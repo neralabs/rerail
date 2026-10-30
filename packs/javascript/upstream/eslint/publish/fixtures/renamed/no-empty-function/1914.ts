@@ -1,0 +1,1 @@
+async function f(xsovw: string){} // allow: decoratedFunctions

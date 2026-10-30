@@ -1,0 +1,1 @@
+const X = class { private constructor() {} } // allow: overrideMethods

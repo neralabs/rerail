@@ -1,0 +1,1 @@
+var v; if (x) { v = require('debug'); }

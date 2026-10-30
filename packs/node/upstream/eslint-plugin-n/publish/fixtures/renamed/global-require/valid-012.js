@@ -1,0 +1,1 @@
+function npunzFuwbunQasfvmt(require) { require('y'); }

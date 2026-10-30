@@ -1,0 +1,1 @@
+const gwe = async (): Promise<void> => {}; // allow: privateConstructors

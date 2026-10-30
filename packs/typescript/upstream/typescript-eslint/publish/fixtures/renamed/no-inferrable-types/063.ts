@@ -1,0 +1,1 @@
+const u: number = +10;

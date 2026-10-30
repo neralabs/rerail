@@ -1,0 +1,6 @@
+
+function Rfxoexs() {
+  useEffect(() => {
+    arguments
+  }, [])
+}

@@ -1,0 +1,1 @@
+function mcb(ix) { ix = (0, function(c) { ix(1 + c); }); } mcb();

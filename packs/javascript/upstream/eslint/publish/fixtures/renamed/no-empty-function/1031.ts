@@ -1,0 +1,1 @@
+class C extends L {static override set qmv(value: string) {}} // allow: overrideMethods

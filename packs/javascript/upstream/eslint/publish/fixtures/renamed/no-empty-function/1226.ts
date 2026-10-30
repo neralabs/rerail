@@ -1,0 +1,1 @@
+class J { static rgu(zqiet: string) {} } // allow: overrideMethods

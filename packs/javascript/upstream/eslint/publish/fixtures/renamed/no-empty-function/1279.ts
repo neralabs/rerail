@@ -1,0 +1,1 @@
+const L = class {static rhk(upkln: string) {}}; // allow: privateConstructors

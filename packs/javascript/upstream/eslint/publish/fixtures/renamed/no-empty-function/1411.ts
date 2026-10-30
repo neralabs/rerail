@@ -1,0 +1,1 @@
+class F {private static *xgr() {}} // allow: constructors

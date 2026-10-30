@@ -1,0 +1,1 @@
+interface U { get b(): any, otzjzjw: true, set b(value: any): void }

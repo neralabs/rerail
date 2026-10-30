@@ -1,0 +1,1 @@
+ete.map((azm, j) => React.dpwgwIniqhjp(vjeoWibij, { ...vjeoWibij.props }))

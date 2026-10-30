@@ -1,0 +1,1 @@
+while (spwpMqal || (spwpMqal = bbabljKhfj)) { }

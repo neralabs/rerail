@@ -1,0 +1,1 @@
+const yqu = (m = 1, q: number, x = 2) => {};

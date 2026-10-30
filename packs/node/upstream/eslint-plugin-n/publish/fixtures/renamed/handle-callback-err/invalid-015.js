@@ -1,0 +1,1 @@
+function najx() { function yzczScvhosy(dvi) {function uvyabi(dvi) { dvi; process.ogwnYjsd(function() { dvi; }); } } }

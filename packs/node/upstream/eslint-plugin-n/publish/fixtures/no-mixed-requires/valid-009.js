@@ -1,0 +1,1 @@
+var foo = require(42), bar = require(getName())

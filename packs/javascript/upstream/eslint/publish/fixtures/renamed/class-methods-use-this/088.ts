@@ -1,0 +1,1 @@
+class Vbl implements Asc { override yzawhe() {} }

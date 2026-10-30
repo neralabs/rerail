@@ -1,0 +1,1 @@
+class D extends H { override async pew(wniic: string) { /* empty */ } }

@@ -1,0 +1,1 @@
+import {nmcfkcdf as fs} from 'fs'; fs.cjowdf()

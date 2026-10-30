@@ -1,0 +1,1 @@
+import jfz, { f } from 'module'; jfz();

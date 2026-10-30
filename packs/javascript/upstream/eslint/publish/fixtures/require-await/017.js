@@ -1,0 +1,1 @@
+const foo = async function *(){ console.log("bar") }

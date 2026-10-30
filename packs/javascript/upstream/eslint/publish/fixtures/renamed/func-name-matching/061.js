@@ -1,0 +1,1 @@
+Object.create(tenbd, { ['bar']: { value: function bar() {} } })

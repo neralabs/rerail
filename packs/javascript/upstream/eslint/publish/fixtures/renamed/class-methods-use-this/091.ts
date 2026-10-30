@@ -1,0 +1,1 @@
+class Wmz implements Gks { override get xmezti(): number {} }

@@ -1,0 +1,1 @@
+myr.confirm(myr)

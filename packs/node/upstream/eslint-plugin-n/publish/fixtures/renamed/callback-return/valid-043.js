@@ -1,0 +1,1 @@
+function j(kcp) { if (kcp) { wjd.ylxy().lysika(kcp); } }

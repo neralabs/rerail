@@ -1,0 +1,1 @@
+var { Buffer } = require('buffer'); var b = Buffer.alloc(10)

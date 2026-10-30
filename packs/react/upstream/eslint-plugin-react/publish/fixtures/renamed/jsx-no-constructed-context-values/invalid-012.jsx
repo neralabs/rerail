@@ -1,0 +1,1 @@
+function Component() { var jgf = {}; return (<Coubnjh.Ropkafwy value={jgf}></Coubnjh.Ropkafwy>)}

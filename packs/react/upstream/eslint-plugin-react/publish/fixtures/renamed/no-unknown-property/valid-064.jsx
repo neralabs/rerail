@@ -1,0 +1,1 @@
+<button aria-label="Close" onClick={yrcwAnddi.close} />;

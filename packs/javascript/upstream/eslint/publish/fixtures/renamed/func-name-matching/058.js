@@ -1,0 +1,1 @@
+Object.create(ufzor, { azb: { value: function azb() {} } })

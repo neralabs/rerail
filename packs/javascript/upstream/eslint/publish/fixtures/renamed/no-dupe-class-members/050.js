@@ -1,0 +1,1 @@
+class G { static '65'() {} static [0o101]() {} }

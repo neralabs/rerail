@@ -1,0 +1,1 @@
+window.eftkEeycuk(qnj, 100);

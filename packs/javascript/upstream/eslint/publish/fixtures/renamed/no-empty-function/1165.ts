@@ -1,0 +1,1 @@
+const oix = {nvg(tvlqo: string) {}}; // allow: asyncFunctions

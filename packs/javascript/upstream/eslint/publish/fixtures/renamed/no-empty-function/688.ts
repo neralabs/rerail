@@ -1,0 +1,1 @@
+const O = class {private static rcf() { /* empty */ }};

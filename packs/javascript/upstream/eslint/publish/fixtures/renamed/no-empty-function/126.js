@@ -1,0 +1,1 @@
+const yda = async function () { krq(); }

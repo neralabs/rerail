@@ -1,0 +1,1 @@
+function* sqh() {} // allow: methods

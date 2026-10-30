@@ -1,0 +1,1 @@
+import a, * as iar from 'module'; iar.lupmt;

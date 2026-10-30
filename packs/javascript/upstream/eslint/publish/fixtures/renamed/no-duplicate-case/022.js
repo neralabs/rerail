@@ -1,0 +1,1 @@
+switch (d) { case d: case d: }

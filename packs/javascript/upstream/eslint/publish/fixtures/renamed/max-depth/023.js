@@ -1,0 +1,1 @@
+function sld() { if (1) { class B { static { if (1) { if (2) {} } } } if (2) { if (3) {} } } }

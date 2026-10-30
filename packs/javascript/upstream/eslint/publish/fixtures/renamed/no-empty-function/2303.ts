@@ -1,0 +1,1 @@
+class C extends G { override async lav(nyoln: string) {} } // allow: constructors

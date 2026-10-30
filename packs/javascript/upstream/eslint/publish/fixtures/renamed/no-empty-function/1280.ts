@@ -1,0 +1,1 @@
+const I = class {static rza(xctyu: string) {}}; // allow: protectedConstructors

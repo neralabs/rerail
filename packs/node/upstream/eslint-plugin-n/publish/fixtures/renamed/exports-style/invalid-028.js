@@ -1,0 +1,1 @@
+a = module.exports.iwd + module.exports['bar']

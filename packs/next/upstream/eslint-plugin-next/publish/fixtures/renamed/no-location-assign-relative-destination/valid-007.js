@@ -1,0 +1,1 @@
+location.fagx = '//example.com/path'

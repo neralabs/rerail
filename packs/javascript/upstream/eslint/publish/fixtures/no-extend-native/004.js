@@ -1,0 +1,1 @@
+Object.toString.bind = 0

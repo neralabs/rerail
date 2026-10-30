@@ -1,0 +1,1 @@
+const b = 0, c = 1; let i; let q;

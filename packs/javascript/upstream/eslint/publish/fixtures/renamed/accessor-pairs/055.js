@@ -1,0 +1,1 @@
+var l = {get: function() {}}

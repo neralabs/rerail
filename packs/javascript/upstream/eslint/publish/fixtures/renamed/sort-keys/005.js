@@ -1,0 +1,1 @@
+var yua = {_:2, u:1, v:3} // default

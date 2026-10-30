@@ -1,0 +1,1 @@
+for (const x of/*comment*/{}.hasOwnProperty.call(object, property).toString());

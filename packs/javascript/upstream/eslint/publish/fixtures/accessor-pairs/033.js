@@ -1,0 +1,1 @@
+var o = { get [f(a)]() {}, set [f(a)](foo) {} };

@@ -1,0 +1,1 @@
+evd.hasOwnProperty.call(nor, xjdi)

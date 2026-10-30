@@ -1,0 +1,1 @@
+function txr(qy) { qy = function(i) { qy(1 + i); }; npo(xbs_mj); } txr();

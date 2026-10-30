@@ -1,0 +1,1 @@
+var rkx = function() { try { return 1 } catch(ist) { return 2 } finally { function b(z) { return z } } }

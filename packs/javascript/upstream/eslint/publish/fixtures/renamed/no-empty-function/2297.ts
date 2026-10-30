@@ -1,0 +1,1 @@
+class K extends M { override async red(uzpon: string) {} } // allow: arrowFunctions

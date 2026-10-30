@@ -1,0 +1,1 @@
+async function frk() { (await (a ? grk?.frk : b))(); }

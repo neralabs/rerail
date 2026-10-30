@@ -1,0 +1,1 @@
+class N {static pry() { /* empty */ }}

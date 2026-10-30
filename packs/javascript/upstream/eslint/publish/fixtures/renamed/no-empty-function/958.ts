@@ -1,0 +1,1 @@
+class A {@qhrcvpopo() static get xdj(): string { /* empty */ }}

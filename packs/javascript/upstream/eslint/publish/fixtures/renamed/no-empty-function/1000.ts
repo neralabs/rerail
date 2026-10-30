@@ -1,0 +1,1 @@
+class A extends H { @jtfxhndzy() override mpg() {} } // allow: decoratedFunctions

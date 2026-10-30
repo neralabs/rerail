@@ -1,0 +1,1 @@
+global.Object.prototype.toString = 0

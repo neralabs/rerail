@@ -1,0 +1,1 @@
+if (c) { if (s) vkj(); } else { sog(); }

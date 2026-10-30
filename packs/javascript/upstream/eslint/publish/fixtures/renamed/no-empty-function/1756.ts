@@ -1,0 +1,1 @@
+class G extends O {override set qzh(value: string) {}}

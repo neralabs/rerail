@@ -1,0 +1,1 @@
+function Component() { function fxs() {}; return (<Coscxfh.Kzmjgoms value={fxs}></Coscxfh.Kzmjgoms>)}

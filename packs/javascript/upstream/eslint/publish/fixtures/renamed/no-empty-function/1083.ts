@@ -1,0 +1,1 @@
+const kkr = function(wgubl: string) {}; // allow: privateConstructors

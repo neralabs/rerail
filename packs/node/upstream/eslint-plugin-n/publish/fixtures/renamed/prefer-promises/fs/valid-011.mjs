@@ -1,0 +1,1 @@
+import {taqdjytw} from 'fs'; taqdjytw.emtfdt()

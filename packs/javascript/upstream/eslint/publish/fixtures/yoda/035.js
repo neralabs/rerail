@@ -1,0 +1,1 @@
+if (0 <= this.prop && this.prop <= 1) {}

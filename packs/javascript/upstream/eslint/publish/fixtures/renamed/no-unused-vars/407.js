@@ -1,0 +1,1 @@
+var [...f] = rhl;'use strict';k(00);

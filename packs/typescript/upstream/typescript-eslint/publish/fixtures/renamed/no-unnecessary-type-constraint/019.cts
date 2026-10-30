@@ -1,0 +1,1 @@
+const bprq = <O extends any>() => {};

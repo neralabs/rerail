@@ -1,0 +1,1 @@
+function Component() { const lmd = ama && {}; return (<Cowslrx.Unxqmsgp value={lmd}></Cowslrx.Unxqmsgp>)}

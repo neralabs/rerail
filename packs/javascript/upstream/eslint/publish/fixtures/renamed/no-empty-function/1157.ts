@@ -1,0 +1,1 @@
+const mjt = {gdq(rrxdw: string) {}};

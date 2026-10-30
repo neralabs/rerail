@@ -1,0 +1,1 @@
+const K = class {static mqf(xqepw: string) {}}; // allow: generatorMethods

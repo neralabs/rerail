@@ -1,0 +1,1 @@
+() => { return (ubpjis = a * i); }

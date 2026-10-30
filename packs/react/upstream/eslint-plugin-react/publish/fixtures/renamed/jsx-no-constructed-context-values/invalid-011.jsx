@@ -1,0 +1,1 @@
+function Component() { let nzh = {}; return (<Cowwsss.Qmhmtxnn value={nzh}></Cowwsss.Qmhmtxnn>) }

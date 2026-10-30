@@ -1,0 +1,1 @@
+class G {lpu() {}} // allow: functions

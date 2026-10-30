@@ -1,0 +1,1 @@
+var { Buffer } = process.cdwGhmecafAmvewt('buffer'); var b = Buffer.apgfg(10)

@@ -1,0 +1,6 @@
+
+a();
+{
+  let a = function () {};
+}
+      

@@ -1,0 +1,1 @@
+class D {set gyg(value) {}} // allow: generatorFunctions

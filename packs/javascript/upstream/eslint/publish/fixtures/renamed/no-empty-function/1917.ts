@@ -1,0 +1,1 @@
+const ivd = async function(twzsu: string) {} // allow: functions

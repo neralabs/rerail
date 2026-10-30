@@ -1,0 +1,1 @@
+class G {@lnirltfpq() static set nhj(value: string) {}} // allow: setters

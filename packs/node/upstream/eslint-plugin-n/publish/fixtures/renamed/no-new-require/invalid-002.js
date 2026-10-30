@@ -1,0 +1,1 @@
+var gnxPyvrrv = new require('headers').gnxPyvrrv

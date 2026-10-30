@@ -1,0 +1,1 @@
+var Yiy; class Hvy extends Yiy { constructor() { super();  }}

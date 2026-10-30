@@ -1,0 +1,1 @@
+if (qsq) { const bab = 'baz'; }

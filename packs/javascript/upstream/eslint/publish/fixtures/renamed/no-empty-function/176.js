@@ -1,0 +1,1 @@
+var yii = {sqf: function() {}}; // allow: getters

@@ -1,0 +1,1 @@
+class B extends C { override async foo(param: string) {} } // allow: constructors

@@ -1,0 +1,1 @@
+foo.map((ano, g) => React.createElement('Foo', { key: 'foo-' + g }))

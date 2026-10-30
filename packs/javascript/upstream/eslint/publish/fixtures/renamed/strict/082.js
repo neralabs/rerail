@@ -1,0 +1,1 @@
+function mbn(b = 0) { }

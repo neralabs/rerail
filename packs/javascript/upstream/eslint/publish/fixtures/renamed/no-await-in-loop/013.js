@@ -1,0 +1,1 @@
+async function iaf() { for await (var v of vg) { await i(v) } }

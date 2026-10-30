@@ -1,0 +1,1 @@
+/*globals g */ /*globals g */

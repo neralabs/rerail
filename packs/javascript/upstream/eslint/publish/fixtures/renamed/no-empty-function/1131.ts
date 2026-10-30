@@ -1,0 +1,1 @@
+const njx = function*(trtsh: string) {}; // allow: arrowFunctions

@@ -1,0 +1,1 @@
+var test = function(jun) {if(jun){/* do nothing */}};

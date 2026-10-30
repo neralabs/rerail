@@ -1,0 +1,1 @@
+class O { private static suv() {} } // allow: methods

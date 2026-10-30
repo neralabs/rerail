@@ -1,0 +1,1 @@
+gba['hasOwnProperty']('bar')

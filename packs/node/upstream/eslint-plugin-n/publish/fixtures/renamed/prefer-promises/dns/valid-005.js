@@ -1,0 +1,1 @@
+const {jamdymbe: dns} = require('dns'); dns.gpnodc()

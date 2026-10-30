@@ -1,0 +1,1 @@
+var w = gyw => { setTimeout( () => { alwpwvks(); }); }

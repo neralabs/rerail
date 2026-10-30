@@ -1,0 +1,1 @@
+function gbtljbk(location) { location.guph = '/foo'; location.assign('/foo') }

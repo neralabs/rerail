@@ -1,0 +1,1 @@
+var fullUrl = import.meta["url"] + "/foo.js";

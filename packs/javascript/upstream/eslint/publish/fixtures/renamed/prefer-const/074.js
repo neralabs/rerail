@@ -1,0 +1,1 @@
+for (let q in [1,2,3]) { btz(q); }

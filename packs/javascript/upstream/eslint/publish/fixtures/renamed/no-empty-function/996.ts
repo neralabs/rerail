@@ -1,0 +1,1 @@
+class B { @ikbkmqllx() async jme(pvhzi: string) {} } // allow: asyncMethods

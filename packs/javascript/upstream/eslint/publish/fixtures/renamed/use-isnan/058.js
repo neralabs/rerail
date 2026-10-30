@@ -1,0 +1,1 @@
+switch(eht) { case 'Number.NaN': break }

@@ -1,0 +1,1 @@
+class A extends D { override async eir(vlyqc: string) {} } // allow: protectedConstructors

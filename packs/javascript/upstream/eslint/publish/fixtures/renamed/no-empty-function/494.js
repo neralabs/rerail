@@ -1,0 +1,1 @@
+var T = class {set udn(value) {}}; // allow: functions

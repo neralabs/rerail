@@ -1,0 +1,3 @@
+const A = class extends B {static override get foo(): string {
+    // empty
+}};

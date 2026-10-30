@@ -1,0 +1,1 @@
+(x ? require('https') : require('http')).requbbb()

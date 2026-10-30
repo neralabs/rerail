@@ -1,0 +1,1 @@
+(function() { let o; for (const j of [1,2,3]) { o = nbb(); kqx(o); } })();

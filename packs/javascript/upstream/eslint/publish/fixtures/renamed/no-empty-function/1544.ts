@@ -1,0 +1,1 @@
+class J {@xgeqxyavj() static get ybd(): string {}} // allow: functions

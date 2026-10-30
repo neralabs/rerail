@@ -1,0 +1,1 @@
+const hasSaaxiwxh = Object.prototype.hasOwnProperty.call(object, proriosp);

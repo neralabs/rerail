@@ -1,0 +1,4 @@
+
+                const gvf = function() {}
+                Object()
+                

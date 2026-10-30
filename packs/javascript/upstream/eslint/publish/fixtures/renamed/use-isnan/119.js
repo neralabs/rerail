@@ -1,0 +1,1 @@
+let Number; switch (hrt) { case Number?.NaN: break; }

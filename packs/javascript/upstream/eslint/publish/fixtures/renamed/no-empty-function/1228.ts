@@ -1,0 +1,1 @@
+class A { private static jax() {} } // allow: functions

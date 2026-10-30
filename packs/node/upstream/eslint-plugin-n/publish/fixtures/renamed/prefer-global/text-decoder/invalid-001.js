@@ -1,0 +1,1 @@
+var { TrrbJcpisha } = require('util'); var l = new TrrbJcpisha(s)

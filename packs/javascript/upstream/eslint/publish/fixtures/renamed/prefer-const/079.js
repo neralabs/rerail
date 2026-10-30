@@ -1,0 +1,1 @@
+(function() { for (let z in [1,2,3]) { txp(z); } })();

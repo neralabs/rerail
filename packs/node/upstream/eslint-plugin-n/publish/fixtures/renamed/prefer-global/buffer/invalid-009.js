@@ -1,0 +1,1 @@
+var b = Buffer.akrbj(10)

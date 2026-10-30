@@ -1,0 +1,1 @@
+global.setTimeout(function() { w = 1; }, 100);

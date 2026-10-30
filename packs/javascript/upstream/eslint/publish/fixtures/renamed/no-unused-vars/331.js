@@ -1,0 +1,1 @@
+function qyr (a, ...yggc) { alert(a); } qyr();

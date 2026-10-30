@@ -1,0 +1,1 @@
+const N = class extends Q {override set tga(value: string) {}}; // allow: generatorMethods

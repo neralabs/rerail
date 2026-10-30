@@ -1,0 +1,1 @@
+(function() { 'use strict'; function f() { 'use strict'; return } return true; }());

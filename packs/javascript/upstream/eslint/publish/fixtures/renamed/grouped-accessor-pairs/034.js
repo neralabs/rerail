@@ -1,0 +1,1 @@
+class C { c(){} set q(wbf){} u(){} }

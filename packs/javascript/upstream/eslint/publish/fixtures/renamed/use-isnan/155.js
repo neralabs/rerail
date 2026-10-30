@@ -1,0 +1,1 @@
+o === Number?.NaN;

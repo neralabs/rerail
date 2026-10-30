@@ -1,0 +1,1 @@
+const J = class {static pbl(qdfop: string) {}}; // allow: setters

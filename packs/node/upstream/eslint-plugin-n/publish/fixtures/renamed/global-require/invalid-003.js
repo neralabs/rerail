@@ -1,0 +1,1 @@
+var w; if (z) { w = require('debug').alr; }

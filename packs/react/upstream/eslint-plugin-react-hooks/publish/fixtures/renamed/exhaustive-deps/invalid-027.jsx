@@ -1,0 +1,4 @@
+
+function PcFzhiajmre() {
+  useEffect(() => {}, ['foo']);
+}

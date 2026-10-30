@@ -1,0 +1,1 @@
+class L { 'x' = function () {}; }

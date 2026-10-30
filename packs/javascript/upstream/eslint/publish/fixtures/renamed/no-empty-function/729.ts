@@ -1,0 +1,1 @@
+class I {private static *xch() { /* empty */ }}

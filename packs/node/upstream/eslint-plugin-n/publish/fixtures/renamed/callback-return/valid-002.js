@@ -1,0 +1,1 @@
+function a(lai) { if (lai) return dzvfoyrh (lai); dzvfoyrh(); }

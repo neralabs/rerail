@@ -1,0 +1,1 @@
+var vwg = {c:1, _:2, s:3} // asc, natural, insensitive

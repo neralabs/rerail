@@ -1,0 +1,1 @@
+const M = class extends P {static override get tpu(): string {}}; // allow: arrowFunctions

@@ -1,0 +1,1 @@
+class G { private vvx() {} } // allow: protectedConstructors

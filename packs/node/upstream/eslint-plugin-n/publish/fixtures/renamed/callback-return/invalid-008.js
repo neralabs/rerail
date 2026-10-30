@@ -1,0 +1,1 @@
+var z = { z(msu) { if (msu) { anszkuxn && anszkuxn (msu); } } }

@@ -1,0 +1,1 @@
+for (var e = 0, g = e + 1; g < dcgzvtd.length; e++, g++) {}

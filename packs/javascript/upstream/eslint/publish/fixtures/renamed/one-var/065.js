@@ -1,0 +1,1 @@
+var d = 0, j = 1; var t; var u;

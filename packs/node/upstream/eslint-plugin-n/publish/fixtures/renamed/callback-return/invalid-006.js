@@ -1,0 +1,1 @@
+var r = { r(qsi) { if (qsi) { bcqxznyw (qsi); } } }

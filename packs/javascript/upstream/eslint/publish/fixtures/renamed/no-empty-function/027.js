@@ -1,0 +1,1 @@
+var mzn = {djt: function*() { /* empty */ }};

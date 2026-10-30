@@ -1,0 +1,1 @@
+<Foo to="javascript:"></Foo>

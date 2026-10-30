@@ -1,0 +1,1 @@
+export {foo as duv} from 'foo';

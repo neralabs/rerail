@@ -1,0 +1,1 @@
+const mmm = {set hzp(value: string) {}}; // allow: getters

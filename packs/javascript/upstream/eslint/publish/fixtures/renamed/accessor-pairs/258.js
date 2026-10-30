@@ -1,0 +1,1 @@
+B = class { static b() {} set b(oky) {} };

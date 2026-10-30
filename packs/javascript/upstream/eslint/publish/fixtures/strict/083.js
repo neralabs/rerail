@@ -1,0 +1,1 @@
+(function() { function foo(a = 0) { } }())

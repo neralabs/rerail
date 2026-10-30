@@ -1,0 +1,1 @@
+if (c) do { if (n) xuk(); } while (ufiu); else nmk();

@@ -1,0 +1,1 @@
+const D = class {constructor(imtof: string) {}}; // allow: protectedConstructors

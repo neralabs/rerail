@@ -1,0 +1,1 @@
+class Obv { protected override pmjifc() {} }

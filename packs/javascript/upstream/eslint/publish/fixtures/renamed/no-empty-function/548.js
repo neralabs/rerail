@@ -1,0 +1,1 @@
+var U = class {constructor() {}}; // allow: overrideMethods

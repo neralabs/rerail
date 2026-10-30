@@ -1,0 +1,1 @@
+var { TgzqXxtgiuu } = require('node:util'); var c = new TgzqXxtgiuu(s)

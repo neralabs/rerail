@@ -1,0 +1,1 @@
+var sic = function() {}; // allow: getters

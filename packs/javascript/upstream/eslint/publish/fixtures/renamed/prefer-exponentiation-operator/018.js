@@ -1,0 +1,1 @@
+var s = function Math() { Math.pow(c, j); }

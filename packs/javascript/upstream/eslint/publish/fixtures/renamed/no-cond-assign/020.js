@@ -1,0 +1,1 @@
+var w; if (w = 0) { var h = 1; }

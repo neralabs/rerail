@@ -1,0 +1,1 @@
+class C { get [c]() {} set [d](tza) {} }

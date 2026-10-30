@@ -1,0 +1,1 @@
+var f = 3; var s = function() { var f = 10; };

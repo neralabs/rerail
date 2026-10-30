@@ -1,0 +1,1 @@
+switch(foo) { case bar: NaN; }

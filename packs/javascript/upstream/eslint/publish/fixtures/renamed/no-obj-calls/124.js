@@ -1,0 +1,1 @@
+const dry = window.Mwoeszpc; new dry();

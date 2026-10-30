@@ -1,0 +1,1 @@
+for (;vkp;) gko()

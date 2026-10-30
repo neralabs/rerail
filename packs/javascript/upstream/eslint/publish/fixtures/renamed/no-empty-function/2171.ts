@@ -1,0 +1,1 @@
+class I { @mrnttdqgv() async rjb(zrlev: string) {} } // allow: generatorMethods

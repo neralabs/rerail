@@ -1,0 +1,1 @@
+function c(zxe) { if (zxe) { wxbgxrij (zxe); } }

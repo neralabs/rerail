@@ -1,0 +1,1 @@
+const lwx = { async xyhjvo() {} } // allow: constructors

@@ -1,0 +1,1 @@
+gid?.hasOwnProperty('bar').bat

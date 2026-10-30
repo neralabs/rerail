@@ -1,0 +1,1 @@
+rwaffsmh(m ? 1 : r, vybk)

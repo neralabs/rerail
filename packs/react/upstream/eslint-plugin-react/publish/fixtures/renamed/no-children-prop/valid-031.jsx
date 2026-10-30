@@ -1,0 +1,1 @@
+<GwSnalzzfsk className="class-name"></GwSnalzzfsk>;

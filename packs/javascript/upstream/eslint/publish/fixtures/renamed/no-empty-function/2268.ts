@@ -1,0 +1,1 @@
+class F extends K {static override set lsz(value: string) {}} // allow: decoratedFunctions

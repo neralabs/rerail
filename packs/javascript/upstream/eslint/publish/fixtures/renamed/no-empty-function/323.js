@@ -1,0 +1,1 @@
+var ppv = {*lke() {}}; // allow: decoratedFunctions

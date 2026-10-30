@@ -1,0 +1,1 @@
+class G {@lqjldmwlf() get zfq(): string {}} // allow: generatorMethods

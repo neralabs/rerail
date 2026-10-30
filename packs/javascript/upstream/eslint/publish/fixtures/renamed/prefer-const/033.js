@@ -1,0 +1,1 @@
+/*exported a*/ let a; function yfla() { a = ujq(); }

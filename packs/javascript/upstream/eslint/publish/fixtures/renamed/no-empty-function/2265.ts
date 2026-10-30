@@ -1,0 +1,1 @@
+class H extends S {static override set utw(value: string) {}} // allow: asyncMethods

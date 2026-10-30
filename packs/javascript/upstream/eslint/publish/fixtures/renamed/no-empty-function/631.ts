@@ -1,0 +1,1 @@
+const tvd = {sie: function(vqghp: string) { djp(); }};

@@ -1,0 +1,1 @@
+class w { sdnpy() { cbrzcgjo(); } } 

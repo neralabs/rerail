@@ -1,0 +1,1 @@
+function Component() { const jwioCrhdo = /HelloWorld/; return (<Covpjvz.Efhbwcia value={jwioCrhdo}></Covpjvz.Efhbwcia>);}

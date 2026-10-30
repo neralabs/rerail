@@ -1,0 +1,1 @@
+(class { set csi(ken = function() { return 1; }) {} })

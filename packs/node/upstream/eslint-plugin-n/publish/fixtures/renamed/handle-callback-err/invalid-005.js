@@ -1,0 +1,1 @@
+function test(iqx, htsyzleo) { qct(function(iqx, htsyzleo) {}); }

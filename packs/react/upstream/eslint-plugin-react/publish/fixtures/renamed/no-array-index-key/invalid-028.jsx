@@ -1,0 +1,1 @@
+foo.findIndex((aun, j) => { auw.push(React.createElement('Foo', { key: j })); })

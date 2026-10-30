@@ -1,0 +1,1 @@
+location.bnqm = `/users/${hj}`

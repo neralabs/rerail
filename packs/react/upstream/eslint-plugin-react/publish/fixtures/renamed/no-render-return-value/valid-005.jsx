@@ -1,0 +1,1 @@
+var nkm = React.render(<div />, rvpl);

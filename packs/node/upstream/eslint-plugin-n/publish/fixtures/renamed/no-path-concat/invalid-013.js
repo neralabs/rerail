@@ -1,0 +1,1 @@
+var fqitZpcz = __filename + "\/foo.js";

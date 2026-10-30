@@ -1,0 +1,1 @@
+new bqi.indexOf(NaN)

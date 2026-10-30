@@ -1,0 +1,1 @@
+this.i = ReactDOM.render(<div />, document.alhr);

@@ -1,0 +1,1 @@
+const avy = (djuvl: string) => {}; // allow: methods

@@ -1,0 +1,1 @@
+const dzy = { async zureiv() {} } // allow: overrideMethods

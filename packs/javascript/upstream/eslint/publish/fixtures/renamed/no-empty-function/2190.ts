@@ -1,0 +1,1 @@
+class F extends M { @nmlrtpxqh() override ptn() {} } // allow: protectedConstructors

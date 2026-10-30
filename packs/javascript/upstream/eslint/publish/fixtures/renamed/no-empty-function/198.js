@@ -1,0 +1,1 @@
+var ilz = () => {}; // allow: overrideMethods

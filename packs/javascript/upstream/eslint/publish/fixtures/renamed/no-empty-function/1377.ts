@@ -1,0 +1,1 @@
+class C { *gef(swnnf: string) {} } // allow: functions

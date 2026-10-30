@@ -1,0 +1,1 @@
+const jyk = (ydzda: string) => {}; // allow: asyncFunctions

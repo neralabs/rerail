@@ -1,0 +1,1 @@
+type Gvrx<T extends unknown> = {};

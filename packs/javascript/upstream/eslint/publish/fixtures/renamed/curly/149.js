@@ -1,0 +1,1 @@
+if (vvw) {qfm()} qft()

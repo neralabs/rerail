@@ -1,0 +1,1 @@
+var wuu = {szn: function() { /* empty */ }};

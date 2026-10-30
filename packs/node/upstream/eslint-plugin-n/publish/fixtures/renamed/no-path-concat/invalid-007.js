@@ -1,0 +1,1 @@
+var path = require("path"); var fsnjYvcs = __dirname + path.tnv + `foo.js`;

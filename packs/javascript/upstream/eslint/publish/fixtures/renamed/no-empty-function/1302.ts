@@ -1,0 +1,1 @@
+const P = class {protected static uau() {}}; // allow: getters

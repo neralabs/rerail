@@ -1,0 +1,1 @@
+var test = function(jak, dkwj) {if(!jak) { ldmi(); } else { cks(); }}

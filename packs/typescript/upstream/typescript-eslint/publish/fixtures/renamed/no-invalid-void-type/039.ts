@@ -1,0 +1,1 @@
+declare function siooqtewAdfyeudmqrd<X extends void>(jov: X): void;

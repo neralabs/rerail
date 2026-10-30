@@ -1,0 +1,1 @@
+function yvj() { const a = 1; const w = 2; }

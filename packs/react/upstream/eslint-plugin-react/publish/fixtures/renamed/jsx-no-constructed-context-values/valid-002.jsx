@@ -1,0 +1,1 @@
+const Component = () => <Coyddmr.Jlasxqpo value="Some string"></Coyddmr.Jlasxqpo>

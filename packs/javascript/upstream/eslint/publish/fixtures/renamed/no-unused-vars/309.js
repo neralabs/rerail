@@ -1,0 +1,1 @@
+const [a, g, l] = xpt; alert(a + l);

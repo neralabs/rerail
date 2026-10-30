@@ -1,0 +1,1 @@
+var M = class {static zfg() {}}; // allow: setters

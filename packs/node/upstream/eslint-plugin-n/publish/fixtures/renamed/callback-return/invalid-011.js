@@ -1,0 +1,1 @@
+function c(vku) { if (vku) { sjsbmsjd (vku); xzxjn(); return; } }

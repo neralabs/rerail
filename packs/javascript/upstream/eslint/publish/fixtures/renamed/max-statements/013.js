@@ -1,0 +1,1 @@
+function cvc() { class A { static { gol; wzm; wahnk; { cvlj; cjlx; sly; } } } }

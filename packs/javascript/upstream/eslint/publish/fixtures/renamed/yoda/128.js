@@ -1,0 +1,1 @@
+function *vct() { yield/**/s < 1 }

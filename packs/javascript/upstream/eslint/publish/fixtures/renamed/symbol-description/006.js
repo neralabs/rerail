@@ -1,0 +1,1 @@
+function abe(Symbol) { Symbol(); }

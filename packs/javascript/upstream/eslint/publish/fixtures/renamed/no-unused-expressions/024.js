@@ -1,0 +1,1 @@
+async function uqq() { uqq ? await opl : await opp; }

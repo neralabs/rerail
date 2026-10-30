@@ -1,0 +1,1 @@
+let d, h; ({d = 0, h} = xfa); kiw(d, h);

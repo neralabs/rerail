@@ -1,0 +1,1 @@
+Number.isNaN(123) !== true;

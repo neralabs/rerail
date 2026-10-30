@@ -1,0 +1,1 @@
+Reflect.defineProperty(eys, 'bar', { get() {} })

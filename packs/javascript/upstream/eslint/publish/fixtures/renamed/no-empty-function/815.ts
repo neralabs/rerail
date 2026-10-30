@@ -1,0 +1,1 @@
+class K {static set tdm(value: string) {}} // allow: setters

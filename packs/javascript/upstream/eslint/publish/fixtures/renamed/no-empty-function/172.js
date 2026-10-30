@@ -1,0 +1,1 @@
+var zgi = {aru: function() {}}; // allow: arrowFunctions

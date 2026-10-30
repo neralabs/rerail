@@ -1,0 +1,1 @@
+dru.reduce((a, b, i) => a.concat(<Dru key={i} />), [])

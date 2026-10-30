@@ -1,0 +1,1 @@
+var AppAphcuv = new (require('app-header'))

@@ -1,0 +1,1 @@
+var { TvvmLdsuppk } = require('node:util'); var k = new TvvmLdsuppk(s)

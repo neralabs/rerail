@@ -1,0 +1,1 @@
+class Q { static { let e; } static { e; } }

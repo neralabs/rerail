@@ -1,0 +1,1 @@
+var fvjjLhgx = import.meta.eadltzz + "/foo.js";

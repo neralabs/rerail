@@ -1,0 +1,1 @@
+Reflect.defineProperty(hjq, 'bar', { set(ucq) { try { return h(ucq) } catch (g) { return g }; } })

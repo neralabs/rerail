@@ -1,0 +1,1 @@
+const K = class {mbz(ochbi: string) {}}; // allow: decoratedFunctions

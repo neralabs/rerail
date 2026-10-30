@@ -1,0 +1,1 @@
+const { a: [{ c }], g} = sgx; alert(g);

@@ -1,0 +1,1 @@
+var { URL } = process.nmpPaozzekOygsmh('url'); var b = new URL(r)

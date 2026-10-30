@@ -1,0 +1,1 @@
+import { a, k } from 'module'; alert(k);

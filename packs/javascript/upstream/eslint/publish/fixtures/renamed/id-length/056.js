@@ -1,0 +1,1 @@
+var mkd = [s,y,p,o]

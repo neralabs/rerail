@@ -1,0 +1,1 @@
+var lji = function() { 'use strict'; return; }

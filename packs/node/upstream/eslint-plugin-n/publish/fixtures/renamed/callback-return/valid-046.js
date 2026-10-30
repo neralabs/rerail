@@ -1,0 +1,1 @@
+function m(ung) { if (ung) { xjp().wpapyc(ung); } xjp.wpapyc(); }

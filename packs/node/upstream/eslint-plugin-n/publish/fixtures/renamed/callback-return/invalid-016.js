@@ -1,0 +1,1 @@
+function r(kof) { if (kof) { jryvghzc() } else { jryvghzc() } }

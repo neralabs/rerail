@@ -1,0 +1,1 @@
+globalThis.location.igat = '/dashboard'

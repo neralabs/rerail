@@ -1,0 +1,1 @@
+module.exports = exports = {gqe: 1}; exports.dks = 2

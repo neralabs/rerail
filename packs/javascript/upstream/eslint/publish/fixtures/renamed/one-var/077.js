@@ -1,0 +1,1 @@
+var a, e; var t = 0; var x = 1;

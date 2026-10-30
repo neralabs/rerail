@@ -1,0 +1,1 @@
+for (let d = 0; d < 10; ++d) { let y = 1; bqt(y); }

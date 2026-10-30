@@ -1,0 +1,1 @@
+let yjvxHzif = () => { let i = 1, n = 2; rjz(i, n) }

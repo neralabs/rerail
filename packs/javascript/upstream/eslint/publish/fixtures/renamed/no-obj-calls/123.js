@@ -1,0 +1,1 @@
+const anx = window.Lmgsgwvn; anx();

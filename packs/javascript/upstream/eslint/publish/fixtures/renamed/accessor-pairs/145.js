@@ -1,0 +1,1 @@
+var z = { get [n]() {}, set [q](ysr) {} };

@@ -1,0 +1,1 @@
+eqg.hasOwnProperty?.('bar')

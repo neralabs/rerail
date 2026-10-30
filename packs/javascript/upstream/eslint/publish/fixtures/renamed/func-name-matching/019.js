@@ -1,0 +1,1 @@
+rgu[pqy] = function oki() {};

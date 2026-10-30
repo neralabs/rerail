@@ -1,0 +1,1 @@
+function v() { return function z() { tauvyq = k * p }; }

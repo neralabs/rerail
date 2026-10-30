@@ -1,0 +1,1 @@
+class F { get f(){} static get l(){} set m(zme){} static set p(ljy){} }

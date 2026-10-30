@@ -1,0 +1,1 @@
+function foo() { var x = 5; function bar() { var y = 6; } bar(); z = 10; baz(); }

@@ -1,0 +1,1 @@
+const {kmqfdk} = require('dns'); kmqfdk()

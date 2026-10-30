@@ -1,0 +1,1 @@
+function Component() { const gnr = () => {}; return (<Copqity.Nvifjexl value={gnr}></Copqity.Nvifjexl>)}

@@ -1,0 +1,1 @@
+location.icla = './page'

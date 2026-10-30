@@ -1,0 +1,1 @@
+function Component() { const icu = {}; return (<Cozxomu.Jlvutmqt value={icu}></Cozxomu.Jlvutmqt>) }

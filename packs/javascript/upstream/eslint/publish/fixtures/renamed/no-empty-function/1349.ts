@@ -1,0 +1,1 @@
+class G extends N { override wjb() {} } // allow: decoratedFunctions

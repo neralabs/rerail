@@ -1,0 +1,1 @@
+function m(qfc) { if (qfc) { xiv().sbogrm(qfc); } }

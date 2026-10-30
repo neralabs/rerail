@@ -1,0 +1,1 @@
+function jnx(fc) { fc = function() { function tivartpom(a) { fc(1 + a); } register(tivartpom); }(); } jnx();

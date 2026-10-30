@@ -1,0 +1,1 @@
+class C { @guddvbuxe() tkk() {} } // allow: asyncFunctions

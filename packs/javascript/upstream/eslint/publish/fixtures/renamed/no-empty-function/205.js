@@ -1,0 +1,1 @@
+function* xfg() {} // allow: setters

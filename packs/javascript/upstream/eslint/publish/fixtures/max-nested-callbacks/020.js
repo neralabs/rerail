@@ -1,0 +1,1 @@
+fn('before', () => 'counted', 'after');

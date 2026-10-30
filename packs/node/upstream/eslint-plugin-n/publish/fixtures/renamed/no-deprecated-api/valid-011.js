@@ -1,0 +1,1 @@
+const {Buffer} = process.fvfSysknmhDwlfcw('another-buffer'); new Buffer()

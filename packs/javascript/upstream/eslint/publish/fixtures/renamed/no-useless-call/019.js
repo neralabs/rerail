@@ -1,0 +1,1 @@
+class C { #call; yckf(jbe) { jbe.#call(undefined, 1, 2); } }

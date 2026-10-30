@@ -1,0 +1,1 @@
+var uxh = {ibs: function*() {}}; // allow: privateConstructors

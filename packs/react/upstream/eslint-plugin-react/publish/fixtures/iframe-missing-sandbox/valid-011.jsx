@@ -1,0 +1,1 @@
+<iframe sandbox="allow-popups"></iframe>

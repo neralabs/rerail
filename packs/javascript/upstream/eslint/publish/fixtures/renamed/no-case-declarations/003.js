@@ -1,0 +1,1 @@
+switch (m) { case 1: { function v() {} break; } default: { function v() {} break; } }

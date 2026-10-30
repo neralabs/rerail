@@ -1,0 +1,1 @@
+var nxaw = ReactDOM.render(<div />, document.cbug);

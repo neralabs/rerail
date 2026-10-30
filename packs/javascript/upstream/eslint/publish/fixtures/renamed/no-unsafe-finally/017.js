@@ -1,0 +1,1 @@
+var qqm = function() { try { return 1 } catch(ayv) { return 2 } finally { return 3 } }

@@ -1,0 +1,1 @@
+class S {get tpr(): string {}} // allow: generatorFunctions

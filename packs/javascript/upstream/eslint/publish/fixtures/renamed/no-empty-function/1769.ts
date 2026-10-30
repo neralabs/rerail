@@ -1,0 +1,1 @@
+class H extends J {static override set mky(value: string) {}}

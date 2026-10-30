@@ -1,0 +1,1 @@
+const c = 0; let f = 1; let h = 2; const o = 3;

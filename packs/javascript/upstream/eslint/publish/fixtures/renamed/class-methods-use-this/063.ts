@@ -1,0 +1,1 @@
+class K { qvh = () => {super.toString} }

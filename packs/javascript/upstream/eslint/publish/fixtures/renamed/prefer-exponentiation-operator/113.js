@@ -1,0 +1,1 @@
+Math.pow(e / j, k)

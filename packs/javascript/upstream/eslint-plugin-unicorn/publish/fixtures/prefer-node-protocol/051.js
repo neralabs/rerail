@@ -1,0 +1,1 @@
+const fs = notProcess.getBuiltinModule("fs")

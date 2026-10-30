@@ -1,0 +1,1 @@
+class A { static nrp(sbmoa: string) {} } // allow: functions

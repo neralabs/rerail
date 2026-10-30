@@ -1,0 +1,1 @@
+class O { static set o(rtx) {} static o() {} static get o() {} }

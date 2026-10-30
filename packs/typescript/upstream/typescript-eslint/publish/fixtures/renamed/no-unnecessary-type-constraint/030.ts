@@ -1,0 +1,1 @@
+const Lllt = class<R extends unknown> {};

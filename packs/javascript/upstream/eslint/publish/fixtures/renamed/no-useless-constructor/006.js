@@ -1,0 +1,1 @@
+class L extends P { constructor(){ super(); xsJiouzagki(); } }

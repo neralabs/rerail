@@ -1,0 +1,1 @@
+const B = class {static get gce(): string {}}; // allow: privateConstructors

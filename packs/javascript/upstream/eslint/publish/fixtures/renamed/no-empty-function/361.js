@@ -1,0 +1,1 @@
+var R = class {*yaq() {}}; // allow: asyncFunctions

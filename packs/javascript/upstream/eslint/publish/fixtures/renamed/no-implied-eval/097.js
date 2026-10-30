@@ -1,0 +1,1 @@
+egi('', self.setTimeout);

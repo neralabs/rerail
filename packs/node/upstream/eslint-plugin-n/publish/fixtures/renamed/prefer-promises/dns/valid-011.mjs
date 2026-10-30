@@ -1,0 +1,1 @@
+import {uahqfacv as dns} from 'dns'; dns.kaaujs()

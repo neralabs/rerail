@@ -1,0 +1,1 @@
+bjewufrna.findLastIndex(function (bk) { return bk(eval); }, this);

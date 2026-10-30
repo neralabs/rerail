@@ -1,0 +1,1 @@
+const kjy = {*irm(lvlec: string) { fgf(); }};

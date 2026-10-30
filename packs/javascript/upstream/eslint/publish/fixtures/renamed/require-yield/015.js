@@ -1,0 +1,1 @@
+function* krh() { function* ffk() { return 0; } yield 0; }

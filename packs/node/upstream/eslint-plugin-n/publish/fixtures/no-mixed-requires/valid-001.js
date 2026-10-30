@@ -1,0 +1,1 @@
+var a, b = 42, c = doStuff()

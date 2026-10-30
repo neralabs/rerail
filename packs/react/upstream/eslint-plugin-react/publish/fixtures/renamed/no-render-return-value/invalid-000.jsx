@@ -1,0 +1,1 @@
+var Gkfdg = ReactDOM.render(<div />, document.ctgv);

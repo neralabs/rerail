@@ -1,0 +1,1 @@
+async function med() { while (hzv) { for await (t of tl); } }

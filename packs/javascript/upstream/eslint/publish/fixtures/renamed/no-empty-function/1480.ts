@@ -1,0 +1,1 @@
+class Q {get vmd(): string {}} // allow: setters

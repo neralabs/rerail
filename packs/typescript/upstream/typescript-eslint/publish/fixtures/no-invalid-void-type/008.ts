@@ -1,0 +1,1 @@
+let voidMap: Map<string, void> = new Map<string, void>();

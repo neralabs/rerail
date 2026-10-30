@@ -1,0 +1,1 @@
+`hello${ikwvt}` == `hello`

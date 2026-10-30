@@ -1,0 +1,1 @@
+const H = class {@kmxmfjqqe() get tqx(): string {}}; // allow: asyncMethods

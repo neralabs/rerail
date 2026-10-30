@@ -1,0 +1,1 @@
+({ set l(vih){}, get [l](){}, get l(){} })

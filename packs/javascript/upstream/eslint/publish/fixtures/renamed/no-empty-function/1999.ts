@@ -1,0 +1,1 @@
+const K = class { private constructor() {} }; // allow: arrowFunctions

@@ -1,0 +1,1 @@
+L: for (l of lpn) { break L; }

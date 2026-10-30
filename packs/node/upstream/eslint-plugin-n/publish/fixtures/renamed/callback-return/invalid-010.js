@@ -1,0 +1,1 @@
+function a(wgl) { ujcgcqdq (wgl); znowv(); }

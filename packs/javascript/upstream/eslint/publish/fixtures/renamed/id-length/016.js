@@ -1,0 +1,1 @@
+var wrftt = location.wrftt.w || '';

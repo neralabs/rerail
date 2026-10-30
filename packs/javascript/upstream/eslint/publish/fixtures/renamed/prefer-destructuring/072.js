@@ -1,0 +1,1 @@
+var kpz = object.kpz, /* comment */ h;

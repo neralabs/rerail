@@ -1,0 +1,1 @@
+function m(b) { b; }

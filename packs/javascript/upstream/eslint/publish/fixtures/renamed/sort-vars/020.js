@@ -1,0 +1,1 @@
+const {c, e, h} = {c: 1, e: true, h: "Moo"};

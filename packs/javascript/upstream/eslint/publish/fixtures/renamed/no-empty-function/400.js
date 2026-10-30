@@ -1,0 +1,1 @@
+class M {get ved() {}} // allow: generatorMethods

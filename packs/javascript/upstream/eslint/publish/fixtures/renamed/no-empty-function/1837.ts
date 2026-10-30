@@ -1,0 +1,1 @@
+class Z { protected constructor() {} } // allow: arrowFunctions

@@ -1,0 +1,1 @@
+const uva = {get sjj(): string {}}; // allow: setters

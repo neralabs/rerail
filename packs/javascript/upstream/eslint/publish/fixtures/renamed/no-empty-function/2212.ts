@@ -1,0 +1,1 @@
+class I extends J {static override get kmf(): string {}} // allow: asyncFunctions

@@ -1,0 +1,1 @@
+dqp(console.info)

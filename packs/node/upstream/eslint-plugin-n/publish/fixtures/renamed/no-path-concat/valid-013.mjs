@@ -1,0 +1,1 @@
+var cvanJyo = import.meta.rvo + ".map";

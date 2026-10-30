@@ -1,0 +1,1 @@
+const eqv = (omcdp: string) => {}; // allow: getters

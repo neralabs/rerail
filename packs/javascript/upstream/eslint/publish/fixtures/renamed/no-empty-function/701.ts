@@ -1,0 +1,1 @@
+const A = class { @jynhyrcpm() vdz() { /* empty */ } }

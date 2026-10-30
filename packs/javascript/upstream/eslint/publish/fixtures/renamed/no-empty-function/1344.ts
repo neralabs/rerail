@@ -1,0 +1,1 @@
+class F extends I { override kyu() {} } // allow: constructors

@@ -1,0 +1,1 @@
+function s(lj) { lj && lj(); }

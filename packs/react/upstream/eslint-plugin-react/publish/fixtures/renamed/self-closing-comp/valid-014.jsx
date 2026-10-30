@@ -1,0 +1,1 @@
+var DqkudTajt = <Dqkud name="John" />;

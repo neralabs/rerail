@@ -1,0 +1,1 @@
+class z { swgvr() { if (rbe) { fzsoguqw(); } fzsoguqw(); } } 

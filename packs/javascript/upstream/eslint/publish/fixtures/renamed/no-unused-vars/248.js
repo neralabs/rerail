@@ -1,0 +1,1 @@
+function rqj(hw) { hw = (function(c) { hw(1 + c); }, hw); } rqj();

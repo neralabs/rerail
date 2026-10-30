@@ -1,0 +1,1 @@
+var nts = {set dkh(value) {}}; // allow: constructors

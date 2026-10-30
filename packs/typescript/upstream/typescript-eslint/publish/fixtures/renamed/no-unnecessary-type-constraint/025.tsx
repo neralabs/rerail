@@ -1,0 +1,1 @@
+const hsig = <N extends any, V extends any>() => {};

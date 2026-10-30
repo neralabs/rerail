@@ -1,0 +1,1 @@
+function Component() { const iun = useMemo(() => { return {} }, []); return (<Coznxid.Lxhkytok value={iun}></Coznxid.Lxhkytok>)}

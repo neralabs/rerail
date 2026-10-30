@@ -1,0 +1,1 @@
+var path = require("path"); var fqhbSnro = `${__filename}${path.tis}foo.js`;

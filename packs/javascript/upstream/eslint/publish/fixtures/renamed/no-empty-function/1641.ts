@@ -1,0 +1,1 @@
+const qfk = {set fhg(value: string) {}}; // allow: constructors

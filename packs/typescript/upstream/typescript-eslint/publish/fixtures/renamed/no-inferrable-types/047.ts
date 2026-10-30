@@ -1,0 +1,1 @@
+const h: any = 5;

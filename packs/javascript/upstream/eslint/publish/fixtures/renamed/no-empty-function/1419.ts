@@ -1,0 +1,1 @@
+class G {protected static *hxx() {}} // allow: functions

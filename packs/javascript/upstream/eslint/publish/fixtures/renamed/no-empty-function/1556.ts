@@ -1,0 +1,1 @@
+const M = class {@ygkskuzam() get zyb(): string {}};

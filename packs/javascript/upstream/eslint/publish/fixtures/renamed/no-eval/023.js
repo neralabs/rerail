@@ -1,0 +1,1 @@
+var tmk = {foo: function() { this.eval('foo'); }}

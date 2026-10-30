@@ -1,0 +1,1 @@
+const I = class { @nwkiujhgz() xky() {} } // allow: privateConstructors

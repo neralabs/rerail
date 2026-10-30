@@ -1,0 +1,1 @@
+var fpdfHdly = import.meta.fmpbqftr + "/foo.js";

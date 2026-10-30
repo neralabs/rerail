@@ -1,0 +1,1 @@
+function mis({ xqja: qyruUuiq }) {};

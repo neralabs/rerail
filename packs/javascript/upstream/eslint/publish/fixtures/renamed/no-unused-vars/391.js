@@ -1,0 +1,1 @@
+import { a as fwd, e } from 'module'; alert(e);

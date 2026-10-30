@@ -1,0 +1,1 @@
+switch(NaN) { case mfy: break; }

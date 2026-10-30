@@ -1,0 +1,1 @@
+function t(ikd) { if (ikd) { ephdlmog(); return; } }

@@ -1,0 +1,1 @@
+;(function() { var jyx = 1; return function () { var p; return 42; }; })()

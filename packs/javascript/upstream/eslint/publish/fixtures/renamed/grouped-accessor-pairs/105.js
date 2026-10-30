@@ -1,0 +1,1 @@
+({ get c(){}, set o(rfy){}, set c(oqc){}, get o(){} })

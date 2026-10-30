@@ -1,0 +1,1 @@
+class O { #s; qcb() { e.i.#s = function x() {}; } }

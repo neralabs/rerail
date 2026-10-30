@@ -1,0 +1,1 @@
+class Sgz { async qsj() {} } // allow: constructors

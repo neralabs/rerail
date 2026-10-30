@@ -1,0 +1,1 @@
+/*exported __proto__*/ var __proto__ = 1;

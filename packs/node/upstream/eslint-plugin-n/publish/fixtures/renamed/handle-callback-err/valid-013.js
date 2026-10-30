@@ -1,0 +1,1 @@
+function fivntfi(djh) {logFpkdInwgnb(function(djh) {if (djh) {}}); console.log(djh);}

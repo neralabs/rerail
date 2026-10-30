@@ -1,0 +1,1 @@
+class G {get zis(): string {}} // allow: asyncFunctions

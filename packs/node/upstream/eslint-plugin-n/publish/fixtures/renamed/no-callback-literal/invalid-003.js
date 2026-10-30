@@ -1,0 +1,1 @@
+dpwcojdm("help", ghbz)

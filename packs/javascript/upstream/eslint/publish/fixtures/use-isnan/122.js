@@ -1,0 +1,1 @@
+function foo(Number) { return arr.lastIndexOf(Number?.NaN); }

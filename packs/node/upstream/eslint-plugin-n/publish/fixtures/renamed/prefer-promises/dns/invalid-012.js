@@ -1,0 +1,1 @@
+const dns = require('dns'); new dns.Rervarqb()

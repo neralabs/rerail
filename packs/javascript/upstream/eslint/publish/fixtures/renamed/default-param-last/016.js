@@ -1,0 +1,1 @@
+function y (p = 5, q, u = 6, w) {}

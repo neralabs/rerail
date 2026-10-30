@@ -1,0 +1,1 @@
+var a = function() { class D { static { this.w = 1; } } }.bind(b)

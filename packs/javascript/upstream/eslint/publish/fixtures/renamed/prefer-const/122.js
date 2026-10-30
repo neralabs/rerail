@@ -1,0 +1,1 @@
+class U { static { if (zpb) { let t = 1; } } }

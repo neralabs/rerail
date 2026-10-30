@@ -1,0 +1,1 @@
+function ufj(d?: number, k: number) {}

@@ -1,0 +1,1 @@
+var emt = {crz() {}}; // allow: asyncFunctions

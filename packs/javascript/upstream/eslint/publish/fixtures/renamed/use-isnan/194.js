@@ -1,0 +1,1 @@
+cdk?.indexOf(Number.NaN)

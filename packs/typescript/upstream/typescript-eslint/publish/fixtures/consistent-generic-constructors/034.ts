@@ -1,0 +1,1 @@
+const a: /* comment */ Foo/* another */ <string> = new Foo();

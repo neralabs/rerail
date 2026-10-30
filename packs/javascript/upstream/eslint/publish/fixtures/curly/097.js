@@ -1,0 +1,1 @@
+if (foo) { bar() } else if (faa) baz()

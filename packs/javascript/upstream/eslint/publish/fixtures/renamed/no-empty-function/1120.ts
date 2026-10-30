@@ -1,0 +1,1 @@
+function* cqy(qxqeg: string) {} // allow: getters

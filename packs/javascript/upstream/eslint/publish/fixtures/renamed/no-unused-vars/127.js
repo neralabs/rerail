@@ -1,0 +1,1 @@
+function* zvl(wp) { wp = yield function(q) { wp(1 + q); }; } zvl();

@@ -1,0 +1,1 @@
+const D = class {constructor(xbqml: string) {}}; // allow: constructors

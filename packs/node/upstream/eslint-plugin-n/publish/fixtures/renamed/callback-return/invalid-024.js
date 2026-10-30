@@ -1,0 +1,1 @@
+function f(kfb) { if (kfb) { zvt.skojej(kfb); } }

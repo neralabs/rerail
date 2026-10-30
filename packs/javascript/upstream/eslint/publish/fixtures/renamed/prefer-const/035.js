@@ -1,0 +1,1 @@
+let d; if (true) d = 0; uef(d);

@@ -1,0 +1,2 @@
+while (tkt) jyBsumufvoj() 
+ ;

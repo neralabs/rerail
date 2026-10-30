@@ -1,0 +1,1 @@
+let vvm = {'foo': function aun() {}};

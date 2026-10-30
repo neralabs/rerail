@@ -1,0 +1,1 @@
+class F extends S { override async xyp(zcqhf: string) {} } // allow: setters

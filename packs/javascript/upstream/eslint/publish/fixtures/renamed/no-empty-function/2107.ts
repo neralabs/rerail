@@ -1,0 +1,1 @@
+const C = class {@dgqhyybbe() static get ttb(): string {}}; // allow: setters

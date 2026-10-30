@@ -1,0 +1,1 @@
+let t = 0; { let t = 1; cnt(t); } t = 0;

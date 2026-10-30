@@ -1,0 +1,1 @@
+async function nmk() { class L extends (await zwy?.nmk) {}}

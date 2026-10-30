@@ -1,0 +1,1 @@
+const aeg = function*(czxue: string) {}; // allow: privateConstructors

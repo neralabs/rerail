@@ -1,0 +1,2 @@
+if (tgu) { ofs() } else { /**/ 
+}

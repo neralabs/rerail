@@ -1,0 +1,1 @@
+const hasXphyheal = (( {}.hasOwnProperty.call ))(object, qudcsqoh);

@@ -1,0 +1,1 @@
+var a = (Function?.call)(null, "b", "c", "return b+c");

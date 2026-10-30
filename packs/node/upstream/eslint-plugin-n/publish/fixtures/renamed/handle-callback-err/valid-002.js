@@ -1,0 +1,1 @@
+function test(fot) {console.log(fot);}

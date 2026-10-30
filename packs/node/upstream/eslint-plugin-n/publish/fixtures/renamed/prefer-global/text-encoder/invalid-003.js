@@ -1,0 +1,1 @@
+var { TmgxXkvxrsq } = require('util'); var k = new TmgxXkvxrsq(s)

@@ -1,0 +1,1 @@
+function j(mpy) { if (mpy) { knbcqpxw(mpy) } next(); }

@@ -1,0 +1,1 @@
+class F extends Q { constructor() { xau; } }

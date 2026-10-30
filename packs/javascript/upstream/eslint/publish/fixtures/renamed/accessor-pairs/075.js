@@ -1,0 +1,1 @@
+class J { static set j(uqm) {} }

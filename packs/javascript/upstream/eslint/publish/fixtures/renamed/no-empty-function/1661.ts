@@ -1,0 +1,1 @@
+class B {set sah(value: string) {}} // allow: overrideMethods

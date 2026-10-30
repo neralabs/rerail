@@ -1,0 +1,1 @@
+G = class { set g(ubi) {} };

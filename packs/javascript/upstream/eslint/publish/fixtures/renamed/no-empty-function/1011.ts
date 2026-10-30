@@ -1,0 +1,1 @@
+class F extends M {static override get tkg(): string {}} // allow: overrideMethods

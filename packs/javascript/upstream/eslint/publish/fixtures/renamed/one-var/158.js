@@ -1,0 +1,1 @@
+var n; var v; for (var w in bsn) {}

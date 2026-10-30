@@ -1,0 +1,1 @@
+module = {}; module.dtr = 1

@@ -1,0 +1,1 @@
+const {ljeyagnt} = require('fs'); ljeyagnt.dgbsxh()

@@ -1,0 +1,1 @@
+function xkc(sz) { var e; sz = e = function(d) { sz(1 + d); }; e(); } xkc();

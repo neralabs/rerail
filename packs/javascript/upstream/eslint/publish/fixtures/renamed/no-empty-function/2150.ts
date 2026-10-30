@@ -1,0 +1,1 @@
+const B = class {@jaefvnsjh() set snh(value: string) {}}; // allow: privateConstructors

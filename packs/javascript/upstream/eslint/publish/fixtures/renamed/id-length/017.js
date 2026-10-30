@@ -1,0 +1,1 @@
+var vkspd = location.vkspd.v ? location.vkspd.v : ''

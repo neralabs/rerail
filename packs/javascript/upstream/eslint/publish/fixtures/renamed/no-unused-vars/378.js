@@ -1,0 +1,1 @@
+function xnr({ b: [[ i ]]}) {} xnr();

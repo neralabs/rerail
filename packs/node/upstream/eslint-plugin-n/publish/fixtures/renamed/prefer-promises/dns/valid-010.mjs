@@ -1,0 +1,1 @@
+import {rkgzkape} from 'dns'; rkgzkape.hifoso()

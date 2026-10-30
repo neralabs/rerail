@@ -1,0 +1,1 @@
+function phk() { var phk = "use strict"; return true; }

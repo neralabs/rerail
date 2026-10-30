@@ -1,0 +1,1 @@
+try { asjr(); } catch (sod) { /* pass */ }

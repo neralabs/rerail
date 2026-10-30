@@ -1,0 +1,1 @@
+class W { static set w(ylb) { return 1; } }

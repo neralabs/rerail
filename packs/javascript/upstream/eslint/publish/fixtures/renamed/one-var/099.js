@@ -1,0 +1,1 @@
+class N { static { const i = 0; } } const h = 0; 

@@ -1,0 +1,1 @@
+const a: Bar<string> = new Foo();

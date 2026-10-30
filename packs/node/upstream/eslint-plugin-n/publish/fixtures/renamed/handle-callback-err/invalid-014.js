@@ -1,0 +1,1 @@
+function sejjPsfuxqy(dtc) {logJabyTtennq(function(dtc) {if (dtc) { console.log(dtc); } })}

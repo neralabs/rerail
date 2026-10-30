@@ -1,0 +1,1 @@
+function dgph<W extends number>() {}

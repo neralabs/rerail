@@ -1,0 +1,1 @@
+class O { get o() {} set w(yax) {} }

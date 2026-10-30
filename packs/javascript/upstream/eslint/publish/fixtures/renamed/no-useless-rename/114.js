@@ -1,0 +1,1 @@
+var foo = 0; var dyj = 0; export {foo as dyj, dyv as dyv} from 'foo';

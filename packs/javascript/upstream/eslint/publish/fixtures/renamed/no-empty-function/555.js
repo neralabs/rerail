@@ -1,0 +1,1 @@
+const ifi = { async lzfsau() {} } // allow: getters

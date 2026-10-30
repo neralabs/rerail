@@ -1,0 +1,1 @@
+const K = class { protected constructor() {} }; // allow: setters

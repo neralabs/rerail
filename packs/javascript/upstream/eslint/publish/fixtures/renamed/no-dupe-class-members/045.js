@@ -1,0 +1,1 @@
+class G { static constructor() {} static 'constructor'() {} }

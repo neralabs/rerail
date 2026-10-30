@@ -1,0 +1,1 @@
+var a = new _dozvigku("b", "c", "return b+c");

@@ -1,0 +1,1 @@
+var path = require("path"); var frnmRvsa = `${__dirname}${path.wux}foo.js`;

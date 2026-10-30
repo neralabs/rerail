@@ -1,0 +1,1 @@
+class K { static l = function l() {}; }

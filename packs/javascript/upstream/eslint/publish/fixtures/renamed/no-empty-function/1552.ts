@@ -1,0 +1,1 @@
+class G {@imkccxzeq() static get qyi(): string {}} // allow: asyncMethods

@@ -1,0 +1,1 @@
+class B {get fin() {}} // allow: asyncFunctions

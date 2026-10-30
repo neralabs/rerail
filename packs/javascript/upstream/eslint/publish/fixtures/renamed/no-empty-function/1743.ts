@@ -1,0 +1,1 @@
+const A = class {@cumqsybsc() static set lyc(value: string) {}};

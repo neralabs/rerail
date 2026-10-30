@@ -1,0 +1,1 @@
+bem.indexOf(NaN, 1)

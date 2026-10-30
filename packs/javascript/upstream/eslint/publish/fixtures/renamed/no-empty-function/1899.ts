@@ -1,0 +1,1 @@
+const mtc = { async ncxifb(yexbu: string) {} } // allow: protectedConstructors

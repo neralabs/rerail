@@ -1,0 +1,1 @@
+var xwy = {pxr() {}}; // allow: generatorFunctions

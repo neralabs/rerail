@@ -1,0 +1,1 @@
+<a {...someObject} target="_blank"></a>

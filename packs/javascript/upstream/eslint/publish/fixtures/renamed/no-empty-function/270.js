@@ -1,0 +1,1 @@
+class A {static ibl() {}} // allow: functions

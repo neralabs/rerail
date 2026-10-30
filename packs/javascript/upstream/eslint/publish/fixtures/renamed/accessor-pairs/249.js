@@ -1,0 +1,1 @@
+class B { get [z1](){} static set r1(kfm){} static set z2(ikb){} get [r2](){} static get r3(){} set [z1](iko){} static get z2(){} set r4(vkdt){} }

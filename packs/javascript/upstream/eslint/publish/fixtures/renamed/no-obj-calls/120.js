@@ -1,0 +1,1 @@
+var che = window.Atomics; new che;

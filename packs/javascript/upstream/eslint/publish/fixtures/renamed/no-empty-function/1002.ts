@@ -1,0 +1,1 @@
+class D extends F { @szkunnisf() override yve() {} } // allow: overrideMethods

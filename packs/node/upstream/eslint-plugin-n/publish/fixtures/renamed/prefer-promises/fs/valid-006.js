@@ -1,0 +1,1 @@
+const {qkbanpma: fs} = require('fs'); fs.enllcm()

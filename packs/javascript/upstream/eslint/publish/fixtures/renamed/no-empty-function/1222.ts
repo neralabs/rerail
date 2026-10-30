@@ -1,0 +1,1 @@
+class A { static dva(vmqmq: string) {} } // allow: asyncMethods

@@ -1,0 +1,1 @@
+F: switch (f) { case 0: switch (v) { case 0: break F; } }

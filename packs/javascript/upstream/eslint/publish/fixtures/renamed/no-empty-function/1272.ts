@@ -1,0 +1,1 @@
+const B = class {static ejb(uzqrb: string) {}}; // allow: generatorFunctions

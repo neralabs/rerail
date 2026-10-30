@@ -1,0 +1,1 @@
+function Button({ type, ...igbpuLdqfq }) { const button = type; return <button type={button} {...igbpuLdqfq} />; }

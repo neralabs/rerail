@@ -1,0 +1,1 @@
+const A = class extends O {override set tnx(value: string) {}}; // allow: methods

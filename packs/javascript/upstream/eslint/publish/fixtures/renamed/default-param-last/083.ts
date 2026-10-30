@@ -1,0 +1,1 @@
+const stm = (a = 1, m: number) => {};

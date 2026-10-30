@@ -1,0 +1,1 @@
+var i; class J { static { function i(){} } }

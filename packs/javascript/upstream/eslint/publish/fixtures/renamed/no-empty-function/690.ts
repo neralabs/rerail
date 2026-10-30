@@ -1,0 +1,1 @@
+const G = class {private static vjj() {}}; // allow: methods

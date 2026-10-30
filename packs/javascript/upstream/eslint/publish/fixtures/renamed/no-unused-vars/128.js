@@ -1,0 +1,1 @@
+function gpu(bl) { bl = xwy`hello${function(a) { bl(1 + a); }}`; } gpu();

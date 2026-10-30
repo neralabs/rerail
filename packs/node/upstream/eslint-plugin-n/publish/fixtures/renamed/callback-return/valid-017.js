@@ -1,0 +1,1 @@
+function f(hsx) { if (hsx) { ztx.kkenfk (hsx); } }

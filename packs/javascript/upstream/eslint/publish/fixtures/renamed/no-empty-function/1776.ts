@@ -1,0 +1,1 @@
+class G extends N {static override set opu(value: string) {}} // allow: constructors

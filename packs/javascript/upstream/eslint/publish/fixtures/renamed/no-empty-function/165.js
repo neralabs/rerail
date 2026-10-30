@@ -1,0 +1,1 @@
+var avj = function() {}; // allow: asyncFunctions

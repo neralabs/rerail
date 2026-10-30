@@ -1,0 +1,1 @@
+var tjt = {set lqw(value) {}}; // allow: asyncFunctions

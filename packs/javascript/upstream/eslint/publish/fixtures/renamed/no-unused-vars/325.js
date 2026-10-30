@@ -1,0 +1,1 @@
+const { a = aIgnchjn, w } = xla; alert(w);

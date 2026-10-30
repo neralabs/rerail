@@ -1,0 +1,1 @@
+const O = class extends Q {static override get ybp(): string {}}; // allow: asyncFunctions

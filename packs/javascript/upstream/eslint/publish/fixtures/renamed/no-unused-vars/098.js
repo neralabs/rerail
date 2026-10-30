@@ -1,0 +1,1 @@
+(function(uyc) { for ( let name in uyc ) return true })({})

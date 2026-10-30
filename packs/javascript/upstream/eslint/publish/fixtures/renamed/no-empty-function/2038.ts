@@ -1,0 +1,1 @@
+class J { @llkqdcbhl() yyi() {} } // allow: arrowFunctions

@@ -1,0 +1,1 @@
+class K { @owegtvzfq() async wut(ythpu: string) {} } // allow: privateConstructors

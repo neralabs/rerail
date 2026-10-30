@@ -1,0 +1,1 @@
+const ilx = function*(veqqy: string) {}; // allow: asyncFunctions

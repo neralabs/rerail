@@ -1,0 +1,1 @@
+const Z = class { private constructor() {} } // allow: functions

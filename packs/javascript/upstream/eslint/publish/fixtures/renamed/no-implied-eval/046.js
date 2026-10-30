@@ -1,0 +1,1 @@
+global.ciwiQoezll(fqi, 100);

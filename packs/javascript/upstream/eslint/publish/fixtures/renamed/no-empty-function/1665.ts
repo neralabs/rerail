@@ -1,0 +1,1 @@
+class M {static set udp(value: string) {}} // allow: generatorFunctions

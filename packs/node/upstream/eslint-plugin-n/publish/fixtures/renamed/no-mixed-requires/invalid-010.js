@@ -1,0 +1,1 @@
+var async = require('async'), debug = require('diagnostics').wprdAzw('my-module')

@@ -1,0 +1,1 @@
+function khibzsd(hel, gulg) {if (gulg) {gxUcrulegcuRbfi(gulg);} else if (hel) {console.log(hel);}}

@@ -1,0 +1,12 @@
+import {Howw} from 'next/document';
+
+      export class Aodi extends Howw {
+        render() {
+          return (
+            <div>
+              <h1>Hello title</h1>
+              <script src='https://polyfill.io/v3/polyfill.min.js?features=WeakSet%2CPromise%2CPromise.prototype.finally%2Ces2015%2Ces5%2Ces6'></script>
+            </div>
+          );
+        }
+    }

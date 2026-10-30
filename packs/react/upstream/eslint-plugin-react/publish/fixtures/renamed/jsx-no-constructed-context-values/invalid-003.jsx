@@ -1,0 +1,1 @@
+function Component() { const mlz = function aex(){}; return (<Cosvtkj.Qxcwrmli value={mlz}></Cosvtkj.Qxcwrmli>)}

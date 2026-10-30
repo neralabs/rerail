@@ -1,0 +1,1 @@
+function Component() { const izr = []; return (<Coshslz.Qhsjfqij value={izr}></Coshslz.Qhsjfqij>) }

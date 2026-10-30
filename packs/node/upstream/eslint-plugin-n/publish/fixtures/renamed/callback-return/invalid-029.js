@@ -1,0 +1,1 @@
+function e(foa) { if (foa) { xsg.uycdhe(foa); /*comment*/ } }

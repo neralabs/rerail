@@ -1,0 +1,1 @@
+type Gmn = { [key: string]: string | Gmn };

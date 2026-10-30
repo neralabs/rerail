@@ -1,0 +1,1 @@
+for (knh of acq) var m, v;

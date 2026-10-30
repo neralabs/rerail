@@ -1,0 +1,1 @@
+var hnz = function() { try { return 1 } catch(dql) { return 2 } finally { var a = function(x) { nvmzd: while(true) { if(x) { break nvmzd; } else { continue } } } } }

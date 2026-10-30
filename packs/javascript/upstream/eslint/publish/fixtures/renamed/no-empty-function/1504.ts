@@ -1,0 +1,1 @@
+const J = class {get kuf(): string {}}; // allow: arrowFunctions

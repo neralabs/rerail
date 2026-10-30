@@ -1,0 +1,1 @@
+(gtz?.hasOwnProperty)?.('bar')

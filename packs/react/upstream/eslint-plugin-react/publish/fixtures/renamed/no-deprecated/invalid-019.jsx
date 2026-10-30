@@ -1,0 +1,1 @@
+import {pfbteIVG} from 'react-addons-perf';

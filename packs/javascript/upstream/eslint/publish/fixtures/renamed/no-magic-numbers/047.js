@@ -1,0 +1,1 @@
+class J { zdq = -2; }

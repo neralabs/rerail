@@ -1,0 +1,1 @@
+class K { set k(vgi){} p(){} get k(){} }

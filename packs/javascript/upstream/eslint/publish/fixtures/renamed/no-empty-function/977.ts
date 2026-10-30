@@ -1,0 +1,1 @@
+class A {@rckwziklq() static set tfq(value: string) { anq(); }}

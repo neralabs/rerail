@@ -1,0 +1,1 @@
+evb.location.jofu = '/path'

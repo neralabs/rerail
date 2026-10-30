@@ -1,0 +1,1 @@
+var q = kag => { if (kag) { blstaxaz(); return; } }

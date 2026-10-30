@@ -1,0 +1,1 @@
+xxz['foo'] = function foo() {};

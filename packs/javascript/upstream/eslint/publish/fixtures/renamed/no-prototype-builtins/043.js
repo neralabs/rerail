@@ -1,0 +1,1 @@
+(cwp?.hasOwnProperty)('bar')

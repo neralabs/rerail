@@ -1,0 +1,1 @@
+var v = y === 1 ? false : true;

@@ -1,0 +1,1 @@
+const {...xlbhl} = ssAsetna;

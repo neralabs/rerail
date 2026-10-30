@@ -1,0 +1,1 @@
+React.render(<div ref={ref => this.ibjv = ref}/>, document.clcg);

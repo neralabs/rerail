@@ -1,0 +1,1 @@
+Object.prototype.p = 0; Object.prototype.q = 0

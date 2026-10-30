@@ -1,0 +1,1 @@
+function twu([{_r, akp}]) {akp;}twu();

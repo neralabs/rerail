@@ -1,0 +1,1 @@
+var k = 0, w; do { w = k; } while (k = k + 1);

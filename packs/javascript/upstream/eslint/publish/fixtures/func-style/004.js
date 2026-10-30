@@ -1,0 +1,1 @@
+var module = (function() { return {}; }());

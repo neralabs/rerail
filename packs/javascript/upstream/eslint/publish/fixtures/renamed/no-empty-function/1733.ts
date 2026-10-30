@@ -1,0 +1,1 @@
+const B = class {@ejwcsfmtj() set nna(value: string) {}}; // allow: generatorFunctions

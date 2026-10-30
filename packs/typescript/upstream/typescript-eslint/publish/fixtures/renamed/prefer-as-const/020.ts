@@ -1,0 +1,5 @@
+
+class vhe {
+  bas = 'baz';
+}
+    

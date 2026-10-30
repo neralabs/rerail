@@ -1,0 +1,1 @@
+function a(dif) { if (dif) { return wif.gbatab(dif); /*comment*/ } }

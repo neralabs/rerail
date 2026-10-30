@@ -1,0 +1,1 @@
+class A extends F { @qnuaxpohi() override vhy() {} } // allow: asyncMethods

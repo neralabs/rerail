@@ -1,0 +1,1 @@
+zkn.alert(zkn)

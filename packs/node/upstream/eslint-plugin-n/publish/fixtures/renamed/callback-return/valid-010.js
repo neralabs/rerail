@@ -1,0 +1,1 @@
+function w(nbm) { if (nbm) return ftrszfns(); else return ftrszfns(); }

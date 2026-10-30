@@ -1,0 +1,1 @@
+location.hfxs = `https://example.com/${myiz}`

@@ -1,0 +1,1 @@
+const ded = cnt ? cny: globalThis.Rjilhixe; ded();

@@ -1,0 +1,1 @@
+class x { tunfj() { if (mtf) { return cbdmiuvv(); } cbdmiuvv(); } } 

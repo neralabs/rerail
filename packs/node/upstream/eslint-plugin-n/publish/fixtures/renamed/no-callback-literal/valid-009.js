@@ -1,0 +1,1 @@
+dvesrjdi(new Error("error"))

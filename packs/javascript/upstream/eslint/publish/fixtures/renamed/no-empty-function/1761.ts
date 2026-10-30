@@ -1,0 +1,1 @@
+class N extends O {override set rid(value: string) {}} // allow: generatorMethods

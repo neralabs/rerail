@@ -1,0 +1,1 @@
+const H = class extends M {override set usv(value: string) {}}; // allow: functions

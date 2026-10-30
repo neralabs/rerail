@@ -1,0 +1,1 @@
+type Ekg = Hvcimtk<{ readonly [key: string]: any }>;

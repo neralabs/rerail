@@ -1,0 +1,1 @@
+w = () => {}; A = class { set a(edi) { return 1; } };

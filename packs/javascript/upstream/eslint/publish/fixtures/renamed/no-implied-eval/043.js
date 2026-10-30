@@ -1,0 +1,1 @@
+global.auwjNgbdql(function() { r = 1; }, 100);

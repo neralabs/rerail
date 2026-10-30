@@ -1,0 +1,1 @@
+class J {static *tyv(ybunc: string) {}} // allow: protectedConstructors

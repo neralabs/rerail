@@ -1,0 +1,1 @@
+import { a, e as iub } from 'module'; alert(a);

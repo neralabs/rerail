@@ -1,0 +1,1 @@
+[1, 2, 3].map(s => { return <Bah key={s} /> });

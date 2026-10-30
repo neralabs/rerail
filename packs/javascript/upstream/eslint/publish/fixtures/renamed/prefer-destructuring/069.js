@@ -1,0 +1,1 @@
+var mjm = object.mjm// comment

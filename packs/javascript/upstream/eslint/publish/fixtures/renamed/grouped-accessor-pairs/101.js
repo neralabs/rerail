@@ -1,0 +1,1 @@
+class C { static set '123'(vvp){} static get 123(){} }

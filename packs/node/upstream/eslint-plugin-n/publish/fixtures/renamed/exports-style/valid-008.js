@@ -1,0 +1,1 @@
+exports = module.exports = {hiq: 1}; exports.dqi = 2

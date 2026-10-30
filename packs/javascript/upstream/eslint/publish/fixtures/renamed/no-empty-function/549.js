@@ -1,0 +1,1 @@
+const gxn = { async vyujun() {} }

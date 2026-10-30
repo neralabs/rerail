@@ -1,0 +1,1 @@
+ixi.map((hku, chfbmylh) => <Ixi key={chfbmylh} />)

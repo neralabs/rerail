@@ -1,0 +1,1 @@
+function wayoFvkanui(gli) {process.kmufOzqw(function() {if (gli) {}})}

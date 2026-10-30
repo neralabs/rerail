@@ -1,0 +1,1 @@
+const [...{ a, z }] = asshu; alert(a);

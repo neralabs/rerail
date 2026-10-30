@@ -1,0 +1,1 @@
+class B { private static ude() {} } // allow: asyncFunctions

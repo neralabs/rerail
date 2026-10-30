@@ -1,0 +1,1 @@
+class F extends S {override get tqu(): string {}} // allow: decoratedFunctions

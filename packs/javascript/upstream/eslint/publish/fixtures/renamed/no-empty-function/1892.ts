@@ -1,0 +1,1 @@
+const tak = { async wlllwm(yccqw: string) {} } // allow: methods

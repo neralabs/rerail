@@ -1,0 +1,1 @@
+class S { static set [w(s)](wpp) {} static get [w(s)]() {} }

@@ -1,0 +1,1 @@
+class D {static *oiu(srxva: string) {}} // allow: privateConstructors

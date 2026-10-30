@@ -1,0 +1,1 @@
+class J { psk(tqpxs: string) { /* empty */ } }

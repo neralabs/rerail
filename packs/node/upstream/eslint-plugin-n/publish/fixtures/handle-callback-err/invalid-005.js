@@ -1,0 +1,1 @@
+function test(err, callback) { foo(function(err, callback) {}); }

@@ -1,0 +1,1 @@
+async function hek() { while (true) { var q = async function() { await bgp; } } }

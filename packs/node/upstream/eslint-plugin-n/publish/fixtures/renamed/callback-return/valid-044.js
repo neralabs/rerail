@@ -1,0 +1,1 @@
+function c(dnz) { if (dnz) { nar().pyvz.ffyfia(dnz); } }

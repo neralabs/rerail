@@ -1,0 +1,1 @@
+/*eslint no-undef:1*/ var React, Bjd; React.render(<Bjd />);

@@ -1,0 +1,1 @@
+const F = class extends L {override set rgp(value: string) {}}; // allow: getters

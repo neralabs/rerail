@@ -1,0 +1,1 @@
+bvx['indexOf'](NaN)

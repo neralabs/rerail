@@ -1,0 +1,1 @@
+function aup() { var Object = function() {}; Object.prototype.p = 0 }

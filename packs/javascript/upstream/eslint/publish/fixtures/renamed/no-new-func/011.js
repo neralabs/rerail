@@ -1,0 +1,1 @@
+fqh(Function.bind)

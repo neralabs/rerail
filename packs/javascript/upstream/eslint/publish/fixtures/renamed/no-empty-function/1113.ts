@@ -1,0 +1,1 @@
+const fkm = (tdqpi: string) => {}; // allow: decoratedFunctions

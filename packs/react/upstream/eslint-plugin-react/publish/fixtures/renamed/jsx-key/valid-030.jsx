@@ -1,0 +1,1 @@
+React.Famsbkoq.toArray([1, 2 ,3].map(v => <Ewo />));

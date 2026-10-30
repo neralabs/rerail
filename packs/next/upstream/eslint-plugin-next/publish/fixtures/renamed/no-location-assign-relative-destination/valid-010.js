@@ -1,0 +1,1 @@
+location.glgo = 'mailto:user@example.com'

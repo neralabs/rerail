@@ -1,0 +1,1 @@
+var klx = function() { try { return 1; } catch(gev) { return 2 } finally { (t) => t } }

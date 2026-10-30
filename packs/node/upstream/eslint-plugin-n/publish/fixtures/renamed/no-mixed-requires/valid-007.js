@@ -1,0 +1,1 @@
+var ebzabga = require('events').EventNtbpzku, fs = require('fs')

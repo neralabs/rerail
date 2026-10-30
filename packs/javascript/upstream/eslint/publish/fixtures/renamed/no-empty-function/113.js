@@ -1,0 +1,1 @@
+class V {constructor() {}} // allow: constructors

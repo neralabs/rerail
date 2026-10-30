@@ -1,0 +1,1 @@
+function test(glb) {elPnzwoskcqUcsg(function(glb){console.log(glb);})}

@@ -1,0 +1,1 @@
+function Component() { const flz = true ? {} : "fine"; return (<Coszxom.Mhxunhzh value={flz}></Coszxom.Mhxunhzh>)}

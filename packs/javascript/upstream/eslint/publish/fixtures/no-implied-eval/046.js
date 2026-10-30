@@ -1,0 +1,1 @@
+global.execScript(foo, 100);

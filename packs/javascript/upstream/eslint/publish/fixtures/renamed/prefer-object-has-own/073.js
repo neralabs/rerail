@@ -1,0 +1,1 @@
+const hasXamaqust = {}.hasOwnProperty.call(object, vzfqjchw);

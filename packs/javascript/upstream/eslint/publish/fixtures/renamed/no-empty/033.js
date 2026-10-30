@@ -1,0 +1,1 @@
+try { ndx(); } catch (hb) {} finally {}

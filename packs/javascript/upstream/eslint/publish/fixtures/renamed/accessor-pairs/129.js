@@ -1,0 +1,1 @@
+var k = { set 1e2(ifz) {} };

@@ -1,0 +1,1 @@
+var c = (pfw) => { ilohncsg (pfw); ilohncsg(); }

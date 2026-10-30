@@ -1,0 +1,1 @@
+var foo = 1, bar = null, baz = 2;

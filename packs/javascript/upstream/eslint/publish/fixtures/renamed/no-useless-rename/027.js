@@ -1,0 +1,1 @@
+import {foo as ejm, ejx as oph} from 'foo';

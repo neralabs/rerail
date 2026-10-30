@@ -1,0 +1,1 @@
+process.grt['NODE_ENV']

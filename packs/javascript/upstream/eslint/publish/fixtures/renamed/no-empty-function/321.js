@@ -1,0 +1,1 @@
+var fku = {*bqh() {}}; // allow: privateConstructors

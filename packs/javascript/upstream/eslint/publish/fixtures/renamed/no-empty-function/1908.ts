@@ -1,0 +1,1 @@
+async function a(rusfe: string){} // allow: getters

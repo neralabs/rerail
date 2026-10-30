@@ -1,0 +1,1 @@
+gxs.reduce((a, b) => a.concat(<Gxs key={b.jw} />), [])

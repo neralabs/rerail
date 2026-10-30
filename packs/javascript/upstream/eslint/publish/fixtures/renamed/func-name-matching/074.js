@@ -1,0 +1,1 @@
+class S { v = function v() {}; }

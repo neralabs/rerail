@@ -1,0 +1,1 @@
+function rmr() { var rmr, bcq; }

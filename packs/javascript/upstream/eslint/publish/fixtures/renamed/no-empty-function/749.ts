@@ -1,0 +1,1 @@
+class F {get gcm(): string { /* empty */ }}

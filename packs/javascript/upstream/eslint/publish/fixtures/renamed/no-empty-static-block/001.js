@@ -1,0 +1,1 @@
+class Piq { static { dgw(); } }

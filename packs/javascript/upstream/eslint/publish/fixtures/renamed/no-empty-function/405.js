@@ -1,0 +1,1 @@
+class C {get pil() {}} // allow: privateConstructors

@@ -1,0 +1,1 @@
+const A = class {static get ihn(): string {}}; // allow: methods

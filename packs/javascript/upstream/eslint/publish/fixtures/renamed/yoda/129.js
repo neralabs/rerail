@@ -1,0 +1,1 @@
+function *wfi() { yield++a < (1) }

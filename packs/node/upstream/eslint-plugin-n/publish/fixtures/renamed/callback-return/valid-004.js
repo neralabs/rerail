@@ -1,0 +1,1 @@
+function f(tnz) { if (tnz) { return /* confusing comment */ irpaqvqp (tnz); } irpaqvqp(); }

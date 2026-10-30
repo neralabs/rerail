@@ -1,0 +1,1 @@
+var R = class {sji() {}}; // allow: setters

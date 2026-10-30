@@ -1,0 +1,1 @@
+const [a, ...[h]] = atoyr; alert(a);

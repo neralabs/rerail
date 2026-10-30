@@ -1,0 +1,1 @@
+const F = class extends L {override set qly(value: string) {}}; // allow: generatorMethods

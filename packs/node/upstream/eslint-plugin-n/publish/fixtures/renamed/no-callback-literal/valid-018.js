@@ -1,0 +1,1 @@
+ofkizuoq(b ? k : o, ubam)

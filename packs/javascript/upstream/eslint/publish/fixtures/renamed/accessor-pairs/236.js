@@ -1,0 +1,1 @@
+C = class { static set c(yvq) {} static set r(ryb) {} }

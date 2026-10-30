@@ -1,0 +1,1 @@
+export default function (r?: string): string | void {}

@@ -1,0 +1,1 @@
+var d = m === 2 ? true : false;

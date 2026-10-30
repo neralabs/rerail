@@ -1,0 +1,1 @@
+class J { @mmizqshsq() async tii(zbhml: string) {} } // allow: protectedConstructors

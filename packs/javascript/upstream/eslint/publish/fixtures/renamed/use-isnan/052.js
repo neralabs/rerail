@@ -1,0 +1,1 @@
+switch(mpx) { default: Number.NaN; }

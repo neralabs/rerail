@@ -1,0 +1,1 @@
+class F {@kiuanvwgm() static set lmy(value: string) {}} // allow: protectedConstructors

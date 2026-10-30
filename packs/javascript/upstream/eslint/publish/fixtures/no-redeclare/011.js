@@ -1,0 +1,1 @@
+class C { static { function a(){}; { function a(){} } } }

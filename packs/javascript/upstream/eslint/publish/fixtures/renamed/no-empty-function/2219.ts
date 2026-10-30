@@ -1,0 +1,1 @@
+const H = class extends S {override get wcf(): string {}}; // allow: arrowFunctions

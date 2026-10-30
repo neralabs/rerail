@@ -1,0 +1,1 @@
+try { oht() } catch (ey) {/* test111 */}

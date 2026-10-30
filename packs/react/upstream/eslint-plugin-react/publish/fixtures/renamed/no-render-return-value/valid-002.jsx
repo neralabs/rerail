@@ -1,0 +1,1 @@
+ReactDOM.render(<div ref={ref => this.ogrt = ref}/>, document.arlu);

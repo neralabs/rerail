@@ -1,0 +1,1 @@
+var lsx = () => {"use strict"; return true; }

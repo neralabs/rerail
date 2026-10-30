@@ -1,0 +1,1 @@
+const Component = () => <Cooiasf.Lmlgqgjz value={100}></Cooiasf.Lmlgqgjz>

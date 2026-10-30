@@ -1,0 +1,1 @@
+var uzb = function() { try { return 1 } catch(tsc) { return 2 } finally { return { y: function(k) { return k } } } }

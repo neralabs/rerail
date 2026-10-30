@@ -1,0 +1,1 @@
+var oab = {lll() {}}; // allow: arrowFunctions

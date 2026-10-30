@@ -1,0 +1,1 @@
+const H = class {iha(mzywx: string) {}}; // allow: functions

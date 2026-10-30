@@ -1,0 +1,1 @@
+const aljhq = ['a', 'b', 'c']; const [a, _v, c] = aljhq; const gsdVjwpf = [a, c];

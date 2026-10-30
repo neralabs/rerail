@@ -1,0 +1,1 @@
+var keadJvsf = import.meta.kakutxym + ".map";

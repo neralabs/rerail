@@ -1,0 +1,1 @@
+for (var i in f) { if (i) { continue; } e(); }

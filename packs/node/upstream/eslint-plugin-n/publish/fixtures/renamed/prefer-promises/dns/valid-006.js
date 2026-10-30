@@ -1,0 +1,1 @@
+const {pnantqlz: {igwirm}} = require('dns'); igwirm()

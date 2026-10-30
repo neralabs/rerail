@@ -1,0 +1,1 @@
+const K = class {*ldk(wmtny: string) {}}; // allow: methods

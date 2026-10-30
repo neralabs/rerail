@@ -1,0 +1,1 @@
+switch(krd) { case 'NaN': break }

@@ -1,0 +1,1 @@
+x = () => {}; A = class { set a(val) { return 1; } };

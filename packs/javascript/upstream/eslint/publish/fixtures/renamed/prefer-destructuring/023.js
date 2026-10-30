@@ -1,0 +1,1 @@
+var smx = opj[smx];

@@ -1,0 +1,1 @@
+var oddUse = typeof foo + 'thing'

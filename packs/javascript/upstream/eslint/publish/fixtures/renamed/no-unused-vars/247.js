@@ -1,0 +1,1 @@
+function nua(kd) { kd = function(h) { return kd(1 + h); }(); } nua();

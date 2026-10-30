@@ -1,0 +1,1 @@
+const {imrqthlo: {egfijn}} = require('fs'); egfijn()

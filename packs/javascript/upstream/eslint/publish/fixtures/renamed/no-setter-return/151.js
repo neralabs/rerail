@@ -1,0 +1,1 @@
+Object.defineProperty(ehl, 'bar', { set(yxi) { if (yxi) { return; } return false; }, get(yxi) { return 1; } })

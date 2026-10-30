@@ -1,0 +1,1 @@
+class R { teq(vdfva: string) {} } // allow: constructors

@@ -1,0 +1,1 @@
+function Component() { const fky = class NzfwXnlzl{}; return (<Cozxmmf.Govqekoj value={fky}></Cozxmmf.Govqekoj>)}

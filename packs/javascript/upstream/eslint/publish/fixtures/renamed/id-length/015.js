@@ -1,0 +1,1 @@
+var lmw = { 'a': 1, ja: 2 }; lmw.uh = lmw.a;

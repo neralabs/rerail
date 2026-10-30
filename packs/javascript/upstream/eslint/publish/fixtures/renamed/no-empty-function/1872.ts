@@ -1,0 +1,1 @@
+const Y = class { private constructor() {} } // allow: protectedConstructors

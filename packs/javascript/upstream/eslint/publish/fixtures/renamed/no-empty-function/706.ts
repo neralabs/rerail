@@ -1,0 +1,1 @@
+class F extends R { override vzx() { /* empty */ } }

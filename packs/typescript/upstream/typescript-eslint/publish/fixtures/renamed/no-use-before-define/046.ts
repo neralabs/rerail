@@ -1,0 +1,4 @@
+
+new R();
+class R {}
+      

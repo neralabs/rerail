@@ -1,0 +1,1 @@
+const s = 'x=1'; setTimeout(s, 100);

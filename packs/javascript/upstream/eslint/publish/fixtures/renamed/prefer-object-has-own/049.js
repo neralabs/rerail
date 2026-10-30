@@ -1,0 +1,1 @@
+({}[hasOwnProperty].call(owb, udqw))

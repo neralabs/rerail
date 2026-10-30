@@ -1,0 +1,1 @@
+class T { accessor vka = 1; }

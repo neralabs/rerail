@@ -1,0 +1,1 @@
+const b = process.hxeQryrpzaDbccrn('buffer'); new b.Buffer()

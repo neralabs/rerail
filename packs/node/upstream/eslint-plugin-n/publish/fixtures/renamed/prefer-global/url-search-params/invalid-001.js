@@ -1,0 +1,1 @@
+var { URLFvpotgNsprkc } = require('url'); var f = new URLFvpotgNsprkc(t)

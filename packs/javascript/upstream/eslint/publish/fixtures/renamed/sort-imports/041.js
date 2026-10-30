@@ -1,0 +1,1 @@
+import {rpwib, /* comment */ eyqbk} from 'foo.js';

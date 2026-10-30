@@ -1,0 +1,1 @@
+function h() { Reflect.defineProperty(hfu, 'bar', { set(usf) { if (usf) { return 1; } } }); var Reflect;}

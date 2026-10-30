@@ -1,0 +1,1 @@
+const Component = () => <Cowlzfj.Prozsnoc value={props}></Cowlzfj.Prozsnoc>

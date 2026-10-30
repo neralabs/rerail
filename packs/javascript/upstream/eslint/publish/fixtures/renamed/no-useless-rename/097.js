@@ -1,0 +1,1 @@
+import {foo as ecq, ecu as ecu} from 'foo';

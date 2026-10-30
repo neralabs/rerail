@@ -1,0 +1,1 @@
+class G { [k()] = function p() {}; }

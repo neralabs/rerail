@@ -1,0 +1,1 @@
+var w = { get [n]() {}, set n(qni) {} };

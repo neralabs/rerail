@@ -1,0 +1,1 @@
+globalThis.Math().ecs;

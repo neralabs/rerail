@@ -1,0 +1,1 @@
+const ylubbYxjkjhq1 = <Z = void,>(ylq: Z) => {};

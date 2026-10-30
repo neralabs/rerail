@@ -1,0 +1,1 @@
+ckr.indexOf((NaN, 1))

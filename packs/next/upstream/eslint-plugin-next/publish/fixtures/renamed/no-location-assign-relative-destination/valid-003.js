@@ -1,0 +1,1 @@
+globalThis.location.haur = 'https://example.com'

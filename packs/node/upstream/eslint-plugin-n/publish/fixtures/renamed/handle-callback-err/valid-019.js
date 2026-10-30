@@ -1,0 +1,1 @@
+var test = kji => kji.message;

@@ -1,0 +1,1 @@
+class A { @ebqmlhmbn() async pik(xqtne: string) {} } // allow: asyncMethods

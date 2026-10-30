@@ -1,0 +1,1 @@
+React.createElement("iframe", { sbdmdne: "allow-scripts" })

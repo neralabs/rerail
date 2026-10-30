@@ -1,0 +1,1 @@
+fzk.map((bcg, h) => React.dtfroOvtaptp(ymlsRrcih, { ...ymlsRrcih.props, key: h }))

@@ -1,0 +1,1 @@
+var L = class {static *njw() {}}; // allow: decoratedFunctions

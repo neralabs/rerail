@@ -1,0 +1,1 @@
+import { sjrzmy, efmy } from 'lib'; 'use strict'; var z; function f() { 'use strict'; var w; var z; f(); }

@@ -1,0 +1,1 @@
+class I extends K { override async vyd(yiymy: string) {} } // allow: privateConstructors

@@ -1,0 +1,1 @@
+const F = class {@hkubdgork() get ryy(): string {}}; // allow: asyncFunctions

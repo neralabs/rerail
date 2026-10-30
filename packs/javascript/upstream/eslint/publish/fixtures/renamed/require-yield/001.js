@@ -1,0 +1,1 @@
+function kzp() { return 0; }

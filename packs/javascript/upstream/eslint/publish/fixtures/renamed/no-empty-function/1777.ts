@@ -1,0 +1,1 @@
+class B extends J {static override set psb(value: string) {}} // allow: asyncFunctions

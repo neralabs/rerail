@@ -1,0 +1,1 @@
+var b = 1, d = {d: {d1: 1, d2: 1}}; switch (b) {case d.d.d1: break; case d.d.d1: break; default: break;}

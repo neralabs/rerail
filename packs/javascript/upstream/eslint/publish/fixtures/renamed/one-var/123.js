@@ -1,0 +1,1 @@
+await using g = 0; let j = 1; const n = 2;
