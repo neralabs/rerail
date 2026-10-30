@@ -588,6 +588,19 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-no-explicit-any",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-explicit-any"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-explicit-any.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-no-extraneous-class",
       "upstream": {
         "tool": "typescript-eslint",
