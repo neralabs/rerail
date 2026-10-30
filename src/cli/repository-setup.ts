@@ -23,7 +23,7 @@ import { recordSetUp } from "../engine/catalog/rule-configuration.js";
 import { loadRulePacks, recommendRulePacks, rulePackPackageName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
-import { readRepositoryLintConfig } from "../engine/catalog/repository-lint-config.js";
+import { readRepositoryLintConfig } from "../engine/catalog/lint-config/repository-lint-config.js";
 import {
   discoverPacks,
   installedPackVersion,
