@@ -1,8 +1,8 @@
-// Reading npm dist-tags, and keeping `next` from trailing `latest`, for the release scripts in this directory. The
-// read-back jobs read with an npm login, or NODE_AUTH_TOKEN with a read token in ~/.npmrc (the workflows'
-// NPM_PACKS_READ_TOKEN); the publish jobs, which hold no read token, read `next` (readNextTag) as an anonymous reader,
-// which a package published with `--access public` allows. Nothing here needs node_modules: the publish jobs install
-// none.
+// Reading npm dist-tags, and keeping `next` from trailing `latest`, for the release scripts in this directory. Core and
+// the packs are published with `--access public`, so an anonymous reader gets their dist-tags: the publish, promote
+// and put-back jobs, which hold no read token, read them that way (readPublicDistTags, `npm dist-tag ls`). The packs'
+// plan and read-back jobs still read with NODE_AUTH_TOKEN set to the workflows' NPM_PACKS_READ_TOKEN in ~/.npmrc.
+// Nothing here needs node_modules: the publish jobs install none.
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -47,15 +47,25 @@ export function compareVersions(a, b) {
 export const nextTrails = (next, version) => next === null || next === undefined || compareVersions(next, version) < 0;
 
 /**
- * `name`'s `next` dist-tag, null when it has none, read anonymously from the registry's dist-tags endpoint (the one
+ * Why a `beta` or `next` preview `version` must not be published, given the package's `latest` (undefined when it has
+ * none), or null when it may be: one older than `latest` would leave its channel behind the stable one.
+ */
+export const previewRefusal = (version, channel, latest) =>
+  latest !== undefined && compareVersions(version, latest) < 0 ? `${version} is older than latest ${latest}: a ${channel} preview must not trail latest` : null;
+
+/**
+ * `name`'s dist-tags (`{ tag: version }`), read anonymously from the registry's dist-tags endpoint (the one
  * `npm dist-tag ls` reads, which sees a publish straight away, where `npm view` can lag it by minutes and a first
  * publish answers 404). Throws when the registry does not answer with the package's dist-tags.
  */
-export async function readNextTag(name) {
+export async function readPublicDistTags(name) {
   const response = await fetch(`${REGISTRY}/-/package/${name.replace("/", "%2f")}/dist-tags`, { headers: { accept: "application/json" } });
   if (!response.ok) throw new Error(`${name}'s dist-tags answer an anonymous request with ${response.status}`);
-  return (await response.json())[NEXT_TAG] ?? null;
+  return await response.json();
 }
+
+/** `name`'s `next` dist-tag, null when it has none (readPublicDistTags). */
+export const readNextTag = async (name) => (await readPublicDistTags(name))[NEXT_TAG] ?? null;
 
 /** Points `name`'s dist-tag `tag` at `version`, with npm's output on the terminal; throws when npm fails. */
 export const addDistTag = (name, version, tag) => execFileSync("npm", ["dist-tag", "add", `${name}@${version}`, tag, "--registry", REGISTRY], { stdio: "inherit" });
@@ -105,8 +115,10 @@ export function parseExpectation(argument) {
 
 /**
  * What each `{ name, version, tag }` a release published has on npm, given `distTagsOf(name)` (null when unread):
- * a markdown table of every dist-tag, and a failure for each package whose `tag` does not point at `version`, or
- * whose `next` is older than its `latest` (the preview channel must never trail the stable one).
+ * a markdown table of every dist-tag, and a failure for each package whose `tag` does not point at `version`, or,
+ * for a release under `latest` or `next` (the two that set `next`), whose `next` is unset or older than its `latest`
+ * (the preview channel must never trail the stable one). A release under another tag (`beta`) never moves `next`, so
+ * is not failed for it.
  */
 export function distTagReport(expected, distTagsOf) {
   const failures = [];
@@ -118,8 +130,9 @@ export function distTagReport(expected, distTagsOf) {
     }
     if (distTags[tag] !== version) failures.push(`${name}: ${tag} is ${distTags[tag] ?? "not set"}, not the ${version} just published`);
     const { latest, [NEXT_TAG]: next } = distTags;
-    if (latest !== undefined && next !== undefined && compareVersions(next, latest) < 0) {
-      failures.push(`${name}: ${NEXT_TAG} is ${next}, older than latest ${latest}; a release under latest must move ${NEXT_TAG} up to it`);
+    if ((tag === "latest" || tag === NEXT_TAG) && latest !== undefined && nextTrails(next, latest)) {
+      const fix = tag === "latest" ? `a release under latest must move ${NEXT_TAG} up to it` : `a ${NEXT_TAG} preview must not be older than latest`;
+      failures.push(`${name}: ${NEXT_TAG} is ${next === undefined ? "not set" : `${next}, older than latest ${latest}`}; ${fix}`);
     }
     const listed = Object.entries(distTags).map(([distTag, at]) => `\`${distTag}\`: ${at}`).join(", ");
     return `| \`${name}\` | ${version} | \`${tag}\` ${distTags[tag] === version ? "✅" : "❌"} | ${listed} |`;

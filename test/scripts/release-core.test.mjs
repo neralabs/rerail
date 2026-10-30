@@ -1,6 +1,7 @@
 // scripts/release/core.mjs, core-paths.mjs and dist-tags.mjs: when core is released (what it ships changed since its
 // last tag), the version it takes, the changelog and version edits the Release pull request makes, the tag guard,
-// `next` kept from trailing `latest`, and the check of a release's dist-tags.
+// `next` kept from trailing `latest`, the refusal of a preview older than `latest`, and the check of a release's
+// dist-tags.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -9,7 +10,7 @@ import semver from "semver";
 import { describe, expect, it } from "vitest";
 import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
 import { PLUGIN_PINS, changelogSection, coreTagRefusal, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
-import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, raiseNext } from "../../scripts/release/dist-tags.mjs";
+import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -154,15 +155,19 @@ describe("distTagReport", () => {
     const report = distTagReport(expected, (name) => distTags[name]);
     expect(report.failures).toEqual(["@neralabs/rerail-pack-react: its dist-tags could not be read from npm"]);
     expect(report.table).toContain("| `@neralabs/rerail` | 0.1.0 | `latest` ✅ | `latest`: 0.1.0, `next`: 0.1.0 |");
-    const stale = distTagReport([expected[0]], () => ({ latest: "0.1.0-next.4" }));
+    const stale = distTagReport([expected[0]], () => ({ latest: "0.1.0-next.4", next: "0.1.0-next.4" }));
     expect(stale.failures).toEqual(["@neralabs/rerail: latest is 0.1.0-next.4, not the 0.1.0 just published"]);
   });
 
-  it("fails a package whose next is older than its latest, and passes one with no next or a newer one", () => {
+  it("fails a latest or next release whose next is unset or older than latest, and passes a newer next or a beta release", () => {
     const trailing = distTagReport([expected[0]], () => ({ latest: "0.1.0", next: "0.1.0-next.4" }));
     expect(trailing.failures).toEqual(["@neralabs/rerail: next is 0.1.0-next.4, older than latest 0.1.0; a release under latest must move next up to it"]);
-    expect(distTagReport([expected[0]], () => ({ latest: "0.1.0" })).failures).toEqual([]);
+    expect(distTagReport([expected[0]], () => ({ latest: "0.1.0" })).failures).toEqual(["@neralabs/rerail: next is not set; a release under latest must move next up to it"]);
     expect(distTagReport([expected[0]], () => ({ latest: "0.1.0", next: "0.1.1-next.1" })).failures).toEqual([]);
+    const preview = distTagReport([parseExpectation("@neralabs/rerail@0.0.9-next.1:next")], () => ({ latest: "0.1.0", next: "0.0.9-next.1" }));
+    expect(preview.failures).toEqual(["@neralabs/rerail: next is 0.0.9-next.1, older than latest 0.1.0; a next preview must not be older than latest"]);
+    const beta = distTagReport([parseExpectation("@neralabs/rerail@0.2.0-beta.1:beta")], () => ({ latest: "0.1.0", next: "0.1.0-next.4", beta: "0.2.0-beta.1" }));
+    expect(beta.failures).toEqual([]);
   });
 
   it("reads npm dist-tag ls output", () => {
@@ -193,6 +198,15 @@ describe("compareVersions and nextTrails", () => {
     expect(nextTrails("0.1.0-next.4", "0.1.0")).toBe(true);
     expect(nextTrails("0.1.4", "0.1.4")).toBe(false);
     expect(nextTrails("0.1.5-next.1", "0.1.4")).toBe(false);
+  });
+});
+
+describe("previewRefusal", () => {
+  it("refuses a preview older than latest, and allows a newer one or one for a package with no latest", () => {
+    expect(previewRefusal("0.1.0-next.5", "next", "0.1.0")).toBe("0.1.0-next.5 is older than latest 0.1.0: a next preview must not trail latest");
+    expect(previewRefusal("0.0.9-beta.1", "beta", "0.1.0")).toBe("0.0.9-beta.1 is older than latest 0.1.0: a beta preview must not trail latest");
+    expect(previewRefusal("0.1.1-next.1", "next", "0.1.0")).toBeNull();
+    expect(previewRefusal("0.1.0-next.1", "next", undefined)).toBeNull();
   });
 });
 

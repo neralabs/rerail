@@ -5,11 +5,12 @@ name: Release
 # macOS, and publishes it.
 #
 # A `v*` tag publishes that tarball to npmjs under the dist-tag derived from the tag: `v1.2.3` -> latest,
-# `v1.2.3-beta.N` -> beta, `v1.2.3-next.N` -> next. The tag must equal package.json's version. Merging the Release
-# pull request makes the tag: release-pr.yml tags the version it set (docs/distribution-model.md, "Release
-# channels"). A version published under `latest` moves `next` up to it too, unless `next` is already at a newer
-# preview, so `next` never trails `latest`. After publishing, the dist-tags job lists core's dist-tags in the run
-# summary and fails if the channel's dist-tag is not the version just published, or `next` is older than `latest`.
+# `v1.2.3-beta.N` -> beta, `v1.2.3-next.N` -> next. The tag must equal package.json's version, and a preview must not
+# be older than core's `latest`. Merging the Release pull request makes the tag: release-pr.yml tags the version it set
+# (docs/distribution-model.md, "Release channels"). A version published under `latest` moves `next` up to it too,
+# unless `next` is already at a newer preview, so `next` never trails `latest`. After publishing, the dist-tags job
+# lists core's dist-tags in the run summary and fails if the channel's dist-tag is not the version just published, or,
+# for a `latest` or `next` release, `next` is older than `latest`.
 #
 # `workflow_dispatch` with no inputs builds and uploads the tarball as a run artifact without publishing, so a build
 # can be installed and checked by hand. With `latest`, it builds nothing and points core's `latest` dist-tag at that
@@ -38,8 +39,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Rejects a malformed tag, one that disagrees with package.json, or a tree Windows cannot check out, before any
-  # engine is built. A tag can name a commit PR CI never ran on.
+  # Rejects a malformed tag, one that disagrees with package.json, a preview older than core's `latest` (published, it
+  # would leave its channel behind the stable one), or a tree Windows cannot check out, before any engine is built. A
+  # tag can name a commit PR CI never ran on.
   metadata:
     name: Release metadata
     if: ${{ !inputs.latest }}
@@ -66,6 +68,7 @@ jobs:
         run: |
           node --input-type=module <<'EOF'
           import { appendFileSync, readFileSync } from "node:fs";
+          import { previewRefusal, readPublicDistTags } from "./scripts/release/dist-tags.mjs";
           if (process.env.TAG_PUSH !== "true") {
             console.log("Not a release tag push: the build is uploaded as an artifact and not published.");
             appendFileSync(process.env.GITHUB_OUTPUT, "channel=\n");
@@ -77,6 +80,10 @@ jobs:
           const version = JSON.parse(readFileSync("package.json", "utf8")).version;
           if (version !== tag.slice(1)) throw new Error(`package.json version ${version} does not match ${tag}`);
           const channel = match[2] ?? "latest";
+          if (channel !== "latest") {
+            const refusal = previewRefusal(version, channel, (await readPublicDistTags("@neralabs/rerail")).latest);
+            if (refusal !== null) throw new Error(refusal);
+          }
           console.log(`Publishing ${version} to the ${channel} channel.`);
           appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nversion=${version}\n`);
           EOF
@@ -175,7 +182,9 @@ jobs:
   # as `npm publish` (a `latest` release moves `next` up).
   # `--provenance` makes npm attach a provenance attestation and fail the publish when it cannot generate one (for
   # example, if this repository is ever made private again), so no release reaches npm without one. The job can be run
-  # again after a failure: a version npm already has is not published again, and `next` is only ever moved up.
+  # again after a failure: a version npm already has is not published again (npm refuses to publish over it, which
+  # the step reads, as packs-publish.mjs does, since `npm view` can lag a publish by minutes), and `next` is only ever
+  # moved up.
   publish:
     name: Publish to npmjs
     needs: [metadata, package, windows-install, unix-install]
@@ -218,10 +227,14 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$RELEASE_CHANNEL" || { echo "::error::No release channel was derived for ${GITHUB_REF_NAME}" >&2; exit 1; }
-          if npm view "@neralabs/rerail@${RELEASE_VERSION}" version --registry https://registry.npmjs.org > /dev/null 2>&1; then
-            echo "::notice::@neralabs/rerail@${RELEASE_VERSION} is already on npm (a re-run): not published again"
+          errors="$RUNNER_TEMP/npm-publish.err"
+          if npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access public --tag "$RELEASE_CHANNEL" --provenance 2> "$errors"; then
+            cat "$errors" >&2
           else
-            npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access public --tag "$RELEASE_CHANNEL" --provenance
+            cat "$errors" >&2
+            node --input-type=module -e 'import { readFileSync } from "node:fs"; import { alreadyOnRegistry } from "./scripts/release/packs.mjs"; process.exit(alreadyOnRegistry(readFileSync(process.argv[1], "utf8")) ? 0 : 1);' "$errors" \
+              || { echo "::error::npm publish @neralabs/rerail@${RELEASE_VERSION} failed" >&2; exit 1; }
+            echo "::notice::@neralabs/rerail@${RELEASE_VERSION} is already on npm (a re-run): not published again"
           fi
 
       # A preview (`next`, `beta`) leaves `next` alone; a stable release moves it up, unless it is at a newer preview.
@@ -231,8 +244,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: node scripts/release/raise-next.mjs "@neralabs/rerail@${RELEASE_VERSION}"
 
-  # Reads core's dist-tags back from npm, which for this restricted package needs a read token: the read-only
-  # NPM_PACKS_READ_TOKEN, which must cover @neralabs/rerail as well as the packs.
+  # Reads core's dist-tags back from npm with `npm dist-tag ls`; core is public, so no token is needed.
   dist-tags:
     name: Published dist-tags
     needs: [metadata, publish]
@@ -250,20 +262,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
-      - name: Authenticate npm to read core
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::Reading the restricted @neralabs/rerail needs the repository secret NPM_PACKS_READ_TOKEN"
-            exit 1
-          fi
-          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
-
       - name: Check core's dist-tag
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
           RELEASED: "@neralabs/rerail@${{ needs.metadata.outputs.version }}:${{ needs.metadata.outputs.channel }}"
         run: node scripts/release/dist-tags-check.mjs
 
@@ -319,18 +319,8 @@ jobs:
           VERSION: ${{ inputs.latest }}
         run: node scripts/release/raise-next.mjs "@neralabs/rerail@${VERSION}"
 
-      - name: Authenticate npm to read core
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::Reading the restricted @neralabs/rerail needs the repository secret NPM_PACKS_READ_TOKEN"
-            exit 1
-          fi
-          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
-
+      # Core is public, so `npm dist-tag ls` reads it back with no token.
       - name: Check core's dist-tag
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
           RELEASED: "@neralabs/rerail@${{ inputs.latest }}:latest"
         run: node scripts/release/dist-tags-check.mjs

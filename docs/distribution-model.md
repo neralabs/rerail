@@ -72,11 +72,12 @@ environment, and each run then checks that `latest` is the version it published 
 [pack-format.md](pack-format.md#release)). `next` and `beta` stay available for a preview: a `v<version>-next.N` or
 `-beta.N` tag pushed by hand publishes under that channel.
 
-`next` never trails `latest`: whoever follows `next` gets every stable release too. Each version published under
-`latest`, core's and each pack's, moves that package's `next` up to it as well, unless `next` is already at a newer
-preview (`scripts/release/raise-next.mjs`, and `releasePacks` for the packs), and each run's dist-tag check fails if a
-package it released has a `next` older than its `latest`. A `next` or `beta` preview leaves `latest` alone, and
-putting a version back to an older one leaves `next` where it is.
+`next` never trails `latest`: whoever follows `next` gets every stable release too. Each version published or
+promoted under `latest`, core's and each pack's, moves that package's `next` up to it as well, unless `next` is
+already at a newer preview (`scripts/release/raise-next.mjs`, and `releasePacks` and `promotePacks` for the packs), and
+each run's dist-tag check fails if a package it released under `latest` or `next` has a `next` unset or older than its
+`latest`. A core `next` or `beta` preview older than `latest` is refused before it is built. A preview leaves `latest`
+alone, and putting a version back to an older one leaves `next` where it is.
 
 Putting a version back moves only its dist-tag, never the bytes: `release.yml`'s `workflow_dispatch` with `latest`
 set points core's `latest` at an earlier released version, and `release-packs.yml`'s does the same for a pack, and

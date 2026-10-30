@@ -21,7 +21,8 @@ name: Release packs
 # puts it back and holds it there (`held`), and naming the pack alone, at its package.json version, promotes it again
 # and releases the hold. With no inputs, every pack whose released version is not `latest` yet, less any pack held.
 # The promote-plan job lists them in the run summary before the promote job, which needs the `release` environment's
-# approval, moves them all (docs/pack-format.md, "Release").
+# approval, moves them all, moves each one's `next` up to it unless `next` is at a newer version, and then fails if a
+# promoted pack's `latest` is not the version or its `next` is older (docs/pack-format.md, "Release").
 
 on:
   push:
@@ -413,9 +414,18 @@ jobs:
           persist-credentials: false
 
       # PROMOTE is the plan's JSON list of `{ id, version, hold, release }`.
-      - name: Point latest at each version
+      - id: promote
+        name: Point latest at each version and raise next
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PROMOTE: ${{ needs.promote-plan.outputs.promote }}
         run: node scripts/release/packs-promote.mjs
+
+      # The packs are public, so `npm dist-tag ls` reads them back with no token. Runs for the packs that moved even when
+      # another failed.
+      - name: Check each promoted pack's dist-tags
+        if: ${{ !cancelled() && steps.promote.outputs.promoted != '' }}
+        env:
+          RELEASED: ${{ steps.promote.outputs.promoted }}
+        run: node scripts/release/dist-tags-check.mjs

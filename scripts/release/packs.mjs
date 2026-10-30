@@ -245,12 +245,16 @@ export function planPromotions(packs, tags, distTagsOf, { named = false } = {}) 
 
 /**
  * Points `latest` at each `{ name, version }` in `promotions`, refusing a version this repository never released (no
- * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. One failure does not stop the
- * others; returns each failure, so the run reports them all and can be run again. `steps.promote(name, version)`,
- * `steps.hold(name, version)` and `steps.release(name)` throw on failure.
+ * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. Then `next` is pointed at the version
+ * too unless it is already at a newer one (raiseNext in dist-tags.mjs), so `next` never trails `latest`; a put-back to
+ * an older version leaves it where it is. One failure does not stop the others. Returns each pack fully promoted, and
+ * each failure, so the run reports them all and can be run again. `steps.promote(name, version)`,
+ * `steps.hold(name, version)`, `steps.release(name)` and `steps.distTag(name, version, tag)` throw on failure, and
+ * `steps.readNext(name)` resolves to `next` or null.
  */
-export function promotePacks(promotions, tags, steps) {
+export async function promotePacks(promotions, tags, steps) {
   const existing = new Set(tags);
+  const promoted = [];
   const failures = [];
   for (const { name, version, hold = false, release = false } of promotions) {
     const tag = releaseTag(name, version);
@@ -260,11 +264,13 @@ export function promotePacks(promotions, tags, steps) {
       if (hold) steps.hold(name, version);
       if (release) steps.release(name);
       steps.log(`promoted ${tag} to latest${hold ? `, held there (${HOLD_TAG})` : ""}${release ? `, ${HOLD_TAG} released` : ""}`);
+      steps.log(await raiseNext(name, version, steps));
+      promoted.push({ name, version });
     } catch (error) {
       failures.push(`${tag}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return failures;
+  return { promoted, failures };
 }
 
 /**

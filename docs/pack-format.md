@@ -495,9 +495,12 @@ them; core's `v*` release (`release.yml`) is separate.
    promote job, once a reviewer approves the `release` environment, points the pack's `latest` at that version and
    tags it `held` there. Publishes and runs with no inputs leave a held pack's `latest` alone (the summary names it)
    until the pack is promoted by id again, at its `package.json` version, which releases the hold. Run with no inputs,
-   the workflow points `latest` at every pack's released version that is not `latest` yet, less any held. A pack that
-   fails to move, or whose dist-tags cannot be read, does not stop the others; the run fails naming it and can be run
-   again. A version that was never released fails the run. These runs go one at a time.
+   the workflow points `latest` at every pack's released version that is not `latest` yet, less any held. Each
+   promotion moves the pack's `next` up to the version too, unless `next` is already at a newer one (a put-back leaves
+   it where it is), and the promote job then lists each promoted pack's dist-tags and fails if one's `latest` is not
+   the version or its `next` is older than its `latest`. A pack that fails to move, or whose dist-tags cannot be read,
+   does not stop the others; the run fails naming it and can be run again. A version that was never released fails
+   the run. These runs go one at a time.
 
 The scripts are in `scripts/release/`. To check a pack's tarball locally:
 `node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>`.

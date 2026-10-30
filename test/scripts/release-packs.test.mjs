@@ -1,7 +1,7 @@
 // scripts/release/packs.mjs: what a pack release run publishes and under which dist-tag, what a promotion moves to
-// `latest`, the lockfile sync after `changeset version`, the publish gate's reading of the pack validation, the
-// patch-only bumps of packs below 1.0.0, and the changeset a pull request owes each pack whose published files it
-// changes.
+// `latest` (and `next`), the lockfile sync after `changeset version`, the publish gate's reading of the pack
+// validation, the patch-only bumps of packs below 1.0.0, and the changeset a pull request owes each pack whose
+// published files it changes.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -101,9 +101,10 @@ describe("planPromotions", () => {
 describe("promotePacks", () => {
   const promotion = (id, version, flags = {}) => ({ name: `@neralabs/rerail-pack-${id}`, version, ...flags });
 
-  it("promotes the rest when one fails, holds and releases as told, and returns each failure, a version never released included", () => {
+  it("promotes the rest when one fails, holds and releases as told, raises a trailing next, and returns what moved and each failure", async () => {
     const calls = [];
-    const failures = promotePacks(
+    const nexts = { "@neralabs/rerail-pack-a": "0.1.2", "@neralabs/rerail-pack-c": "0.1.4", "@neralabs/rerail-pack-e": null };
+    const { promoted, failures } = await promotePacks(
       [promotion("a", "0.1.3"), promotion("b", "0.1.3"), promotion("c", "0.1.2", { hold: true }), promotion("e", "0.1.4", { release: true }), promotion("d", "9.9.9")],
       ["a@0.1.3", "b@0.1.3", "c@0.1.2", "e@0.1.4"].map((tag) => `@neralabs/rerail-pack-${tag}`),
       {
@@ -113,17 +114,22 @@ describe("promotePacks", () => {
         },
         hold: (name, version) => void calls.push(`held ${name}@${version}`),
         release: (name) => void calls.push(`release ${name}`),
+        readNext: async (name) => nexts[name],
+        distTag: (name, version, tag) => void calls.push(`${tag} ${name}@${version}`),
         log: () => {},
       },
     );
 
     expect(calls).toEqual([
       "latest @neralabs/rerail-pack-a@0.1.3",
+      "next @neralabs/rerail-pack-a@0.1.3",
       "latest @neralabs/rerail-pack-c@0.1.2",
       "held @neralabs/rerail-pack-c@0.1.2",
       "latest @neralabs/rerail-pack-e@0.1.4",
       "release @neralabs/rerail-pack-e",
+      "next @neralabs/rerail-pack-e@0.1.4",
     ]);
+    expect(promoted.map(({ name }) => name)).toEqual(["@neralabs/rerail-pack-a", "@neralabs/rerail-pack-c", "@neralabs/rerail-pack-e"]);
     expect(failures).toEqual([
       "@neralabs/rerail-pack-b@0.1.3: npm error code E403",
       "@neralabs/rerail-pack-d@9.9.9: it was never released from this repository (no such git tag)",
