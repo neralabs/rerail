@@ -2922,7 +2922,7 @@
         "tool": "ruff",
         "rule": "ANN401"
       },
-      "policy": "rules/ruff-ann401-any-type.json",
+      "policy": "candidates/rules/ruff-ann401-any-type.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -2963,7 +2963,7 @@
         "tool": "ruff",
         "rule": "ARG003"
       },
-      "policy": "rules/ruff-arg003-unused-class-method-argument.json",
+      "policy": "candidates/rules/ruff-arg003-unused-class-method-argument.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2976,7 +2976,7 @@
         "tool": "ruff",
         "rule": "ARG004"
       },
-      "policy": "rules/ruff-arg004-unused-static-method-argument.json",
+      "policy": "candidates/rules/ruff-arg004-unused-static-method-argument.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2989,7 +2989,7 @@
         "tool": "ruff",
         "rule": "ARG005"
       },
-      "policy": "rules/ruff-arg005-unused-lambda-argument.json",
+      "policy": "candidates/rules/ruff-arg005-unused-lambda-argument.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -3123,7 +3123,7 @@
         "tool": "ruff",
         "rule": "C409"
       },
-      "policy": "rules/ruff-c409-unnecessary-literal-within-tuple-call.json",
+      "policy": "candidates/rules/ruff-c409-unnecessary-literal-within-tuple-call.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -3305,7 +3305,7 @@
         "tool": "ruff",
         "rule": "COM818"
       },
-      "policy": "rules/ruff-com818-trailing-comma-on-bare-tuple.json",
+      "policy": "candidates/rules/ruff-com818-trailing-comma-on-bare-tuple.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3403,7 +3403,7 @@
         "tool": "ruff",
         "rule": "D106"
       },
-      "policy": "rules/ruff-d106-undocumented-public-nested-class.json",
+      "policy": "candidates/rules/ruff-d106-undocumented-public-nested-class.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -4293,7 +4293,7 @@
         "tool": "ruff",
         "rule": "ICN001"
       },
-      "policy": "rules/ruff-icn001-unconventional-import-alias.json",
+      "policy": "candidates/rules/ruff-icn001-unconventional-import-alias.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -7214,7 +7214,7 @@
         "tool": "ruff",
         "rule": "RUF058"
       },
-      "policy": "rules/ruff-ruf058-starmap-zip.json",
+      "policy": "candidates/rules/ruff-ruf058-starmap-zip.json",
       "capabilities": [
         "syntax",
         "arguments",

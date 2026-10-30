@@ -1032,41 +1032,6 @@
       "on": false
     },
     {
-      "id": "ruff-ann401-any-type",
-      "document": "rules/ruff-ann401-any-type.json",
-      "title": "Ruff ANN401: Any type",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-arg003-unused-class-method-argument",
-      "document": "rules/ruff-arg003-unused-class-method-argument.json",
-      "title": "Ruff ARG003: Unused class method argument",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-arg004-unused-static-method-argument",
-      "document": "rules/ruff-arg004-unused-static-method-argument.json",
-      "title": "Ruff ARG004: Unused static method argument",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-arg005-unused-lambda-argument",
-      "document": "rules/ruff-arg005-unused-lambda-argument.json",
-      "title": "Ruff ARG005: Unused lambda argument",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-c409-unnecessary-literal-within-tuple-call",
-      "document": "rules/ruff-c409-unnecessary-literal-within-tuple-call.json",
-      "title": "Ruff C409: Unnecessary literal within tuple call",
-      "group": "Ruff",
-      "on": false
-    },
-    {
       "id": "ruff-c419-unnecessary-comprehension-in-call",
       "document": "rules/ruff-c419-unnecessary-comprehension-in-call.json",
       "title": "Ruff C419: Unnecessary comprehension in call",
@@ -1077,13 +1042,6 @@
       "id": "ruff-c420-unnecessary-dict-comprehension-for-iterable",
       "document": "rules/ruff-c420-unnecessary-dict-comprehension-for-iterable.json",
       "title": "Ruff C420: Unnecessary dict comprehension for iterable",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-com818-trailing-comma-on-bare-tuple",
-      "document": "rules/ruff-com818-trailing-comma-on-bare-tuple.json",
-      "title": "Ruff COM818: Trailing comma on bare tuple",
       "group": "Ruff",
       "on": false
     },
@@ -1105,13 +1063,6 @@
       "id": "ruff-d105-undocumented-magic-method",
       "document": "rules/ruff-d105-undocumented-magic-method.json",
       "title": "Ruff D105: Undocumented magic method",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-d106-undocumented-public-nested-class",
-      "document": "rules/ruff-d106-undocumented-public-nested-class.json",
-      "title": "Ruff D106: Undocumented public nested class",
       "group": "Ruff",
       "on": false
     },
@@ -1189,13 +1140,6 @@
       "id": "ruff-g202-logging-redundant-exc-info",
       "document": "rules/ruff-g202-logging-redundant-exc-info.json",
       "title": "Ruff G202: Logging redundant exc info",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-icn001-unconventional-import-alias",
-      "document": "rules/ruff-icn001-unconventional-import-alias.json",
-      "title": "Ruff ICN001: Unconventional import alias",
       "group": "Ruff",
       "on": false
     },
@@ -1588,13 +1532,6 @@
       "id": "ruff-ruf013-implicit-optional",
       "document": "rules/ruff-ruf013-implicit-optional.json",
       "title": "Ruff RUF013: Implicit optional",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-ruf058-starmap-zip",
-      "document": "rules/ruff-ruf058-starmap-zip.json",
-      "title": "Ruff RUF058: Starmap zip",
       "group": "Ruff",
       "on": false
     },
