@@ -1,21 +1,30 @@
-//! Lattice facts, experiment E1 (docs/facts/LATTICE.md): the semiring-round fixpoint on the CPU.
+//! Lattice facts (docs/facts/LATTICE.md): E1, the semiring-round fixpoint on the CPU; E3, its
+//! maintenance per edit.
 //!
 //! - `round`: the operator (L5): CSR (flat or base + replacement rows), `set` and `min_level`; a
 //!   sequential kernel and four parallel-within-a-round ones (push over frontier word ranges,
 //!   push over edge ranges, owner-computes push, direction-optimizing push/pull); the naive
 //!   reference. Depends on nothing else in the crate.
-//! - `cols`: columns written once and mapped read-only (L6), with the copy counter.
+//! - `cols`: columns written once and mapped read-only (L6), with the copy counter; columns a
+//!   worktree writes, mapped privately (copy-on-write pages).
 //! - `build`: Y2's dead-code product graph (`y2::dc`) as columns, and Y2's own reachability timed
 //!   on the same inputs, interleaved with the sequential fixpoint, as the exactness reference.
 //! - `bench`: the timed, counted, checked runs (workloads A and B).
+//! - `maint` (E3): the layered CSR updated in place; `min_level` and `set` maintained per edit
+//!   in the L5 shape. Depends only on `round`.
+//! - `e3`: Y3's replay with both lattices maintained after every event, checked against E1's
+//!   fixpoint and Y2.
 //!
 //! `facts-b lattice build --dump F [--edges Y1_FILE] --out DIR [--y2-runs N] [--limit-worktrees N]
 //!   [--order st|hash]`
 //! `facts-b lattice run --graph DIR --threads T --out FILE [--runs N] [--lattice level|set]
 //!   [--kernel seq|par|edge|own|dir] [--fleet within|across]`
+//! `facts-b lattice maint --out DIR [--limit N] [--check-every N] [--check-load] [--workers W]`
 pub mod bench;
 pub mod build;
 pub mod cols;
+pub mod e3;
+pub mod maint;
 pub mod round;
 
 use std::path::PathBuf;
@@ -51,6 +60,7 @@ pub fn main(args: Vec<String>) {
             kernel: arg(&args, "--kernel").unwrap_or_else(|| "par".into()),
             fleet: arg(&args, "--fleet"),
         }),
+        Some("maint") => e3::run(&args),
         _ => {
             eprintln!("usage: facts-b lattice build --dump F [--edges Y1_FILE] --out DIR | run --graph DIR --threads T --out FILE [--runs N] [--lattice level|set] [--kernel seq|par] [--fleet within|across]");
             std::process::exit(2);

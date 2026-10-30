@@ -15,6 +15,9 @@
 //!   export digest blind to inputs and scope (`gen/real.rs` `export_digest`), producers' failures
 //!   not compared (`gen/real.rs` `producers_agree`).
 //! - 56: the interner's epoch sweep does not mark the arrangements' rows (`gen/lower.rs` `walk_rows`).
+//! - 75: `min_level` maintenance counts an invalidated predecessor as a witness (`lattice/maint.rs`
+//!   `level_update`); 77: `set` maintenance's over-delete takes no forward round (`set_update`);
+//!   79: `set` by B/F accepts an id reached before the edit as support (`set_update_bf`).
 
 #[cfg(feature = "mutants")]
 pub fn on(n: u32) -> bool {

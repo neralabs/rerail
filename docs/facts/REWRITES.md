@@ -32,6 +32,7 @@ Numbers:
 - 42: the generator's ordered aggregates (`group_concat`/`json_group_array` folded in the order of the Sort below; not a rewrite: the gate's `MUTANTS`, family `facts-b-unit`); 46: the generator's LEFT JOIN on equalities (unmatched rows by an antijoin on the join's keys, stratified inside a recursion; `MUTANTS`, `facts-b-unit`).
 - 50, 52, 54: R37 (facts-b table, P3a M1: cross-plan stage sharing; P3a takes even numbers from 50, P3b odd from 51, P3c from 100); 56: the interner's epoch sweep marks the arrangements' rows (P3a M1; not a rewrite: the gate's `MUTANTS`, family `facts-b-unit`).
 - 71, 73: R38, R39 (facts-a table, lattice E4: tree closures with no rounds; E4 takes odd numbers from 71).
+- 75, 77, 79: the lattice facts' maintenance (LATTICE.md L9, E3: `spikes/facts-b/src/lattice/maint.rs`): 75 `min_level`'s levelled re-check counts an invalidated predecessor as a witness, 77 `set`'s DRed over-delete stops after one step, 79 `set`'s backward/forward check accepts an id reached before the edit as support; not rewrites: the gate's `MUTANTS`, family `facts-b-unit` (E3 takes odd numbers from 75; E4 holds 71, 73).
 
 ## Implemented
 

@@ -164,7 +164,12 @@ pub struct Stats {
     pub succ_calls: usize,
     pub pred_checks: usize,
     pub prepare_ms: f64,
+    /// Of `prepare_ms`, the scoping alone (the dirty states and root candidates, before `succ`
+    /// at the dirty reached states). Measurement for the lattice experiment (E3).
+    pub scope_ms: f64,
     pub finish_ms: f64,
+    /// Of `finish_ms`, the findings re-evaluated.
+    pub findings_ms: f64,
     /// The findings that left (false) and came (true) in this step.
     #[serde(skip)]
     pub delta: Vec<(Finding, bool)>,
@@ -176,7 +181,24 @@ pub struct Prep {
     imports: Vec<(u32, bool, bool)>,
     hc: FxHashSet<u32>,
     stats: Stats,
+    /// Filled only while `CAPTURE` is set (the lattice experiment, E3).
+    pub scope: Scope,
 }
+
+/// What `prepare` scoped, for a consumer that maintains the product graph's rows itself (E3):
+/// every dirty state (reached or not; a state outside it has the same `succ` before and after),
+/// the dispatch layers whose every state is dirty (`flow(n, d)` for a changed definition `d`:
+/// Y2 expands them over its reached nodes only), and the root candidates' nodes.
+#[derive(Default, Debug)]
+pub struct Scope {
+    pub dirty: FxHashSet<St>,
+    pub layers: Vec<u32>,
+    pub roots: Vec<u32>,
+}
+
+/// Set by the lattice experiment (E3): `prepare` keeps its scope in `Prep::scope`. Off, nothing
+/// changes in Y2.
+pub static CAPTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub type Finding = (u32, i64, i64, u32, &'static str);
 
@@ -366,7 +388,7 @@ impl Dc {
         }
     }
 
-    fn is_root(&self, f: &Facts, x: u32) -> bool {
+    pub(crate) fn is_root(&self, f: &Facts, x: u32) -> bool {
         if x & MOD != 0 {
             return self.imported.contains_key(&(x & !MOD));
         }
@@ -484,6 +506,8 @@ impl Dc {
         let mut rc: FxHashSet<u32> = FxHashSet::default();
         let mut hc: FxHashSet<u32> = FxHashSet::default();
         let mut imports = Vec::new();
+        let cap = CAPTURE.load(std::sync::atomic::Ordering::Relaxed);
+        let mut layers: Vec<u32> = Vec::new();
         // Class rows changed per name: `unique_class(name)` is a derived key whose readers are
         // dirty only if its value changes.
         let mut class_names: FxHashMap<u32, (Vec<u32>, Vec<u32>)> = FxHashMap::default();
@@ -527,6 +551,9 @@ impl Dc {
                     self.dirty_node(x.id, &mut d);
                     for &n in at(&self.nodes_by_disp, &(x.id + 2)) {
                         d.insert(st(n, x.id + 2));
+                    }
+                    if cap {
+                        layers.push(x.id + 2);
                     }
                     for &(o, _) in at(&f.hier_by_base, &x.id) {
                         self.dirty_node(o, &mut d);
@@ -680,18 +707,20 @@ impl Dc {
             }
         }
         let mut stats = Stats { changes: changes.len(), dirty_states: d.len(), root_candidates: rc.len(), ..Default::default() };
+        stats.scope_ms = t.elapsed().as_secs_f64() * 1e3;
         let mut succ_old = FxHashMap::default();
-        for s in d {
-            if self.reached.contains_key(&s) {
-                let v = self.succ_sorted(f, s);
-                succ_old.insert(s, v);
+        for s in &d {
+            if self.reached.contains_key(s) {
+                let v = self.succ_sorted(f, *s);
+                succ_old.insert(*s, v);
             }
         }
         stats.dirty_reached = succ_old.len();
-        let roots_old = rc.into_iter().map(|x| (x, self.is_root(f, x))).collect();
+        let roots_old: Vec<(u32, bool)> = rc.into_iter().map(|x| (x, self.is_root(f, x))).collect();
         stats.succ_calls = self.succ_calls - calls0;
+        let scope = if cap { Scope { roots: roots_old.iter().map(|r| r.0).collect(), dirty: d, layers } } else { Scope::default() };
         stats.prepare_ms = t.elapsed().as_secs_f64() * 1e3;
-        Prep { succ_old, roots_old, imports, hc, stats }
+        Prep { succ_old, roots_old, imports, hc, stats, scope }
     }
 
     /// After the changes are applied: the new edges of the dirty states, the reached set, the
@@ -699,7 +728,7 @@ impl Dc {
     pub fn finish(&mut self, f: &Facts, p: Prep) -> Stats {
         let t = std::time::Instant::now();
         let calls0 = self.succ_calls;
-        let Prep { succ_old, roots_old, imports, mut hc, mut stats } = p;
+        let Prep { succ_old, roots_old, imports, mut hc, mut stats, scope: _ } = p;
         for (target, module_kind, added) in imports {
             self.count_import(target, module_kind, if added { 1 } else { -1 });
         }
@@ -790,6 +819,7 @@ impl Dc {
         let back: FxHashSet<St> = added.iter().copied().filter(|s| before.contains(s)).collect();
         let toggled: Vec<St> = before.iter().copied().filter(|s| !back.contains(s)).chain(added.iter().copied().filter(|s| !before.contains(s))).collect();
         stats.toggled = toggled.len();
+        let tf = std::time::Instant::now();
         for s in toggled {
             if layer(s) == ANN {
                 let x = node(s);
@@ -815,6 +845,7 @@ impl Dc {
             }
         }
         stats.succ_calls += self.succ_calls - calls0;
+        stats.findings_ms = tf.elapsed().as_secs_f64() * 1e3;
         stats.finish_ms = t.elapsed().as_secs_f64() * 1e3;
         stats
     }

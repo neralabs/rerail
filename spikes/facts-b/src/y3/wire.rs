@@ -118,6 +118,9 @@ pub struct StepOut {
     /// (plan, finding, introduced)
     #[serde(skip)]
     pub delta: Vec<(String, String, bool)>,
+    /// Dead code's scope (`dc::CAPTURE` set: the lattice experiment, E3).
+    #[serde(skip)]
+    pub scope: Option<dc::Scope>,
 }
 
 pub const DEAD_CODE: &str = "unreachable-internal-symbols";
@@ -254,7 +257,8 @@ pub fn step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[(String, O
     let t = Instant::now();
     match (top.dc.as_mut(), top.ef.as_mut()) {
         (Some(dc), Some(ef)) => {
-            let pd = dc.prepare(&top.facts, &ch);
+            let mut pd = dc.prepare(&top.facts, &ch);
+            let scope = std::mem::take(&mut pd.scope);
             let pe = ef.prepare(&top.facts, &ch);
             top.facts.apply(&ch);
             let sd = dc.finish(&top.facts, pd);
@@ -266,6 +270,7 @@ pub fn step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[(String, O
                 out.delta.push((FAMILIES.into(), crate::y2::facts::show_row(&ef_row(f)), *added));
             }
             out.dc = Some(sd);
+            out.scope = Some(scope);
             out.ef = Some(se);
         }
         _ => top.facts.apply(&ch),
