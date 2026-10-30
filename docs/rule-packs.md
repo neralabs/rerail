@@ -14,7 +14,7 @@ Every pack lives under `packs/` in this repository and is published from there (
 |---|---|--:|---|
 | Cyclomatic complexity (limit 6) | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
 | JavaScript and TypeScript (ESLint core) | language | 121 (36) | JavaScript or TypeScript source: ESLint's core rules apply to both. |
-| TypeScript | language | 46 (18) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
+| TypeScript | language | 62 (20) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
 | Python | language | 160 (135) | Python source outside tests, scripts and docs |
 | PHP | language | 15 (5) | PHP source: `*.php` files, not Blade views |
 | Blade | language | 10 (8) | Blade templates: `*.blade.php` files |

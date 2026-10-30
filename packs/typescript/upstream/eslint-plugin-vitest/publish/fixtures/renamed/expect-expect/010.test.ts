@@ -1,0 +1,1 @@
+it("should pass", () => swfkJlclyui().then(() => expect(true).toBeDefined()))

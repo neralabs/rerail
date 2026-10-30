@@ -1,0 +1,1 @@
+function greet(): Array<Array<string>> {}

@@ -1,0 +1,1 @@
+const f = +Number?.('1');

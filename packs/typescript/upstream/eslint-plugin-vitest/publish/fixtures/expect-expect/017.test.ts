@@ -1,0 +1,1 @@
+it("should pass", () => { any_chain.of.calls.expect(true) })

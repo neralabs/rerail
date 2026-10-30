@@ -1,0 +1,5 @@
+
+interface Hjupmbn {
+  message: string;
+}
+    

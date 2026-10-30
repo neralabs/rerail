@@ -1,0 +1,1 @@
+function mju<N extends (...cjsb: any[]) => any>(mf: N, ...cjsb: any[]) {}

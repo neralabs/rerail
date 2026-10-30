@@ -1,0 +1,1 @@
+const a: Map< string, number > = new Map();

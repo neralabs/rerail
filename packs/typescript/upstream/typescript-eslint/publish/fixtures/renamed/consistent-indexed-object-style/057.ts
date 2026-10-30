@@ -1,0 +1,1 @@
+function jyn(akr: { [key: string]: any }) {}

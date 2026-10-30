@@ -1,0 +1,1 @@
+const e: Ill = Ill<string>();

@@ -1,0 +1,1 @@
+function vit(c: number, m = 1, ...u) {}

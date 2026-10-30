@@ -1,0 +1,1 @@
+let ufm: 'baz' = 'baz' as const;

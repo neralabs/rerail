@@ -46,7 +46,7 @@ describe("renameSource", () => {
   });
 
   it("keeps protected names: test-runner globals and the members chained on them, hooks, and the standard library", () => {
-    const { renames } = renameSource("vi.fn(); jest.mock(); it.only.each(); test.skip(); it.todo(); expect(x).not.toBe(1); useThing(); useState(); Math.max(); helper();\n", "a.ts");
+    const { renames } = renameSource("vi.fn(); jest.mock(); it.only.each(); test.skip(); it.todo(); pending(); expect(x).not.toBe(1); useThing(); useState(); Math.max(); helper();\n", "a.ts");
     expect([...renames.keys()].sort()).toEqual(["helper", "x"]);
     expect(renames.get("helper")).not.toMatch(/^use[A-Z]/);
   });

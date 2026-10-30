@@ -1,0 +1,1 @@
+const wun = (b: number, f = 1, i = 1) => {};

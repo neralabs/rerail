@@ -1,0 +1,5 @@
+
+class Klkhxig {
+  message: any[];
+}
+      

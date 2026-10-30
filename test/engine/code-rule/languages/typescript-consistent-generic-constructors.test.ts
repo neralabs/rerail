@@ -16,7 +16,7 @@ import { repositoryPath } from "../../../support/oracles.js";
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
-const DOCUMENT = repositoryPath("packs", "typescript", "candidates", "rules", "typescript-eslint-consistent-generic-constructors.json");
+const DOCUMENT = repositoryPath("packs", "typescript", "rules", "typescript-eslint-consistent-generic-constructors.json");
 
 const evaluationSchema = z.object({
   violations: z.array(z.object({ message: z.string(), span: z.object({ startLine: z.number().int().nonnegative() }) })).default([]),

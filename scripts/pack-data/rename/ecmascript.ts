@@ -47,7 +47,7 @@ import { dirname, join } from "node:path";
 import ts from "typescript";
 
 /** The test runners' globals. */
-const TEST_GLOBALS = ["describe", "it", "test", "expect", "suite", "bench", "vi", "jest", "xit", "xtest", "xdescribe", "fit", "fdescribe"];
+const TEST_GLOBALS = ["describe", "it", "test", "expect", "suite", "bench", "vi", "jest", "xit", "xtest", "xdescribe", "fit", "fdescribe", "pending"];
 
 /**
  * Host objects whose members are their API: the member names of a chain of accesses and calls on one are kept

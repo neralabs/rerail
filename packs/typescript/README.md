@@ -1,13 +1,14 @@
 # Rerail rule pack: TypeScript
 
-46 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
-options. 28 start off (`"on": false`): no approved typescript-eslint configuration turns them on, so they are
+62 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
+options. 42 start off (`"on": false`): no approved typescript-eslint configuration turns them on, so they are
 experimental. Each is scored against the tool's own findings on the tool's test fixtures and on their rename variants
 (`holds-under-rename`), and against the labelled lines of the tool's real-code samples
 ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with every
-disagreement declared in `divergences.json`: 2 today, both `rerail-unknown`, each an upstream fixture the grammar reads
-with a syntax error. The conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) gates the
-shipped rules. ESLint's core rules are in the [JavaScript pack](../javascript/README.md).
+disagreement declared in `divergences.json`: 27 today. 26 are `rerail-unknown`, each an upstream fixture or its rename
+variant that the grammar reads with a syntax error or misreads; 1 is `not-comparable`, a candidate's sample. The
+conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules. ESLint's core
+rules are in the [JavaScript pack](../javascript/README.md).
 
 Every typescript-eslint rule runs on `.ts`, `.tsx`, `.mts` and `.cts` files only. On JavaScript a port steers CommonJS
 files away from
@@ -25,7 +26,7 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); `upstream/eslint-plugin-vitest/UPSTREAM.md` lists the fixtures Rerail wrote (`fixtures/*/rerail-*`), which the generator holds and lints like the copied ones |
 | `upstream/generate.mjs` | typescript-eslint's generator; `upstream/eslint-plugin-vitest/generate.mjs` is @vitest/eslint-plugin's |
-| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the expected findings do not have) and `no-explicit-any` (the expected findings do not cover it yet) is listed in `conformance.json`, scored and reported, never gated. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
+| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the expected findings do not have) is listed in `conformance.json`, scored and reported, never gated. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
 | `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
@@ -216,3 +217,67 @@ typescript-eslint 8.70.1, default options. Flags BigInt/Boolean/Number/Object/St
 ### `typescript-eslint-prefer-for-of`
 
 Flags a `for` loop that declares one non-const index starting at 0, runs while the index is below an array's `length`, steps it by one, and uses the index in its body only to read elements of that same array.
+
+### `typescript-eslint-class-literal-property-style`
+
+Default option `fields`. Flags class getters (not `override`) whose first statement returns a literal, unless the class body has a setter of the same member name (typescript-eslint's getStaticMemberAccessValue: computed keys folded, constant bindings followed, `#a` same as `a`). Getters in object literals are not checked, as upstream checks class members only. A getter whose computed name has no static value is reported; a setter with none never pairs. The message tells the agent to check for subclasses that override the getter as an accessor, which a field would break (TS2611); the rule cannot see other classes, so it reports these getters as upstream does.
+
+### `typescript-eslint-class-methods-use-this`
+
+Flags a non-static, non-constructor class method, or a class field initialized with a function or arrow, whose own body never uses `this` or `super`. Nested functions, static blocks and nested class field initializers have their own `this`; arrows share it. A `this` parameter (`method(this: void)`) declares the receiver's type and is no use of `this`; a default value that reads `this` is. Default options.
+
+### `typescript-eslint-consistent-generic-constructors`
+
+Covers variable declarators, class fields and parameter defaults initialized with `new Name(...)`, default mode `constructor`. The nine typed-array built-ins are excepted when the name is the global, as upstream's isReferenceToGlobalFunction decides: a local class, variable, import or parameter of that name is checked like any other. The fix rebuilds the declaration from its parts, so whitespace and comments inside it are not kept, and a declaration with modifiers is not fixed. typescript-eslint skips the constructor-mode report when the `isolatedDeclarations` parser option is set; Rerail has no such fact, so the port reports it and its message says to keep the annotation under isolatedDeclarations (TS9010). Divergence: `new` followed by a line break, which the TypeScript grammar reads as an identifier (`rerail-unknown`).
+
+### `typescript-eslint-consistent-indexed-object-style`
+
+Default option `record`. Flags an interface or object type literal whose only member is an index signature, and a mapped type that does not use its key and whose constraint is not a bare `keyof`, unless the type refers back to the type alias or interface that declares it (directly or through other local type declarations). Fixes to a `Record` type where upstream does; no fix when a comment would be lost, for `-readonly`, for an interface with `extends` or under `export default`, when an interface's type parameter holds a comma and the parameters are not already joined by `, ` on one line (upstream re-joins them), or when the key or value type continues on a line indented with spaces or holds a multi-line string (the engine re-indents multi-line text, upstream copies it as is). Divergences: files with an index signature or mapped type that has no type, which the TypeScript grammar does not parse (`rerail-unknown`).
+
+### `typescript-eslint-consistent-type-imports`
+
+Default options (`prefer: 'type-imports'`, `disallowTypeAnnotations: true`). Flags an import statement, at its start, once, when some of its bindings are used and every used one is used only as a type: in a type position, as the head of a qualified type name, in `typeof`, in a computed key of a property signature or in `export type { … }`. Imports already written `import type` are skipped. Files with decorators are checked: upstream skips them only under `emitDecoratorMetadata` with `experimentalDecorators`, which the rule cannot see and which are off by default. Also flags `import('…')` used as a type annotation, at `import`.
+
+### `typescript-eslint-explicit-function-return-type`
+
+Allowances with defaults: typed function expressions, higher-order functions and direct const assertions in arrows on; expressions, IIFEs, void-started concise arrows, functions without type parameters and allowed names off. Reports at the function head: a method's or field's start for methods and fields, and for an `accessor` field the function's own head (the arrow's `=>`, or `function` or `async`), as upstream's getFunctionHeadLoc does. An `accessor` field's type annotation does not make its function typed, and allowed names do not cover it.
+
+### `typescript-eslint-member-ordering`
+
+Default options only: a member is flagged when an earlier member of the same body belongs to a group ranked later in typescript-eslint's default member-type order. The document compares member kind (signature, field, static block, constructor, getter, setter, method), then group, then accessibility (public, protected, private, `#private`), rather than writing out upstream's 117-entry order rank by rank.
+
+### `typescript-eslint-method-signature-style`
+
+Default option `property`. Flags method signatures in interfaces and type literals only; a class's overload signatures and the members of a `declare class` are not method signatures in upstream's syntax tree. Fixes to a function property except inside a module declaration, when the return type mentions `this`, or when the key is overloaded (typescript-eslint's merged-overload fix is not reproduced).
+
+### `typescript-eslint-no-explicit-any`
+
+Flags every `any` type. Default options (`ignoreRestArgs` and `fixToUnknown` off): no fix, as upstream only suggests one. With `fixToUnknown`, `keyof any` is fixed to `PropertyKey`, a rest parameter's `any` to `unknown[]` and any other `any` to `unknown`; with `ignoreRestArgs`, a rest parameter's `any` is not flagged.
+
+### `typescript-eslint-no-invalid-this`
+
+Standalone port (extends ESLint's no-invalid-this). Flags `this` whose nearest non-arrow function scope is the module top level or a function ESLint's isDefaultThisBinding treats as called without a receiver. Strictness and the global `this` come from the case's language options: a script's top level and a non-strict function's `this` are valid. `this` in a type predicate (`this is T`, `asserts this`) is no use of `this`; `typeof this` is.
+
+### `typescript-eslint-no-shadow`
+
+Default options. Flags a declaration whose name is already declared in an enclosing scope: the nearest enclosing scope declaring the name is found structurally (eslint-scope's scope boundaries, `var` hoisting to the function), and upstream's default exemptions apply: a type shadowing a value or a value shadowing a type (or a type-only import), parameters of signatures without a body, a name declared only by function signatures without a body (`declare function f(): void`), a later declaration that is not a function or type (hoist: functions-and-types), a function or class expression named after the variable it initializes, a static method's type parameter shadowing its class's, a module augmentation merging a type-only import, and `declare global` blocks.
+
+### `typescript-eslint-no-unused-vars`
+
+Reported where ESLint reports (last write from the variable's own function, else its first definition). Usedness, exports, `/* exported */` comments and report anchors come from the engine's per-variable references (`binds`, `resolves.write: "last"`); options filter on them. The head of a qualified type name (`ns.T`) reads only types, so it marks an import or namespace used and never a parameter of the same name; members declared with `declare` directly in a `declare module` body count as used. An unused `/* global */` name with no declaration is reported at the name in the first comment that declares it (first three names of a comment). Divergences (`rerail-unknown`): an index signature or mapped type with no type, and `using`/`await using` declarations, which the TypeScript grammar does not read.
+
+### `typescript-eslint-no-useless-constructor`
+
+Exempt: private/protected constructors, `public` constructors in derived classes, parameter properties and decorated parameters. Flags an empty-body constructor in a class without extends, or one whose body is only `super(...)` passing its own parameters through unchanged (ESLint isPassingThrough for any number of simple parameters: positional name match, spread of a rest parameter, or one spread of `arguments`). The parameters compared are the nearest constructor's, not those of a method or constructor the class expression sits in.
+
+### `typescript-eslint-parameter-properties`
+
+Default options, `class-property` mode: flags constructor parameter properties (an accessibility modifier, `readonly` or `override`) whose modifiers are not in the (empty) allow list.
+
+### `typescript-eslint-prefer-function-type`
+
+Applies to a type literal, or an interface with no supertype other than Function, whose only member is a call or construct signature with a return type; in such an interface the first `this` type (outside nested literals) is reported instead. Fixes cover call signatures without comments; checks are split by fix shape.
+
+### `typescript-eslint-unified-signatures`
+
+Compares each overload with every earlier overload of the same name in the same container, pairing parameters by position for any number of parameters, requiring equal return types and type parameters. As upstream: only class declarations are class containers (an anonymous `export default class` too; a class expression's overloads are not compared), anonymous `export default function` overloads share one name, and so do computed keys that are neither an identifier nor a literal. `export declare function` overloads count, and an interface method signature is reported at its start. Not ported: the outer type-parameter usage test. With three or more overloads of a name, the message names the line of the other overload ESLint picks (a `line` transform).

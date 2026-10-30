@@ -119,6 +119,9 @@ rules:
   "@typescript-eslint/no-empty-object-type":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-explicit-any":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
   "@typescript-eslint/no-extra-non-null-assertion":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }

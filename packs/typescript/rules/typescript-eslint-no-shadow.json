@@ -1,0 +1,2692 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-shadow",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Don't declare a TypeScript variable, function or type with a name already declared in an enclosing scope; the inner one hides the outer.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "scope": {
+            "any": [
+              {
+                "matches": "fscope"
+              },
+              {
+                "kind": "switch_body"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "for_in_statement"
+              },
+              {
+                "kind": "catch_clause"
+              },
+              {
+                "kind": "enum_declaration"
+              },
+              {
+                "kind": "method_signature"
+              },
+              {
+                "kind": "abstract_method_signature"
+              },
+              {
+                "kind": "call_signature"
+              },
+              {
+                "kind": "construct_signature"
+              },
+              {
+                "kind": "function_type"
+              },
+              {
+                "kind": "constructor_type"
+              },
+              {
+                "kind": "index_signature"
+              },
+              {
+                "kind": "function_signature"
+              },
+              {
+                "kind": "interface_declaration"
+              },
+              {
+                "kind": "type_alias_declaration"
+              },
+              {
+                "kind": "conditional_type"
+              },
+              {
+                "kind": "class_declaration"
+              },
+              {
+                "kind": "abstract_class_declaration"
+              },
+              {
+                "kind": "class"
+              },
+              {
+                "kind": "statement_block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      },
+                      {
+                        "kind": "class_static_block"
+                      },
+                      {
+                        "kind": "internal_module"
+                      },
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "kind": "ambient_declaration"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "fscope": {
+            "any": [
+              {
+                "kind": "program"
+              },
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              },
+              {
+                "kind": "class_static_block"
+              },
+              {
+                "kind": "internal_module"
+              },
+              {
+                "kind": "module"
+              },
+              {
+                "kind": "ambient_declaration",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "statement_block"
+                }
+              }
+            ]
+          },
+          "vardecl": {
+            "inside": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "variable_declarator"
+                  },
+                  {
+                    "kind": "for_in_statement"
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "kind": "variable_declarator",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "variable_declaration"
+                  }
+                },
+                {
+                  "kind": "for_in_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^var$"
+                  }
+                }
+              ]
+            }
+          },
+          "mark": {
+            "pattern": "$M",
+            "all": [
+              {
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "import_statement",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^type$",
+                            "not": {
+                              "kind": "identifier"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "import_specifier",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^type$",
+                            "not": {
+                              "kind": "identifier"
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "pattern": "$TI"
+                  },
+                  {
+                    "regex": "^"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "import_statement",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "source",
+                        "pattern": "$IS"
+                      }
+                    }
+                  },
+                  {
+                    "regex": "^"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "type_parameters",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "class_declaration"
+                            },
+                            {
+                              "kind": "abstract_class_declaration"
+                            },
+                            {
+                              "kind": "class"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "pattern": "$CTP"
+                  },
+                  {
+                    "regex": "^"
+                  }
+                ]
+              }
+            ]
+          },
+          "self-mark": {
+            "any": [
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "class"
+              }
+            ],
+            "pattern": "$MV",
+            "has": {
+              "field": "name",
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "type_identifier"
+                },
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                }
+              ],
+              "pattern": "$N",
+              "matches": "mark"
+            }
+          },
+          "declares": {
+            "all": [
+              {
+                "matches": "valmark-free-declares"
+              },
+              {
+                "matches": "valmark"
+              }
+            ]
+          },
+          "valmark-free-declares": {
+            "any": [
+              {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "export_statement"
+                        },
+                        {
+                          "kind": "expression_statement"
+                        },
+                        {
+                          "kind": "lexical_declaration"
+                        },
+                        {
+                          "kind": "variable_declaration"
+                        },
+                        {
+                          "kind": "variable_declarator"
+                        },
+                        {
+                          "kind": "object_pattern"
+                        },
+                        {
+                          "kind": "array_pattern"
+                        },
+                        {
+                          "kind": "pair_pattern"
+                        },
+                        {
+                          "kind": "object_assignment_pattern"
+                        },
+                        {
+                          "kind": "assignment_pattern"
+                        },
+                        {
+                          "kind": "rest_pattern"
+                        },
+                        {
+                          "kind": "formal_parameters"
+                        },
+                        {
+                          "kind": "required_parameter"
+                        },
+                        {
+                          "kind": "optional_parameter"
+                        },
+                        {
+                          "kind": "type_parameters"
+                        },
+                        {
+                          "kind": "type_parameter"
+                        },
+                        {
+                          "kind": "import_statement"
+                        },
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "named_imports"
+                        },
+                        {
+                          "kind": "import_specifier"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        },
+                        {
+                          "kind": "import_require_clause"
+                        },
+                        {
+                          "kind": "import_alias"
+                        },
+                        {
+                          "kind": "enum_body"
+                        },
+                        {
+                          "kind": "enum_assignment"
+                        },
+                        {
+                          "kind": "switch_case"
+                        },
+                        {
+                          "kind": "switch_default"
+                        },
+                        {
+                          "kind": "mapped_type_clause"
+                        },
+                        {
+                          "kind": "statement_block",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "function_declaration"
+                              },
+                              {
+                                "kind": "generator_function_declaration"
+                              },
+                              {
+                                "kind": "function_expression"
+                              },
+                              {
+                                "kind": "generator_function"
+                              },
+                              {
+                                "kind": "arrow_function"
+                              },
+                              {
+                                "kind": "method_definition"
+                              },
+                              {
+                                "kind": "class_static_block"
+                              },
+                              {
+                                "kind": "internal_module"
+                              },
+                              {
+                                "kind": "module"
+                              },
+                              {
+                                "kind": "ambient_declaration"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "kind": "ambient_declaration",
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "statement_block"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "type_identifier"
+                            },
+                            {
+                              "kind": "property_identifier"
+                            },
+                            {
+                              "kind": "shorthand_property_identifier_pattern"
+                            }
+                          ],
+                          "pattern": "$N"
+                        },
+                        {
+                          "any": [
+                            {
+                              "binds": {
+                                "form": [
+                                  "parameter",
+                                  "except",
+                                  "import",
+                                  "typeParameter"
+                                ]
+                              }
+                            },
+                            {
+                              "binds": {
+                                "form": [
+                                  "assignment",
+                                  "for"
+                                ]
+                              },
+                              "not": {
+                                "matches": "vardecl"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "matches": "mark"
+                        },
+                        {
+                          "any": [
+                            {
+                              "not": {
+                                "kind": "type_identifier"
+                              },
+                              "pattern": "$MV"
+                            },
+                            {
+                              "regex": "^"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "function_declaration"
+                            },
+                            {
+                              "kind": "generator_function_declaration"
+                            },
+                            {
+                              "kind": "class_declaration"
+                            },
+                            {
+                              "kind": "abstract_class_declaration"
+                            },
+                            {
+                              "kind": "enum_declaration"
+                            },
+                            {
+                              "kind": "function_signature"
+                            },
+                            {
+                              "kind": "interface_declaration"
+                            },
+                            {
+                              "kind": "type_alias_declaration"
+                            },
+                            {
+                              "kind": "internal_module"
+                            },
+                            {
+                              "kind": "module"
+                            }
+                          ]
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "kind": "type_identifier"
+                                  },
+                                  {
+                                    "kind": "property_identifier"
+                                  },
+                                  {
+                                    "kind": "shorthand_property_identifier_pattern"
+                                  }
+                                ],
+                                "pattern": "$N",
+                                "matches": "mark"
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "identifier",
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "type_identifier"
+                                    },
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "shorthand_property_identifier_pattern"
+                                    }
+                                  ],
+                                  "pattern": "$N",
+                                  "matches": "mark"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "not": {
+                            "matches": "var-before"
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "any": [
+                                {
+                                  "kind": "function_declaration"
+                                },
+                                {
+                                  "kind": "generator_function_declaration"
+                                },
+                                {
+                                  "kind": "interface_declaration"
+                                },
+                                {
+                                  "kind": "type_alias_declaration"
+                                }
+                              ],
+                              "pattern": "$HK"
+                            },
+                            {
+                              "regex": "^"
+                            }
+                          ]
+                        },
+                        {
+                          "any": [
+                            {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "interface_declaration"
+                                  },
+                                  {
+                                    "kind": "type_alias_declaration"
+                                  }
+                                ]
+                              },
+                              "pattern": "$MV"
+                            },
+                            {
+                              "regex": "^"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "program"
+                      },
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      },
+                      {
+                        "kind": "class_static_block"
+                      },
+                      {
+                        "kind": "internal_module"
+                      },
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "kind": "ambient_declaration",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "statement_block"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "variable_declaration"
+                        },
+                        {
+                          "kind": "for_in_statement",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^var$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "program"
+                          },
+                          {
+                            "kind": "function_declaration"
+                          },
+                          {
+                            "kind": "generator_function_declaration"
+                          },
+                          {
+                            "kind": "function_expression"
+                          },
+                          {
+                            "kind": "generator_function"
+                          },
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "method_definition"
+                          },
+                          {
+                            "kind": "class_static_block"
+                          },
+                          {
+                            "kind": "internal_module"
+                          },
+                          {
+                            "kind": "module"
+                          },
+                          {
+                            "kind": "ambient_declaration",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "statement_block"
+                            }
+                          }
+                        ]
+                      },
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "type_identifier"
+                        },
+                        {
+                          "kind": "property_identifier"
+                        },
+                        {
+                          "kind": "shorthand_property_identifier_pattern"
+                        }
+                      ],
+                      "pattern": "$N",
+                      "binds": {
+                        "form": [
+                          "assignment",
+                          "for"
+                        ]
+                      },
+                      "all": [
+                        {
+                          "matches": "vardecl"
+                        },
+                        {
+                          "matches": "mark"
+                        },
+                        {
+                          "pattern": "$MV"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "conditional_type",
+                "all": [
+                  {
+                    "has": {
+                      "field": "right",
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "matches": "infer"
+                        },
+                        {
+                          "has": {
+                            "stopBy": {
+                              "kind": "conditional_type"
+                            },
+                            "matches": "infer"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "left",
+                          "stopBy": "neighbor",
+                          "matches": "holds-h"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "right",
+                          "stopBy": "neighbor",
+                          "matches": "holds-h"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "consequence",
+                          "stopBy": "neighbor",
+                          "matches": "holds-h"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "self-mark"
+              }
+            ]
+          },
+          "var-n": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "type_identifier"
+                  },
+                  {
+                    "kind": "property_identifier"
+                  },
+                  {
+                    "kind": "shorthand_property_identifier_pattern"
+                  }
+                ],
+                "pattern": "$N",
+                "binds": {
+                  "form": [
+                    "assignment",
+                    "for"
+                  ]
+                },
+                "matches": "vardecl"
+              },
+              {
+                "not": {
+                  "matches": "fscope"
+                },
+                "has": {
+                  "stopBy": {
+                    "matches": "fscope"
+                  },
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "type_identifier"
+                    },
+                    {
+                      "kind": "property_identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ],
+                  "pattern": "$N",
+                  "binds": {
+                    "form": [
+                      "assignment",
+                      "for"
+                    ]
+                  },
+                  "matches": "vardecl"
+                }
+              }
+            ]
+          },
+          "var-before": {
+            "any": [
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "var-n"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "program"
+                    },
+                    {
+                      "kind": "statement_block",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "function_declaration"
+                          },
+                          {
+                            "kind": "generator_function_declaration"
+                          },
+                          {
+                            "kind": "function_expression"
+                          },
+                          {
+                            "kind": "generator_function"
+                          },
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "method_definition"
+                          },
+                          {
+                            "kind": "class_static_block"
+                          },
+                          {
+                            "kind": "internal_module"
+                          },
+                          {
+                            "kind": "module"
+                          },
+                          {
+                            "kind": "ambient_declaration"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "export_statement"
+                    },
+                    {
+                      "kind": "expression_statement"
+                    },
+                    {
+                      "kind": "ambient_declaration"
+                    }
+                  ],
+                  "matches": "var-before"
+                }
+              }
+            ]
+          },
+          "walk": {
+            "inside": {
+              "stopBy": "end",
+              "all": [
+                {
+                  "matches": "scope"
+                },
+                {
+                  "matches": "declares"
+                }
+              ]
+            }
+          },
+          "own": {
+            "inside": {
+              "stopBy": {
+                "matches": "scope"
+              },
+              "pattern": "$H",
+              "all": [
+                {
+                  "matches": "scope"
+                },
+                {
+                  "any": [
+                    {
+                      "matches": "self-mark"
+                    },
+                    {
+                      "matches": "walk"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "own-var": {
+            "inside": {
+              "stopBy": {
+                "matches": "fscope"
+              },
+              "pattern": "$H",
+              "all": [
+                {
+                  "matches": "fscope"
+                },
+                {
+                  "any": [
+                    {
+                      "matches": "self-mark"
+                    },
+                    {
+                      "matches": "walk"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "infer": {
+            "kind": "infer_type",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "type_identifier"
+                },
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                }
+              ],
+              "pattern": "$N",
+              "matches": "mark"
+            }
+          },
+          "own-infer": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "infer_type",
+              "inside": {
+                "stopBy": {
+                  "matches": "scope",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "function_type"
+                      },
+                      {
+                        "kind": "constructor_type"
+                      },
+                      {
+                        "kind": "call_signature"
+                      },
+                      {
+                        "kind": "construct_signature"
+                      },
+                      {
+                        "kind": "method_signature"
+                      },
+                      {
+                        "kind": "index_signature"
+                      }
+                    ]
+                  }
+                },
+                "kind": "conditional_type",
+                "pattern": "$H",
+                "matches": "walk",
+                "any": [
+                  {
+                    "has": {
+                      "field": "left",
+                      "stopBy": "neighbor",
+                      "matches": "infer-n"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "right",
+                      "stopBy": "neighbor",
+                      "matches": "infer-n"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "consequence",
+                      "stopBy": "neighbor",
+                      "matches": "infer-n"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "infer-n": {
+            "any": [
+              {
+                "kind": "infer_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "pattern": "$N"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "infer_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "pattern": "$N"
+                  }
+                }
+              }
+            ]
+          },
+          "holds-h": {
+            "any": [
+              {
+                "pattern": "$HH",
+                "compare": {
+                  "left": "HH",
+                  "op": "eq",
+                  "right": "H",
+                  "text": "node"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "pattern": "$HH",
+                  "compare": {
+                    "left": "HH",
+                    "op": "eq",
+                    "right": "H",
+                    "text": "node"
+                  }
+                }
+              }
+            ]
+          },
+          "valmark": {
+            "any": [
+              {
+                "compare": {
+                  "left": "MV",
+                  "op": "eq",
+                  "right": "MV",
+                  "text": "node"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "matches": "scope"
+                  },
+                  "pattern": "$VAL",
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "type_identifier"
+                            },
+                            {
+                              "kind": "property_identifier"
+                            },
+                            {
+                              "kind": "shorthand_property_identifier_pattern"
+                            }
+                          ],
+                          "pattern": "$N"
+                        },
+                        {
+                          "not": {
+                            "kind": "type_identifier"
+                          }
+                        },
+                        {
+                          "binds": {
+                            "form": [
+                              "parameter",
+                              "except",
+                              "import",
+                              "typeParameter",
+                              "assignment",
+                              "for"
+                            ]
+                          }
+                        },
+                        {
+                          "not": {
+                            "matches": "vardecl"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "function_declaration"
+                        },
+                        {
+                          "kind": "generator_function_declaration"
+                        },
+                        {
+                          "kind": "class_declaration"
+                        },
+                        {
+                          "kind": "abstract_class_declaration"
+                        },
+                        {
+                          "kind": "enum_declaration"
+                        },
+                        {
+                          "kind": "function_signature"
+                        },
+                        {
+                          "kind": "internal_module"
+                        },
+                        {
+                          "kind": "module"
+                        }
+                      ],
+                      "has": {
+                        "field": "name",
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "type_identifier"
+                              },
+                              {
+                                "kind": "property_identifier"
+                              },
+                              {
+                                "kind": "shorthand_property_identifier_pattern"
+                              }
+                            ],
+                            "pattern": "$N"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "identifier",
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "type_identifier"
+                                },
+                                {
+                                  "kind": "property_identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier_pattern"
+                                }
+                              ],
+                              "pattern": "$N"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "fscope",
+                "has": {
+                  "stopBy": {
+                    "matches": "fscope"
+                  },
+                  "pattern": "$VAL",
+                  "all": [
+                    {
+                      "kind": "identifier",
+                      "pattern": "$N"
+                    },
+                    {
+                      "binds": {
+                        "form": [
+                          "assignment",
+                          "for"
+                        ]
+                      }
+                    },
+                    {
+                      "matches": "vardecl"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  },
+                  {
+                    "kind": "class"
+                  }
+                ],
+                "pattern": "$VAL",
+                "has": {
+                  "field": "name",
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "type_identifier"
+                    },
+                    {
+                      "kind": "property_identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ],
+                  "pattern": "$N"
+                }
+              },
+              {
+                "regex": "^"
+              }
+            ]
+          },
+          "ambient": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "variable_declarator",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "lexical_declaration"
+                      },
+                      {
+                        "kind": "variable_declaration"
+                      }
+                    ],
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "ambient_declaration"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "nested_identifier"
+                        },
+                        {
+                          "kind": "member_expression"
+                        }
+                      ]
+                    }
+                  },
+                  "any": [
+                    {
+                      "kind": "class_declaration"
+                    },
+                    {
+                      "kind": "abstract_class_declaration"
+                    },
+                    {
+                      "kind": "enum_declaration"
+                    },
+                    {
+                      "kind": "internal_module"
+                    },
+                    {
+                      "kind": "module"
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "ambient_declaration"
+                  }
+                }
+              }
+            ]
+          },
+          "type-or-value": {
+            "any": [
+              {
+                "binds": {
+                  "redefines": {
+                    "every": true,
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "interface_declaration"
+                        },
+                        {
+                          "kind": "type_alias_declaration"
+                        },
+                        {
+                          "kind": "type_parameter"
+                        },
+                        {
+                          "kind": "infer_type"
+                        },
+                        {
+                          "kind": "mapped_type_clause"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "matches": "istype"
+              },
+              {
+                "not": {
+                  "binds": {
+                    "redefines": {
+                      "every": true,
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "interface_declaration"
+                          },
+                          {
+                            "kind": "type_alias_declaration"
+                          },
+                          {
+                            "kind": "type_parameter"
+                          },
+                          {
+                            "kind": "infer_type"
+                          },
+                          {
+                            "kind": "mapped_type_clause"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                "matches": "isval"
+              }
+            ]
+          },
+          "isval": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "compare": {
+                      "left": "MV",
+                      "op": "eq",
+                      "right": "MV",
+                      "text": "node"
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "VAL",
+                      "op": "eq",
+                      "right": "VAL",
+                      "text": "node"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "compare": {
+                    "left": "TI",
+                    "op": "eq",
+                    "right": "TI",
+                    "text": "node"
+                  }
+                }
+              }
+            ]
+          },
+          "istype": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "not": {
+                      "compare": {
+                        "left": "MV",
+                        "op": "eq",
+                        "right": "MV",
+                        "text": "node"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "compare": {
+                        "left": "VAL",
+                        "op": "eq",
+                        "right": "VAL",
+                        "text": "node"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "compare": {
+                  "left": "TI",
+                  "op": "eq",
+                  "right": "TI",
+                  "text": "node"
+                }
+              }
+            ]
+          },
+          "ism": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "type_identifier"
+              },
+              {
+                "kind": "property_identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ],
+            "pattern": "$Q",
+            "compare": {
+              "left": "Q",
+              "op": "eq",
+              "right": "M",
+              "text": "node"
+            }
+          },
+          "declm": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "class_declaration"
+              },
+              {
+                "kind": "abstract_class_declaration"
+              },
+              {
+                "kind": "enum_declaration"
+              },
+              {
+                "kind": "function_signature"
+              },
+              {
+                "kind": "interface_declaration"
+              },
+              {
+                "kind": "type_alias_declaration"
+              },
+              {
+                "kind": "internal_module"
+              },
+              {
+                "kind": "module"
+              }
+            ],
+            "has": {
+              "field": "name",
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "type_identifier"
+                    },
+                    {
+                      "kind": "property_identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ],
+                  "matches": "ism"
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "matches": "ism"
+                  }
+                }
+              ]
+            }
+          },
+          "prev": {
+            "any": [
+              {
+                "matches": "ism"
+              },
+              {
+                "matches": "declm"
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "program"
+                      },
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      },
+                      {
+                        "kind": "class_static_block"
+                      },
+                      {
+                        "kind": "internal_module"
+                      },
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "kind": "ambient_declaration",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "statement_block"
+                        }
+                      }
+                    ]
+                  },
+                  "any": [
+                    {
+                      "matches": "ism"
+                    },
+                    {
+                      "matches": "declm"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "tdz-ok": {
+            "any": [
+              {
+                "compare": {
+                  "left": "HK",
+                  "op": "eq",
+                  "right": "HK",
+                  "text": "node"
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "prev"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "prev"
+                  }
+                }
+              }
+            ]
+          },
+          "init-of-m": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "stopBy": "neighbor",
+                    "matches": "ism"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "any": [
+                    {
+                      "kind": "required_parameter"
+                    },
+                    {
+                      "kind": "optional_parameter"
+                    }
+                  ],
+                  "has": {
+                    "field": "pattern",
+                    "stopBy": "neighbor",
+                    "matches": "ism"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "any": [
+                    {
+                      "kind": "assignment_pattern"
+                    },
+                    {
+                      "kind": "object_assignment_pattern"
+                    }
+                  ],
+                  "has": {
+                    "field": "left",
+                    "stopBy": "neighbor",
+                    "matches": "ism"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "init-of-m"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "binary_expression",
+                  "matches": "init-of-m",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^(\\|\\||&&|\\?\\?)$"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "consequence",
+                  "kind": "ternary_expression",
+                  "matches": "init-of-m"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "alternative",
+                  "kind": "ternary_expression",
+                  "matches": "init-of-m"
+                }
+              }
+            ]
+          },
+          "shadow": {
+            "all": [
+              {
+                "not": {
+                  "binds": {
+                    "redefines": {}
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "ambient_declaration",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "statement_block"
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "binds": {
+                          "form": "definition"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "function_expression"
+                            },
+                            {
+                              "kind": "generator_function"
+                            },
+                            {
+                              "kind": "class"
+                            }
+                          ],
+                          "pattern": "$H",
+                          "matches": "walk"
+                        }
+                      },
+                      {
+                        "matches": "isval"
+                      },
+                      {
+                        "matches": "tdz-ok"
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "function_expression"
+                              },
+                              {
+                                "kind": "generator_function"
+                              },
+                              {
+                                "kind": "class"
+                              }
+                            ],
+                            "matches": "init-of-m"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "binds": {
+                          "form": "definition"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "interface_declaration"
+                            },
+                            {
+                              "kind": "type_alias_declaration"
+                            }
+                          ],
+                          "matches": "own"
+                        }
+                      },
+                      {
+                        "matches": "type-or-value"
+                      },
+                      {
+                        "matches": "tdz-ok"
+                      },
+                      {
+                        "not": {
+                          "all": [
+                            {
+                              "compare": {
+                                "left": "TI",
+                                "op": "eq",
+                                "right": "TI",
+                                "text": "node"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "any": [
+                                  {
+                                    "kind": "interface_declaration"
+                                  },
+                                  {
+                                    "kind": "type_alias_declaration"
+                                  }
+                                ],
+                                "inside": {
+                                  "stopBy": {
+                                    "matches": "scope"
+                                  },
+                                  "kind": "module",
+                                  "has": {
+                                    "field": "name",
+                                    "stopBy": "neighbor",
+                                    "kind": "string",
+                                    "pattern": "$MS"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "compare": {
+                                "left": "IS",
+                                "op": "eq",
+                                "right": "MS",
+                                "text": "value"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "binds": {
+                          "form": "definition"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "function_declaration"
+                                },
+                                {
+                                  "kind": "generator_function_declaration"
+                                },
+                                {
+                                  "kind": "class_declaration"
+                                },
+                                {
+                                  "kind": "abstract_class_declaration"
+                                },
+                                {
+                                  "kind": "enum_declaration"
+                                },
+                                {
+                                  "kind": "function_signature"
+                                }
+                              ],
+                              "matches": "own"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "any": [
+                                    {
+                                      "kind": "nested_identifier"
+                                    },
+                                    {
+                                      "kind": "member_expression"
+                                    }
+                                  ]
+                                }
+                              },
+                              "any": [
+                                {
+                                  "kind": "internal_module"
+                                },
+                                {
+                                  "kind": "module"
+                                }
+                              ],
+                              "matches": "own"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "matches": "isval"
+                      },
+                      {
+                        "matches": "tdz-ok"
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "type_identifier"
+                      },
+                      {
+                        "binds": {
+                          "form": "typeParameter"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "matches": "own-infer"
+                          },
+                          {
+                            "matches": "own"
+                          }
+                        ]
+                      },
+                      {
+                        "matches": "type-or-value"
+                      },
+                      {
+                        "matches": "tdz-ok"
+                      },
+                      {
+                        "not": {
+                          "all": [
+                            {
+                              "compare": {
+                                "left": "CTP",
+                                "op": "eq",
+                                "right": "CTP",
+                                "text": "node"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "kind": "type_parameter",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameters",
+                                  "inside": {
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "kind": "method_definition"
+                                      },
+                                      {
+                                        "kind": "method_signature"
+                                      }
+                                    ],
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^static$"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "binds": {
+                          "form": [
+                            "assignment",
+                            "for"
+                          ]
+                        }
+                      },
+                      {
+                        "matches": "vardecl"
+                      },
+                      {
+                        "matches": "own-var"
+                      },
+                      {
+                        "matches": "isval"
+                      },
+                      {
+                        "matches": "tdz-ok"
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "binds": {
+                              "form": [
+                                "parameter",
+                                "except",
+                                "import"
+                              ]
+                            }
+                          },
+                          {
+                            "kind": "property_identifier",
+                            "binds": {
+                              "form": "typeParameter"
+                            }
+                          },
+                          {
+                            "binds": {
+                              "form": [
+                                "assignment",
+                                "for"
+                              ]
+                            },
+                            "not": {
+                              "matches": "vardecl"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "stopBy": {
+                              "matches": "scope"
+                            },
+                            "any": [
+                              {
+                                "kind": "method_signature"
+                              },
+                              {
+                                "kind": "abstract_method_signature"
+                              },
+                              {
+                                "kind": "call_signature"
+                              },
+                              {
+                                "kind": "construct_signature"
+                              },
+                              {
+                                "kind": "function_type"
+                              },
+                              {
+                                "kind": "constructor_type"
+                              },
+                              {
+                                "kind": "index_signature"
+                              },
+                              {
+                                "kind": "function_signature"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "matches": "own"
+                      },
+                      {
+                        "matches": "isval"
+                      },
+                      {
+                        "matches": "tdz-ok"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "declare-function-only": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "function_signature"
+                }
+              },
+              {
+                "binds": {
+                  "redefines": {
+                    "every": true,
+                    "site": {
+                      "kind": "function_signature"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "shadowing-name",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "type_identifier"
+              },
+              {
+                "kind": "property_identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ],
+            "pattern": "$N",
+            "binds": {},
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "name",
+                        "kind": "variable_declarator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "type",
+                          "kind": "type_annotation"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "pattern",
+                        "kind": "required_parameter",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "type",
+                          "kind": "type_annotation"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "pattern",
+                        "kind": "optional_parameter"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "parameter",
+                        "kind": "catch_clause",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "type",
+                          "kind": "type_annotation"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "shadow"
+              },
+              {
+                "not": {
+                  "matches": "declare-function-only"
+                }
+              }
+            ]
+          },
+          "file": {
+            "declaration": false
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-shadow",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "shadowing-name-in-declaration-file",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "type_identifier"
+              },
+              {
+                "kind": "property_identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ],
+            "pattern": "$N",
+            "binds": {},
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "name",
+                        "kind": "variable_declarator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "type",
+                          "kind": "type_annotation"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "pattern",
+                        "kind": "required_parameter",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "type",
+                          "kind": "type_annotation"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "pattern",
+                        "kind": "optional_parameter"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "parameter",
+                        "kind": "catch_clause",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "type",
+                          "kind": "type_annotation"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "matches": "ambient"
+                }
+              },
+              {
+                "matches": "shadow"
+              },
+              {
+                "not": {
+                  "matches": "declare-function-only"
+                }
+              }
+            ]
+          },
+          "file": {
+            "declaration": true
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-shadow",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "shadowing-typed-variable",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "variable_declarator",
+            "regex": "^(?<S>(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|<(?:=>|<(?:=>|<(?:=>|[^<>])*>|[^<>])*>|[^<>])*>|[^=]|=>)*?)\\s*(?:=[^>]|$)",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "kind": "type_annotation"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "identifier",
+                  "pattern": "$N",
+                  "binds": {},
+                  "all": [
+                    {
+                      "matches": "shadow"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "file": {
+            "declaration": false
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.S",
+        "code": "@typescript-eslint/no-shadow",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "shadowing-typed-variable-in-declaration-file",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "variable_declarator",
+            "regex": "^(?<S>(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|<(?:=>|<(?:=>|<(?:=>|[^<>])*>|[^<>])*>|[^<>])*>|[^=]|=>)*?)\\s*(?:=[^>]|$)",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "kind": "type_annotation"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "identifier",
+                  "pattern": "$N",
+                  "binds": {},
+                  "all": [
+                    {
+                      "not": {
+                        "matches": "ambient"
+                      }
+                    },
+                    {
+                      "matches": "shadow"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "file": {
+            "declaration": true
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.S",
+        "code": "@typescript-eslint/no-shadow",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "shadowing-typed-parameter",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "required_parameter",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "kind": "type_annotation"
+                }
+              },
+              {
+                "kind": "optional_parameter"
+              }
+            ],
+            "regex": "^(?:@[\\p{L}\\p{N}_$.]*(?:<(?:=>|<(?:=>|<(?:=>|[^<>])*>|[^<>])*>|[^<>])*>)?(?:\\((?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|[^()'\"`]|\\((?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|[^()'\"`]|\\((?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|[^()'\"`]|\\((?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|[^()'\"`]|\\((?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|[^()'\"`])*\\))*\\))*\\))*\\))*\\))*(?:\\s|/\\*[\\s\\S]*?\\*/)*)*(?:\\p{L}+\\s+)*?(?<S>[\\p{L}\\p{N}_$]+(?:(?:\\s|/\\*[\\s\\S]*?\\*/)*\\??(?:\\s|/\\*[\\s\\S]*?\\*/)*:(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|<(?:=>|<(?:=>|<(?:=>|[^<>])*>|[^<>])*>|[^<>])*>|[^=]|=>)*?|(?:\\s|/\\*[\\s\\S]*?\\*/)*\\?))\\s*(?:=[^>]|$)",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "pattern",
+                  "kind": "identifier",
+                  "pattern": "$N",
+                  "binds": {},
+                  "matches": "shadow"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.S",
+        "code": "@typescript-eslint/no-shadow",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "shadowing-typed-catch-parameter",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "catch_clause",
+            "regex": "\\(\\s*(?:/\\*[\\s\\S]*?\\*/\\s*)*(?<S>[^)]*?)(?:\\s*/\\*[\\s\\S]*?\\*/)*\\s*\\)",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "kind": "type_annotation"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "parameter",
+                  "kind": "identifier",
+                  "pattern": "$N",
+                  "binds": {},
+                  "matches": "shadow"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.S",
+        "code": "@typescript-eslint/no-shadow",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
