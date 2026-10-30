@@ -9,7 +9,7 @@
  */
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
@@ -264,7 +264,7 @@ describe("validatePack", () => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
         writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", description: "Remove pass statements.", checks: [] });
       },
-      { rules: ["candidates/rules/no-pass.json: format is tempo.policy/v1; a rule document is rerail.policy/v1"] },
+      { rules: ["candidates/rules/no-pass.json: format is tempo.policy/v1; a rule document is rerail.policy/v1 or a conversation rule"] },
     ],
     [
       "a candidate outside a rules/ directory",
@@ -374,12 +374,17 @@ describe("validatePack", () => {
     [
       "a restricted package",
       directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, publishConfig: { access: "restricted" } })),
-      { package: ["package.json: publishConfig.access is restricted; packs are public"] },
+      { package: ["package.json: publishConfig.access is restricted; a published pack is public"] },
     ],
     [
       "a package.json with no publishConfig",
       directory => editJson(join(directory, "package.json"), ({ publishConfig: _publishConfig, ...manifest }) => manifest),
-      { package: ["package.json: publishConfig.access is missing; packs are public"] },
+      { package: ["package.json: publishConfig.access is missing; a published pack is public"] },
+    ],
+    [
+      "private: false in package.json",
+      directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, private: false })),
+      { package: ["package.json: private is false; omit private for a published pack, so there is one way to say it"] },
     ],
     [
       "upstream/ in package.json files",
@@ -550,6 +555,14 @@ describe("validatePack", () => {
     expect(validation.pass).toBe(true);
   });
 
+  it("passes a private pack with no publishConfig: npm never publishes it", async () => {
+    const validation = await validatePack(
+      changed("valid", directory => editJson(join(directory, "package.json"), ({ publishConfig: _publishConfig, ...manifest }) => ({ ...manifest, private: true }))),
+    );
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
+  });
+
   it("passes a rule whatever its message says: messages are left to review", async () => {
     const message = `NEVER keep this pass (pass-statement); Rerail flags it.${" Remove it.".repeat(20)}`;
     const validation = await validatePack(
@@ -561,6 +574,70 @@ describe("validatePack", () => {
     expect(failing(validation)).toEqual({});
     expect(validation.pass).toBe(true);
     expect(validation.rules.find(rule => rule.id === "pass-statement")?.status).toBe("ok");
+  });
+
+  describe("conversation rules", () => {
+    const pushRule = (regex: string): Record<string, unknown> => ({
+      id: "no-fixtures-push",
+      mode: "steer",
+      match: { field: "input.command", regex },
+      sample: { source: "tool:*", boundary: "tool-call" },
+      action: { content: "Leave pack data to the pull request that publishes it." },
+      repeat: { mode: "always" },
+    });
+    const commands = { caught: { text: "npm run fixtures:push" }, passes: { text: "npm run fixtures:pull" } };
+    /** `valid` shipping the conversation rule `no-fixtures-push` with `regex` and `examples`. */
+    const shipping =
+      (regex: string, examples: unknown = commands) =>
+      (directory: string): void => {
+        writeJson(join(directory, "rules", "no-fixtures-push.json"), pushRule(regex));
+        editJson(join(directory, "pack.json"), pack => ({
+          ...pack,
+          rules: [...z.array(z.unknown()).parse(pack.rules), { id: "no-fixtures-push", document: "rules/no-fixtures-push.json", title: "No fixtures push", group: "Valid", examples }],
+        }));
+      };
+
+    it("passes a pack shipping a conversation rule whose caught command fires it and passes command does not", async () => {
+      const validation = await validatePack(changed("valid", shipping("\\bnpm\\s+run\\s+fixtures:push\\b")));
+      expect(failing(validation)).toEqual({});
+      expect(validation.rules.find(rule => rule.id === "no-fixtures-push")).toEqual({ id: "no-fixtures-push", document: "rules/no-fixtures-push.json", status: "ok" });
+    });
+
+    it("passes a conversation rule as a candidate", async () => {
+      const validation = await validatePack(
+        changed("valid", directory => {
+          mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
+          writeJson(join(directory, "candidates", "rules", "no-fixtures-push.json"), pushRule("fixtures:push"));
+        }),
+      );
+      expect(failing(validation)).toEqual({});
+    });
+
+    it("fails a conversation rule whose pattern the engine refuses", async () => {
+      const validation = await validatePack(changed("valid", shipping("(?<=npm )run fixtures:push")));
+      expect(failing(validation).rules).toEqual([expect.stringMatching(/^no-fixtures-push: rules\/no-fixtures-push\.json has a pattern the engine refuses at match\.regex: /u)]);
+      expect(validation.rules.find(rule => rule.id === "no-fixtures-push")?.status).toBe("failed");
+    });
+
+    it("fails a conversation rule that is not one", async () => {
+      const validation = await validatePack(
+        changed("valid", directory => {
+          shipping("fixtures:push")(directory);
+          editJson(join(directory, "rules", "no-fixtures-push.json"), rule => ({ ...rule, mode: "shout" }));
+        }),
+      );
+      expect(failing(validation).rules).toEqual([expect.stringMatching(/^no-fixtures-push: rules\/no-fixtures-push\.json is not a valid conversation rule: rule\.mode /u)]);
+    });
+
+    it("fails a caught command the rule does not fire on, and a passes command it does", async () => {
+      const validation = await validatePack(changed("valid", shipping("fixtures:push", { caught: commands.passes, passes: commands.caught })));
+      expect(failing(validation)).toEqual({
+        examples: [
+          "no-fixtures-push: the caught example does not fire the rule: npm run fixtures:pull",
+          "no-fixtures-push: the passes example fires the rule: npm run fixtures:push",
+        ],
+      });
+    });
   });
 
   describe("check 8: text", () => {
@@ -584,6 +661,21 @@ describe("validatePack", () => {
     it("fails a pack core's generated pack list does not name, when it must be listed", async () => {
       const validation = await validatePack(join(FIXTURES, "valid"), { listed: true });
       expect(failing(validation)).toEqual({ manifest: ["src/engine/catalog/pack-list.generated.ts does not list valid; run npm run generate:packs"] });
+    });
+
+    it("passes a private pack core's generated pack list leaves out, since set-up must not fetch it from npm", async () => {
+      const validation = await validatePack(changed("valid", directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, private: true }))), { listed: true });
+      expect(failing(validation).manifest).toBeUndefined();
+    });
+
+    it("fails a private pack core's generated pack list names", async () => {
+      const directory = join(dirname(changed("valid", () => {})), "python");
+      cpSync(join(FIXTURES, "valid"), directory, { recursive: true });
+      editJson(join(directory, "package.json"), manifest => ({ ...manifest, private: true }));
+      const validation = await validatePack(directory, { listed: true });
+      expect(failing(validation).manifest).toEqual([
+        "src/engine/catalog/pack-list.generated.ts lists python, which is private: set-up would fetch it from npm, where it is never published; run npm run generate:packs",
+      ]);
     });
   });
 

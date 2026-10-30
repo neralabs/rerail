@@ -148,6 +148,24 @@ describe("the installed-pack catalog", () => {
         }),
         reason: new RegExp(`^this Rerail \\(${activeCoreVersion().replace(/\./gu, "\\.")}\\) cannot run its rule ${PYTHON_RULE}, so the pack may need a newer Rerail \\(\`rerail update\` installs the newest\\)\\. The engine says: `, "u"),
       },
+      {
+        name: "a conversation rule whose pattern the engine rejects",
+        breakPack: directory => {
+          writeJson(join(directory, "rules", `${PYTHON_RULE}.json`), {
+            id: PYTHON_RULE,
+            mode: "steer",
+            match: { field: "input.command", regex: "(?<=npm )run" },
+            sample: { source: "tool:*", boundary: "tool-call" },
+            action: { content: "Run it another way." },
+          });
+          // A conversation rule's examples take no path, so the listing drops the code rule's.
+          editJson(directory, "pack.json", pack => ({
+            ...pack,
+            rules: (pack.rules as Json[]).map(({ examples, ...rule }) => (rule.id === PYTHON_RULE || examples === undefined ? rule : { ...rule, examples })),
+          }));
+        },
+        reason: new RegExp(`^this Rerail \\(${activeCoreVersion().replace(/\./gu, "\\.")}\\) cannot run its rule ${PYTHON_RULE}, so the pack may need a newer Rerail \\(\`rerail update\` installs the newest\\)\\. The engine says: match\\.regex `, "u"),
+      },
     ];
 
     for (const { name, breakPack, reason } of cases) {

@@ -43,6 +43,12 @@ describe("#2 rule document location", () => {
     expect(result.actual).toBe("1 in 1 dirs");
   });
 
+  it("places conversation rules like code rules", () => {
+    const conversation = JSON.stringify({ id: "no-push", mode: "steer", match: { field: "input.command", regex: "push" }, sample: { source: "tool:*", boundary: "tool-call" }, action: { content: "Don't." } });
+    const result = ruleDocLocation(memoryRepo({ "packs/rerail/rules/no-push.json": conversation, "scripts/no-push.json": conversation }));
+    expect(paths(result)).toEqual(["scripts/no-push.json"]);
+  });
+
   it("rejects rule sets parked under fixtures/ (rules, candidates, probes, policies dirs) except validator packs", () => {
     const result = ruleDocLocation(
       memoryRepo({

@@ -8,7 +8,7 @@ Rerail recommends packs for a repository by matching the repository's files and 
 
 ## The packs
 
-Every pack lives under `packs/` in this repository and is published from there ([pack format](pack-format.md)). Core keeps the list of their names in `src/engine/catalog/pack-list.generated.ts` (`npm run generate:packs`); what each pack fits is in the pack's own `pack.json`.
+Every pack lives under `packs/` in this repository, and each published pack is published from there ([pack format](pack-format.md)). Core keeps the list of their names in `src/engine/catalog/pack-list.generated.ts` (`npm run generate:packs`); what each pack fits is in the pack's own `pack.json`. A private pack (`"private": true` in its `package.json`) is never published and is not on the list: it is installed from a checkout with `rerail packs add packs/<id>`, and once installed set-up offers it from that copy.
 
 | Pack | Category | Rules (on) | Recommended for |
 |---|---|--:|---|
@@ -24,6 +24,7 @@ Every pack lives under `packs/` in this repository and is published from there (
 | Node.js | framework | 32 (6) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | 23 (21) | `*.vue` files |
 | React | framework | 0 | never yet: every port is still a candidate, and a pack with no rule that starts on is never recommended |
+| Rerail repository | repository | 0 | never yet, as it ships no rules; written for this repository (`packs/*/pack.json` files). Private: never published, so install it from a checkout with `rerail packs add packs/rerail`. See `packs/rerail/README.md`. |
 
 A pack for a project's own conventions is made the same way: a `repository` pack directory with its rule documents in `rules/`, a `pack.json` that lists them with a match definition naming the files or dependencies that identify the project, and a `package.json` named `@neralabs/rerail-pack-<id>` with core's range under `peerDependencies`. It is installed from its folder with `rerail packs add <folder>`.
 

@@ -1,7 +1,7 @@
 // #16 `rules/` directories holding things other than rules.
 //
 // Predicate: every tracked file with a `rules` directory in its path (at any depth below it) is a rule
-// document (JSON whose `format` is `rerail.policy/v1`); the metric counts the offending `rules/`
+// document (JSON whose `format` is `rerail.policy/v1`, or a conversation rule); the metric counts the offending `rules/`
 // directories.
 // Exemption `data-roots`: `fixtures/**` and `packs/<id>/upstream/**` keep upstream projects' own trees,
 // whose `rules/` directories hold upstream sources and expected findings.

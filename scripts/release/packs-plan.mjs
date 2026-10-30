@@ -1,18 +1,19 @@
 #!/usr/bin/env node
-// Which packs a release run publishes: every pack whose package.json version has no release tag on GitHub yet.
+// Which packs a release run publishes: every published pack (not `"private": true`) whose package.json version has no
+// release tag on GitHub yet.
 // A pack never published at all is reported as needing its first publish by hand (docs/publishing-a-new-pack.md) and left out.
 // Of those published, a pack held at an older `latest` (heldPacks in packs.mjs) is published under `next`, so the hold
 // stays; reading that from npm needs NODE_AUTH_TOKEN with a read token, and a pack whose dist-tags cannot be read
 // fails the plan, so nothing publishes over a hold unseen.
-// `--all` names every pack without reading tags, for a pull request's dry run, which packs and checks but publishes
+// `--all` names every published pack without reading tags, for a pull request's dry run, which packs and checks but publishes
 // nothing. Writes `publish`, `first` and `held` (space-separated pack ids) to $GITHUB_OUTPUT when it is set.
 //
 //   node scripts/release/packs-plan.mjs [--all]   (GH_REPO or the checkout's remote names the repository)
 import { appendFileSync } from "node:fs";
 import { readDistTags } from "./dist-tags.mjs";
-import { heldPacks, listPacks, planPacks, releaseTags } from "./packs.mjs";
+import { heldPacks, planPacks, publishedPacks, releaseTags } from "./packs.mjs";
 
-const packs = listPacks();
+const packs = publishedPacks();
 const all = process.argv.includes("--all");
 const { publish, first } = all ? { publish: packs.map((pack) => pack.id), first: [] } : planPacks(packs, releaseTags());
 const packOf = (id) => packs.find((pack) => pack.id === id);

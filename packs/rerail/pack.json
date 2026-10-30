@@ -1,0 +1,19 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "rerail",
+  "name": "Rerail repository",
+  "category": "repository",
+  "covers": "Steers work in the Rerail repository toward the architecture and conventions it has written down and broken before.",
+  "reason": "holds Rerail rule packs under packs/",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "packs/*/pack.json"
+        ],
+        "label": "packs/*/pack.json files"
+      }
+    ]
+  },
+  "rules": []
+}

@@ -109,6 +109,8 @@ export const rulePackPackageSchema = z.looseObject({
   files: z.array(nonEmpty).min(1),
   peerDependencies: z.looseObject({ "@neralabs/rerail": nonEmpty }),
   publishConfig: z.looseObject({ access: z.enum(["restricted", "public"]) }).optional(),
+  /** npm's own flag: `true` means the pack is never published (docs/pack-format.md, "package.json"). */
+  private: z.boolean().optional(),
 });
 export type RulePackPackage = z.infer<typeof rulePackPackageSchema>;
 
