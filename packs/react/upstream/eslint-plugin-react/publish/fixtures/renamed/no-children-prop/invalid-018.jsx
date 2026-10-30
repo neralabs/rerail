@@ -1,0 +1,1 @@
+<WoSalyzcjgj>{function* () {}}</WoSalyzcjgj>;

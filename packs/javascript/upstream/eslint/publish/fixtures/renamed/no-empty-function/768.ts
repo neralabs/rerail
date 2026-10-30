@@ -1,0 +1,1 @@
+class P {@vdwbcollz() get zyv(): string {}} // allow: decoratedFunctions

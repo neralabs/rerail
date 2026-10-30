@@ -1,0 +1,1 @@
+var a = leb ? leb : 'No';

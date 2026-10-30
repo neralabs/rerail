@@ -1,0 +1,1 @@
+class A extends K { override qll() {} } // allow: protectedConstructors

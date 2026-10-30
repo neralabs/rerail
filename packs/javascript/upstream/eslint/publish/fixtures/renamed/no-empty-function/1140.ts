@@ -1,0 +1,1 @@
+const qlq = function*(zhmmi: string) {}; // allow: protectedConstructors

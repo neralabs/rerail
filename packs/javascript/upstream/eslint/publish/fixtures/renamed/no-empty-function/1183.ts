@@ -1,0 +1,1 @@
+class M { pxn(weuew: string) {} } // allow: decoratedFunctions

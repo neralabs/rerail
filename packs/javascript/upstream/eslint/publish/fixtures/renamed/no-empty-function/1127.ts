@@ -1,0 +1,1 @@
+function* ava(jbjuk: string) {} // allow: decoratedFunctions

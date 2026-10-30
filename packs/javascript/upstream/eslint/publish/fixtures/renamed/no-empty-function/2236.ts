@@ -1,0 +1,1 @@
+const C = class extends Q {static override get ysq(): string {}}; // allow: setters

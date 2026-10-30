@@ -1,0 +1,1 @@
+({ get foo() { return 1; } })

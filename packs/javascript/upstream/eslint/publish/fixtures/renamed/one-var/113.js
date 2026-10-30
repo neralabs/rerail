@@ -1,0 +1,1 @@
+class M { static { var d; qei; var g; } }

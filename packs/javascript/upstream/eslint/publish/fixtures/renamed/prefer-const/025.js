@@ -1,0 +1,1 @@
+let l; for (const {s = ++l} of zze());

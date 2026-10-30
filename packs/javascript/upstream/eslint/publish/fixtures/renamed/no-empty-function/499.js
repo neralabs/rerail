@@ -1,0 +1,1 @@
+var M = class {set olv(value) {}}; // allow: getters

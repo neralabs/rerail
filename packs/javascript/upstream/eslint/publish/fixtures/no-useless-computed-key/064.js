@@ -1,0 +1,1 @@
+class Foo { ['x' /* this comment also prevents a fix */]() {} }

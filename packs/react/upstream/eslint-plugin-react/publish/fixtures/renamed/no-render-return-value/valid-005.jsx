@@ -1,0 +1,1 @@
+var nfp = React.render(<div />, root);

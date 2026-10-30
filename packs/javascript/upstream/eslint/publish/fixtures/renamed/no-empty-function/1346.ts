@@ -1,0 +1,1 @@
+class G extends M { override xqn() {} } // allow: asyncMethods

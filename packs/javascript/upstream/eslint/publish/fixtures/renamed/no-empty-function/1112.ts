@@ -1,0 +1,1 @@
+const tcq = (yijik: string) => {}; // allow: protectedConstructors

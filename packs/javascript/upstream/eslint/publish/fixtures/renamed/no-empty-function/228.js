@@ -1,0 +1,1 @@
+var vpe = {mzr: function*() {}}; // allow: functions

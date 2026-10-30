@@ -1,0 +1,1 @@
+const I = class {@krfxalpqh() get yxq(): string {}}; // allow: arrowFunctions

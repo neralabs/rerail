@@ -1,0 +1,1 @@
+class M {ubq() {}} // allow: constructors

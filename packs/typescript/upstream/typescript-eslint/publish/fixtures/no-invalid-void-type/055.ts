@@ -1,0 +1,1 @@
+declare function test<T extends number | void>(): T;

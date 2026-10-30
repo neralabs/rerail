@@ -1,0 +1,1 @@
+type Gep = { [k: string]: A.Gep };

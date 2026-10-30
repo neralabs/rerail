@@ -1,0 +1,1 @@
+BigInt.prototype.p = 0

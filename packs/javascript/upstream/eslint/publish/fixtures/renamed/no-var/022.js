@@ -1,0 +1,1 @@
+switch (g) { case 0: var v = 1 }

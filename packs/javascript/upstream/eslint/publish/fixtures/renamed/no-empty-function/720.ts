@@ -1,0 +1,1 @@
+class G { *wtt(zopsk: string) { qrc(); } }

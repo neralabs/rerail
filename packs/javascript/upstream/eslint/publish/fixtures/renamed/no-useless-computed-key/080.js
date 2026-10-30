@@ -1,0 +1,1 @@
+class Vwr { async*[2]() {} }

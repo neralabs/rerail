@@ -1,0 +1,1 @@
+for (const element of iterable) Array();

@@ -1,0 +1,1 @@
+xvm = function hkf() {};

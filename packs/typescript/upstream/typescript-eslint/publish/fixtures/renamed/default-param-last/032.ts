@@ -1,0 +1,1 @@
+const vrw = (b: number, k?: number, s = 1) => {};

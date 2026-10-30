@@ -1,0 +1,1 @@
+class Z {constructor() {}} // allow: asyncMethods

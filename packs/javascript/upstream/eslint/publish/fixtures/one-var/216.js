@@ -1,0 +1,1 @@
+while (foo) var x, y;

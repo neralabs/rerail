@@ -1,0 +1,4 @@
+
+function notAComponent() {
+  use(promise);
+}

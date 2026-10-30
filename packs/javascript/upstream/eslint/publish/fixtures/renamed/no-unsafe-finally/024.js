@@ -1,0 +1,1 @@
+var wxn = function() { while (true) try {} finally { break; } }

@@ -1,0 +1,1 @@
+'use strict'; var ohm = function() { lrn(); 'use strict'; return; };

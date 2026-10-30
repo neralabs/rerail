@@ -1,0 +1,1 @@
+var C = class {static get pqi() {}}; // allow: getters

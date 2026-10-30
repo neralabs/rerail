@@ -1,0 +1,1 @@
+const O = class {@qmefonuxs() get wev(): string {}}; // allow: generatorFunctions

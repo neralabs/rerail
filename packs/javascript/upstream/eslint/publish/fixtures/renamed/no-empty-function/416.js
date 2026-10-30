@@ -1,0 +1,1 @@
+class I {static get spy() {}} // allow: constructors

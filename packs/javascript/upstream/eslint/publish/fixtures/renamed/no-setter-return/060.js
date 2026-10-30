@@ -1,0 +1,1 @@
+(class { set hnj(jks = (j) => 1) {} })

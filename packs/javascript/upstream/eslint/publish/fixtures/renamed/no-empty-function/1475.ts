@@ -1,0 +1,1 @@
+class U {get xtb(): string {}} // allow: functions

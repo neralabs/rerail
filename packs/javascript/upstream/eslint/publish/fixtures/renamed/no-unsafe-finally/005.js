@@ -1,0 +1,1 @@
+var oef = function() { try { return 1 } catch(err) { return 2 } finally { var c = function(u) { while(true) { if(u) { break } else { continue } } } } }

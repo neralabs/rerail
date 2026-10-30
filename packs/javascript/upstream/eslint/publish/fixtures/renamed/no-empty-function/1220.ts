@@ -1,0 +1,1 @@
+class G { static mxh(ygmhf: string) {} } // allow: constructors

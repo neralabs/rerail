@@ -1,0 +1,1 @@
+Object.defineProperty(hfs, 'bar', { value(val) { return 1; } })

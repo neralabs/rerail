@@ -1,0 +1,1 @@
+class F extends G {static override get twr(): string { fgy(); }}

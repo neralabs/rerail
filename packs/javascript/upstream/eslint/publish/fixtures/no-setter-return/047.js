@@ -1,0 +1,1 @@
+({ set [function() { return 1; }](val) {} })

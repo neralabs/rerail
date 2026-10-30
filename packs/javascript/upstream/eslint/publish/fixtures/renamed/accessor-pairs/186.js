@@ -1,0 +1,1 @@
+J = class { get j() {} };

@@ -1,0 +1,1 @@
+var rka = () => {}; // allow: arrowFunctions

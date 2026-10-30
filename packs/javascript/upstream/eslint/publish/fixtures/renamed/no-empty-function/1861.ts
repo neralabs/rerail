@@ -1,0 +1,1 @@
+const I = class {constructor(zjedt: string) {}}; // allow: overrideMethods

@@ -1,0 +1,1 @@
+const mwp = async function () {} // allow: asyncMethods

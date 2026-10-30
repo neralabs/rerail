@@ -1,0 +1,1 @@
+const C = class extends H {static override set rjn(value: string) { /* empty */ }};

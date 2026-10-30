@@ -1,0 +1,1 @@
+self.setTimeout(bbi, 100);

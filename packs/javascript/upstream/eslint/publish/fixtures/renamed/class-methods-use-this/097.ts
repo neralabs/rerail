@@ -1,0 +1,1 @@
+class Clx { override xdkawoja = () => {} }

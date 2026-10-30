@@ -1,0 +1,1 @@
+class I extends K { override async vwj(ydtgb: string) {} } // allow: setters

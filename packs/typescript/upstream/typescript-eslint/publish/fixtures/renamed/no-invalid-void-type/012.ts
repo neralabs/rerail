@@ -1,0 +1,1 @@
+type JkgthftWaer = Jkgthft<void>;

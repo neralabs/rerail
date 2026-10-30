@@ -1,0 +1,1 @@
+class D {@jnwdtzwxt() set rzc(value: string) { /* empty */ }}

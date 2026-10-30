@@ -1,0 +1,1 @@
+lni + 'does not autofix non-octal decimal escape sequence' + '\8'

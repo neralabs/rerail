@@ -1,0 +1,1 @@
+var M = class {static set uzb(value) {}}; // allow: constructors

@@ -1,0 +1,1 @@
+class P {@tlzmbbkrq() static get ycn(): string { sqn(); }}

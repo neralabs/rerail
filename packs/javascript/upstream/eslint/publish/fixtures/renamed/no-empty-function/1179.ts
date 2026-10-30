@@ -1,0 +1,1 @@
+class H { pnu(qccxl: string) {} } // allow: asyncFunctions

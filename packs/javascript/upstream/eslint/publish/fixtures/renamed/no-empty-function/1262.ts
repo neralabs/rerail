@@ -1,0 +1,1 @@
+const M = class {shz(ycesr: string) {}}; // allow: constructors

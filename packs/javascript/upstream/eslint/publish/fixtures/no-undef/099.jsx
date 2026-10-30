@@ -1,0 +1,1 @@
+let React; React.render(<App />);

@@ -1,0 +1,1 @@
+class B {static set dmm(value) {}} // allow: methods

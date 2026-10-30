@@ -1,0 +1,1 @@
+class F { *wxc(zeupt: string) {} } // allow: arrowFunctions

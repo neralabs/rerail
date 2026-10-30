@@ -1,0 +1,1 @@
+var idv = sju, sju = function () { sju(); };

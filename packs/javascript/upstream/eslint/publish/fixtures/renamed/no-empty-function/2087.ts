@@ -1,0 +1,1 @@
+class K {@mwdjbwhex() static get rcs(): string {}} // allow: overrideMethods

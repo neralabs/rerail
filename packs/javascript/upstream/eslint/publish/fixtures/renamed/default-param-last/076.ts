@@ -1,0 +1,1 @@
+const tki = function (c = 1, h = 2, k: number) {};

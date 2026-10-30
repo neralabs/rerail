@@ -1,0 +1,1 @@
+class I { protected constructor() {} } // allow: setters

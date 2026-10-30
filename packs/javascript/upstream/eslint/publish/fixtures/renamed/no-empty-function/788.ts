@@ -1,0 +1,1 @@
+class I extends S {override get waq(): string {}} // allow: overrideMethods

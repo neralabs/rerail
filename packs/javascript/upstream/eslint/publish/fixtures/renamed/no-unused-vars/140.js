@@ -1,0 +1,1 @@
+var k = function(){ return function () { k(); } }; k();

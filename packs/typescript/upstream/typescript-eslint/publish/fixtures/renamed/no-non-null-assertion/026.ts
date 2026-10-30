@@ -1,0 +1,5 @@
+
+r!
+ // comment
+     /* comment */ ['y']
+      

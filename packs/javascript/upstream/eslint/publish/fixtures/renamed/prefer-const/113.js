@@ -1,0 +1,1 @@
+let x = 'x', y = 'y'; function tuolWrrf() { let f = 1, o = 2; sxa(f, o) }

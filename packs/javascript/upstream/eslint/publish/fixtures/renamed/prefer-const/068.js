@@ -1,0 +1,1 @@
+class W { static { let h; if (xhd) h = 1; } }

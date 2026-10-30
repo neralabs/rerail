@@ -1,0 +1,1 @@
+var lef = {bms: function() {}}; // allow: setters

@@ -1,0 +1,1 @@
+Object.defineProperty({ set(yoa) { return 1; } }, kmv, 'bar')

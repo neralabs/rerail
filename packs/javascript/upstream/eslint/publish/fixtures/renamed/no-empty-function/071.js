@@ -1,0 +1,1 @@
+var vez = {get njx() { /* empty */ }};

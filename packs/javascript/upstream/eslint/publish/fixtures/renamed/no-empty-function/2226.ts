@@ -1,0 +1,1 @@
+const A = class extends I {override get xzp(): string {}}; // allow: asyncMethods

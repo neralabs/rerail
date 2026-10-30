@@ -1,0 +1,1 @@
+switch(mlq) { case gtp: break; case Number.NaN: break; default: break; }

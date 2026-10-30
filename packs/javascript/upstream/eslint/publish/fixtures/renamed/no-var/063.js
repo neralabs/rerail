@@ -1,0 +1,1 @@
+function n() { try {} catch (g) {} var g = 1; }

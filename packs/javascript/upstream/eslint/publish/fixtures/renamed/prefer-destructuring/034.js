@@ -1,0 +1,1 @@
+class I { #q; npy() { q = this.c.#q; } }

@@ -1,0 +1,1 @@
+const C = class extends D {override get sjr(): string {}}; // allow: constructors

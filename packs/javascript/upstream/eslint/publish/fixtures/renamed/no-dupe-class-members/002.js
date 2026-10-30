@@ -1,0 +1,1 @@
+class F { static ydv() {} ydv() {} }

@@ -1,0 +1,1 @@
+(function(krup) { let name; for ( name of krup ) return; })({});

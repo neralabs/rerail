@@ -1,0 +1,1 @@
+const b: RegExp = /a/;

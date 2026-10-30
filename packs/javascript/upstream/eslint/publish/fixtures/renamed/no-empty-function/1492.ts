@@ -1,0 +1,1 @@
+class N {static get rlq(): string {}} // allow: methods

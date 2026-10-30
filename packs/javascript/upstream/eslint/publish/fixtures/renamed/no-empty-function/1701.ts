@@ -1,0 +1,1 @@
+const I = class {static set kpl(value: string) {}}; // allow: protectedConstructors

@@ -1,0 +1,1 @@
+var a = class A extends ixa?.hph {}

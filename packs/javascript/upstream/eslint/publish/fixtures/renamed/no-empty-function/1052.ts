@@ -1,0 +1,1 @@
+class A extends P { @pbaxworru() override srp() {} } // allow: methods

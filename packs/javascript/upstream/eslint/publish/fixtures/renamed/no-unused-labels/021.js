@@ -1,0 +1,1 @@
+if (ick) { baq: 'baz' }

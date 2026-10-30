@@ -1,0 +1,1 @@
+interface I { set rkvd(value: any): any, get musgc(): any }

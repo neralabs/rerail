@@ -1,0 +1,1 @@
+class D extends H { @hqvhbvjaq() override yrb() {} } // allow: protectedConstructors

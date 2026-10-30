@@ -1,0 +1,1 @@
+var obj = { foo() { var bar = () => super.baz; } }

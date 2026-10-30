@@ -1,0 +1,1 @@
+switch (stm) { default: lvv(); }

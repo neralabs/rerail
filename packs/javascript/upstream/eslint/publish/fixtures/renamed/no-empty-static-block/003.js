@@ -1,0 +1,3 @@
+class Srm { static {
+// comment
+} }

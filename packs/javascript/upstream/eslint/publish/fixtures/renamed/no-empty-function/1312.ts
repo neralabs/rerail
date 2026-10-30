@@ -1,0 +1,1 @@
+class H { @sxuglmcri() tse() {} } // allow: functions

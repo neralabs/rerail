@@ -1,0 +1,1 @@
+const I = class {@svindmxdp() static get vte(): string {}}; // allow: privateConstructors

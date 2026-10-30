@@ -1,0 +1,1 @@
+class H {get zag(): string {}} // allow: overrideMethods

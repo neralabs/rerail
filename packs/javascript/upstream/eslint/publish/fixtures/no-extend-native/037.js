@@ -1,0 +1,1 @@
+Array.prototype.p &&= 0

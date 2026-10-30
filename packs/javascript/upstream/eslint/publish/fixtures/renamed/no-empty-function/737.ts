@@ -1,0 +1,1 @@
+const F = class {*ofb(wstix: string) { /* empty */ }};

@@ -1,0 +1,1 @@
+class B { get [b](){} g(){} get [b](){} s(){} set [b](yzr){} }

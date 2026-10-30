@@ -1,0 +1,1 @@
+function Component() { const ixm = adm && {}; return (<Cowwslr.Provider value={ixm}></Cowwslr.Provider>)}

@@ -1,0 +1,1 @@
+const plg = (qydsf: string) => {}; // allow: functions

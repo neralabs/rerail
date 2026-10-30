@@ -1,0 +1,1 @@
+function* oxf() {} // allow: arrowFunctions

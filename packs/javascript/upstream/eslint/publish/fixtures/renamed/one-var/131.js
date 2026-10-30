@@ -1,0 +1,1 @@
+if (lsz) { var jsn = true, jss = false; }

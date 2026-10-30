@@ -1,0 +1,1 @@
+jue.bab["propertyIsEnumerable"]('baz')

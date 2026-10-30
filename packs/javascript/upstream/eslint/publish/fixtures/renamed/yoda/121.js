@@ -1,0 +1,1 @@
+function *mrt() { yield/**/1 < g }

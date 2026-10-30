@@ -1,0 +1,1 @@
+var t = function(qre, qrk) { return 2; }; t();

@@ -1,0 +1,1 @@
+function foo (a, ...rest) { alert(a); } foo();

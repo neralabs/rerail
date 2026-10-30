@@ -1,0 +1,1 @@
+class A { @bdvrueymh() async jeg(qttmq: string) {} } // allow: constructors

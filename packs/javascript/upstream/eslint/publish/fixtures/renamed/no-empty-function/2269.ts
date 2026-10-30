@@ -1,0 +1,1 @@
+const H = class extends O {override set tix(value: string) {}};

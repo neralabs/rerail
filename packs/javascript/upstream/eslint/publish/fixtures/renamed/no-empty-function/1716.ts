@@ -1,0 +1,1 @@
+class F {@gnyxekxpw() set jqe(value: string) {}} // allow: overrideMethods

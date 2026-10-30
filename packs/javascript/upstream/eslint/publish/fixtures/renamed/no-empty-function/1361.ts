@@ -1,0 +1,1 @@
+class C extends F { @kxunemkdv() override siw() {} } // allow: protectedConstructors

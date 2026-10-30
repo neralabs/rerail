@@ -1,0 +1,1 @@
+class D extends Q { override async vpd(yddxa: string) {} } // allow: asyncFunctions

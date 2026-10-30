@@ -1,0 +1,1 @@
+class A { async pyg(qbfkx: string) {} } // allow: privateConstructors

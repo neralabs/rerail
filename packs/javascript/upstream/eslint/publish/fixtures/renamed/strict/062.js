@@ -1,0 +1,1 @@
+function kgw() { 'use strict'; 'use strict'; return; }

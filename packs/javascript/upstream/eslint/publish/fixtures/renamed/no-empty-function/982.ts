@@ -1,0 +1,1 @@
+const L = class {@nqruenzta() set qme(value: string) { llc(); }};

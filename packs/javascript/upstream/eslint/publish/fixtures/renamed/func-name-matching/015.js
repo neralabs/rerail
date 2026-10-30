@@ -1,0 +1,1 @@
+wuh.lpk.nzp = function lpz() {};

@@ -1,0 +1,1 @@
+class F extends N {static override get pzp(): string {}} // allow: functions

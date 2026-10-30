@@ -1,0 +1,1 @@
+let wks = <'bar'>'bar';

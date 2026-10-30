@@ -1,0 +1,1 @@
+async function foo() { for await (x of xs); }

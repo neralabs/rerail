@@ -1,0 +1,1 @@
+const d = 0; var j = 1; var o = 2; const z = 3;

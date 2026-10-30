@@ -1,0 +1,1 @@
+let vbr = 1 as const;

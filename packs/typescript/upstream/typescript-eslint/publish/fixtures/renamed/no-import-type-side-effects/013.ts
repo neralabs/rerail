@@ -1,0 +1,1 @@
+import { type A as AG } from 'mod';

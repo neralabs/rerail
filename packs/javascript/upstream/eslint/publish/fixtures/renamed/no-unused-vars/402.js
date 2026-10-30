@@ -1,0 +1,1 @@
+while (d) var zne;

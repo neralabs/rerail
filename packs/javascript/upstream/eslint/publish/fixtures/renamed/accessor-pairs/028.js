@@ -1,0 +1,1 @@
+var s = { get [d]() {}, set [(d)](kwt) {} };

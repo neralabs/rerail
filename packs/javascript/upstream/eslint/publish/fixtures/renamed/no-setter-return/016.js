@@ -1,0 +1,1 @@
+function nqy(){} return 1; var mdp = function*(){ return 1; }; return 1; var mds = () => {}; return 1;

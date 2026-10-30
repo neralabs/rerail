@@ -1,0 +1,1 @@
+class C { static { one; two; three; { four; five; six; } } } function top_level() { 1; 2; } 

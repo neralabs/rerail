@@ -1,0 +1,1 @@
+const B = class extends R {override get vks(): string {}}; // allow: protectedConstructors

@@ -1,0 +1,1 @@
+Reflect.defineProperty(oeq, 'bar', { value() {} })

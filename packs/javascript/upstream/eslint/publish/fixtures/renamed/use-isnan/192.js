@@ -1,0 +1,1 @@
+gtp.fsv.lastIndexOf(Number.NaN)

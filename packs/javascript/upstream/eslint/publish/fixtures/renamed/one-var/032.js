@@ -1,0 +1,1 @@
+for (let o of nak) {}; for (let q of nak) {}

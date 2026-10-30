@@ -1,0 +1,1 @@
+const D = class extends K {static override set ujb(value: string) {}}; // allow: protectedConstructors

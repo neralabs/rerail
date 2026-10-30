@@ -1,0 +1,1 @@
+array.findLast(x => this.eval.includes(x), { eval: 'abc' });

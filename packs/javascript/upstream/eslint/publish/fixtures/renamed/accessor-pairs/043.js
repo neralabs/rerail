@@ -1,0 +1,1 @@
+var y = { get g() {}, set g(oes) {}, get g() {} };

@@ -1,0 +1,1 @@
+var nxu = {*aps() {}}; // allow: asyncFunctions

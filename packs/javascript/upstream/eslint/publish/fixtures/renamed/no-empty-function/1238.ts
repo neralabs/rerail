@@ -1,0 +1,1 @@
+class N { private static weq() {} } // allow: protectedConstructors

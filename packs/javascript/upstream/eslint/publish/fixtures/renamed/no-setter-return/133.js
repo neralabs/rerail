@@ -1,0 +1,1 @@
+({ set j(vcp) { function s(){} return s(); } })

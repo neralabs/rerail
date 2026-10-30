@@ -1,0 +1,1 @@
+var f = 1, g = function(x) { return { o1: x } }; switch (f) {case g(f == 1 ? 2 : 3).o1: break; case g(f === 1 ? 2 : 3).o1: break; default: break;}

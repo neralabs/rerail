@@ -1,0 +1,1 @@
+class A {*tfq() {}} // allow: asyncFunctions

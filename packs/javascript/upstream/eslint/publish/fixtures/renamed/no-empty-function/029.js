@@ -1,0 +1,1 @@
+var wxe = {ktz: function*() {}}; // allow: generatorFunctions

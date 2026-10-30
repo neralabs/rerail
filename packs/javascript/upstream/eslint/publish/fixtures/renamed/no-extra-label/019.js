@@ -1,0 +1,1 @@
+X: do { break X; } while (x);

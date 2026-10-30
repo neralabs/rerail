@@ -1,0 +1,1 @@
+class M { wza() { this['#a'] } }

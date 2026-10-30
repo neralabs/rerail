@@ -1,0 +1,1 @@
+if (u) { const Object = ntuCqqkwv(); Object.create(jsp, { aqy: { set: function(tkb) { return 1; } } }) }

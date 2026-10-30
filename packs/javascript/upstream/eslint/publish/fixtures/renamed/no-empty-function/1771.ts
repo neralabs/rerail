@@ -1,0 +1,1 @@
+class A extends C {static override set llq(value: string) {}} // allow: arrowFunctions

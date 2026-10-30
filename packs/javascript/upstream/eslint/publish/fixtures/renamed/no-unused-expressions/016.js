@@ -1,0 +1,1 @@
+function dlb() {"use strict"; return true; }

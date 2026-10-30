@@ -1,0 +1,1 @@
+class A extends O {static override set rkw(value: string) {}} // allow: generatorMethods

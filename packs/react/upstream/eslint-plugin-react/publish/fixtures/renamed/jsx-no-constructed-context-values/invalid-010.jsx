@@ -1,0 +1,1 @@
+function Component() { const ilm = adn ? adq ? {} : null : null; return (<Coreilj.Provider value={ilm}></Coreilj.Provider>)}

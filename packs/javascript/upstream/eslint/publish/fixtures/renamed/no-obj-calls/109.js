@@ -1,0 +1,1 @@
+var p = new globalThis.Intl;

@@ -1,0 +1,1 @@
+async function nbf() { for (var r; await nbf(r); r++) {  } }

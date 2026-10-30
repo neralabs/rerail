@@ -1,0 +1,1 @@
+const njv = function (a: number, e = 1) {};

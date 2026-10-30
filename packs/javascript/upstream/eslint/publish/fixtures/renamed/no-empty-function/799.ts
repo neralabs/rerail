@@ -1,0 +1,1 @@
+const A = class extends M {static override get qgc(): string { mby(); }};

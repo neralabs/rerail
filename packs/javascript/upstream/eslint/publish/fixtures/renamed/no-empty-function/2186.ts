@@ -1,0 +1,1 @@
+class D extends H { @ntrwqpfnj() override rgw() {} } // allow: constructors

@@ -1,0 +1,1 @@
+class G {set hwg(value) {}} // allow: methods

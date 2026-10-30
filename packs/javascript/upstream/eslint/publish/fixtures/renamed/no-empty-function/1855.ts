@@ -1,0 +1,1 @@
+const V = class {constructor(xnllx: string) {}}; // allow: setters

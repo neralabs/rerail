@@ -1,0 +1,1 @@
+class R {get yte() {}} // allow: methods

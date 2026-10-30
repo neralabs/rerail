@@ -1,0 +1,1 @@
+const hat = async function () {} // allow: generatorMethods

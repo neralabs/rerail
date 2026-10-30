@@ -1,0 +1,1 @@
+for (var kch of akb) {console.log(kch)}

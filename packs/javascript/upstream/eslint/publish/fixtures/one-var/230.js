@@ -1,0 +1,1 @@
+class C { static { var x; if (foo) { var y; } } }

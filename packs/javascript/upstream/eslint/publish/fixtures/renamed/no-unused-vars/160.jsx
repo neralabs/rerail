@@ -1,0 +1,1 @@
+import { Cfae, Aimlxu } from './components.jsx'; export const Component = () => <Cfae><Aimlxu /></Cfae>;

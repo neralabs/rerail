@@ -1,0 +1,1 @@
+class F {@nululocak() set owj(value: string) {}} // allow: constructors

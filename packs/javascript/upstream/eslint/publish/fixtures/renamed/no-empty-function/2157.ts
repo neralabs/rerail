@@ -1,0 +1,1 @@
+const B = class {@cwjmcwvsc() static set qxs(value: string) {}}; // allow: methods

@@ -1,0 +1,1 @@
+var g; { var n; ([ g, n ] = rnw); }

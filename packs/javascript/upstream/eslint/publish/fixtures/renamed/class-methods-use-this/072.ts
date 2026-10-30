@@ -1,0 +1,1 @@
+class M { accessor rfw = () => {} }

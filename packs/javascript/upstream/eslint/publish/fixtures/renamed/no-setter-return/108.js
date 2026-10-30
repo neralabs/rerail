@@ -1,0 +1,1 @@
+z = function Object() { Object.defineProperty(nwp, 'bar', { set(xqg) { return 1; } }) }

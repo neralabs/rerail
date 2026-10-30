@@ -1,0 +1,1 @@
+class O {twp() {}} // allow: setters

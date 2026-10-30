@@ -1,0 +1,1 @@
+interface Ckyo<U extends unknown> {}

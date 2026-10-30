@@ -1,0 +1,1 @@
+var ned = {m:3, l:1, _:2} // desc, natural, insensitive

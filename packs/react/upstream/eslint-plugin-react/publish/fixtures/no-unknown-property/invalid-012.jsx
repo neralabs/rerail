@@ -1,0 +1,1 @@
+<div onMousedown="bar"></div>;

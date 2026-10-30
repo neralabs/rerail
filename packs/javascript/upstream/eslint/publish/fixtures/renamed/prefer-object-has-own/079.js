@@ -1,0 +1,1 @@
+function egy(){return {}.hasOwnProperty.call(object, uoibgmhq)}

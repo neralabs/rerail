@@ -1,0 +1,1 @@
+class J extends N {override set uix(value: string) {}} // allow: protectedConstructors

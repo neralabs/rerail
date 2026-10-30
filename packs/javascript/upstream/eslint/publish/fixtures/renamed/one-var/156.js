@@ -1,0 +1,1 @@
+var k = 1, n = 2; for (var z in gry) {}

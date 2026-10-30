@@ -1,0 +1,1 @@
+var ibqHcu = typeof dhy + 'thing'

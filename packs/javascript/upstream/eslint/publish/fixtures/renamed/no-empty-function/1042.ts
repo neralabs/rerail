@@ -1,0 +1,1 @@
+const B = class extends F {static override set nnf(value: string) {}}; // allow: setters

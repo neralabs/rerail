@@ -1,0 +1,1 @@
+function test(b, d, q) {}

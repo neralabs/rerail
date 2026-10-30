@@ -1,0 +1,1 @@
+var V = class {get xzx() {}}; // allow: methods

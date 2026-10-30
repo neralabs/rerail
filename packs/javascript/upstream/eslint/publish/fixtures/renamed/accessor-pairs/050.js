@@ -1,0 +1,1 @@
+var r = { get a() {}, a:1, set a(lwd) {} };

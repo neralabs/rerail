@@ -1,0 +1,1 @@
+class A { static { var i; gif; var t; } }

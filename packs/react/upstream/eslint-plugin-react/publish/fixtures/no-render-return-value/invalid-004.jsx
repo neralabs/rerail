@@ -1,0 +1,1 @@
+this.o = ReactDOM.render(<div />, document.body);

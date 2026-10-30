@@ -1,0 +1,1 @@
+const bus = function*(qiwib: string) {}; // allow: setters

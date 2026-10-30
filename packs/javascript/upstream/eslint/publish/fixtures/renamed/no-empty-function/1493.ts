@@ -1,0 +1,1 @@
+class H {static get jjy(): string {}} // allow: generatorMethods

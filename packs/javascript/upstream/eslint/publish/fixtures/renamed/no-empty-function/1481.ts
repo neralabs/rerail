@@ -1,0 +1,1 @@
+class K {get lib(): string {}} // allow: constructors

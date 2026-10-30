@@ -1,0 +1,1 @@
+const P = class {@sriwyqzey() static get vme(): string {}}; // allow: overrideMethods

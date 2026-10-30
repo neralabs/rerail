@@ -1,0 +1,1 @@
+(function(kdal) { for ( const name of kdal ) return true })({})

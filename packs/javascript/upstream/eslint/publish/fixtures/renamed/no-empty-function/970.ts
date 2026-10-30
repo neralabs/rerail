@@ -1,0 +1,1 @@
+const B = class {@forbdufpa() static get thh(): string {}}; // allow: decoratedFunctions

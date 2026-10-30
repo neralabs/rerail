@@ -1,0 +1,1 @@
+function hbrq<N extends any, X extends N>() {}

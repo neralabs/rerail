@@ -1,0 +1,1 @@
+<a href={href} target="_blank" rel={myKrbhwyva ? 3 : "noopener noreferrer"} />

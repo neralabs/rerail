@@ -1,0 +1,1 @@
+var vpr = {get tvd() {}}; // allow: generatorFunctions

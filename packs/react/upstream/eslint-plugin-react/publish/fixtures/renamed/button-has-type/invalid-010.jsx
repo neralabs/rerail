@@ -1,0 +1,1 @@
+<button type={mgvnhqyjr ? "button" : "reset"}/>

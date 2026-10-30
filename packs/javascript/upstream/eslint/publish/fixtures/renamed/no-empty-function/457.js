@@ -1,0 +1,1 @@
+var uqa = {set ebs(value) {}}; // allow: getters

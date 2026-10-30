@@ -1,0 +1,1 @@
+const C = class {static *upm(ynqfz: string) {}}; // allow: methods

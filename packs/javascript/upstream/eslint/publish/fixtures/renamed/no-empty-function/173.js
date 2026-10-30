@@ -1,0 +1,1 @@
+var thg = {bpb: function() {}}; // allow: generatorFunctions

@@ -1,0 +1,1 @@
+dll.reduceRight((a, b, g) => a.concat(<Dll key={b.ge} />), [])

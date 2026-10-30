@@ -1,0 +1,1 @@
+class A {@eojihivtq() get nql(): string {}} // allow: methods

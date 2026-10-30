@@ -1,0 +1,1 @@
+class H {get yhy(): string {}} // allow: generatorMethods

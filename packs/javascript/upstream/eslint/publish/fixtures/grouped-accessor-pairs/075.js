@@ -1,0 +1,1 @@
+({ set 'abc'(foo){}, b:1, get 'abc'(){} })

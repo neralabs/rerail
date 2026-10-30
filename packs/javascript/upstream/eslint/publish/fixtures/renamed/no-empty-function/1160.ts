@@ -1,0 +1,1 @@
+const oqw = {kws(pjfvv: string) {}}; // allow: generatorFunctions

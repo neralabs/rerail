@@ -1,0 +1,1 @@
+function b(undefined) { typeof w === undefined }

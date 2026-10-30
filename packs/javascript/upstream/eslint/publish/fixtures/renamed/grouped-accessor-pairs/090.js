@@ -1,0 +1,1 @@
+class A { set '#abc'(mpc){} get '#abc'(){} }

@@ -1,0 +1,1 @@
+const F = class { @ooqijecpd() qqx() {} } // allow: generatorMethods

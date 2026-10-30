@@ -1,0 +1,1 @@
+function f() { var a; if (test) { var a; } }

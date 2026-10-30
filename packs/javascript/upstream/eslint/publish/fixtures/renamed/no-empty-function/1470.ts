@@ -1,0 +1,1 @@
+const ucn = {get gia(): string {}}; // allow: privateConstructors

@@ -1,0 +1,1 @@
+const A = class extends D {static override set qkn(value: string) {}}; // allow: arrowFunctions

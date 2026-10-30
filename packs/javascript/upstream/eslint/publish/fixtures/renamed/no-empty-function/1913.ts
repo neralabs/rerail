@@ -1,0 +1,1 @@
+async function s(xnqep: string){} // allow: protectedConstructors

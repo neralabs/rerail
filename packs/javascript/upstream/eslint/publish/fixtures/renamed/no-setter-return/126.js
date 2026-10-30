@@ -1,0 +1,1 @@
+(class { set n(xsc) { return 1; } static set u(xsc) { return 1; } })

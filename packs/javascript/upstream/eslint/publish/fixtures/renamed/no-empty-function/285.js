@@ -1,0 +1,1 @@
+var L = class {vry() {}}; // allow: arrowFunctions

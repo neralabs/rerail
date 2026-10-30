@@ -1,0 +1,1 @@
+let {fuf: fuf} = xrn;

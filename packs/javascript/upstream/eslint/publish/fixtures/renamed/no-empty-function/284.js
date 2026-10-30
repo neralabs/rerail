@@ -1,0 +1,1 @@
+var R = class {xrq() {}}; // allow: functions

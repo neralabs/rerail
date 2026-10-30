@@ -1,0 +1,1 @@
+class W { static { var e; } [e]; }

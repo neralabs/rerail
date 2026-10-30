@@ -1,0 +1,1 @@
+const H = class { @mufgnkcsh() ppj() {} } // allow: methods

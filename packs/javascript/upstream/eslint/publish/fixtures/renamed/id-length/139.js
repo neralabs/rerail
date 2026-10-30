@@ -1,0 +1,1 @@
+var { b, f: { j: n, v: yzlrWbxn } } = {};

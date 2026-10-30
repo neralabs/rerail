@@ -1,0 +1,1 @@
+class I { @jiuqmlqhb() opg() {} } // allow: generatorMethods

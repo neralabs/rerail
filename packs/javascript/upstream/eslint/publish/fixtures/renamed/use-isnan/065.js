@@ -1,0 +1,1 @@
+byv.indexOf(Number.NaN)

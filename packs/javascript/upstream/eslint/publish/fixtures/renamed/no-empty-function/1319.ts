@@ -1,0 +1,1 @@
+class K { @qwjstwlgs() stj() {} } // allow: asyncFunctions

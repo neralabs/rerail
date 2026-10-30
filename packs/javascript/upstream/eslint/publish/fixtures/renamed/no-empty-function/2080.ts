@@ -1,0 +1,1 @@
+class F {@mhgacinkn() static get otd(): string {}} // allow: generatorMethods

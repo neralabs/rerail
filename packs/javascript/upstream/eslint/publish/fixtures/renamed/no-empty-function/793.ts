@@ -1,0 +1,1 @@
+class H extends P {static override get rcx(): string {}} // allow: overrideMethods

@@ -1,0 +1,1 @@
+const J = class {@owvbfmcvg() static get uad(): string {}}; // allow: protectedConstructors

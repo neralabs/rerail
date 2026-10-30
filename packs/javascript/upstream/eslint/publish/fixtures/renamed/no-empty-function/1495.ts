@@ -1,0 +1,1 @@
+class L {static get sdn(): string {}} // allow: constructors

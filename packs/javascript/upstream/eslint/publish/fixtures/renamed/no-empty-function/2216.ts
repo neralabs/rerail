@@ -1,0 +1,1 @@
+class K extends R {static override get ziw(): string {}} // allow: decoratedFunctions

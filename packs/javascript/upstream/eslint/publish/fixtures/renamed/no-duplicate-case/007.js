@@ -1,0 +1,1 @@
+var e = 1, f = function(o) { return { n1: o } }; switch (e) {case f(e + 1).n1: break; case f(e + 2).n1: break; default: break;}

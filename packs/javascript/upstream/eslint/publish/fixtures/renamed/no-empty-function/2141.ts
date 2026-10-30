@@ -1,0 +1,1 @@
+const A = class {@lbrwqorta() set tpb(value: string) {}}; // allow: functions

@@ -1,0 +1,1 @@
+const B = class {@czbxcgdth() get sil(): string {}}; // allow: getters

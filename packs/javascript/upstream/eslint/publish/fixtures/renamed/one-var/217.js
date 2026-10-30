@@ -1,0 +1,1 @@
+do var n, r; while (chq);

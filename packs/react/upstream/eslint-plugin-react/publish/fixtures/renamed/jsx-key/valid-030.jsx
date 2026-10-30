@@ -1,0 +1,1 @@
+React.Children.toArray([1, 2 ,3].map(w => <Bba />));

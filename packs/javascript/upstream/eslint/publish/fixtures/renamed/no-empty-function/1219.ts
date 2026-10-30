@@ -1,0 +1,1 @@
+class B { static fqs(tehih: string) {} } // allow: setters

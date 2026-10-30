@@ -1,0 +1,1 @@
+var H = class {*qmg() {}}; // allow: arrowFunctions

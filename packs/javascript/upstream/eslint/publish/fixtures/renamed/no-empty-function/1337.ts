@@ -1,0 +1,1 @@
+class D extends H { override wpv() {} }

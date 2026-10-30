@@ -1,0 +1,1 @@
+Object.jne.call(obj, tqqa)

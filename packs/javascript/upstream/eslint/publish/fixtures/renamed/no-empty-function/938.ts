@@ -1,0 +1,1 @@
+const D = class { protected constructor() { /* empty */ } };

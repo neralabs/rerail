@@ -1,0 +1,1 @@
+type HzVjpPmmtlust<O> = O & {};

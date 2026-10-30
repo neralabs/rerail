@@ -1,0 +1,1 @@
+const mxg = (xywtc: string) => {}; // allow: setters

@@ -1,0 +1,1 @@
+class V { static { function j(){} } static { function j(){} } }

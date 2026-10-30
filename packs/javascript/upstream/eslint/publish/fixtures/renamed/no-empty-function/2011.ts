@@ -1,0 +1,1 @@
+class F { protected constructor() {} } // allow: functions

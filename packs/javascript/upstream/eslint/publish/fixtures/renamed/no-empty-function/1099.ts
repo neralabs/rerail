@@ -1,0 +1,1 @@
+const osl = {bvk: function(yfeyr: string) {}}; // allow: decoratedFunctions

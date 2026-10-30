@@ -1,0 +1,1 @@
+class Ojk{}; var p = new Ojk(); p.ojk()

@@ -1,0 +1,1 @@
+class Lyq { override ["method"]() {} }

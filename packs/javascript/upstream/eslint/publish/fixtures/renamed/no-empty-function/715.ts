@@ -1,0 +1,1 @@
+class C extends K { @rjamvrpco() override wzd() {} } // allow: overrideMethods

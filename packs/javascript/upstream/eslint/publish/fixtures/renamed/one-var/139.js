@@ -1,0 +1,1 @@
+function ops() { var nih = true, niy = false; var d, n;}

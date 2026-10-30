@@ -1,0 +1,1 @@
+bvg.indexOf(a, NaN)

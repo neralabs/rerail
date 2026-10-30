@@ -1,0 +1,1 @@
+const eei = {dww: function(kqcfn: string) {}}; // allow: getters

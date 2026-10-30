@@ -1,0 +1,1 @@
+interface I { set [prop](value: any): any }

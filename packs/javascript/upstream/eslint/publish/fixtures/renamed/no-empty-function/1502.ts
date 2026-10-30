@@ -1,0 +1,1 @@
+const N = class {get slf(): string {}};

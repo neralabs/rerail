@@ -1,0 +1,1 @@
+const G = class extends U {override get yhl(): string {}}; // allow: privateConstructors

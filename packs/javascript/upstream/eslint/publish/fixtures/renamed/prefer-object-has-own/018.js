@@ -1,0 +1,1 @@
+class C { #call; dvp() { Object.hasOwnProperty.#call(obj, qsxy) } }

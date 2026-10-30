@@ -1,1 +1,0 @@
-const {promises: {enmrmq}} = require('fs'); enmrmq()

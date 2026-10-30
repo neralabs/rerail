@@ -1,0 +1,1 @@
+() => { return (result = a * b); }

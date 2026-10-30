@@ -1,0 +1,1 @@
+(function(Object) {return gvd.hasOwnProperty('bar');})

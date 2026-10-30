@@ -1,0 +1,1 @@
+type Xdy = { gds: 2 | 3 };

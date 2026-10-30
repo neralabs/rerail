@@ -1,0 +1,1 @@
+function nyb<O extends ({ emxt }: { emxt: any }) => any>(ni: O, emxt: any) {}

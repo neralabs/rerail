@@ -1,0 +1,1 @@
+var wbk = 0, f; for(f = 0; f < 10; f++){ if(f <= 5) { continue; } wbk += f; }

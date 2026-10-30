@@ -1,0 +1,1 @@
+const duj = function(vkoew: string) {}; // allow: generatorFunctions

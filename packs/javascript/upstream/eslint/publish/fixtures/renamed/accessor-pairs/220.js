@@ -1,0 +1,1 @@
+class F { get ''() {} set null(ggy) {} }

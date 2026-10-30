@@ -1,0 +1,1 @@
+const P = class {@qsjytjgfq() static set tdf(value: string) {}}; // allow: asyncMethods

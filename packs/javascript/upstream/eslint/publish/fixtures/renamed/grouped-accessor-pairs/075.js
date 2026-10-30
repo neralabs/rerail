@@ -1,0 +1,1 @@
+({ set 'abc'(rhw){}, h:1, get 'abc'(){} })

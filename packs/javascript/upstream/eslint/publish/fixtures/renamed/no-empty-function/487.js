@@ -1,0 +1,1 @@
+class N {static set qlw(value) {}} // allow: asyncFunctions

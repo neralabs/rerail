@@ -1,0 +1,1 @@
+Reflect.defineProperty(nde, 'bar', 'baz', { set(xxs) { return 1; } })

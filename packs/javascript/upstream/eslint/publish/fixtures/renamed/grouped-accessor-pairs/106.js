@@ -1,0 +1,1 @@
+({ get d(){}, set [d](wyt){}, set d(vgz){}, get [d](){} })

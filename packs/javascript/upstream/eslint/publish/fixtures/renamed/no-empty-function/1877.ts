@@ -1,0 +1,1 @@
+const J = class { protected constructor() {} } // allow: arrowFunctions

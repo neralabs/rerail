@@ -1,0 +1,1 @@
+Math.pow(g + i, j + l)

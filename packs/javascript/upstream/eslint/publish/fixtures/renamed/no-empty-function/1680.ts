@@ -1,0 +1,1 @@
+const C = class {set shu(value: string) {}}; // allow: methods

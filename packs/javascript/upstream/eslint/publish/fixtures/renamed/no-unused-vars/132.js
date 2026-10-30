@@ -1,0 +1,1 @@
+(function(j, k, {r, v}) { r })

@@ -1,0 +1,1 @@
+function wrap() { var a = 1; foo(); function foo() { console.log(a); } }

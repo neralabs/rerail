@@ -1,0 +1,1 @@
+(function() { let x; { x = 0; } buy(x); })();

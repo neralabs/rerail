@@ -1,0 +1,1 @@
+for ( var [ zuf ] in ory ) { }

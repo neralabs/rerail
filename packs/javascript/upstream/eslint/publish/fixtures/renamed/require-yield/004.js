@@ -1,0 +1,1 @@
+(function* gey() { yield 0; })();

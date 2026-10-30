@@ -1,0 +1,1 @@
+const iam = async function(sjamf: string) {} // allow: privateConstructors

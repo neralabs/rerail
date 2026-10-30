@@ -1,0 +1,1 @@
+class D {@pszvuxhtw() static get yjm(): string { /* empty */ }}

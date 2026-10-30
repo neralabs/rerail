@@ -1,0 +1,6 @@
+
+  a() &&
+	function namedFunctionInExpressionContext() {
+	  f();
+	};
+		

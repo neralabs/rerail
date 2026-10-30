@@ -1,0 +1,1 @@
+class F {static *wal(xzcos: string) {}} // allow: arrowFunctions

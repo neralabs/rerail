@@ -1,0 +1,1 @@
+let {'foo': bae, 'baz': ndt} = lli;

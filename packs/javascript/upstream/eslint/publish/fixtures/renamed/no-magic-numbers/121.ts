@@ -1,0 +1,1 @@
+type Otf = Parameters<Mid>[2];

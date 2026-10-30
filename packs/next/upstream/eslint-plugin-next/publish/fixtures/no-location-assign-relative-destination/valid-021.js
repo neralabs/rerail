@@ -1,0 +1,1 @@
+foo.location.assign('/path')

@@ -1,0 +1,1 @@
+class K { @putgxokzm() waz() {} } // allow: methods

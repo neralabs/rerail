@@ -1,0 +1,1 @@
+export const yzm=() => d, ond=2;

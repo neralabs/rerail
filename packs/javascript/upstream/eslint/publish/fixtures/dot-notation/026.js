@@ -1,0 +1,1 @@
+class C { foo() { this['#a'] } }

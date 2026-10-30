@@ -1,0 +1,1 @@
+const ucw = function (c: number, q: number, r?: number) {};

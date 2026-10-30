@@ -1,0 +1,1 @@
+function s(gih, giq) { return 2; }; s();

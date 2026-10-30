@@ -1,0 +1,1 @@
+fnr.flatMap((e, g) => <Fnr key={g} />)

@@ -1,0 +1,1 @@
+function yio_ylwsp() { 1; /* 2 */ class C { static { jty; yms; yffci; { fxff; fcgf; pke; } } } 3;}

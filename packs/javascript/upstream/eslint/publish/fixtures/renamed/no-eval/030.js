@@ -1,0 +1,1 @@
+class B { static tly() { this.eval(); } }

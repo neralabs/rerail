@@ -1,0 +1,1 @@
+const H = class extends J {static override get rxd(): string {}}; // allow: privateConstructors

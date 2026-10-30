@@ -1,0 +1,1 @@
+let {a = 0, g} = xxq; g = 0; luf(a, g);

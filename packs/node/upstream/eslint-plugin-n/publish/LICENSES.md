@@ -6,7 +6,7 @@ This archive is the test data of `packs/node/upstream/eslint-plugin-n/`. `proven
 
 Repository https://github.com/eslint-community/eslint-plugin-n, tag `v18.4.1`, commit `f1d47aff402b9e009578f4b3155b84f7d8beef9b`. License: MIT.
 
-21452 file(s): 17051 verbatim, 3081 extracted, 1320 renamed. They remain under eslint-plugin-n's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
+21444 file(s): 17051 verbatim, 3081 extracted, 1312 renamed. They remain under eslint-plugin-n's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names renamed (literals and the names' order kept). `verbatim` files are unchanged copies.
 
 ### LICENSE
 
@@ -36,4 +36,4 @@ SOFTWARE.
 
 ## Rerail
 
-1509 file(s): 1 recorded, 1508 authored. Rerail's, under Apache-2.0 (the pack's `LICENSE`): `authored` files were written by Rerail, and `recorded` files are a tool's output on this data, recorded by the pack's generators.
+1506 file(s): 1 recorded, 1505 authored. Rerail's, under Apache-2.0 (the pack's `LICENSE`): `authored` files were written by Rerail, and `recorded` files are a tool's output on this data, recorded by the pack's generators.

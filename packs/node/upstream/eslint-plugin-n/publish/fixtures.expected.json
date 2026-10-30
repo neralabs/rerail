@@ -13437,30 +13437,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-deprecated-api/valid-025.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/valid-026.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-101/case.js",
-    "renamed/no-deprecated-api/invalid-101/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-102/case.js",
-    "renamed/no-deprecated-api/invalid-102/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-104.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-107/case.js",
-    "renamed/no-deprecated-api/invalid-107/package.json"
-   ],
-   [
     "renamed/no-exports-assign/valid-005.js",
     "renamed/package.json"
    ],
@@ -17685,10 +17661,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/prefer-promises/dns/valid-006.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/prefer-promises/dns/valid-010.mjs",
     "renamed/package.json"
    ],
@@ -17710,10 +17682,6 @@
    ],
    [
     "renamed/prefer-promises/fs/valid-006.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/valid-007.js",
     "renamed/package.json"
    ],
    [
@@ -34597,30 +34565,6 @@
     ],
     "renamedFrom": "no-callback-literal/valid-020.js"
    },
-   "renamed/no-deprecated-api/invalid-101/case.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-101/case.js"
-   },
-   "renamed/no-deprecated-api/invalid-102/case.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-102/case.js"
-   },
-   "renamed/no-deprecated-api/invalid-104.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-104.js"
-   },
-   "renamed/no-deprecated-api/invalid-107/case.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-107/case.js"
-   },
    "renamed/no-deprecated-api/valid-003.js": {
     "rules": [
      "n/no-deprecated-api"
@@ -34644,18 +34588,6 @@
      "n/no-deprecated-api"
     ],
     "renamedFrom": "no-deprecated-api/valid-016.js"
-   },
-   "renamed/no-deprecated-api/valid-025.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/valid-025.js"
-   },
-   "renamed/no-deprecated-api/valid-026.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/valid-026.js"
    },
    "renamed/no-exports-assign/valid-005.js": {
     "rules": [
@@ -40987,12 +40919,6 @@
     ],
     "renamedFrom": "prefer-promises/dns/valid-005.js"
    },
-   "renamed/prefer-promises/dns/valid-006.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/valid-006.js"
-   },
    "renamed/prefer-promises/dns/valid-010.mjs": {
     "rules": [
      "n/prefer-promises/dns"
@@ -41028,12 +40954,6 @@
      "n/prefer-promises/fs"
     ],
     "renamedFrom": "prefer-promises/fs/valid-006.js"
-   },
-   "renamed/prefer-promises/fs/valid-007.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/valid-007.js"
    },
    "renamed/prefer-promises/fs/valid-011.mjs": {
     "rules": [
@@ -50322,18 +50242,6 @@
   },
   {
    "rule": "n/no-unsupported-features/es-syntax",
-   "path": "renamed/no-deprecated-api/invalid-107/case.js",
-   "line": 1,
-   "column": 1
-  },
-  {
-   "rule": "n/no-unsupported-features/es-syntax",
-   "path": "renamed/no-deprecated-api/invalid-107/case.js",
-   "line": 1,
-   "column": 5
-  },
-  {
-   "rule": "n/no-unsupported-features/es-syntax",
    "path": "renamed/no-unsupported-features/es-builtins/invalid-012/case.js",
    "line": 1,
    "column": 1
@@ -59250,12 +59158,6 @@
   },
   {
    "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/valid-006.js",
-   "line": 1,
-   "column": 38
-  },
-  {
-   "rule": "n/prefer-node-protocol",
    "path": "renamed/prefer-promises/dns/valid-010.mjs",
    "line": 1,
    "column": 24
@@ -59289,12 +59191,6 @@
    "path": "renamed/prefer-promises/fs/valid-006.js",
    "line": 1,
    "column": 32
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/valid-007.js",
-   "line": 1,
-   "column": 38
   },
   {
    "rule": "n/prefer-node-protocol",
@@ -62040,12 +61936,6 @@
   },
   {
    "rule": "n/prefer-process-get-builtin-module",
-   "path": "renamed/prefer-promises/dns/valid-006.js",
-   "line": 1,
-   "column": 30
-  },
-  {
-   "rule": "n/prefer-process-get-builtin-module",
    "path": "renamed/prefer-promises/fs/valid-005.js",
    "line": 1,
    "column": 20
@@ -62055,12 +61945,6 @@
    "path": "renamed/prefer-promises/fs/valid-006.js",
    "line": 1,
    "column": 24
-  },
-  {
-   "rule": "n/prefer-process-get-builtin-module",
-   "path": "renamed/prefer-promises/fs/valid-007.js",
-   "line": 1,
-   "column": 30
   },
   {
    "rule": "n/prefer-promises/dns",

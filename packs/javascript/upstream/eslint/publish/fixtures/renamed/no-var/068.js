@@ -1,0 +1,1 @@
+function oyqc() { bww(); var a = 1; function bww() { function kukae() { console.log(a); } kukae(); } }

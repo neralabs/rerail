@@ -1,0 +1,1 @@
+async function j(votuh: string){} // allow: functions

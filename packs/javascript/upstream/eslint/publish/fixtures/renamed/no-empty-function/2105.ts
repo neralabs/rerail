@@ -1,0 +1,1 @@
+const F = class {@jhwkvdihh() static get kpy(): string {}}; // allow: methods

@@ -1,0 +1,1 @@
+class J { static get j() {} static set j(lgd) {} }

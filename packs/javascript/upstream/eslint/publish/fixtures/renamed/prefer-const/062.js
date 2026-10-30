@@ -1,0 +1,1 @@
+const w = [1,2]; let z; [,z] = w; z = 0;

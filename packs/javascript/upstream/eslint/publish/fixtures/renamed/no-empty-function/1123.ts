@@ -1,0 +1,1 @@
+function* mrg(xkkbh: string) {} // allow: asyncFunctions

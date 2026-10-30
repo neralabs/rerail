@@ -1,0 +1,1 @@
+const FrTmzunjuuy = () => <div />; <FrTmzunjuuy />;

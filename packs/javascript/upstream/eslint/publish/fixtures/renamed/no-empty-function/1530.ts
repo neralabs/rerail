@@ -1,0 +1,1 @@
+class A {@msahvtqps() get ytq(): string {}}

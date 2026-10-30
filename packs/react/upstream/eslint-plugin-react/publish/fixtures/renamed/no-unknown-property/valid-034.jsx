@@ -1,0 +1,1 @@
+<link onLoad={cwc} onError={hbj} />

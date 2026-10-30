@@ -1,0 +1,1 @@
+const M = class {@rqkwdpifj() get zsm(): string {}}; // allow: asyncMethods

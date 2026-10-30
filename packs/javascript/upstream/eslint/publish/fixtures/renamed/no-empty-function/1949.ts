@@ -1,0 +1,1 @@
+class C { @dwakiwjuj() async liu(oovmy: string) {} } // allow: generatorMethods

@@ -1,0 +1,20 @@
+
+      import Document, { Html, Main, NextScript } from 'next/document'
+      import Head from 'next/head'
+
+      class MfBbndnwld extends Document {
+        render() {
+          return (
+            <Html>
+              <Head />
+              <body>
+                <Main />
+                <NextScript />
+              </body>
+            </Html>
+          )
+        }
+      }
+
+      export default MfBbndnwld
+      

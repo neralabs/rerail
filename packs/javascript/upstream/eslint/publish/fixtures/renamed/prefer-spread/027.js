@@ -1,0 +1,1 @@
+(hkn?.apply)(undefined, asyy);

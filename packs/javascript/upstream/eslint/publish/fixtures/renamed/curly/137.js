@@ -1,0 +1,1 @@
+for (var dsi of aud) { if (dsi) console.log(1) }

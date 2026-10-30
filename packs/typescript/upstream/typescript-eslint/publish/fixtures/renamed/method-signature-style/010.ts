@@ -1,0 +1,1 @@
+type Pxgh = { readonly h?: <P>(b?: P) => P };

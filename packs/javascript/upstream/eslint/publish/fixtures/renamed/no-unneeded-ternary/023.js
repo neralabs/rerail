@@ -1,0 +1,1 @@
+var c = hjz ? false : false;

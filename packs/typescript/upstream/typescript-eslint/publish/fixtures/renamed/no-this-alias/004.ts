@@ -1,0 +1,4 @@
+
+let krso;
+krso = this;
+      

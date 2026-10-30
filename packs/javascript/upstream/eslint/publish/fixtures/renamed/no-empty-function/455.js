@@ -1,0 +1,1 @@
+var mek = {set dei(value) {}}; // allow: methods

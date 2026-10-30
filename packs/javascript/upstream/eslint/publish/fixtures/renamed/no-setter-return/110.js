@@ -1,0 +1,1 @@
+({ set f(sci) { return 1; } })

@@ -1,0 +1,1 @@
+class B { async hfq(xjvie: string) {} } // allow: methods

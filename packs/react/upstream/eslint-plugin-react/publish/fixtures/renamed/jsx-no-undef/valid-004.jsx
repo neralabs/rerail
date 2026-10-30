@@ -1,0 +1,1 @@
+/*eslint no-undef:1*/ var React, cqa; React.render(<cqa.jtr.Ffh />);

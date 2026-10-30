@@ -1,0 +1,1 @@
+(class { set o(rbn) { return null; } })

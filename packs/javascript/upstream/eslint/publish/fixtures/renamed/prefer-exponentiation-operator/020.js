@@ -1,0 +1,1 @@
+function izm() { Math.pow(a, h); var Math; }

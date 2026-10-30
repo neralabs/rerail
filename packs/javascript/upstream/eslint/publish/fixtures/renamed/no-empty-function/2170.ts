@@ -1,0 +1,1 @@
+class B { @mfpzsvoks() async udi(zveic: string) {} } // allow: methods

@@ -1,0 +1,1 @@
+var t = globalThis.JSON();

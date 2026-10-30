@@ -1,0 +1,1 @@
+const W = class extends Y {override get znf(): string {}}; // allow: asyncMethods

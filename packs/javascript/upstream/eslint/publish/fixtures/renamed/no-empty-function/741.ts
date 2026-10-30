@@ -1,0 +1,1 @@
+const A = class {static *ldu(nqwqg: string) { /* empty */ }};

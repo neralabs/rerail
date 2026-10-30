@@ -1,0 +1,1 @@
+for (var y in v) { if (y) { b(); continue; } r(); }

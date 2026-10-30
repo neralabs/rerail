@@ -1,0 +1,1 @@
+var qpa = function() { while (true) try {} finally { continue; } }

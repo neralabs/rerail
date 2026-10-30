@@ -1,0 +1,1 @@
+const G = class { protected constructor() {} }; // allow: protectedConstructors

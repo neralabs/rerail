@@ -1,0 +1,1 @@
+class A { static { console.info(foo) } }

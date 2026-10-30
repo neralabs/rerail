@@ -1,0 +1,1 @@
+(function(rkm) { for ( const name in rkm ) { return true } })({})

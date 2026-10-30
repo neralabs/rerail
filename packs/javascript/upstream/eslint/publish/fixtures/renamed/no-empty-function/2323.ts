@@ -1,0 +1,1 @@
+class F extends K { override wrp() {} } // allow: generatorFunctions

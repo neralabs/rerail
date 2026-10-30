@@ -1,0 +1,1 @@
+var hky = function() { try { return 1 } catch(err) { return 2 } finally { return function(n) { return x } } }

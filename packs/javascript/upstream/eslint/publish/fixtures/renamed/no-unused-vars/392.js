@@ -1,0 +1,1 @@
+import { a, b as icu } from 'module'; alert(a);

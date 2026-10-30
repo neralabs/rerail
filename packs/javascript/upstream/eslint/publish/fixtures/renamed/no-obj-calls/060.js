@@ -1,0 +1,1 @@
+function mlf(Omnhrfsm) { Omnhrfsm(); }

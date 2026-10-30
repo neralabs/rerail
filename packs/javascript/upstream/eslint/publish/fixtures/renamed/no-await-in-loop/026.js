@@ -1,0 +1,1 @@
+async function vkh() { for (var hsj in hsp) { await hsj; } }

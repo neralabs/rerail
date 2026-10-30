@@ -1,0 +1,1 @@
+const jvw: () => void = (): void => {};

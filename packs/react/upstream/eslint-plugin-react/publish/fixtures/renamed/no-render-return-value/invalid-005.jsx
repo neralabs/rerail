@@ -1,0 +1,1 @@
+var s; s = ReactDOM.render(<div />, document.body);

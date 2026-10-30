@@ -1,0 +1,1 @@
+const C = class {oql(pigzl: string) { /* empty */ }};

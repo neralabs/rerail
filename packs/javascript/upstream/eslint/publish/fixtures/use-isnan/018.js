@@ -1,0 +1,1 @@
+foo(Number.NaN + 1);

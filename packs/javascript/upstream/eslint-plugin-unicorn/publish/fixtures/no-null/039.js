@@ -1,0 +1,1 @@
+new Object.create(null)

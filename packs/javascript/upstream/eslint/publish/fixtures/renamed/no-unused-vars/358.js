@@ -1,0 +1,1 @@
+const [a, [n]] = aqpls; alert(a);

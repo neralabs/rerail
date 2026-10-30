@@ -1,0 +1,1 @@
+function fnJqzv(...dln) {  return dln;}

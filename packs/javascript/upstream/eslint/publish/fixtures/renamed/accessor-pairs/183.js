@@ -1,0 +1,1 @@
+(Object?.defineProperties)(obj, {liz: {set: function(value) {}}});

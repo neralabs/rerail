@@ -1,0 +1,1 @@
+(function(cqjv) { var name; for ( name of cqjv ) { c(); return; } })({});

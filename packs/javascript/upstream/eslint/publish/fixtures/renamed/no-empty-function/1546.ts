@@ -1,0 +1,1 @@
+class N {@ufvavchuq() static get yya(): string {}} // allow: generatorFunctions

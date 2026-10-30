@@ -1,0 +1,1 @@
+function ywb() { var qvc, qvf; var o = true; var q = false; var u, v;}

@@ -1,0 +1,1 @@
+var g = test['__proto__'];

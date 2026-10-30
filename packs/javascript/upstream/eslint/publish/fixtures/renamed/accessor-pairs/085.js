@@ -1,0 +1,1 @@
+class B { set b(hdw) {} get b() {} }

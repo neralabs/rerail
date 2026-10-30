@@ -1,0 +1,1 @@
+const I = class {set jbf(value: string) { /* empty */ }};

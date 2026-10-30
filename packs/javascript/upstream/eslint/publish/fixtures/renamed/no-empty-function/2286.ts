@@ -1,0 +1,1 @@
+const A = class extends C {static override set lzh(value: string) {}}; // allow: methods

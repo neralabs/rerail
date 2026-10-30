@@ -1,0 +1,1 @@
+const C = class {@dqnzybjqt() static get eyh(): string {}}; // allow: functions

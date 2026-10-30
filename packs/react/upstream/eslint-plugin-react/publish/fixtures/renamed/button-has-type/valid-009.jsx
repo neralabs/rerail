@@ -1,0 +1,1 @@
+<button type={mibazbgmq ? 'button' : 'submit'}/>

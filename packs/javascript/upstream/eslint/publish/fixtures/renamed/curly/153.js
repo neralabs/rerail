@@ -1,0 +1,2 @@
+if (knv) { icf++ }
+icq;

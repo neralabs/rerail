@@ -1,0 +1,1 @@
+new (ysh?.ugq?.() || ysh?.fws)()

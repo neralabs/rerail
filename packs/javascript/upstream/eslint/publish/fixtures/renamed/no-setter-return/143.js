@@ -1,0 +1,1 @@
+Object.defineProperty(jxt, 'bar', { set(xry) { return 1; } })

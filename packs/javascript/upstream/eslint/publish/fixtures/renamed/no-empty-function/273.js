@@ -1,0 +1,1 @@
+class P {static zix() {}} // allow: generatorMethods

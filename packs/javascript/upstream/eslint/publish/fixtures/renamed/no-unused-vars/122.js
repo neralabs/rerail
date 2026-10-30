@@ -1,0 +1,1 @@
+function ozk(b) { var c = b++; cgn(c) } ozk();

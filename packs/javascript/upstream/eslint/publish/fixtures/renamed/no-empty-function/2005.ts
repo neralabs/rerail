@@ -1,0 +1,1 @@
+const U = class { private constructor() {} }; // allow: asyncFunctions

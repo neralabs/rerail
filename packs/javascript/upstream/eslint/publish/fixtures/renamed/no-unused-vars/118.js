@@ -1,0 +1,1 @@
+var d = 0, h; h = d += d + 1; myd(h);

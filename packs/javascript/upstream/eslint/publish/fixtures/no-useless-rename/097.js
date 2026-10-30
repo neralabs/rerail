@@ -1,0 +1,1 @@
+import {foo as bar, baz as baz} from 'foo';

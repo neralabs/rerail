@@ -1,0 +1,1 @@
+({ set qss(sjj) { var qss = function(sjj) { return 1; } } })

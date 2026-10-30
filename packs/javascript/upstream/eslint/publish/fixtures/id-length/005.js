@@ -1,0 +1,1 @@
+var obj = { abc: 1, de: 2 };

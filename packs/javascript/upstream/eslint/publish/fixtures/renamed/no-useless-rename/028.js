@@ -1,0 +1,1 @@
+import {'foo' as baw} from 'baz';

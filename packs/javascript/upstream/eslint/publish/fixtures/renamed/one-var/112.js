@@ -1,0 +1,1 @@
+class Q { static { let e; const p = 0; let q; } }

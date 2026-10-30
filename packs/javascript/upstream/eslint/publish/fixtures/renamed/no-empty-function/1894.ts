@@ -1,0 +1,1 @@
+const crw = { async lweagz(obhpx: string) {} } // allow: getters

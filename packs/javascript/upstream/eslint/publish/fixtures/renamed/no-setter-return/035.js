@@ -1,0 +1,1 @@
+(class set { rmj(tip) { return 1; } })

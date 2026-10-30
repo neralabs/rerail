@@ -1,0 +1,1 @@
+function hci(Number) { return gab.indexOf(Number?.NaN); }

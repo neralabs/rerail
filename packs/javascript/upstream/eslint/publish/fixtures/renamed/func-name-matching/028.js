@@ -1,0 +1,1 @@
+nfz['x' + 2] = function cnl(){};

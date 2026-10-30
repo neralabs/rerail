@@ -1,0 +1,1 @@
+class D { static zjv = 2; }

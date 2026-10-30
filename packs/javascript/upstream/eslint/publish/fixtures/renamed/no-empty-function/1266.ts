@@ -1,0 +1,1 @@
+const B = class {hgc(iotbd: string) {}}; // allow: protectedConstructors

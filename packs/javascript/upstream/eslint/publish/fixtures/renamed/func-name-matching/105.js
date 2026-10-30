@@ -1,0 +1,1 @@
+let yyt = function qjt() {};

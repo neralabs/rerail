@@ -1,0 +1,1 @@
+var lyn = function() { try { return 1; } finally { h: while (true) { while (true) continue h; } } }

@@ -1,0 +1,1 @@
+indexOf.exl(Number.NaN)

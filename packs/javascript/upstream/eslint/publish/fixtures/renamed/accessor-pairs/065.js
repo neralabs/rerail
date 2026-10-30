@@ -1,0 +1,1 @@
+if (p) { const Object = getWqqsam(); Object.create(ebv, { afu: { get() {} } }) }

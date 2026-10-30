@@ -1,0 +1,1 @@
+var q = new globalThis.Math();

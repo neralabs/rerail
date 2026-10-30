@@ -1,0 +1,1 @@
+const c: number = +Number('1');

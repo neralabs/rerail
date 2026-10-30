@@ -1,0 +1,1 @@
+class S { static { { var h; } { var h; } } }

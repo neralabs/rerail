@@ -1,0 +1,1 @@
+const sdk = function(xwjkl: string) {}; // allow: protectedConstructors

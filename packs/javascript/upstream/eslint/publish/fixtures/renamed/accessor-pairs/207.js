@@ -1,0 +1,1 @@
+class C { static get 1e2() {} }

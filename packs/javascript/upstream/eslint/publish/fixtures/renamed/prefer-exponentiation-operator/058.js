@@ -1,0 +1,1 @@
+e(ezv, Math.pow(b, c))

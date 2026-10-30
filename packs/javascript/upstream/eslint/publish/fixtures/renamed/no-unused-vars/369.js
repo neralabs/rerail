@@ -1,0 +1,1 @@
+const { m, a: { c } } = tkg; alert(m);

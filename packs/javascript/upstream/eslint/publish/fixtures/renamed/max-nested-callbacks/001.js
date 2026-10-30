@@ -1,0 +1,1 @@
+mny(function() { cwn(tjfae, function(efmg) {}); });

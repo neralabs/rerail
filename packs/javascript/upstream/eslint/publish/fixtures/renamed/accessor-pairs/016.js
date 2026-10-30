@@ -1,0 +1,1 @@
+var k = { set(ips) {} };

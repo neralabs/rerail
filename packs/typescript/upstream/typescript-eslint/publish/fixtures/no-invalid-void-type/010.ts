@@ -1,0 +1,1 @@
+async function returnsVoidPromiseAsync(): Promise<void> {}

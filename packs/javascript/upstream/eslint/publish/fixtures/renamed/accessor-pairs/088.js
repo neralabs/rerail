@@ -1,0 +1,1 @@
+(class { set m(ncr) {} get m() {} });

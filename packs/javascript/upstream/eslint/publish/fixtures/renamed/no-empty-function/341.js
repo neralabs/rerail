@@ -1,0 +1,1 @@
+class D {static *wmw() {}} // allow: arrowFunctions

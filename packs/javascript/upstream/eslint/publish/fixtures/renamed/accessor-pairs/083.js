@@ -1,0 +1,1 @@
+T = class { t() {} static t() {} u() {} static v() {} }

@@ -1,0 +1,1 @@
+for (let i = 0, bmq = 10; i < bmq; ++i) {}

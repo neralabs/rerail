@@ -1,0 +1,1 @@
+class B { #parseInt; irm() { Number.#parseInt(irm); } }

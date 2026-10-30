@@ -1,0 +1,1 @@
+function Component() { const mnr = () => {}; return (<Cowcqiy.Provider value={mnr}></Cowcqiy.Provider>)}

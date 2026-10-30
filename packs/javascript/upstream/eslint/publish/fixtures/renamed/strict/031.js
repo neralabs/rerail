@@ -1,0 +1,1 @@
+class B { yip() { function mcd() { } } }

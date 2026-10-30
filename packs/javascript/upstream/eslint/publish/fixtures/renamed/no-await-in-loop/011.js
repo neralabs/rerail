@@ -1,0 +1,1 @@
+async function mjz() { while (true) { var z = async () => { await mjz; } } }

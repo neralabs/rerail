@@ -1,0 +1,1 @@
+<a target={null} href="//example.com"></a>

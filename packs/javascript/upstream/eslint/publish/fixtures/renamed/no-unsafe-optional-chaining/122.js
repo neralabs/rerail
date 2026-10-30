@@ -1,0 +1,1 @@
+async function lgi() { const [lgi] = await rxy?.bkj || await rxy?.lgi; }

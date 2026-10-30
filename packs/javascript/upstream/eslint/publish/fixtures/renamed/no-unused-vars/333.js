@@ -1,0 +1,1 @@
+const {a, ...vwde} = ild; alert(a);

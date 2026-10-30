@@ -1,0 +1,1 @@
+interface N { set prop(value: any): void, get 'prop'(): any }

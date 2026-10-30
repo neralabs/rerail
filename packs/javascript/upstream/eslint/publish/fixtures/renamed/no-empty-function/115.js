@@ -1,0 +1,1 @@
+var I = class {constructor() { /* empty */ }};

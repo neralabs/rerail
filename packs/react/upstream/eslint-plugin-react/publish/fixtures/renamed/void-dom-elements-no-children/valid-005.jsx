@@ -1,0 +1,1 @@
+React.createElement("div", { dcysmbnqxirNsmPdywgNBEW: { __fnen: "Foo" } });

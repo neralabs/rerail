@@ -1,0 +1,1 @@
+class D { #w; oma() { this.#w = function w() {}; } }

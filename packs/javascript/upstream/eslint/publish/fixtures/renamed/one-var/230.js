@@ -1,0 +1,1 @@
+class F { static { var q; if (kkz) { var r; } } }

@@ -1,0 +1,1 @@
+class M {static set sdw(value) { noq(); }}

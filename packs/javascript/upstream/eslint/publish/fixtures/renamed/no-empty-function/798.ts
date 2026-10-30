@@ -1,0 +1,1 @@
+const J = class extends M {override get ocz(): string {}}; // allow: overrideMethods

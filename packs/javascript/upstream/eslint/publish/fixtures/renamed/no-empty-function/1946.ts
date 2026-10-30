@@ -1,0 +1,1 @@
+class D { @mnvwvnaaj() async oek(quhxk: string) {} } // allow: arrowFunctions

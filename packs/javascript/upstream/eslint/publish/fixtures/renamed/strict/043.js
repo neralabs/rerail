@@ -1,0 +1,1 @@
+var nue = function() { 'use strict'; return; };

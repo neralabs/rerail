@@ -1,0 +1,1 @@
+(class { set d(vbs){} q(){} static get d(){} })

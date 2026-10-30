@@ -1,0 +1,1 @@
+var lfl3 = load('not_an_import');

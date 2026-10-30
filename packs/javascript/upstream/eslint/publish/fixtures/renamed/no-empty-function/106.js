@@ -1,0 +1,1 @@
+var I = class {static set rcm(value) { npl(); }};
