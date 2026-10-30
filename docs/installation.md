@@ -20,6 +20,21 @@ looked, never one you left out with `--agents` or removed with
 `rerail install --remove --agents <id>`; name one to connect it anyway, for
 example `npx @neralabs/rerail setup --agents codex`.
 
+### From Pi's package gallery
+
+Pi's [package gallery](https://pi.dev/packages) lists Rerail, and
+`pi install npm:@neralabs/rerail` works: the next Pi session loads Rerail and
+says to start it with `/rerail-start`. `/rerail-start` then finishes set-up,
+and in `~/.pi/agent/settings.json` it swaps that `npm:@neralabs/rerail` entry
+for the managed install, `~/.rerail/current`, in the same place. Pi then loads
+one copy, and `rerail update` governs the version, not `pi update`.
+
+`omp plugin install @neralabs/rerail` works the same way to begin with, but
+set-up cannot swap OMP's plugin install: OMP keeps it in its own plugin folder
+(`~/.omp/plugins`), removed through `omp plugin uninstall`, and loads it beside
+the extension link set-up makes, so two copies run. Set-up's summary says so;
+run `omp plugin uninstall @neralabs/rerail` and restart OMP.
+
 ## What setup does
 
 `npx` fetches the package into npm's cache and runs its `rerail` binary from
@@ -101,8 +116,8 @@ person says yes.
    stopped on its own. Other repositories stay off. Connecting writes persistent registrations, all pointing at
    `~/.rerail/current`, so hooks follow an update without being rewritten; `rerail update` registers the new version
    again only with the coding agents already connected, to bring its new commands and skills:
-   - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`
-   - Pi: `packages` entry in `~/.pi/agent/settings.json`
+   - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`. When OMP also has its own plugin install of Rerail (`omp plugin install @neralabs/rerail`), set-up changes nothing of it and its summary says to run `omp plugin uninstall @neralabs/rerail`
+   - Pi: `packages` entry in `~/.pi/agent/settings.json`. An `npm:@neralabs/rerail` entry, at any version, as Pi's gallery writes it, is replaced by this one in its place; in the `{ "source": … }` form only its `source` changes, so its filters stay. Other `npm:` entries, rule packs included, stay
    - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-manage`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-uninstall`, `/rerail-help`, `/rerail-show-me`) under `~/.claude/commands/` (`/rerail-manage` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
    - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage`, and so on
    - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-manage` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
@@ -622,7 +637,7 @@ rerail install --remove
 `rerail install --remove` takes out every registration that names this
 installation — harness hooks, the Claude Code status line and commands, the
 Cursor commands, the Codex skill, the OMP extension symlink and MCP entry, and
-the Pi package entry — and leaves other tools' entries alone, writing a
+the Pi package entry, an `npm:@neralabs/rerail` one included — and leaves other tools' entries alone, writing a
 `<file>.<timestamp>.bak` beside every file it changes. A folder that held only
 what it removed goes too: each `~/.codex/skills/rerail*` (and `~/.codex/skills`
 when those were all it held), and `~/.omp/agent/extensions` when the link was
