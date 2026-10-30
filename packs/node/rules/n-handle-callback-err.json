@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-handle-callback-err",
-  "revision": 2,
+  "revision": 4,
   "mode": "steer",
   "description": "Handle the err parameter of error-first callbacks instead of leaving it unused; ignoring it silently swallows failures.",
   "scope": {
@@ -19,6 +19,33 @@
   },
   "clauses": [
     {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "has": {
+              "binds": {
+                "form": "parameter",
+                "referenced": false
+              },
+              "kind": "identifier",
+              "regex": "^err$"
+            },
+            "kind": "rest_pattern"
+          },
+          "c2": {
+            "binds": {
+              "form": "parameter",
+              "referenced": false
+            },
+            "kind": "identifier",
+            "regex": "^err$"
+          }
+        }
+      }
+    },
+    {
       "id": "function",
       "forbid": {
         "ast": {
@@ -27,12 +54,7 @@
             "first-err": {
               "any": [
                 {
-                  "kind": "identifier",
-                  "regex": "^err$",
-                  "binds": {
-                    "form": "parameter",
-                    "referenced": false
-                  }
+                  "matches": "c2"
                 },
                 {
                   "any": [
@@ -47,23 +69,10 @@
                     "field": "pattern",
                     "any": [
                       {
-                        "kind": "identifier",
-                        "regex": "^err$",
-                        "binds": {
-                          "form": "parameter",
-                          "referenced": false
-                        }
+                        "matches": "c2"
                       },
                       {
-                        "kind": "rest_pattern",
-                        "has": {
-                          "kind": "identifier",
-                          "regex": "^err$",
-                          "binds": {
-                            "form": "parameter",
-                            "referenced": false
-                          }
-                        }
+                        "matches": "c1"
                       }
                     ]
                   }
@@ -81,15 +90,7 @@
                   }
                 },
                 {
-                  "kind": "rest_pattern",
-                  "has": {
-                    "kind": "identifier",
-                    "regex": "^err$",
-                    "binds": {
-                      "form": "parameter",
-                      "referenced": false
-                    }
-                  }
+                  "matches": "c1"
                 }
               ]
             }

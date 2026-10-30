@@ -19,6 +19,8 @@ use crate::code_rule_dsl::eval::{
     WitnessError, document_matcher, file_language, grammar_matcher, witness_from_match,
     witnesses_from_match,
 };
+use crate::code_rule_dsl::import_target::ViewSlot;
+use crate::code_rule_dsl::import_target::fs::View;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -41,7 +43,7 @@ use ast_grep_core::AstGrep as Root;
 use ast_grep_language::LanguageExt;
 use napi::Result;
 use rayon::prelude::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -77,6 +79,10 @@ pub(super) struct JobContext<'a> {
     pub(super) closed: &'a Arc<AtomicBool>,
     /// Extract each Python file's call summary (a code rule holds `calls` terms).
     pub(super) summarize: bool,
+    /// What import targets resolve among (`import_target::fs::View`), where a clause reads them.
+    pub(super) import_view: Option<&'a Arc<View>>,
+    /// The clauses that read import targets: their results are never stored.
+    pub(super) import_clauses: &'a HashSet<ClauseId>,
 }
 
 type Evaluated = Vec<(String, FileState, Result<Metrics>)>;
@@ -188,6 +194,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 )
             });
             let _consumer = CrossFileScheduler::install(crossfile);
+            let _view = ViewSlot::install(context.import_view.cloned());
             let mut restored = None;
             let evaluated = evaluate_file(
                 &mut file,
@@ -203,6 +210,12 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 super::TEST_CLAUSE_WORK_BUDGET.set(previous);
             }
             let mut metrics = evaluated?;
+            // What a target resolves to depends on more than the file: no store may answer it.
+            for id in &file.candidates.ast {
+                if context.import_clauses.contains(id) {
+                    file.unstored.insert(*id);
+                }
+            }
             // A consumers' pass after a transient evaluation of the file stays transient.
             file.transient_failure |= transient;
             if context.summarize {

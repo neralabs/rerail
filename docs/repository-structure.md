@@ -16,6 +16,7 @@ structure review on PR #1 plus #25, the generated-file manifest.
 | `fixtures/packs/` | Pack-validator inputs |
 | `test/`, `integration/` | Unit and integration tests; helpers in `support/` |
 | `e2e/` | The dashboard's Playwright browser specs over seeded scenarios (`e2e/README.md`); helpers in `support/` |
+| `plugins/<agent>/` | The installer plugins the Claude, OpenAI and Cursor plugin directories list (`claude/`, `codex/`, `cursor/`): one skill each, `install`, that runs `npx @neralabs/rerail@<version> setup --relay`; no hooks or binaries (`plugins/README.md`) |
 | `scripts/generate/` | Generators of engine, host and pack data, listed in `scripts/generate/README.md` |
 
 ## Running the gate

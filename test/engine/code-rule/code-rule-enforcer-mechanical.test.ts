@@ -1539,7 +1539,7 @@ function pagingWorkspace(page: (cursor: number) => string, onApply: () => void =
     memoryProfile: () => JSON.stringify({}),
     resultPageAsync: async (cursor: number) => page(cursor),
     evictInactive: () => false, nodeReference: () => null,
-    resolveNodeReference: () => JSON.stringify(null), setDocumentResidencyLimit: () => undefined, close: () => undefined,
+    resolveNodeReference: () => JSON.stringify(null), setDocumentResidencyLimit: () => undefined, setRoot: () => undefined, close: () => undefined,
   } as unknown as NativeCodeRuleDslWorkspace;
 }
 

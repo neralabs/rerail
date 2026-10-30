@@ -301,8 +301,8 @@ export async function runScrubCommand(args: readonly string[], usage: () => stri
       db.$client.close();
     }
   } else process.stdout.write(`No Rerail database at ${path}; no stored history to scrub.\n`);
-  // The copy `rerail update` took before switching versions, which `rerail update rollback` puts back: opened without
-  // this build's schema, so it stays the earlier version's file.
+  // The copy `rerail update` took before switching versions: opened without this build's schema, so it stays the
+  // earlier version's file.
   const copy = preUpdateSnapshotPath(path);
   if (existsSync(copy)) {
     try {

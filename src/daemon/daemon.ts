@@ -338,8 +338,8 @@ export class RerailDaemon {
     const storageRoot = join(workspaceRoot, ".rerail", "sessions");
     const modelPath = bundledModelPath();
     let daemon: RerailDaemon | undefined;
-    // Open the database before binding anything: a refused open (a rollback holding it) must leave no engine
-    // socket behind, or every later start fails with EADDRINUSE.
+    // Open the database before binding anything: a refused open (a file this build cannot read, say) must leave no
+    // engine socket behind, or every later start fails with EADDRINUSE.
     const stores = new DatabaseApiStores(databasePath, {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,

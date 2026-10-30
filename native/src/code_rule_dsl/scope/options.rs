@@ -126,6 +126,12 @@ pub(crate) struct LanguageOptions {
     /// The query's `sourceType`; `None` leaves it to each file (`SourceType::of_file`), which the
     /// readers below take as `file`.
     pub(crate) source_type: Option<SourceType>,
+    /// `moduleSystem: "package-type"`: without a `sourceType`, a file's module system is the one
+    /// its extension and its package's `type` give it (`SourceType::by_package_type`), not its own
+    /// (`SourceType::of_file`, Node's syntax detection where `type` is unset, a module without a
+    /// manifest). The readers below take whichever the query reads as `file`
+    /// (`file_source_type_for`).
+    pub(crate) package_type_module_system: bool,
     /// The ecmaVersion builtins and the configured `globals`; CommonJS's are added by
     /// `declares` for a CommonJS file (no builtin shares a name with them).
     pub(crate) globals: HashMap<String, GlobalSetting>,
@@ -162,6 +168,7 @@ impl LanguageOptions {
         Self {
             ecma_version,
             source_type,
+            package_type_module_system: false,
             globals,
             global_return: false,
             implied_strict: false,

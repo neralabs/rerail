@@ -749,6 +749,86 @@ fn a_derived_server_graph_follows_removals_configuration_and_manifest_edits() {
     workspace.close();
 }
 
+/// A workspace deriving `package` for files the host sent none for reads which files npm publishes
+/// from the manifest's `files` and the `.npmignore` or `.gitignore` entries in its folder: a
+/// request that sends, edits or removes one of them alone changes its package's files, and a
+/// manifest edit keeps the ignore files the workspace holds.
+#[test]
+fn a_derived_publication_follows_ignore_file_edits_and_removals() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "publication",
+        json!([{
+            "id": "unpublished",
+            "violation": { "anchor": "witness.span", "code": "UNPUBLISHED", "message": "unpublished" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "published": false } }, "rule": { "kind": "program" } } }
+        }]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let reported = || {
+        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect::<Vec<_>>()
+    };
+    apply_host(
+        &workspace,
+        1,
+        json!([
+            file("pkg/package.json", "json", "{}"),
+            file("pkg/index.js", "javascript", "export {};\n"),
+            file("pkg/test/a.js", "javascript", "export {};\n"),
+        ]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    // The `.gitignore` decides without `files` or a `.npmignore`.
+    apply_host(
+        &workspace,
+        2,
+        json!([file("pkg/.gitignore", "text", "test\n")]),
+        &[],
+    );
+    assert_eq!(reported(), ["pkg/test/a.js"]);
+    // A `.npmignore` replaces it.
+    apply_host(
+        &workspace,
+        3,
+        json!([file("pkg/.npmignore", "text", "index.js\n")]),
+        &[],
+    );
+    assert_eq!(reported(), ["pkg/index.js"]);
+    // A manifest edit keeps the ignore files.
+    apply_host(
+        &workspace,
+        4,
+        json!([file("pkg/package.json", "json", r#"{ "name": "pkg" }"#)]),
+        &[],
+    );
+    assert_eq!(reported(), ["pkg/index.js"]);
+    // `main` is always published.
+    apply_host(
+        &workspace,
+        5,
+        json!([file(
+            "pkg/package.json",
+            "json",
+            r#"{ "main": "index.js" }"#
+        )]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    // Removing the `.npmignore` gives the `.gitignore` back its say.
+    apply_host(&workspace, 6, json!([]), &["pkg/.npmignore"]);
+    assert_eq!(reported(), ["pkg/test/a.js"]);
+    apply_host(&workspace, 7, json!([]), &["pkg/.gitignore"]);
+    assert!(reported().is_empty());
+    workspace.close();
+}
+
 /// A manifest that gains (or regains) `next` after its sources arrived derives the graph for
 /// them, and a nested package created or removed between a page and what it imports moves the
 /// boundary of the enclosing graph.
@@ -3938,6 +4018,94 @@ fn a_symlinked_folder_pointing_outside_the_root_holds_no_manifest() {
         package("vendor/x.js"),
         Some(json!({ "folder": "", "type": "unset" }))
     );
+}
+
+/// On disk, a host's `package` facts carry the manifest's `private` and each file's own
+/// `published`, read from the manifest's `files` and `main` and its folder's `.npmignore` (a
+/// regular file, never a symlink): one reader reads each manifest once for every file below it,
+/// and the manifest's digest, which reuse keys carry, follows its ignore files.
+#[test]
+fn host_package_facts_read_private_and_each_files_publication_on_disk() {
+    let directory = TempDir::new("package-publication");
+    let root = directory.0.clone();
+    std::fs::create_dir_all(root.join("lib")).unwrap();
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        r#"{ "files": ["lib"], "main": "main.js", "private": true }"#,
+    )
+    .unwrap();
+    std::fs::write(root.join(".npmignore"), "lib/x.js\n").unwrap();
+    std::fs::write(root.join("pkg/package.json"), "{}").unwrap();
+    let absolute = |path: &str| root.join(path).to_string_lossy().into_owned();
+    let reader = crate::code_rule_dsl::PackageFactsReader::new(root.to_string_lossy().into_owned());
+    let facts = |path: &str| {
+        reader
+            .facts("javascript".to_owned(), absolute(path))
+            .map(|facts| (facts.folder, facts.private, facts.published))
+    };
+    assert_eq!(
+        facts("lib/a.js"),
+        Some((String::new(), Some(true), Some(true)))
+    );
+    assert_eq!(
+        facts("lib/x.js"),
+        Some((String::new(), Some(true), Some(false)))
+    );
+    assert_eq!(
+        facts("src/b.js"),
+        Some((String::new(), Some(true), Some(false)))
+    );
+    assert_eq!(
+        facts("main.js"),
+        Some((String::new(), Some(true), Some(true)))
+    );
+    assert_eq!(
+        facts("pkg/a.js"),
+        Some(("pkg".to_owned(), None, Some(true)))
+    );
+    let one_shot = crate::code_rule_dsl::package_facts(
+        "javascript".to_owned(),
+        absolute("lib/x.js"),
+        root.to_string_lossy().into_owned(),
+    )
+    .expect("the root manifest");
+    assert_eq!(
+        (one_shot.private, one_shot.published),
+        (Some(true), Some(false))
+    );
+    // The digest follows the ignore files.
+    let digest = || {
+        *crate::code_rule_dsl::package_manifest::Manifests::new(root.clone())
+            .of_file(&root.join("pkg/a.js"))
+            .expect("the package's manifest")
+            .digest()
+    };
+    let before = digest();
+    std::fs::write(root.join("pkg/.gitignore"), "a.js\n").unwrap();
+    assert_ne!(digest(), before);
+    let reader = crate::code_rule_dsl::PackageFactsReader::new(root.to_string_lossy().into_owned());
+    assert_eq!(
+        reader
+            .facts("javascript".to_owned(), absolute("pkg/a.js"))
+            .and_then(|facts| facts.published),
+        Some(false)
+    );
+    // A symlinked ignore file is not read.
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(root.join("pkg/.gitignore")).unwrap();
+        std::fs::write(root.join("ignore-all"), "*\n").unwrap();
+        std::os::unix::fs::symlink(root.join("ignore-all"), root.join("pkg/.npmignore")).unwrap();
+        let reader =
+            crate::code_rule_dsl::PackageFactsReader::new(root.to_string_lossy().into_owned());
+        assert_eq!(
+            reader
+                .facts("javascript".to_owned(), absolute("pkg/a.js"))
+                .and_then(|facts| facts.published),
+            Some(true)
+        );
+    }
 }
 
 /// A clean tree's reuse follows the configuration a nested package's `extends` reaches outside

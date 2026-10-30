@@ -16,7 +16,8 @@ use crate::code_rule_dsl::model::{
 };
 use crate::code_rule_dsl::module_graph;
 use crate::code_rule_dsl::package_manifest::{
-    Manifest, deserialize_wire, manifest_directory, manifest_in,
+    GITIGNORE, Manifest, NPMIGNORE, deserialize_wire, ignore_file_directory, manifest_directory,
+    manifest_in,
 };
 use crate::content_store::StoreError;
 use napi::Result;
@@ -239,6 +240,7 @@ pub(super) fn make_file(
         failures: BTreeMap::new(),
         syntax: None,
         crossfile: CrossFileFileState::default(),
+        import_generation: 0,
     }
 }
 
@@ -345,6 +347,52 @@ impl WorkspaceState {
         }
         self.evicted_inputs.remove(path);
         self.files.remove(path)
+    }
+
+    /// Holds `path`'s `source` for import target resolution (`import_target::fs::HeldFiles`): a
+    /// change disk below the root does not already show moves `import_generation`. A workspace
+    /// whose clauses read no import targets (they are fixed before its first apply) holds none.
+    pub(super) fn hold_import_file(&mut self, path: &str, source: &Arc<String>) {
+        if self.import_clauses.is_empty() {
+            return;
+        }
+        let root = self.import_root.as_deref();
+        if Arc::make_mut(&mut self.import_files).hold(path, source, root) {
+            self.import_generation += 1;
+        }
+    }
+
+    /// Stops holding `path` for import target resolution, as `hold_import_file` holds it.
+    fn release_import_file(&mut self, path: &str) {
+        let root = self.import_root.as_deref();
+        if Arc::make_mut(&mut self.import_files).release(path, root) {
+            self.import_generation += 1;
+        }
+    }
+
+    /// Marks dirty every file whose clauses read import targets and whose last evaluation read
+    /// them before the held files (or the root) last changed. A file whose source a busy store
+    /// freed keeps its results: nothing can supply its source again (`results_only`).
+    pub(super) fn stale_imports(&mut self) {
+        if self.import_clauses.is_empty() {
+            return;
+        }
+        let generation = self.import_generation;
+        let stale = self
+            .files
+            .iter()
+            .filter(|(_, file)| {
+                file.import_generation != generation
+                    && !file.results_only
+                    && file
+                        .candidates
+                        .ast
+                        .iter()
+                        .any(|id| self.import_clauses.contains(id))
+            })
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        self.dirty_files.extend(stale);
     }
 }
 
@@ -546,10 +594,10 @@ impl ContextChanges {
 /// ECMA file the host sent no `package` for the workspace's nearest one. As package markers are
 /// the packages of JSON/buffer overlays, the workspace's `package.json` entries (whatever their
 /// language) are their manifests, read as on disk (`Manifest::parse`) with the `jsxImportSource`
-/// of the `tsconfig.json`-style entries beside them (a change of one is a change of the
-/// manifest). A resident file follows them while its `package` equals their derivation before
-/// the request, so a host's own fact stays authoritative. The changes are the workspace's once
-/// the request applies (`ContextChanges`).
+/// of the `tsconfig.json`-style entries beside them and the `.npmignore` and `.gitignore` entries
+/// in their folder (a change of one is a change of the manifest). A resident file follows them
+/// while its `package` equals their derivation before the request, so a host's own fact stays
+/// authoritative. The changes are the workspace's once the request applies (`ContextChanges`).
 fn refresh_manifest_context(
     state: &mut WorkspaceState,
     inputs: &mut Vec<FileInput>,
@@ -569,9 +617,22 @@ fn refresh_manifest_context(
             module_config_text(state, inputs, removed, path)
         })
     };
+    let ignore_files = |state: &WorkspaceState, directory: &str| {
+        let text = |name: &str| {
+            let path = if directory.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{directory}/{name}")
+            };
+            request_text(&state.ignore_files, inputs, removed, &path)
+        };
+        (text(NPMIGNORE), text(GITIGNORE))
+    };
     for input in inputs.iter() {
         if let Some(directory) = manifest_directory(&input.path) {
+            let (npmignore, gitignore) = ignore_files(state, directory);
             let manifest = Manifest::parse(directory.to_owned(), input.source.as_bytes())
+                .with_ignore_files(npmignore, gitignore)
                 .with_jsx_import_source(config(state, directory).jsx_import_source());
             if state
                 .manifests
@@ -582,6 +643,25 @@ fn refresh_manifest_context(
             } else {
                 changes.insert(directory.to_owned(), Some(Arc::new(manifest)));
             }
+        }
+    }
+    let ignore_directories = inputs
+        .iter()
+        .map(|input| input.path.as_str())
+        .chain(removed.iter().map(String::as_str))
+        .filter_map(ignore_file_directory)
+        .collect::<BTreeSet<_>>();
+    for directory in ignore_directories {
+        if changes.contains_key(directory) {
+            continue;
+        }
+        let Some(current) = state.manifests.get(directory) else {
+            continue;
+        };
+        let (npmignore, gitignore) = ignore_files(state, directory);
+        let updated = (**current).clone().with_ignore_files(npmignore, gitignore);
+        if updated != **current {
+            changes.insert(directory.to_owned(), Some(Arc::new(updated)));
         }
     }
     if inputs
@@ -853,10 +933,21 @@ fn derives_package_below(state: &WorkspaceState, directory: &str) -> bool {
             .any(|(path, input)| derived(path, input))
 }
 
-/// The text of the project configuration at `path` once the request applies: the request's own,
-/// else the workspace's (`WorkspaceState::module_configs`) unless the request removes it.
+/// The text of the project configuration at `path` once the request applies (`request_text`
+/// over `WorkspaceState::module_configs`).
 fn module_config_text(
     state: &WorkspaceState,
+    inputs: &[FileInput],
+    removed: &[String],
+    path: &str,
+) -> Option<String> {
+    request_text(&state.module_configs, inputs, removed, path)
+}
+
+/// The text of the file at `path` once the request applies: the request's own, else the
+/// workspace's (`stored`) unless the request removes it.
+fn request_text(
+    stored: &BTreeMap<String, Arc<String>>,
     inputs: &[FileInput],
     removed: &[String],
     path: &str,
@@ -867,10 +958,7 @@ fn module_config_text(
     if removed.iter().any(|removed| removed == path) {
         return None;
     }
-    state
-        .module_configs
-        .get(path)
-        .map(|text| text.as_str().to_owned())
+    stored.get(path).map(|text| text.as_str().to_owned())
 }
 
 /// The ECMA files of a request the host sent no `package` for (`refresh_manifest_context`).
@@ -935,9 +1023,17 @@ pub(super) fn apply_request(
                 .module_configs
                 .insert(input.path.clone(), Arc::clone(&input.source));
         }
+        if ignore_file_directory(&input.path).is_some() {
+            state
+                .ignore_files
+                .insert(input.path.clone(), Arc::clone(&input.source));
+        }
+        state.hold_import_file(&input.path, &input.source);
     }
     for path in &request.removed {
         state.module_configs.remove(path);
+        state.ignore_files.remove(path);
+        state.release_import_file(path);
     }
     context_changes.apply(state);
     for path in request.removed {
@@ -972,6 +1068,11 @@ pub(super) fn apply_request(
         }
         state.dirty_files.insert(path.clone());
         CrossFileScheduler::forget(state, &path);
+    }
+    // A deferred request (a batch of a scan) leaves the files whose import targets it changed to
+    // the closing one, which reads every file the scan sent.
+    if !request.defer_global {
+        state.stale_imports();
     }
     state.result_page_index = None;
     state.revision = request.revision;
@@ -1011,6 +1112,7 @@ pub(super) fn is_cheap(state: &WorkspaceState, request: &Request) -> bool {
         && state.files.len() <= 4 && request.files[0].source.len() <= 1024
         && !adds_package_marker(state, &request.files[0])
         && manifest_directory(&request.files[0].path).is_none()
+        && ignore_file_directory(&request.files[0].path).is_none()
         && state.files.values().map(|file| file.input.source.len()).sum::<usize>() <= 4096
         && state.code_rules.iter().map(|code_rule| code_rule.clauses.len()).sum::<usize>() <= 4
         && state.code_rules.iter().all(|code_rule| code_rule.clauses.iter().all(|clause|
