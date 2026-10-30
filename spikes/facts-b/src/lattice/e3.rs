@@ -68,6 +68,7 @@ pub struct Base {
     lay_off: Col<u32>,
     lay_ids: Col<u32>,
     lvl: Col<u32>,
+    set: Col<u64>,
     dir: PathBuf,
     /// The base's membership (path → content), for divergence.
     members: FxHashMap<u32, u32>,
@@ -175,6 +176,7 @@ fn build_base(f: &Facts, dir: &Path) -> (Base, serde_json::Value) {
         lay_off: cols::map(&dir.join("lay_off.u32")),
         lay_ids: cols::map(&dir.join("lay_ids.u32")),
         lvl: cols::map(&dir.join("lvl.u32")),
+        set: cols::map(&dir.join("set.u64")),
         dir: dir.to_path_buf(),
         members: FxHashMap::default(),
     };
@@ -581,6 +583,11 @@ fn memory(b: &Base, w: &LWt) -> serde_json::Value {
         diff += d;
         pages += (d > 0) as usize;
     }
+    // Reached bits (DRed's array) that differ from the base's, and the words holding one.
+    let s = w.set.as_slice();
+    let bs = &b.set[..b.nb.div_ceil(64)];
+    let set_differ: u32 = s.iter().zip(bs).map(|(a, z)| (a ^ z).count_ones()).sum();
+    let set_words_differ = s.iter().zip(bs).filter(|(a, z)| a != z).count();
     let reached = l.iter().filter(|x| **x != INF).count();
     json!({
         "ids": w.ext.n(), "ext_ids": w.ext.st.len(), "ext_bytes": w.ext.bytes(),
@@ -588,6 +595,7 @@ fn memory(b: &Base, w: &LWt) -> serde_json::Value {
         "rev": {"replaced": w.rev.replaced(), "live_edges": w.rev.live_edges(), "bytes": w.rev.bytes(), "bytes_tight": w.rev.bytes_tight()},
         "lvl_private": w.lvl.private_bytes(), "set_private": w.set.private_bytes(), "set_bf_private": w.set_bf.private_bytes(), "seed_private": w.seed.private_bytes(),
         "lvl_differ": diff, "lvl_pages_differ": pages, "lvl_ext": l.len() - b.nb, "reached": reached,
+        "set_differ": set_differ, "set_words_differ": set_words_differ,
     })
 }
 

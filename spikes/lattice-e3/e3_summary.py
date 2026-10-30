@@ -112,6 +112,7 @@ def memory(res):
             "lvl_private": tot(lambda w: w["lvl_private"]), "set_private": tot(lambda w: w["set_private"]), "set_bf_private": tot(lambda w: w.get("set_bf_private", 0)), "seed_private": tot(lambda w: w["seed_private"]),
             "lvl_differ_sparse_bytes (8 B per differing id)": tot(lambda w: w["lvl_differ"]) * 8,
             "lvl_differ": tot(lambda w: w["lvl_differ"]), "lvl_pages_differ": tot(lambda w: w["lvl_pages_differ"]),
+            "set_differ": tot(lambda w: w.get("set_differ", 0)), "set_words_differ": tot(lambda w: w.get("set_words_differ", 0)),
             "ext_ids": tot(lambda w: w["ext_ids"]), "ext_bytes": tot(lambda w: w["ext_bytes"]),
             "y2_dc_delta_bytes": tot(lambda w: w["y2_dc_bytes"]),
             "per_worktree_fwd_replaced": summ([w["fwd"]["replaced"] for w in ws]),
