@@ -1964,6 +1964,48 @@ pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connect
     out
 }
 
+/// Positions in a symbol, for splitting one at its dots (`$m = @cat($q, $x)` with only $m bound).
+const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT INTO rdl_int WITH RECURSIVE i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM i WHERE i < 4096) SELECT i FROM i;";
+
+/// The relations a single rule projects from one input atom, as views (`CREATE TEMP VIEW`), with
+/// their statistics, input columns and document columns recorded in `model`.
+fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&Rule>>) -> Result<Vec<(String, String)>> {
+    let mut views = Vec::new();
+    for (&rel, rs) in rules_by {
+        let [rule] = rs.as_slice() else { continue };
+        if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
+            continue;
+        }
+        let (h, b) = (&rule.head, &rule.body);
+        let [Literal::Atom(a)] = b.as_slice() else { continue };
+        if a.neg || !prog.inputs.contains(&a.rel) {
+            continue;
+        }
+        let order = vec![Step { at: 0, lit: b[0].clone(), mode: None }];
+        let select = model.sql_select(prog, h, &order, None, None)?.replacen("SELECT DISTINCT", "SELECT", 1);
+        views.push((rel.to_owned(), format!("CREATE TEMP VIEW {rel} AS {select}")));
+        model.view_stats(rel, h, a);
+        let src = first_columns(a);
+        let cols = h.args.iter().map(|t| if let Term::Var(v) = t { src.get(v.as_str()).map(|&c| sql_col(&a.rel, c)) } else { None }).collect();
+        model.view_src.insert(rel.to_owned(), (a.rel.clone(), cols));
+        if let ([Term::Var(h0), Term::Var(h1)], [Term::Var(d), Term::Var(n), rest @ ..]) = (h.args.as_slice(), a.args.as_slice())
+            && a.rel == "node"
+            && rest.iter().all(|t| matches!(t, Term::Wild))
+            && d != n
+        {
+            let names = [h0, h1];
+            let (mut sorted_h, mut sorted_a) = (vec![h0, h1], vec![d, n]);
+            sorted_h.sort();
+            sorted_a.sort();
+            if sorted_h == sorted_a {
+                let pos = |x: &String| names.iter().position(|v| *v == x).expect("a head variable");
+                model.docof.insert(rel.to_owned(), (pos(n), pos(d)));
+            }
+        }
+    }
+    Ok(views)
+}
+
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
     let db = db;
     let temp: Vec<(String, String)> = db
@@ -1974,7 +2016,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         db.execute_batch(&format!("DROP {} IF EXISTS temp.{name}", if ty == "view" { "VIEW" } else { "TABLE" }))?;
     }
     // Positions in a symbol, for splitting one at its dots (`$m = @cat($q, $x)` with only $m bound).
-    db.execute_batch("CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT INTO rdl_int WITH RECURSIVE i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM i WHERE i < 4096) SELECT i FROM i;")?;
+    db.execute_batch(RDL_INT)?;
     let atoms = inputs.atoms.is_some();
     let facts = inputs.facts.clone();
     if inputs.native.contains("nearest") {
@@ -1988,38 +2030,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     let native = model.inputs.native.clone();
     let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new() };
-    for (&rel, rs) in &rules_by {
-        let [rule] = rs.as_slice() else { continue };
-        if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
-            continue;
-        }
-        let (h, b) = (&rule.head, &rule.body);
-        let [Literal::Atom(a)] = b.as_slice() else { continue };
-        if a.neg || !prog.inputs.contains(&a.rel) {
-            continue;
-        }
-        let order = vec![Step { at: 0, lit: b[0].clone(), mode: None }];
-        let select = run.model.sql_select(prog, h, &order, None, None)?.replacen("SELECT DISTINCT", "SELECT", 1);
-        db.execute(&format!("CREATE TEMP VIEW {rel} AS {select}"), [])?;
-        run.views.insert(rel.to_owned());
-        run.model.view_stats(rel, h, a);
-        let src = first_columns(a);
-        let cols = h.args.iter().map(|t| if let Term::Var(v) = t { src.get(v.as_str()).map(|&c| sql_col(&a.rel, c)) } else { None }).collect();
-        run.model.view_src.insert(rel.to_owned(), (a.rel.clone(), cols));
-        if let ([Term::Var(h0), Term::Var(h1)], [Term::Var(d), Term::Var(n), rest @ ..]) = (h.args.as_slice(), a.args.as_slice())
-            && a.rel == "node"
-            && rest.iter().all(|t| matches!(t, Term::Wild))
-            && d != n
-        {
-            let names = [h0, h1];
-            let (mut sorted_h, mut sorted_a) = (vec![h0, h1], vec![d, n]);
-            sorted_h.sort();
-            sorted_a.sort();
-            if sorted_h == sorted_a {
-                let pos = |x: &String| names.iter().position(|v| *v == x).expect("a head variable");
-                run.model.docof.insert(rel.to_owned(), (pos(n), pos(d)));
-            }
-        }
+    for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
+        db.execute(&view, [])?;
+        run.views.insert(rel);
     }
     for (rel, cols) in &prog.decls {
         if prog.inputs.contains(rel) || run.views.contains(rel) {
@@ -2154,6 +2167,23 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         }
     }
     run.materialize(&prog.outputs)?;
+    let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms)?;
+    outcome.outputs = outputs;
+    outcome.nodes = nodes;
+    Ok(outcome)
+}
+
+/// The program's outputs as text rows, sorted (symbols as text, kinds and fields by name), and per
+/// output the columns that hold nodes.
+#[allow(clippy::type_complexity)]
+fn decoded_outputs(
+    prog: &Program,
+    db: &Connection,
+    lowered: Option<&lower::Lowered>,
+    facts: &str,
+    atoms: bool,
+) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
+    let (mut outputs, mut all_nodes) = (BTreeMap::new(), BTreeMap::new());
     let text = |e: &str| if atoms { format!("sym_text({e})") } else { e.to_owned() };
     for rel in &prog.outputs {
         // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).
@@ -2207,11 +2237,13 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             .collect::<rusqlite::Result<_>>()?;
         rows.sort();
         let nodes = domains.iter().enumerate().filter(|(_, d)| **d == lower::Domain::Node).map(|(i, _)| i).collect();
-        outcome.nodes.insert(name.clone(), nodes);
-        outcome.outputs.insert(name, rows);
+        all_nodes.insert(name.clone(), nodes);
+        outputs.insert(name, rows);
     }
-    Ok(outcome)
+    Ok((outputs, all_nodes))
 }
+
+pub(in crate::code_rule_dsl) mod emit;
 
 #[cfg(test)]
 mod tests;

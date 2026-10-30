@@ -93,6 +93,7 @@ impl Wave {
             }],
             file_local: true,
             partitions: vec![(RELATION.to_owned(), self.names.clone())],
+            lattices: Vec::new(),
         }
     }
 

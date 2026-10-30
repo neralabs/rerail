@@ -64,6 +64,10 @@ pub(in crate::code_rule_dsl) struct Program {
     /// i-th name's family holds the rows whose first column is i (a match-fact family per rule
     /// clause, 06 S4).
     pub partitions: Vec<(String, Vec<String>)>,
+    /// Flat-lattice relations (`logic::plan`'s `merge_lattice`): (relation, key columns, top). The
+    /// last column is the value: a key's equal values stay, different ones (or top) become top. A
+    /// lattice relation's rows are keyed by its keys, and its fold merges by key.
+    pub lattices: Vec<(String, usize, i64)>,
 }
 
 impl Program {
@@ -76,6 +80,9 @@ impl Program {
         }
         for s in &self.steps {
             hash.update(format!("{}\0{}\0{}\0{}\0", s.output, s.stratum, s.reads.join(","), s.sql).as_bytes());
+        }
+        for (rel, keys, top) in &self.lattices {
+            hash.update(format!("lattice {rel}/{keys}/{top}\0").as_bytes());
         }
         hash.finalize().into()
     }
@@ -161,8 +168,10 @@ fn declare(lease: &Lease<'_>, program: &Program) -> rusqlite::Result<()> {
     for (rel, arity) in &program.relations {
         let cols = (0..*arity).map(|i| format!("c{i}")).collect::<Vec<_>>();
         let typed = cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", ");
-        for table in [rel.clone(), format!("new_{rel}"), format!("delta_{rel}")] {
-            let definition = format!("CREATE TEMP TABLE {table}({typed}, PRIMARY KEY ({})) WITHOUT ROWID", cols.join(", "));
+        // A lattice relation and its delta hold one value per key; its `new_` rows, every candidate.
+        let keys = lattice(program, rel).map_or(*arity, |(keys, _)| keys);
+        for (table, keys) in [(rel.clone(), keys), (format!("new_{rel}"), *arity), (format!("delta_{rel}"), keys)] {
+            let definition = format!("CREATE TEMP TABLE {table}({typed}, PRIMARY KEY ({})) WITHOUT ROWID", cols[..keys].join(", "));
             storage.declare(lease, &table, definition, true)?;
         }
     }
@@ -177,10 +186,37 @@ fn declare(lease: &Lease<'_>, program: &Program) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn lattice(program: &Program, rel: &str) -> Option<(usize, i64)> {
+    program.lattices.iter().find(|(name, ..)| name == rel).map(|(_, keys, top)| (*keys, *top))
+}
+
+/// A lattice relation's fold (`merge_lattice`): the candidates of `new_<rel>` joined per key, those
+/// that change the relation's value as its delta (a value that differs from one already there is
+/// top), merged into the relation. Returns the delta's rows.
+fn fold_lattice(lease: &Lease<'_>, rel: &str, arity: usize, keys: usize, top: i64) -> rusqlite::Result<usize> {
+    let key = (0..keys).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
+    let v = format!("c{}", arity - 1);
+    let on = (0..keys).map(|i| format!("r.c{i} = j.c{i}")).collect::<Vec<_>>().join(" AND ");
+    let same = (0..keys).map(|i| format!("r.c{i} = delta_{rel}.c{i}")).collect::<Vec<_>>().join(" AND ");
+    let joined = format!(
+        "SELECT {key}, CASE WHEN count(DISTINCT {v}) > 1 OR max({v}) = {top} THEN {top} ELSE min({v}) END AS {v} FROM new_{rel} GROUP BY {key}"
+    );
+    lease.execute_batch(&format!("DELETE FROM delta_{rel}"))?;
+    let n = lease.execute(
+        &format!("INSERT INTO delta_{rel} SELECT j.* FROM ({joined}) j LEFT JOIN {rel} r ON {on} WHERE r.{v} IS NULL OR (r.{v} <> {top} AND r.{v} <> j.{v})"),
+        [],
+    )?;
+    lease.execute_batch(&format!(
+        "UPDATE delta_{rel} SET {v} = {top} WHERE EXISTS (SELECT 1 FROM {rel} r WHERE {same} AND r.{v} <> delta_{rel}.{v});
+         INSERT OR REPLACE INTO {rel} SELECT * FROM delta_{rel}; DELETE FROM new_{rel}"
+    ))?;
+    Ok(n)
+}
+
 /// Runs one chunk's waves to the fixpoint: every step is pending at first, and after each wave
 /// the readers of every relation that changed. Returns the number of waves.
 fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u32) -> StoreResult<u32> {
-    let derived: BTreeSet<&str> = program.relations.iter().map(|(r, _)| r.as_str()).collect();
+    let derived: BTreeMap<&str, usize> = program.relations.iter().map(|(r, arity)| (r.as_str(), *arity)).collect();
     lease.execute_batch("DELETE FROM temp.wave_delta; DELETE FROM temp.wave_pending; INSERT INTO temp.wave_pending SELECT step FROM temp.wave_step")?;
     let mut wave = 0;
     loop {
@@ -219,14 +255,19 @@ fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u3
         // Fold: the rows not seen before are the relation's delta for the next wave.
         let mut storage = lease.storage.borrow_mut();
         let mut record = lease.prepare_cached("INSERT INTO temp.wave_delta(wave, rel, rows) VALUES (?1, ?2, ?3)")?;
-        for rel in &derived {
+        for (rel, arity) in &derived {
             let had = storage.rows(&format!("delta_{rel}")) != 0;
             if !written.contains(rel) && !had {
                 continue;
             }
-            lease.execute_batch(&format!("DELETE FROM delta_{rel}"))?;
-            let n = lease.execute(&format!("INSERT INTO delta_{rel} SELECT * FROM new_{rel} EXCEPT SELECT * FROM {rel}"), [])?;
-            lease.execute_batch(&format!("INSERT INTO {rel} SELECT * FROM delta_{rel}; DELETE FROM new_{rel}"))?;
+            let n = if let Some((keys, top)) = lattice(program, rel) {
+                fold_lattice(lease, rel, *arity, keys, top)?
+            } else {
+                lease.execute_batch(&format!("DELETE FROM delta_{rel}"))?;
+                let n = lease.execute(&format!("INSERT INTO delta_{rel} SELECT * FROM new_{rel} EXCEPT SELECT * FROM {rel}"), [])?;
+                lease.execute_batch(&format!("INSERT INTO {rel} SELECT * FROM delta_{rel}; DELETE FROM new_{rel}"))?;
+                n
+            };
             storage.populated(&format!("delta_{rel}"), n);
             storage.grew(rel, n);
             record.execute(rusqlite::params![wave, rel, n as i64])?;

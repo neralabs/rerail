@@ -32,6 +32,7 @@ fn ancestry() -> Program {
         ],
         file_local: true,
         partitions: Vec::new(),
+        lattices: Vec::new(),
     }
 }
 fn none(_: &[Document]) -> StoreResult<Option<PackedDemand>> {
@@ -124,6 +125,7 @@ fn steps_read_the_chunks_demand_batch() {
         steps: vec![step("seen", 0, &["rerail_batch_status"], "INSERT OR IGNORE INTO new_seen SELECT complete FROM rerail_batch_status WHERE batch = :batch")],
         file_local: true,
         partitions: Vec::new(),
+        lattices: Vec::new(),
     };
     let mut batches = 0;
     let mut demand = |_: &[Document]| {
