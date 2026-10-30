@@ -280,7 +280,8 @@ export type CodeRuleDslTransformation =
     }
   | { line: { source: string; default?: string; edge?: "start" | "end" } }
   | { lines: { source: string; default?: string } }
-  | { count: { source: string; default?: string } };
+  | { count: { source: string; default?: string } }
+  | { toPrecision: { source: string; default?: string; value?: boolean; digits: number | string } };
 
 /** A text condition: `regex` (unanchored) must match, `notRegex` must not; at least one. */
 export interface CodeRuleDslTextCondition {

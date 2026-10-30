@@ -402,6 +402,18 @@ export const codeRuleTransformationSchema = z.union([
     .strict(),
   z.object({ lines: z.object({ source: transformSource, default: z.string().optional() }).strict() }).strict(),
   z.object({ count: z.object({ source: transformSource, default: z.string().optional() }).strict() }).strict(),
+  z
+    .object({
+      toPrecision: z
+        .object({
+          source: transformSource,
+          default: z.string().optional(),
+          value: z.boolean().optional(),
+          digits: z.union([z.number().int().min(1).max(100), z.string().regex(/^\$[A-Z0-9_]+$/, "toPrecision digits are a number from 1 to 100 or a $NAME variable.")]),
+        })
+        .strict(),
+    })
+    .strict(),
 ]) as unknown as z.ZodType<CodeRuleDslTransformation>;
 
 /** The transformation's body: its source and settings. */
@@ -411,6 +423,7 @@ function transformBody(transformation: CodeRuleDslTransformation): { source: str
   if ("convert" in transformation) return transformation.convert;
   if ("line" in transformation) return transformation.line;
   if ("lines" in transformation) return transformation.lines;
+  if ("toPrecision" in transformation) return transformation.toPrecision;
   return transformation.count;
 }
 

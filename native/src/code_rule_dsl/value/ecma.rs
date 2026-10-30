@@ -14,6 +14,7 @@ pub(crate) mod ops;
 
 use super::{ContainerKind, Context, MAX_ELEMENTS, MAX_STRING_BYTES, Value};
 use ast_grep_core::{Doc, Node};
+pub(crate) use calls::to_precision;
 pub(crate) use destructure::destructured;
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.

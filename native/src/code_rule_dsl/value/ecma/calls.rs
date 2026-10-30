@@ -501,6 +501,7 @@ pub(super) const IMPLEMENTED: &[&str] = &[
     "Number.parseInt",
     "Number.prototype.constructor",
     "Number.prototype.toFixed",
+    "Number.prototype.toPrecision",
     "Number.prototype.toString",
     "Object.freeze",
     "Object.is",
@@ -1188,8 +1189,101 @@ fn apply_number(name: &str, number: f64, values: &[Value]) -> Option<Value> {
             }
             Some(utf16(&to_fixed(number, digits as u32)?))
         }
+        "toPrecision" => {
+            if matches!(first, Value::Undefined) {
+                return Some(utf16(&number_to_string(number)));
+            }
+            let digits = integer(first)?;
+            if !number.is_finite() {
+                return Some(utf16(&number_to_string(number)));
+            }
+            if !(1.0..=100.0).contains(&digits) {
+                return None;
+            }
+            Some(utf16(&to_precision(number, digits as u32)))
+        }
         _ => None,
     }
+}
+
+/// A finite non-negative double as the exact rational `mantissa * 2^exponent`.
+fn exact(magnitude: f64) -> (BigInt, i64) {
+    let bits = magnitude.to_bits();
+    let exponent = ((bits >> 52) & 0x7FF) as i64;
+    let fraction = bits & ((1 << 52) - 1);
+    if exponent == 0 {
+        (BigInt::from(fraction), -1074)
+    } else {
+        (BigInt::from(fraction | (1 << 52)), exponent - 1075)
+    }
+}
+
+/// The integer nearest `mantissa * 2^exponent * 10^scale`, the larger on a tie.
+fn rounded(mantissa: &BigInt, exponent: i64, scale: i64) -> BigInt {
+    let ten = BigInt::from(10u32);
+    let mut numerator = mantissa.clone();
+    let mut denominator = BigInt::from(1u8);
+    if scale >= 0 {
+        numerator *= ten.pow(scale as u32);
+    } else {
+        denominator *= ten.pow((-scale) as u32);
+    }
+    if exponent >= 0 {
+        numerator <<= exponent as usize;
+    } else {
+        denominator <<= (-exponent) as usize;
+    }
+    let two = BigInt::from(2u8);
+    (&numerator * &two + &denominator) / (&denominator * &two)
+}
+
+/// `Number.prototype.toPrecision(precision)` of a finite `number`, exactly (ECMA-262
+/// §21.1.3.5): the `precision` significant digits `n` and exponent `e` for which
+/// `n * 10^(e - precision + 1)` is nearest the number, the larger on a tie, laid out in fixed
+/// notation for `-6 <= e < precision` and in exponential notation otherwise.
+pub(crate) fn to_precision(number: f64, precision: u32) -> String {
+    debug_assert!(number.is_finite() && (1..=100).contains(&precision));
+    let sign = if number < 0.0 { "-" } else { "" };
+    let magnitude = number.abs();
+    let p = precision as i64;
+    let (digits, e) = if magnitude == 0.0 {
+        ("0".repeat(precision as usize), 0)
+    } else {
+        let (mantissa, exponent) = exact(magnitude);
+        let low = BigInt::from(10u32).pow(precision - 1);
+        let high = &low * BigInt::from(10u32);
+        // The estimate is off by at most one either way; the exact rounding settles it.
+        let mut e = magnitude.log10().floor() as i64;
+        let n = loop {
+            let n = rounded(&mantissa, exponent, p - 1 - e);
+            if n >= high {
+                e += 1;
+            } else if n < low {
+                e -= 1;
+            } else {
+                break n;
+            }
+        };
+        (n.to_string(), e)
+    };
+    let text = if e < -6 || e >= p {
+        let (first, rest) = digits.split_at(1);
+        let point = if rest.is_empty() {
+            String::new()
+        } else {
+            format!(".{rest}")
+        };
+        let exponent_sign = if e >= 0 { "+" } else { "-" };
+        format!("{first}{point}e{exponent_sign}{}", e.abs())
+    } else if e == p - 1 {
+        digits
+    } else if e >= 0 {
+        let (whole, fraction) = digits.split_at(e as usize + 1);
+        format!("{whole}.{fraction}")
+    } else {
+        format!("0.{}{digits}", "0".repeat((-(e + 1)) as usize))
+    };
+    format!("{sign}{text}")
 }
 
 /// `Number.prototype.toFixed`, exactly: the integer `n` nearest `x * 10^f`, the larger on a tie.
@@ -1373,4 +1467,65 @@ fn join(items: &[Value], separator: &[u16], depth: usize) -> Option<Vec<u16>> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `Number.prototype.toPrecision` as Node.js 25 (V8) computes it, exactly: ties go to the
+    /// larger magnitude, and the layout turns exponential below `e-6` and from `precision` digits.
+    #[test]
+    fn to_precision_is_ecmascripts() {
+        for (number, precision, expected) in [
+            (0.0, 1, "0"),
+            (-0.0, 3, "0.00"),
+            (1.0, 1, "1"),
+            (123.456, 4, "123.5"),
+            (0.000123, 2, "0.00012"),
+            (1e21, 3, "1.00e+21"),
+            (123456.0, 2, "1.2e+5"),
+            (9223372036854775808.0, 19, "9223372036854775808"),
+            (9223372036854775808.0, 20, "9223372036854775808.0"),
+            (0.1, 20, "0.10000000000000000555"),
+            (5e-324, 3, "4.94e-324"),
+            (
+                f64::MAX,
+                100,
+                "1.797693134862315708145274237317043567980705675258449965989174768031572607800285387605895586327668782e+308",
+            ),
+            (2.5, 1, "3"),
+            (3.5, 1, "4"),
+            (-1.25, 2, "-1.3"),
+            (0.00001, 1, "0.00001"),
+            (0.000001, 1, "0.000001"),
+            (1e-7, 1, "1e-7"),
+            (99.99, 3, "100"),
+            (99.95, 3, "100"),
+            (1.005, 3, "1.00"),
+            (255.0, 2, "2.6e+2"),
+            (1.0 / 3.0, 17, "0.33333333333333331"),
+            (12345678901234567890.0, 21, "12345678901234567168.0"),
+            (-987.654321, 10, "-987.6543210"),
+        ] {
+            assert_eq!(to_precision(number, precision), expected, "{number}");
+        }
+    }
+
+    /// The evaluator's `toPrecision`: `String(x)` without an argument or for a non-finite `x`,
+    /// and no value (a RangeError) outside 1 to 100.
+    #[test]
+    fn to_precision_calls_follow_the_specification() {
+        let call = |number: f64, values: &[Value]| {
+            apply_number("Number.prototype.toPrecision", number, values)
+        };
+        assert_eq!(call(0.5, &[]), Some(utf16("0.5")));
+        assert_eq!(
+            call(f64::INFINITY, &[Value::Float(0.0)]),
+            Some(utf16("Infinity"))
+        );
+        assert_eq!(call(0.5, &[Value::Float(2.0)]), Some(utf16("0.50")));
+        assert_eq!(call(0.5, &[Value::Float(0.0)]), None);
+        assert_eq!(call(0.5, &[Value::Float(101.0)]), None);
+    }
 }

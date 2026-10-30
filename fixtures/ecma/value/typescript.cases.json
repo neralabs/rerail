@@ -626,10 +626,14 @@
  "(0.1).toFixed(20)",
  "(1).toFixed(101)",
  "(2.5).toFixed()",
- {
-  "src": "(1).toPrecision(2)",
-  "unknown": "not implemented"
- },
+ "(1).toPrecision(2)",
+ "(9223372036854775808).toPrecision(19)",
+ "(123.456).toPrecision(4)",
+ "(0.000001234).toPrecision(2)",
+ "(1e21).toPrecision(3)",
+ "(-1.25).toPrecision(2)",
+ "(1).toPrecision()",
+ "(1).toPrecision(0)",
  "[1, 2, 3].join('-')",
  "[1, [2, 3], null, undefined].join()",
  "[1, 2].toString()",

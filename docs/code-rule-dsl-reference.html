@@ -712,7 +712,8 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <div class="prod" data-zod="codeRuleTransformationSchema@5">               | { convert:   { <b class="k">source</b>: Src, <b class="k">default</b>?, <b class="k">value</b>?, <b class="k">toCase</b>: Case, <b class="k">separatedBy</b>?: [Separator] } }</div>
 <div class="prod" data-zod="codeRuleTransformationSchema@7">               | { line:      { <b class="k">source</b>: Src, <b class="k">default</b>?, <b class="k">edge</b>?: <span class="lit">"start"</span> | <span class="lit">"end"</span> } }</div>
 <div class="prod" data-zod="codeRuleTransformationSchema@9">               | { lines:     { <b class="k">source</b>: Src, <b class="k">default</b>? } }</div>
-<div class="prod" data-zod="codeRuleTransformationSchema@11">               | { count:     { <b class="k">source</b>: Src, <b class="k">default</b>? } }
+<div class="prod" data-zod="codeRuleTransformationSchema@11">               | { count:     { <b class="k">source</b>: Src, <b class="k">default</b>? } }</div>
+<div class="prod" data-zod="codeRuleTransformationSchema@13">               | { toPrecision: { <b class="k">source</b>: Src, <b class="k">default</b>?, <b class="k">value</b>?, <b class="k">digits</b>: 1..100 | <span class="lit">"$NAME"</span> } }
 <span class="nt">Src</span>          = <span class="lit">"$NAME"</span> | <span class="lit">"$$$NAME"</span>     <span class="nt">Case</span> = lowerCase | upperCase | capitalize | camelCase | snakeCase | kebabCase | pascalCase
 <span class="nt">Separator</span>    = caseChange | dash | dot | slash | space | underscore</div>
 <div class="prod" id="g-LanguageOptions" data-zod="codeRuleLanguageOptionsSchema"><span class="nt">LanguageOptions</span> = {
@@ -4509,10 +4510,12 @@ Gap = { "to": "token" | "sibling" | "capture.NAME", "comments"?: Bool, "edge"?: 
                    | { "convert":   { "source", "toCase", "separatedBy"?, "default"?, "value"? } }
                    | { "line":      { "source", "edge"?: "start" | "end", "default"? } }
                    | { "lines":     { "source", "default"? } }
-                   | { "count":     { "source", "default"? } } }</div></dd>
+                   | { "count":     { "source", "default"? } }
+                   | { "toPrecision": { "source", "digits": 1..100 | "$NAME", "default"?, "value"? } } }</div></dd>
 <dt>Semantics</dt><dd><ul>
 <li>Run after the rule and its constraints matched, in dependency order (a variable may transform another); each from its source's text (<code>$NAME</code>, <code>$$$NAME</code> from its first node to its last, de-indented), or from a named regex group of the witness (text known only once the rule matched).</li>
 <li><code>replace</code>: every match of the regex replaced by <code>by</code> (which expands <code>$1</code> and <code>${name}</code>). <code>substring</code>: characters from <code>startChar</code> to <code>endChar</code>, negative from the end. <code>convert</code>: to a case, splitting words at <code>separatedBy</code> (by default all separators).</li>
+<li><code>toPrecision</code>: ECMAScript's <code>Number.prototype.toPrecision(digits)</code>, exactly, of the number the source's text denotes (a numeric literal as written, <code>0x</code>, <code>0o</code>, <code>0b</code>, legacy octal and <code>_</code> separators included, or a <code>value</code>'s text); <code>digits</code> is a number or the text of another capture or variable read as an integer. ESLint's <code>no-loss-of-precision</code> compares a literal with <code>value.toPrecision(n)</code> for its <code>n</code> significant digits: <code>9223372036854775808</code> is exact at 19 digits though <code>String</code> gives <code>9223372036854776000</code>. The empty text where the source is no number (a BigInt, a name) or the digits no integer from 1 to 100; <code>String(x)</code> for an infinite or NaN number.</li>
 <li><code>line</code>: the 1-based line of the capture's start (<code>edge: "end"</code>: its end), with the linter's terminators. <code>lines</code>: the number of lines it spans. <code>count</code>: the named nodes a <code>$$$</code> capture holds, comments and Python line continuations aside (1 for a single capture).</li>
 <li><code>default</code>: the text an unbound source reads as, which the operation then transforms (<code>default: ""</code> with <code>replace: "^$"</code> supplies a fallback); without it an unbound source gives the empty text and runs no operation, as upstream. <code>value: true</code>: read the capture's value converted to a string as the host does (JavaScript <code>String(v)</code>: <code>'\x61'</code> is <code>a</code>, <code>1e2</code> is <code>100</code>; Python <code>str(v)</code>: <code>1e2</code> is <code>100.0</code>).</li>
 </ul></dd>
