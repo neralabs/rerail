@@ -84,6 +84,13 @@ mod backend_parity_tests;
 // The tree-sitter query front end (05 Phase 4 row 4, from Tempo's `scm.rs`).
 #[path = "packed/compile/scm.rs"]
 mod scm;
+// W's composite matcher as label passes and programs (06-first-slice S1).
+#[path = "packed/compile/matcher.rs"]
+#[cfg_attr(not(test), allow(dead_code))]
+mod compile_matcher;
+#[cfg(test)]
+#[path = "packed/compile/matcher_tests.rs"]
+mod compile_matcher_tests;
 mod metal_bulk_closure;
 #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_bulk_closure_tests;

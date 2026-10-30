@@ -70,42 +70,67 @@ Five decisions of 03 are exercised on this path:
 
 Each step is one or a few commits. Each is checked with `cargo check` and the touched module's tests (seconds), and pushed. No PR.
 
-### S1. Lower W's matcher to packed programs (write new; the core of the slice)
+### S1. Lower W's matcher to packed programs — done (2026-10-29, decision 0011)
 
-**New file:** `transducer/packed/compile/matcher.rs`, `lower(&AstMatcher, &UtilTable, dialect) -> Result<Program, Unsupported>`.
+**Files:**
+- `matcher/lower.rs`: W's `AstMatcher` becomes a `MatchTree`, or is refused by operator.
+- `transducer/packed/compile/matcher.rs`: `LoweredMatcher`, the label passes and the root program.
+- `TapeDoc::with_labels`: derived classes as bitsets.
+- `compile/matcher_tests.rs`: the gate.
 
-The IR already has the operations needed. They are listed in `packed.rs`:
-- navigation: `CHILD`, `NEXT`, `PARENT`, `DESCEND`, `FOLLOWING`;
-- control: `FORK`, `GOTO`, `SAVE_CURSOR`/`RESTORE_CURSOR`, `REPEAT_*`, `ASSERT`;
-- tests: `KIND`, `SUPERTYPE`, `FIELD`, `ABSENT_FIELD`, `TEXT`, `FIRST`/`LAST`, `MISSING`/`ERROR`;
-- output: `CAPTURE`, `EMIT`.
+**Shape.** A clause is a sequence of node-label passes, then one root program.
+- Labels are derived classes that later programs test with `SUPERTYPE`, so no new operation is
+  needed.
+- **Negation** (`not`, a stop rule's bound) is a complement label between passes, not an
+  operation. This replaces S2's NOT_EXISTS barrier, as the Bend investigation proposed:
+  "sequence full-width phases, do not fork them against each other".
+- **Programs are positive** and walk one relation deep. Backward walks (`inside` to the end or a
+  stop, `follows`) are forward passes from each match, because the verifier admits only loops that
+  move forward in preorder.
+- **Recursive utilities** are groups iterated to their fixpoint. Through `not`, only recursion
+  that walks forward (`has`, `precedes`) is admitted, which is structural descent as the
+  termination proof.
+- **Each pass starts from its domain:** the rule's kinds, or a label.
 
-| Matcher | Lowering |
-|---|---|
-| `kind` | `KIND`, or `SUPERTYPE` for abstract kinds (tape v8) |
-| `pattern` | `Program::compile_ast_grep_pattern`'s body, inlined as a sub-program |
-| `regex` | `TEXT` predicate on the node's span (§16's `R[tid]` comes later, Phase 4g) |
-| `all` | sequence, with `SAVE_CURSOR`/`RESTORE_CURSOR` around each conjunct |
-| `any` | `FORK` |
-| `has` / `inside` | `DESCEND`/`CHILD` and `PARENT` loops |
-| `stopBy` | a `KIND`/sub-program test inside the loop |
-| `field` | `FIELD` |
-| `precedes` / `follows` | `NEXT`/`FOLLOWING` |
-| `matches` (utils) | inlined, depth-bounded as W's `MAX_UTIL_DEPTH` |
-| `not`, `count` | refused until S2; `Unsupported` names the operator |
+**Gate.** `lowered_python_clauses_match_where_ws_matcher_does`:
+- For every Python pack clause that lowers, and every fixture, the set of root nodes equals
+  `GrammarMatcher::match_root` at each node of the same tape.
+- It runs every fourth fixture by default (19 s); `RERAIL_S1_ALL=1` runs all of them.
+- `the_gate_catches_a_widened_walk` is the mutation check: widening a `neighbor` walk to `end` must
+  fail the gate.
 
-**Oracle (S1's check):** root-level differential against W's matcher on tapes of a fixture sample. For every lowered clause and every node, the program's match set must equal `GrammarMatcher::match_root`. This is position parity on node byte-range sets, mutation-checked (spike 2.17: DH L3379-3541, L3415-3420). It is the same parity the spike reached for 4,985/4,985 patterns.
+**Result:** 77 of 286 clauses lower, and 77 of 77 are exact on all 475 fixtures. Refused:
 
-**Coverage counter:** clauses lowered out of 286, by refused operator. It is printed by the test and recorded here.
+| Refusal | Clauses | Where it goes |
+|---|---|---|
+| `resolves` | 94 | O24 (semantic labels) |
+| `count` | 25 | S2 |
+| shared binding | 18 | O24 (joins on captures) |
+| `parse` | 13 | O24 |
+| `arguments` | 13 | O24 |
+| constraints below top level | 12 | O24 |
+| `resolves.binding` | 11 | O24 |
+| `formatArgs` | 6 | O24 |
+| `value` | 6 | O24 |
+| `binds` | 5 | O24 |
+| parameterized utility | 3 | later |
+| `layout` | 2 | O24 |
+| `compare` | 1 | later |
 
-Prior work: spike 2.3 shows matching over the tape is exact (4,600/4,600 pairs, TAG L16-41) and 23.40× faster than native match. Spike 2.23: generic interpretation is about 12× slower than specialised code (DH L7715-7728), which is why §3 keeps a JIT binding of the same plan. The slice uses the interpreter; the JIT swap is Phase 4d.
+**Cost.** Over all 475 fixtures, the lowered passes take 83.6 s against W's matcher's 5.5 s, about
+15× (wall time inside the test, in a debug build of the crate, from every node; the run took 66 s
+of user CPU at load average 27). That is generic interpretation (spike 2.23) without
+anchors. S4's prefilter gives the root program its candidates, and the JIT (Phase 4d) replaces the
+interpreter.
 
-### S2. NOT_EXISTS and COUNT barriers (Phase 4 write-new b)
+### S2. COUNT, and the labels on Metal (revised by S1)
 
-- `not` is in 109 clauses and `count` in 28, so without them the slice covers a minority.
-- Add the barrier operations on **both** the CPU interpreter and the Metal interpreter, as the verifier rule F1 requires (no CPU-only op).
-- The verifier proves them bounded.
-- Check: the S1 differential, now including the clauses with `not` and `count`.
+- `not` is already lowered in S1 as a complement label, so no NOT_EXISTS operation is needed.
+- `count` (25 clauses) becomes a counting pass: a per-node count of the nodes its rule matches
+  along its relation, compared with the bound, as a label.
+- The labels must run on Metal too (O23, F1): upload the label bitsets beside the class table, run
+  the passes as kernels in one command buffer, and check that the S1 gate's root sets are equal on
+  CPU and Metal.
 
 ### S3. Ingest through the push path (closes O2's ingest side)
 

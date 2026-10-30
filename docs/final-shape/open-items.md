@@ -23,6 +23,8 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | copy placed (2026-10-29): S's oracle runs as copied on P's anchor engine (`findings::tests::s_native_oracle`, `matcher::p_anchors`); open only: which comparison survives (O19) |
 | O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | closed (2026-10-29): jemalloc stays the global allocator (user decision); `mimalloc` remains a dependency only |
 | O22 | Phase 9 | P's text prefilter on three-valued clauses against W's consumers' pass | closed (2026-10-29): option (a), user decision |
+| O23 | Phase 4 / 9 | Lowered matchers' node labels on Metal (06 S1, decision 0011) | open |
+| O24 | Phase 4 / 10 | Semantic predicates as labels from fact producers (06 S1, decision 0011) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -527,3 +529,42 @@ at result time reports each candidate clause as `adapter-error` (`STORED_RESULT_
 transient, rather than failing the apply (`results.rs::evicted_file_states`). `api.rs` treats such
 a transient state as a failed read, so the next apply that offers the file evaluates it in full.
 
+
+## O23. Lowered matchers' node labels on Metal
+
+**Requirement.** Rule F1: no operation runs on one backend only. A lowered clause (decision 0011)
+tests its node labels with `SUPERTYPE`, which both interpreters execute. The labels themselves are
+per-tape bitsets the CPU interpreter reads through `TapeDoc::with_labels`.
+
+**Why it is open.** The Metal backends read the class table they uploaded with the tape, which has
+no labels. The label passes (complement, constrained pattern, fixpoint rounds) also run on the CPU.
+
+**Direction.** Upload the label bitsets as a column beside the class table, and run the passes as
+kernels in one command buffer: a complement is a word-parallel not, and a program pass is the
+existing dispatch. GPU waves cost about 1.2–1.6 µs each, against 386–890 µs for a host round trip
+(metal-enqueue notes), so no pass may need the host between passes. Check: the S1 gate's root sets
+are equal on CPU and Metal (Bend's rule that every binding must give the same keys).
+
+## O24. Semantic predicates as labels from fact producers
+
+**Requirement.** 209 of the 286 Python `ast` clauses are refused by S1's lowering. Most of them
+read semantic predicates:
+
+| Predicate | Clauses |
+|---|---|
+| `resolves` | 94 |
+| `parse` | 13 |
+| `arguments` | 13 |
+| `resolves.binding` | 11 |
+| `formatArgs` | 6 |
+| `value` | 6 |
+| `binds` | 5 |
+| `layout` | 2 |
+
+The rest are refused for `count` (25, S2), shared bindings (18), constraints below the top level
+(12), parameterized utilities (3) and comparisons (1).
+
+**Direction.** A semantic leaf is a node label produced by its fact producer
+(`transducer::semantic_facts`, rows before SQL composition), not an operation inside the program.
+Its sub-rules are lowered as labels of their own. Shared bindings are joins on capture columns
+between labels, in the wave's SQL.

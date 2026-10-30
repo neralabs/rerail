@@ -208,6 +208,9 @@ impl From<String> for TemplateError {
 }
 
 /// Owns only compact structure and a binding to the exact source and grammar.
+/// The first derived class id (`TapeDoc::with_labels`), above every grammar's kinds and supertypes.
+pub(super) const DERIVED_CLASS_BASE: u16 = 0xf000;
+
 #[derive(Clone)]
 pub(super) struct TapeImage {
     rec: Vec<u8>,
@@ -1568,6 +1571,9 @@ pub(super) struct TapeDoc {
     kind_aliases: Arc<Vec<(String, bool)>>,
     kind_overrides: Arc<Vec<(u32, u16)>>,
     supertypes: Arc<Vec<(u32, u16)>>,
+    /// Derived classes (`with_labels`): a bitset over the nodes per class from
+    /// `DERIVED_CLASS_BASE`.
+    labels: Arc<Vec<Vec<u64>>>,
     /// A host's guests (`embed`); the host a guest reads links to them weakly, as they hold it.
     guests: Guests,
     /// A guest's link to the file it is embedded in.
@@ -2006,6 +2012,7 @@ impl TapeDoc {
             kind_aliases: Arc::new(image.kind_aliases.clone()),
             kind_overrides: Arc::new(image.kind_overrides.clone()),
             supertypes: Arc::new(image.supertypes.clone()),
+            labels: Arc::new(Vec::new()),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
         })
@@ -2248,7 +2255,25 @@ impl TapeDoc {
     // The packed runtime's class test (Phase 4).
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_has_supertype(&self, node: u32, kind: u16) -> bool {
+        if kind >= DERIVED_CLASS_BASE {
+            return self
+                .labels
+                .get(usize::from(kind - DERIVED_CLASS_BASE))
+                .and_then(|bits| bits.get(node as usize / 64))
+                .is_some_and(|word| word >> (node % 64) & 1 != 0);
+        }
         self.supertypes.binary_search(&(node, kind)).is_ok()
+    }
+
+    /// This tape with derived node classes: a lowered matcher's label passes (06-first-slice S1),
+    /// one bitset over the nodes per class from `DERIVED_CLASS_BASE`, which `SUPERTYPE` tests as it
+    /// tests a grammar class.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn with_labels(&self, labels: Arc<Vec<Vec<u64>>>) -> Self {
+        Self {
+            labels,
+            ..self.clone()
+        }
     }
 
     /// The node at a preorder ordinal: `root.adopt(doc.node(ordinal))` is the node ast-grep

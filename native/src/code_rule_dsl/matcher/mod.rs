@@ -28,6 +28,9 @@ mod embedded;
 mod exported;
 mod format_args;
 mod layout;
+// 06-first-slice S1: reached from the S1 gate only until the slice's wave (S4) calls it.
+#[cfg_attr(not(test), allow(dead_code))]
+mod lower;
 mod memo;
 mod nth_child;
 mod parse;
@@ -44,6 +47,8 @@ mod value;
 use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 pub(super) use analysis::RequiredText;
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(super) use lower::{Axis, MatchTree, Stop, match_tree};
 pub(crate) use analysis::calls_positive_only;
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 // The prefilter lowers a plan's structure to SQL (`prefilter/lower.rs`).
