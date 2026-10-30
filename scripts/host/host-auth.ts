@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -18,8 +18,11 @@ function requireValidTimeout(timeoutMs: number): void {
 async function credentialPaths(source: string, destination: string): Promise<{ sourcePath: string; targetPath: string }> {
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
   const sourcePath = await realpath(source);
-  const targetPath = resolve(await realpath(dirname(destination)), basename(destination));
+  const targetDirectory = await realpath(dirname(destination));
+  const targetPath = resolve(targetDirectory, basename(destination));
   if (sourcePath === targetPath) throw new Error("Credential source and sandbox destination must differ");
+  // mkdir's mode covers only directories it creates; a pre-existing destination directory is narrowed too.
+  await chmod(targetDirectory, 0o700);
   return { sourcePath, targetPath };
 }
 
@@ -121,6 +124,11 @@ export async function importAccessOnlyAuth(kind: AuthDestination, source: string
   const { candidates, idToken } = await readAuthCandidates(kind, sourcePath);
   const credential = selectCredential(candidates, now, timeoutMs);
   await writeCredential(kind, targetPath, credential, idToken, now);
+}
+
+/** Deletes a sandbox credential copy and the SQLite journal files a harness may have written beside it; absent files are fine. */
+export async function removeAccessOnlyAuth(destination: string): Promise<void> {
+  await Promise.all(["", "-wal", "-shm", "-journal"].map((suffix) => rm(`${destination}${suffix}`, { force: true })));
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

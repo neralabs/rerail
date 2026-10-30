@@ -2,6 +2,7 @@
 //! backlog) and a workspace's storage context.
 
 use super::persisted::{grammar_set, grammar_version, tape_dialect};
+use super::secret_names::SecretNames;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::tape;
@@ -261,14 +262,25 @@ pub(super) struct StorageContext {
     pub(super) workspace_id: WorkspaceId,
     pub(super) snapshot_id: SnapshotId,
     pub(super) owner: String,
+    /// The names the host judges secret-like: a file so named is never written to the store.
+    pub(super) secret_names: StdArc<SecretNames>,
     pub(super) _maintenance: Option<StdArc<StorageRegistration>>,
+}
+
+impl StorageContext {
+    /// Whether `path` (workspace-relative) is named like one holding secrets, judged by its path in
+    /// the repository: the store keeps no copy of such a file, not its source, tapes or results.
+    pub(super) fn withholds(&self, path: &str) -> bool {
+        self.secret_names.matches(&self.repository_prefix, path)
+    }
 }
 
 pub(super) fn unix_seconds() -> Result<i64> {
     crate::content_store::unix_seconds().map_err(|error| invalid(error.to_string()))
 }
 
-/// A workspace's storage context over an explicit store file, discovering its Git worktree.
+/// A workspace's storage context over an explicit store file, discovering its Git worktree, with
+/// no secret-like names.
 #[cfg(test)]
 pub(super) fn storage_context_in(
     root: &str,
@@ -276,7 +288,7 @@ pub(super) fn storage_context_in(
 ) -> Result<StorageContext> {
     let discovered = git_workspace::discover(std::path::Path::new(root))
         .map_err(|error| invalid(error.to_string()))?;
-    match attach_storage(root, discovered, store_path)? {
+    match attach_storage(root, discovered, store_path, StdArc::default())? {
         Attached::Storage(context) => Ok(context),
         Attached::Busy(reason) => Err(invalid(reason)),
     }
@@ -291,11 +303,13 @@ pub(super) enum Attached {
 }
 
 /// The storage context of the workspace at `root` in the `discovered` Git worktree, over an
-/// explicit store file; `Attached::Busy` when the store stays busy.
+/// explicit store file, never holding files `secret_names` names; `Attached::Busy` when the store
+/// stays busy.
 pub(super) fn attach_storage(
     root: &str,
     discovered: git_workspace::GitWorkspace,
     store_path: std::path::PathBuf,
+    secret_names: StdArc<SecretNames>,
 ) -> Result<Attached> {
     let busy = |during: &str| {
         Attached::Busy(format!(
@@ -350,6 +364,7 @@ pub(super) fn attach_storage(
         workspace_id,
         snapshot_id: snapshot,
         owner,
+        secret_names,
         _maintenance: Some(registration),
     }))
 }

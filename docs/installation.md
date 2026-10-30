@@ -484,10 +484,12 @@ rerail settings --session ID --mode log             # save this workspace's defa
 rerail update check      # is a newer version on the channel?
 rerail update            # install it; `rerail update rollback` undoes it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
+rerail scrub             # redact secrets from history earlier versions stored (database, ledgers, daemon.log)
 rerail rules list        # your rules, and those waiting for approval
 rerail rules approve ID  # print a waiting rule's content and approve it so it runs
 rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database, delete the install
+rerail install --remove --delete-data  # the same, deleting the database, backups, cache and checkouts' session ledgers instead
 ```
 
 Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
@@ -659,6 +661,30 @@ It deletes that repository's ended sessions and every session's events, work
 links, audits, and audit requests in one transaction. Rules, settings, and
 other repositories are untouched; the file is never unlinked, so open daemons
 and harness sessions keep working, and running sessions keep recording.
+It then rewrites the database in place (a WAL checkpoint, `VACUUM`, and a
+second checkpoint that empties `rerail.sqlite-wal`), so the deleted history
+cannot be read back from the file's bytes; every writer also runs with
+`secure_delete` on, which zeroes what any delete frees. When another Rerail
+process is reading the database at that moment, `rerail reset` says the
+`-wal` file may still hold deleted history; run it again once that process
+has stopped. The `.rerail/sessions` ledgers in your checkouts are not
+touched by `rerail reset`.
+
+### Redacting secrets from stored history
+
+Rerail redacts secrets it recognizes (provider API keys and tokens, private
+keys, JWTs, the password of a URL, `Authorization` credentials, and a value
+assigned to a key such as `password` or `api_key`) from everything it writes
+to disk: stored session events, session ledgers, audit findings and
+`daemon.log`. Rules and steers still read the original text in memory. A
+secret becomes `[redacted:<kind>:<hash>]`, the hash the first six hex digits
+of its SHA-256, or `[redacted:<kind>]` for a value under a secret-like key.
+
+History stored before that is redacted by `rerail scrub` (safe to repeat;
+`rerail update` suggests it once). It rewrites the database's events, audit
+findings and audit errors in batches, then the file in place as `rerail reset`
+does; the session ledgers of every checkout the database records, never
+through a link; and `daemon.log`. It prints how many of each it changed.
 
 ### Removing Rerail
 
@@ -667,7 +693,7 @@ To take Rerail off a machine:
 ```sh
 rerail rules export --output ~/rerail-rules.json   # optional: a portable copy of your rules
 rerail install --remove --dry-run                  # print what would change
-rerail install --remove
+rerail install --remove                            # or: --remove --delete-data, keeping nothing
 ```
 
 `rerail install --remove` takes out every registration that names this
@@ -704,6 +730,30 @@ closed (`Remove-Item -LiteralPath '<path>' -Recurse -Force` in PowerShell, and
 `[System.IO.Directory]::Delete('<path>')` for the `current` link, which removes the link and not
 what it points at; `rm -rf <path>` elsewhere); the rest of the uninstall has
 happened, so it still exits 0.
+
+#### Removing everything, data included
+
+`rerail install --remove --delete-data` does all of the above, but deletes
+instead of backing up, and prints each path it deleted:
+
+- `rerail.sqlite` and `harness.sqlite` in the Rerail home, with every file named
+  after them (`-wal`, `-shm`, journals);
+- every earlier backup, `~/.rerail-clean-*`;
+- the session ledgers, `<checkout>/.rerail/sessions`, of every checkout the
+  database recorded (read before the database goes); the checkout's `.rerail`
+  goes too when the ledgers were all it held. A checkout that no longer exists
+  is skipped. A link is never followed: a `.rerail` that is a link is left alone,
+  and a `sessions` that is a link is removed as a link, never what it points
+  at. Ledgers written elsewhere with `RERAIL_STORAGE_ROOT` are not found;
+- the content cache: `~/.cache/rerail` (as above, kept while another Rerail
+  home's daemon holds it), and the file `RERAIL_CONTENT_STORE_PATH` names, with
+  its sidecars, when it is set.
+
+`rerail install --remove --delete-data --dry-run` lists what it would delete.
+`--delete-data` only goes with the whole uninstall: with `--agents`, or with
+`--root` naming a checkout other than the active install, it refuses before
+changing anything. Nothing it deletes can be restored, so export your rules
+first if you may want them back.
 
 ## Developing from a checkout
 

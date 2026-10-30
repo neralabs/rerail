@@ -20,6 +20,7 @@ import {
   repositories,
 } from "../../src/engine/index.js";
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
+import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { installPack } from "../support/installed-packs.js";
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
@@ -113,6 +114,16 @@ function approve(id: string): void {
   const database = openRerailDatabase(defaultRerailDatabasePath());
   try {
     approveRule(database, loadRuleCatalog(), "library", id, getLibraryRule(database, id)!.contentHash);
+  } finally {
+    database.$client.close();
+  }
+}
+
+/** The mode library rule `id`'s stored content sets. */
+function getLibraryRuleMode(id: string): string | undefined {
+  const database = openRerailDatabase(defaultRerailDatabasePath());
+  try {
+    return getLibraryRule(database, id)?.document.rule.mode;
   } finally {
     database.$client.close();
   }
@@ -474,6 +485,21 @@ describe("rerail rules add", () => {
     expect(stdout).toContain("● Added acme:no-console-web to rerail-rule-draft-");
     expect(stdout).toContain("/web.");
     expect(rulesOf(repo).waiting).toEqual([{ id: "acme:no-console-web", kind: "library_rule", folder: "web" }]);
+  });
+
+  it("says a rule added on Block steers in this release, and stores it on Block", async () => {
+    const repo = await repository();
+    setUpEmpty(repo);
+    const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(undefined, "acme:no-console-block"), mode: "block" } });
+
+    const { exit, stdout } = await run("add", [file, "--repo", repo]);
+
+    expect(exit).toBe(0);
+    expect(stdout).toContain(BLOCK_STEERS_NOTE);
+    expect(getLibraryRuleMode("acme:no-console-block")).toBe("block");
+
+    const steering = writeDraft(repo, { kind: "code", rule: noConsolePolicy(undefined, "acme:no-console-steer") });
+    expect((await run("add", [steering, "--repo", repo])).stdout).not.toContain(BLOCK_STEERS_NOTE);
   });
 
   it("sets a repository that is not set up up with only the new rule", async () => {

@@ -6,7 +6,7 @@
  */
 import { h, setContent, icon, searchIcon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { categoryLabel, inPack, packSuppressions } from "../derive.js";
+import { categoryLabel, inPack, MODE_LABEL, packSuppressions } from "../derive.js";
 import { data, ui, isAttached, keptPacks, reviewing, repoName } from "../state.js";
 import { SHEET_FILTER_AT, sheetRules } from "../pack-model.js";
 import { changeOwner } from "../shell.js";
@@ -49,9 +49,8 @@ const monogram = pack => PACK_LETTERS[pack.id] ?? pack.id.replace(/[^a-z0-9]/giu
 
 export const packIcon = pack => h("span.picon", { "aria-hidden": "true" }, h(`span.ltr${monogram(pack).length > 2 ? ".l3" : ""}`, null, monogram(pack)));
 
-const MODE_NAME = { log: "Log", steer: "Steer", block: "Block" };
 /** How a pack rule starts once added: its mode, and "off" for a rule the pack adds switched off. */
-const startsAs = rule => `${MODE_NAME[rule.mode] ?? rule.mode}${rule.on ? "" : " · off"}`;
+const startsAs = rule => `${MODE_LABEL[rule.mode] ?? rule.mode}${rule.on ? "" : " · off"}`;
 
 /** Once the pack is added: whether its rules here honour suppression comments, and the pack's switch for them. */
 function suppressionsLine(pack, suppressions) {

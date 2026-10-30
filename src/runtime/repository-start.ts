@@ -21,6 +21,12 @@ import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
 
+/**
+ * What `rerail stop` and `/rerail-stop` say of the daemon: stopping a checkout leaves it serving the machine's other
+ * checkouts and coding agents, and `rerail daemon stop` shuts it down (#297).
+ */
+export const DAEMON_KEEPS_RUNNING = "The Rerail daemon keeps running for your other checkouts and coding agents. To shut it down, run rerail daemon stop in a terminal.";
+
 /** Whether Rerail runs in `checkout`; the catalog's resolution, exported here beside {@link stateOf}. */
 export { checkoutStatus };
 
@@ -301,6 +307,8 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   io.say([
     `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
     `  Start it again with ${startCommand}.`,
+    // The daemon serves every checkout and coding agent on the machine, so stopping one checkout leaves it running (#297).
+    `  ${DAEMON_KEEPS_RUNNING}`,
     // Turning off one rule is something the person says to the coding agent, so a terminal is not offered it.
     ...(io.lane === "agent" ? ["", ...turnOffOneRuleLines(steered)] : []),
   ].join("\n"));

@@ -20,6 +20,7 @@ import {
   hostCli,
   hostCommand,
   readDeliveries,
+  removeHostAuth,
   requireBuilt,
   run,
   sandboxAvailable,
@@ -457,7 +458,14 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
     } finally {
       if (previousRerailHome === undefined) delete process.env.RERAIL_HOME;
       else process.env.RERAIL_HOME = previousRerailHome;
-      if (sandbox !== undefined) await rm(sandbox, { recursive: true, force: true });
+      if (sandbox !== undefined) {
+        // The credential copy goes first and on its own, so a recursive delete that fails partway cannot leave it behind.
+        try {
+          await removeHostAuth(sandbox);
+        } finally {
+          await rm(sandbox, { recursive: true, force: true });
+        }
+      }
     }
   }
 }

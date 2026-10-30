@@ -250,11 +250,17 @@ export const libraryUpsertBodySchema = z.object({
   }
 });
 
+/** The note a write that puts a rule on `block` answers with: block does not block in this release, and steers. */
+export const blockNoteShape = {
+  note: z.string().optional().describe("Set when the write puts a rule on block: block does not block in this release, and the rule steers instead."),
+};
+
 export const libraryUpsertResultSchema = z.object({
   rule: libraryRuleRecordSchema,
   copiedFromRuleId: z.string().nullable().describe("Set when the write edited a By Rerail rule and stored a copy instead."),
   attached: z.object({ repositoryKey: z.string(), folders: z.array(z.string()) }).strict().nullable()
     .describe("Where the rule (or the copy) was added; a copy switches the original off there once it is approved."),
+  ...blockNoteShape,
 }).strict();
 
 export const rerailRuleSchema = z.discriminatedUnion("kind", [

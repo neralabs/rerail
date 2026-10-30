@@ -103,12 +103,15 @@ These are stated in the code or docs, or follow from the design:
   access capability, and with it call `/api` as the person. It can run `rerail stop`, `rerail rules add` or
   `rerail reset` directly, and it can edit the database, the managed install or the model directory.
   [privacy.md](privacy.md) says so for the capability.
-- **No enforcement.** Hooks fail open (T4) and never deny a tool call. `block` mode is not built.
-- **No content-based secret detection.** The data boundary judges path names only (T5).
-- **No encryption at rest, and no secure deletion.** `rerail reset` deletes rows. It does not `VACUUM`, and the
-  rows' pages stay recoverable in the file.
+- **No enforcement.** Hooks fail open (T4) and never deny a tool call. `block` mode is not built, and every place that
+  sets it says the rule steers instead.
+- **No complete secret detection.** Before anything reaches disk, Rerail redacts the secrets it recognizes, by format
+  or by a secret-like key (T6). A secret in a format it does not know can still be stored.
+- **No encryption at rest.** Deleted data is removed from the file itself: writers run with `secure_delete`, and
+  `rerail reset` and `rerail scrub` rewrite the file (T6).
 - **No Nera-held update signature.** Updates are checked against npm's registry signatures and provenance (T7).
-- **No transport security for a remote daemon.** `--allow-remote` serves plain HTTP (T9).
+- **Transport security for a remote daemon is the person's to supply.** A daemon other machines can reach refuses to
+  start without `--tls-cert`/`--tls-key`, unless `--insecure-http` is passed (T9).
 - The agent's model provider receives steer text under its own terms (see [privacy.md](privacy.md)).
 
 ## Trust boundaries and their controls
@@ -236,10 +239,10 @@ behaviour was confirmed in code, or by running it, while this model was written.
 | T3 | Prompt injection through steer text | Malicious repo, pack author | Partly mitigated | Medium |
 | T4 | Rules silently disarmed | Agent, crash, DoS | By design | Medium |
 | T5 | Secrets reach the agent past the name-based boundary | Malicious repo, agent | Partly mitigated | Low–Medium |
-| T6 | Secrets at rest, unredacted | Disk access, backups, other users | Partly mitigated | Low–Medium |
+| T6 | Secrets at rest | Disk access, backups, other users | Mostly mitigated: redaction, erasure, `--delete-data` | Low |
 | T7 | Malicious update or dependency | npm or registry compromise | Mostly mitigated | Low–Medium |
 | T8 | Repo-planted `.rerail/` redirects or exposes ledgers | Malicious repo | Mitigated | Low |
-| T9 | Capability exposed with `--allow-remote` | Network attacker | Opt-in | Medium |
+| T9 | Capability exposed with `--allow-remote` | Network attacker | Mitigated: TLS required, clients pin the certificate | Low |
 | T10 | Files and directories not kept private | Other OS users | Mitigated on Unix | Low |
 | T11 | Repo-controlled environment and config redirect Rerail | Malicious repo | Mostly host-equivalent | Low–Medium |
 | T12 | Native engine crash or hang | Malicious repo | Partly mitigated | Low |
@@ -358,7 +361,12 @@ Cursor merges hook answers so that `deny` and `ask` from other hooks still win. 
 `allow` skips Cursor's own approval prompt.]
 
 This is consistent with Rerail being advisory. It means Rerail must not be presented as a control the agent cannot
-switch off.
+switch off. The product says so where it matters:
+
+- **Block mode.** `rerail rules add`, `import`, `list` and `approve`, the API writes that set a mode (which return a
+  `note`), and the dashboard ("Block (steers for now)") all say that a rule on Block steers in this release.
+- **Stopping.** `rerail stop` and `/rerail-stop` say that the shared daemon keeps running and name `rerail daemon stop`.
+  No API or MCP operation stops the daemon.
 
 ### T5: Secrets reach the agent past the name-based boundary
 
@@ -387,23 +395,35 @@ in two ways:
 - **Name-only judging.** `violations_list`, `audits_list`, `repository_audit_entries_list` and `rerail rules evidence`
   still judge findings by name only, not by symlink target.
 
-### T6: Secrets at rest, unredacted
+### T6: Secrets at rest
 
 **Mitigated:**
 
-- **Tool output.** `persistEvent` (`src/runtime/runtime.ts`) stores a tool result without its `output` when the call
-  names a secret-like path (`callNamesSecretPath`). It stores a withheld marker and the byte length instead. The
-  sample written to the in-repo ledger is emptied the same way.
-- **Pre-edit text.** Preimage capture (`code-rule-bridge.ts`) keeps only a hash and length for a secret-like file.
-  `rewind` refuses such a file rather than deleting it.
+- **Redaction before disk** (`src/engine/secret-scrub.ts`). Every write to disk goes through the scrubber: stored
+  events (prompts, replies, tool inputs and outputs, errors), ledger entries, stored findings and audit errors, and the
+  lines Rerail writes to `daemon.log`. Rule matching and steers read the original text in memory. The scrubber redacts:
+  - **Known formats.** Cloud, Git host, chat, payment and AI provider keys and tokens, private keys, JWTs, URL
+    passwords and `Authorization` credentials, as `[redacted:<kind>:<6 hex of sha256>]`.
+  - **Assigned values.** A value assigned to a secret-like key (`password`, `api_key`, `token`, ...) of at least 12
+    characters and 3.0 bits per character, as `[redacted:<kind>]` with no hash, because such a value may be a
+    guessable password.
+  - **Never touched.** Hashes, UUIDs, integrity strings, `data:` URIs and code.
+- **Secret-like files.** A tool result for a call that names a secret-like path is stored without its output.
+  Preimages of a secret-like file, or of one whose text holds a secret, keep only a hash and size.
+- **Erasure.** Database writers run with `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM` and
+  checkpoints again, so deleted history cannot be read back from the file.
+- **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
+  checkout's ledgers and `daemon.log` the same way, then rewrites the file. `rerail update` suggests it once.
+- **Removing everything.** `rerail install --remove --delete-data` deletes the databases, every `~/.rerail-clean-*`
+  backup, the content cache, and every recorded checkout's `.rerail/sessions` instead of backing them up.
 
 **What remains:**
 
-- **Outputs of other files.** Outputs from hidden but not secret-like files (`.github/...`) are stored, and so is any
-  secret in a file whose name does not look secret.
-- **The content cache.** It holds copies of every source file the engine read.
-- **`rerail reset`.** It keeps open sessions, ledgers, the cache and the log, and leaves deleted pages in the file.
-- **The backup.** `rerail install --remove` moves the database to `~/.rerail-clean-YYYYMMDD`, which is never deleted.
+- **Unknown formats.** A secret in a format the scrubber does not know, or a short or low-entropy value outside a
+  secret-like key, is stored.
+- **Unredacted log lines.** Lines that native code or Node's uncaught-error report write straight to `daemon.log`.
+- **The default removal.** Plain `rerail install --remove` still moves the database to `~/.rerail-clean-YYYYMMDD`.
+  `rerail scrub` does not touch those backups.
 - **No encryption.** Nothing is encrypted at rest ([privacy.md](privacy.md)).
 
 ### T7: Malicious update or dependency
@@ -450,11 +470,23 @@ in two ways:
 
 ### T9: Capability exposed with `--allow-remote` or `--public-host`
 
-- The daemon serves plain HTTP with no rate limit, so the capability crosses the network in clear on every request.
-- The dashboard link carries it in the query string.
-- Holding it gives full `person` access: approving rules, and writing steer text for every session.
+**Mitigated** (`src/daemon/daemon.ts:loadDaemonTls`, `src/runtime/daemon-control.ts:daemonFetch`):
 
-This applies only when the person opts in.
+- **HTTPS.** `rerail daemon start --tls-cert <pem> --tls-key <pem>` serves HTTPS. Start refuses a key file that other
+  users could read.
+- **Remote means TLS.** A daemon that other machines can reach, judged from its bind address or from
+  `--public-host`, refuses to start without TLS unless `--insecure-http` is passed.
+- **Rerail's own clients pin the certificate.** `daemon.json` records the certificate's SHA-256, and the clients
+  (probe, MCP bridge, CLI, native session client) open the TLS connection and check that fingerprint before they send
+  anything, so the capability never reaches another server.
+
+**What remains:**
+
+- **`--insecure-http`.** It still sends the capability in clear.
+- **The dashboard link.** It carries the capability in its query string, so it is only as private as the place it is
+  pasted.
+- **No rate limit.** The daemon limits no requests.
+- **Full access.** Holding the capability gives full `person` access.
 
 ### T10: Files and directories not kept private
 
@@ -486,11 +518,15 @@ items therefore mostly match the host's own trust model rather than going beyond
 
 ### T12: Native engine crash or hang
 
-**Mitigated** (`src/api/http.ts:requestBodyLimit`, `src/daemon/daemon.ts`):
+**Mitigated** (`src/api/http.ts:requestBodyLimit`, `src/daemon/daemon.ts`, `native/src/code_rule_dsl/value/names.rs`):
 
 - **Body limits.** A body over 4 MiB on `/api` or `/mcp`, or over 256 MiB on `/native`, gets `413`.
 - **Timeouts.** `headersTimeout` is 10 s and `requestTimeout` 60 s. `/mcp` sends one JSON response per request, so
   these cannot cut a stream.
+- **A malformed names table.** It is a rule execution failure (`adapter-error`), not a process abort. The build
+  refuses a Git LFS pointer in place of `names.bin`, and so does `install --root` for any LFS-tracked file.
+- **Health covers the model.** `/healthz`, `rerail status` and the dashboard header check `model/` against
+  `manifest.json` and name the file that fails. `rerail status` exits 5 when the model is not ok.
 
 **What remains:**
 
@@ -509,16 +545,18 @@ These are risks for maintainers, not users.
 - **Pinned references.** Every `uses:` reference under `.github`, first-party actions and the reviewer workflow
   included, is pinned to a commit SHA with a version comment. Dependabot keeps them current, composite actions
   included. `npm run check:pins` keeps the reviewer's `reviewer_ref` equal to its `uses:` SHA.
-- **The reviewer cannot approve.** `reviewer.yml` sets `allow_approve: false`. The called workflow keeps both keys
-  from fork pull requests under `pull_request_target`.
+- **The reviewer cannot approve, and never sees a fork.** `reviewer.yml` sets `allow_approve: false`. Its
+  `same-repo` job holds no secrets and has a read-only token. It looks up the pull request's head repository and
+  calls the reviewer only when that is this repository, so no trigger, a maintainer's comment command included, gives
+  a fork pull request the model key or the app key.
 - **No branch code beside the write token.** `dependabot-pins.yml` runs branch code in a read-only job that uploads a
   patch. A second job applies only pin-file changes, then mints the write token and pushes.
 
 **What remains:**
 
 - **Tag pushes.** `release.yml` runs on any `v*` tag, and the `release` environment approval is the only gate.
-- **Maintainer-run reviews of fork PRs.** An `issue_comment` review command from a maintainer on a fork pull request
-  gives the model step the Bedrock key. That step has no shell or network tools.
+- **Developer smoke runs.** `scripts/host/host-auth.ts` copies an access-only OAuth token (no refresh token) into a
+  sandbox, 0600 in a 0700 folder. It deletes the copy and its SQLite journal files when the run ends, on failure too.
 - **Unsigned native binaries.** The `.node` binaries are shipped without a separate signature and rely on provenance.
 
 ### T14: Smaller local exposures

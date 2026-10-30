@@ -1,15 +1,16 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
 import { readFile, stat, writeFile, rm, rename } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import type { AddressInfo, Server as NetServer } from "node:net";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, type DaemonHealth, type DaemonState, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
@@ -20,6 +21,7 @@ import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
+import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -83,6 +85,17 @@ export interface RerailDaemonOptions {
   kernelSocketPath?: string;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
+  /**
+   * The certificate (a PEM chain, leaf first) and private key to serve https with; omitted, the daemon serves http.
+   * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
+   */
+  tls?: DaemonTlsMaterial;
+}
+
+/** What `--tls-cert` and `--tls-key` name, read: PEM text. */
+export interface DaemonTlsMaterial {
+  cert: string;
+  key: string;
 }
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -136,7 +149,10 @@ export function defaultEngineSocketPath(
     : join(tmpdir(), `rerail-${process.getuid!()}`, `${identity}.sock`);
 }
 
-async function listen(server: Server, port: number, host: string): Promise<void> {
+/** The listener the daemon serves on: `node:http`'s, or `node:https`'s when it has a certificate. */
+type DaemonServer = NetServer & Pick<HttpServer, "closeIdleConnections" | "closeAllConnections">;
+
+async function listen(server: DaemonServer, port: number, host: string): Promise<void> {
   const listening = Promise.withResolvers<void>();
   server.once("error", listening.reject);
   server.listen(port, host, () => {
@@ -152,7 +168,7 @@ async function listen(server: Server, port: number, host: string): Promise<void>
  * port number. Held (EADDRINUSE) or refused (EACCES: Windows reserves port ranges for Hyper-V and moves them across
  * restarts) both move on; the remembered port moves on whatever its error, since only a deleted file would undo it.
  */
-async function listenPreferred(server: Server, port: number | undefined, remembered: number | undefined, host: string): Promise<void> {
+async function listenPreferred(server: DaemonServer, port: number | undefined, remembered: number | undefined, host: string): Promise<void> {
   if (port !== undefined) return await listen(server, port, host);
   for (const preferred of new Set([remembered ?? DEFAULT_DAEMON_PORT, DEFAULT_DAEMON_PORT])) {
     try {
@@ -227,7 +243,7 @@ async function persistentAccessToken(file: string): Promise<string> {
   return token;
 }
 
-async function closeHttpServer(server: Server): Promise<void> {
+async function closeHttpServer(server: DaemonServer): Promise<void> {
   server.closeIdleConnections();
   const closed = Promise.withResolvers<void>();
   server.close((error) => (error === undefined ? closed.resolve() : closed.reject(error)));
@@ -240,7 +256,7 @@ export class RerailDaemon {
   readonly port: number;
   readonly url: string;
   readonly startedAt: number;
-  readonly #server: Server;
+  readonly #server: DaemonServer;
   readonly #engineService: EngineService;
   readonly #stores: DatabaseApiStores;
   readonly #ui: DaemonState["ui"];
@@ -252,12 +268,14 @@ export class RerailDaemon {
   readonly #nativeServer: NativeSessionServer;
   readonly #nativeToken: string;
   readonly #accessToken: string;
+  readonly #tlsFingerprint256: string | undefined;
   #closed = false;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken,
+    tlsFingerprint256,
   }: {
-    server: Server;
+    server: DaemonServer;
     engineService: EngineService;
     kernelSocketPath: string;
     stores: DatabaseApiStores;
@@ -269,11 +287,12 @@ export class RerailDaemon {
     nativeServer: NativeSessionServer;
     nativeToken: string;
     accessToken: string;
+    tlsFingerprint256: string | undefined;
   }) {
     const address = server.address() as AddressInfo;
     this.host = address.address;
     this.port = address.port;
-    this.url = `http://${this.host}:${this.port}/`;
+    this.url = `${tlsFingerprint256 === undefined ? "http" : "https"}://${this.host}:${this.port}/`;
     this.startedAt = Date.now();
     this.#server = server;
     this.#engineService = engineService;
@@ -287,9 +306,12 @@ export class RerailDaemon {
     this.#nativeServer = nativeServer;
     this.#nativeToken = nativeToken;
     this.#accessToken = accessToken;
+    this.#tlsFingerprint256 = tlsFingerprint256;
   }
 
   static async start(options: RerailDaemonOptions): Promise<RerailDaemon> {
+    // Before anything is opened or bound: a file that holds no certificate is the start's whole failure.
+    const tlsFingerprint256 = options.tls === undefined ? undefined : certificateFingerprint(options.tls.cert);
     const bindHost = options.host ?? DEFAULT_DAEMON_HOST;
     const loopbackBind = LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase());
     // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. a
@@ -325,7 +347,7 @@ export class RerailDaemon {
     });
     let engineService: EngineService | undefined;
     let nativeServer: NativeSessionServer | undefined;
-    let server: Server | undefined;
+    let server: DaemonServer | undefined;
     try {
       engineService = await startEngineService({
         socketPath: kernelSocketPath,
@@ -392,12 +414,15 @@ export class RerailDaemon {
         return context.json({ error: "internal", message: INTERNAL_ERROR_MESSAGE }, 500);
       });
       const listener = getRequestListener(app.fetch);
-      server = createServer(HTTP_TIMEOUTS, (request, response) => void listener(request, response));
+      const handle: RequestListener = (request, response) => void listener(request, response);
+      server = options.tls === undefined
+        ? createServer(HTTP_TIMEOUTS, handle)
+        : createHttpsServer({ ...HTTP_TIMEOUTS, cert: options.tls.cert, key: options.tls.key }, handle);
       const remembered = options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,
-        nativeServer: sessions, nativeToken, accessToken,
+        nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256,
       });
       if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(daemon.state(), null, 2)}\n`);
       // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
@@ -443,10 +468,12 @@ export class RerailDaemon {
       workspaceRoot: this.#workspaceRoot,
       nativeToken: this.#nativeToken,
       accessToken: this.#accessToken,
+      ...(this.#tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: this.#tlsFingerprint256 }),
     };
   }
 
   health(): DaemonHealth {
+    const model = modelStatus();
     return {
       status: "ok",
       version: this.#options.version,
@@ -457,6 +484,8 @@ export class RerailDaemon {
         exists: existsSync(this.#databasePath),
       },
       native: this.#native,
+      model,
+      healthy: this.#native.ok && model.ok,
       ui: this.#ui,
       workspaceRoot: this.#workspaceRoot,
       installedAt: this.#stores.installedAt(),
@@ -558,6 +587,7 @@ interface DaemonArguments {
   port?: number;
   dev: boolean;
   stateFile?: string;
+  tls?: DaemonTlsFiles;
 }
 
 const LOOPBACK_BIND_HOSTS: readonly string[] = ["127.0.0.1", "localhost", "::1"];
@@ -580,22 +610,91 @@ export function parsePublicHosts(text: string | undefined): readonly string[] {
   return text === undefined ? [] : text.split(",").map(host => host.trim()).filter(host => host !== "");
 }
 
+/** The flags and options `parseDaemonTransport` reads; every launcher of the daemon accepts them. */
+export const DAEMON_TRANSPORT_FLAGS: readonly string[] = ["--insecure-http"];
+export const DAEMON_TRANSPORT_OPTIONS: readonly string[] = ["--tls-cert", "--tls-key"];
+
+/**
+ * Whether a daemon on `host` answering `publicHosts` serves https (`--tls-cert` and `--tls-key`, resolved to absolute
+ * paths) or plain http. One reachable from other machines (bound off loopback, or answering a `--public-host`) must
+ * not serve plain http unless `--insecure-http` says so: every request carries the access capability, which would
+ * cross the network in clear. Shared by `rerail daemon start` and the daemon itself, like `assertHostBindable`.
+ */
+export function parseDaemonTransport(
+  arguments_: ParsedArguments,
+  host: string,
+  publicHosts: readonly string[],
+): Pick<DaemonLaunchOptions, "tls" | "insecureHttp"> {
+  const certFile = arguments_.options.get("--tls-cert");
+  const keyFile = arguments_.options.get("--tls-key");
+  if ((certFile === undefined) !== (keyFile === undefined)) {
+    throw new Error("--tls-cert and --tls-key go together: pass the certificate and its private key, both PEM files.");
+  }
+  const insecureHttp = arguments_.flags.has("--insecure-http");
+  if (certFile !== undefined && keyFile !== undefined) {
+    if (insecureHttp) throw new Error("--insecure-http contradicts --tls-cert and --tls-key; pass one or the other.");
+    return { tls: { certFile: resolve(certFile), keyFile: resolve(keyFile) } };
+  }
+  if (insecureHttp) return { insecureHttp: true };
+  const offLoopback = !LOOPBACK_BIND_HOSTS.includes(host.toLowerCase());
+  if (!offLoopback && publicHosts.length === 0) return {};
+  throw new Error(
+    `${offLoopback ? `--host ${host}` : `--public-host ${publicHosts.join(",")}`} makes this daemon reachable from other machines, `
+    + "and over plain http its access capability, sent with every request, would cross the network in clear. "
+    + "Pass --tls-cert <cert.pem> --tls-key <key.pem> to serve https; a self-signed certificate works "
+    + "(openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 -subj /CN=rerail "
+    + "-keyout key.pem -out cert.pem, then chmod 600 key.pem). Pass --insecure-http instead only when the network in "
+    + "between is already trusted, such as a container port published on the host's loopback.",
+  );
+}
+
+/**
+ * The PEM files `tls` names, read once at start. The private key must be its owner's alone: a key other users can read
+ * lets any of them impersonate the daemon, so a key with any group or other permission is refused, as ssh refuses
+ * one. Windows has no mode bits to check.
+ */
+export async function loadDaemonTls(tls: DaemonTlsFiles): Promise<DaemonTlsMaterial> {
+  if (process.platform !== "win32") {
+    const mode = (await stat(tls.keyFile)).mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      throw new Error(
+        `${tls.keyFile} is open to other users (mode ${mode.toString(8).padStart(4, "0")}); a TLS private key must be `
+        + `readable by its owner only: chmod 600 ${tls.keyFile}`,
+      );
+    }
+  }
+  const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
+  return { cert, key };
+}
+
+/** The SHA-256 fingerprint of the first certificate in `pem`, the one a TLS server presents as its own. */
+function certificateFingerprint(pem: string): string {
+  try {
+    return new X509Certificate(pem).fingerprint256;
+  } catch (error) {
+    throw new Error(`The TLS certificate is not a PEM X.509 certificate: ${errorText(error)}`);
+  }
+}
+
 function parseDaemonArguments(argv: readonly string[]): DaemonArguments {
   const { flags, options } = parseArguments(
     argv,
-    { flags: ["--dev", "--allow-remote"], options: ["--host", "--port", "--state-file", "--public-host"] },
+    { flags: ["--dev", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--host", "--port", "--state-file", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
     (argument) => `Unknown daemon argument: ${argument}`,
   );
   const host = options.get("--host") ?? DEFAULT_DAEMON_HOST;
   assertHostBindable(host, flags.has("--allow-remote"));
+  const publicHosts = parsePublicHosts(options.get("--public-host"));
+  const { tls } = parseDaemonTransport({ flags, options }, host, publicHosts);
   const port = options.get("--port");
   const stateFile = options.get("--state-file");
   return {
     host,
-    publicHosts: parsePublicHosts(options.get("--public-host")),
+    publicHosts,
     ...(port === undefined ? {} : { port: parsePort(port) }),
     dev: flags.has("--dev"),
     ...(stateFile === undefined ? {} : { stateFile: resolve(stateFile) }),
+    ...(tls === undefined ? {} : { tls }),
   };
 }
 
@@ -616,6 +715,7 @@ export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
 
 export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
+  const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
   // here naming the first. A checkout's daemon is a dev build with its own content store and takes no lock.
   const build = isMainRerailBuild() ? currentRerailBuild() : undefined;
@@ -641,15 +741,20 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     dev,
     ...services,
     ...(arguments_.stateFile === undefined ? {} : { stateFile: arguments_.stateFile }),
+    ...(tls === undefined ? {} : { tls }),
   });
   const health = daemon.health();
   process.stdout.write(`rerail daemon ${health.version} listening at ${daemon.url} (pid ${process.pid})\n`);
+  const { tlsFingerprint256 } = daemon.state();
+  // What a browser shows for a self-signed certificate, to compare before accepting it.
+  if (tlsFingerprint256 !== undefined) process.stdout.write(`TLS certificate SHA-256: ${tlsFingerprint256}\n`);
   process.stdout.write(`database: ${health.database.path}\n`);
   process.stdout.write(
     health.native.ok
       ? `native kernel: ok (version ${health.native.kernelVersion})\n`
       : `native kernel: unavailable: ${health.native.error}\n`,
   );
+  process.stdout.write(`model: ${health.model.message}\n`);
   const catalog = loadRuleCatalog();
   const packs = [...catalog.packs.values()].map(pack => `${pack.id}@${pack.version ?? "unversioned"}`);
   process.stdout.write(`rule packs: ${packs.length === 0 ? "none installed" : packs.join(", ")}\n`);

@@ -6,7 +6,8 @@
 //! - `evaluate`: per-file evaluation; `global`: cross-file clauses.
 //! - `crossfile`: the cross-file scheduling seam; `calls_state`: the `calls` adapter's summaries
 //!   and closure.
-//! - `persisted` and `storage`: stored results and the content store.
+//! - `persisted` and `storage`: stored results and the content store; `secret_names`: the paths
+//!   it never holds.
 //! - `results` and `memory`: reporting and memory accounting.
 
 mod api;
@@ -20,6 +21,7 @@ mod ingest;
 mod memory;
 mod persisted;
 mod results;
+mod secret_names;
 mod storage;
 
 use super::json::invalid;
@@ -301,6 +303,10 @@ struct FileState {
     /// resident (`release_unpublished_over_budget`): its results stand, it is never published,
     /// and its source is empty.
     results_only: bool,
+    /// The file is named like one holding secrets (`StorageContext::withholds`): the store never
+    /// holds its source, tapes or results, so it is never published and stays resident whole
+    /// through every eviction.
+    withheld: bool,
     /// Clauses whose last result depends on more than the content and the catalog: the file's
     /// shared work or its clause-work ceiling ran out before they finished, or they ran out of
     /// work in a pass over some of the file's clauses, or with tables an earlier pass built. Kept
@@ -334,10 +340,10 @@ impl FileState {
     }
 
     /// Whether eviction keeps the file: the store lacks some of its results (its last evaluation
-    /// was transient, some clause's result is `unstored`, or a busy store left it `unpublished`),
-    /// which reading it back would lose.
+    /// was transient, some clause's result is `unstored`, a busy store left it `unpublished`, or
+    /// it is `withheld`), which reading it back would lose.
     fn stays_resident(&self) -> bool {
-        self.transient_failure || self.unpublished || !self.unstored.is_empty()
+        self.transient_failure || self.unpublished || self.withheld || !self.unstored.is_empty()
     }
 
     /// Takes `stored`'s results (this file read back from the store) for the clauses this file

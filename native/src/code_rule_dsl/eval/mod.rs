@@ -11,6 +11,7 @@ use super::model::{
 };
 use super::module_graph;
 use super::package_manifest::{Manifest, manifest_directory, manifest_in};
+use super::value::names;
 use napi::Result;
 pub(super) use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
@@ -288,6 +289,7 @@ pub(super) fn evaluate_clauses(
     };
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
     for clause in clauses {
+        names::take_unavailable();
         match &clause.kind {
             ClauseKind::Forbid(query) => {
                 let mut partial = BTreeMap::new();
@@ -399,6 +401,16 @@ pub(super) fn evaluate_clauses(
                 "LLM capability is unavailable",
                 None,
             )),
+        }
+        // A `\N{...}` escape the malformed names table could not answer read as unknown: the
+        // clause has no verdict of its own, and the engine's build is at fault, not the source.
+        if names::take_unavailable() {
+            evaluation.failures.push(failure(
+                &clause.id,
+                "adapter-error",
+                names::TABLE_UNAVAILABLE,
+                None,
+            ));
         }
     }
     if evaluation.metrics.witnesses > limits.max_witnesses

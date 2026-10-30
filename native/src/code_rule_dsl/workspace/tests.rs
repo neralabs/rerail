@@ -733,6 +733,7 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         workspace_id,
         snapshot_id: snapshot,
         owner: owner.to_owned(),
+        secret_names: Default::default(),
         _maintenance: None,
     });
 

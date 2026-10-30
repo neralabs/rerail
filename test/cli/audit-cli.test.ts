@@ -14,6 +14,7 @@ import {
   defaultRerailDatabasePath,
 } from "../../src/engine/index.js";
 import {
+  DAEMON_KEEPS_RUNNING,
   RerailRuntime,
   type RerailRuntimeOptions,
   isRerailStarted,
@@ -129,6 +130,7 @@ describe("rerail scan and settings CLI", () => {
     expect(notices.at(-1)).toBe([
       `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
       "  Start it again with /rerail-start.",
+      `  ${DAEMON_KEEPS_RUNNING}`,
       "",
       "  Rerail steered this session on one rule, test:no-print.",
       "  To turn off only that rule, say “turn that rule off”.",

@@ -188,11 +188,29 @@ describe("The rewind steer strategy", () => {
       expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
       expect(deliveries[0]).not.toHaveProperty("rewound");
       expect(await readFile(join(session.root, "secrets.py"), "utf8")).toBe(`${before}NEEDLE = 1\n`);
-      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("secrets.py is named like a file holding secrets"));
+      expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/secrets\.py .*no copy/u));
       const directory = createHash("sha256").update("strategy").digest("hex");
       expect(await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8")).not.toContain("sk-live-0123456789");
     } finally {
       stderr.mockRestore();
+      await session.runtime.dispose();
+    }
+  });
+
+  it("puts back a file whose text holds a secret, while its session ledger keeps only the file's digest", async () => {
+    // Assembled from parts so no key-shaped literal sits in the file for secret scanners to refuse.
+    const key = ["sk-", "proj-", "Q7f2LmZ9xV4pR8tK1wN6bH3cJ5dS0gYa"].join("");
+    const before = `API_KEY = "${key}"\n`;
+    const session = await strategySession({ strategy: "rewind", host: "omp", files: { "config.py": before } });
+    try {
+      const deliveries = await session.edit("w1", "config.py", `${before}NEEDLE = 1\n`);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["config.py"] })]);
+      expect(await readFile(join(session.root, "config.py"), "utf8")).toBe(before);
+      const directory = createHash("sha256").update("strategy").digest("hex");
+      const ledger = await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8");
+      expect(ledger).not.toContain(key);
+      expect(ledger).toContain(createHash("sha256").update(before).digest("hex"));
+    } finally {
       await session.runtime.dispose();
     }
   });

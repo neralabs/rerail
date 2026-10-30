@@ -29,7 +29,16 @@ import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from
 import { gitExecutable, GitUnavailableError } from "../engine/git.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
 import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
-import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
+import {
+  assertHostBindable,
+  DAEMON_TRANSPORT_FLAGS,
+  DAEMON_TRANSPORT_OPTIONS,
+  DEFAULT_DAEMON_HOST,
+  parseArguments,
+  parseDaemonTransport,
+  parsePort,
+  parsePublicHosts,
+} from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
   accessTokenKept,
@@ -47,6 +56,7 @@ import {
 import { deviceSecretStore } from "../activation/device-keystore.js";
 import { runRerailMcpBridge } from "../api/mcp-bridge.js";
 import { rollbackWithSnapshot, runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
+import { runScrubCommand } from "./scrub-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -58,6 +68,7 @@ import { runShowMeCommand } from "./show-me.js";
 import { runPacksCommand } from "./packs-cli.js";
 import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { modelStatusLine } from "../engine/native/model-status.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
@@ -134,19 +145,20 @@ function usage(): string {
   return [
     "Usage:",
     "  rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--relay] [--database <file>]",
-    "  rerail install [--root <package>] [--agents <list>] [--remove] [--dry-run]",
+    "  rerail install [--root <package>] [--agents <list>] [--remove [--delete-data]] [--dry-run]",
     "  rerail install --refresh",
     "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--relay] [--database <file>]",
     "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
     "  rerail version",
-    "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
+    "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--tls-cert <pem> --tls-key <pem>] [--insecure-http] [--open]",
     "  rerail daemon stop",
     "  rerail session [<host> [<session-id>]] [--open]",
     "  rerail manage [--print]",
     "  rerail seed",
     "  rerail reset",
+    "  rerail scrub",
     "  rerail packs [list]",
     "  rerail packs add <id[@version] | package | tarball | folder>...",
     "  rerail packs remove <id>...",
@@ -185,24 +197,27 @@ function printDaemon(daemon: RunningDaemon): void {
   process.stdout.write(health.native.ok
     ? `Engine: ok (version ${health.native.kernelVersion})\n`
     : `Engine: unavailable: ${health.native.error}\n`);
+  process.stdout.write(`${modelStatusLine(health.model)}\n`);
 }
 
 async function runDaemonStartCommand(args: readonly string[], home: string): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: ["--dev", "--open", "--allow-remote"], options: ["--port", "--host", "--public-host"] },
+    { flags: ["--dev", "--open", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--port", "--host", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
   const port = options.get("--port");
   const host = options.get("--host");
   if (host !== undefined) assertHostBindable(host, flags.has("--allow-remote"));
   const publicHosts = parsePublicHosts(options.get("--public-host"));
+  const transport = parseDaemonTransport({ flags, options }, host ?? DEFAULT_DAEMON_HOST, publicHosts);
   const result = await startDaemon({ home, packageRoot }, {
     dev: flags.has("--dev"),
     ...(host === undefined ? {} : { host }),
     ...(flags.has("--allow-remote") ? { allowRemote: true } : {}),
     ...(publicHosts.length === 0 ? {} : { publicHosts }),
     ...(port === undefined ? {} : { port: parsePort(port) }),
+    ...transport,
   });
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
@@ -267,7 +282,7 @@ async function runStatusCommand(home: string): Promise<number> {
     return 4;
   }
   printDaemon({ state: lookup.state, health: lookup.health });
-  return 0;
+  return lookup.health.healthy === false ? 5 : 0;
 }
 
 /**
@@ -579,8 +594,8 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
+  // `seed`, `rules`, `show-me`, `reset` and `scrub` write the Rerail database with the invoking package's schema (a checkout build, say).
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }
@@ -684,6 +699,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "show-me") return runShowMeCommand(args, usage);
   if (command === "packs") return await runPacksCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
+  if (command === "scrub") return await runScrubCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });

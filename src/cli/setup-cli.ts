@@ -1,7 +1,8 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, readdir, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import Database from "better-sqlite3";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-contracts.js";
 import {
@@ -17,7 +18,7 @@ import {
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
-import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
+import { contentStoreOverride, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { daemonUsesPackageRoot, lookupDaemon, openDashboard, processAlive, startDaemon, stopDaemon, type DaemonState } from "../runtime/daemon-control.js";
 import { DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
 import {
@@ -40,6 +41,8 @@ import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, t
 import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { LAUNCHER_HEADER, type ManagedUpdater } from "../setup/updater.js";
+import { requireLfsContent } from "../setup/lfs-pointers.js";
+import { scrubHintOnce } from "./scrub-cli.js";
 
 export interface SetupContext {
   /** Rerail's own state directory (`~/.rerail` unless `RERAIL_HOME`); versions, launcher, daemon live here. */
@@ -118,6 +121,8 @@ async function activateExplicitRoot(context: SetupContext, root: string, remove:
   const { updater } = context;
   // Removal has to name whichever path the hooks in place were written with.
   if (remove) return (await currentPointsAt(context, root)) ? updater.currentLink : root;
+  // A checkout cloned without Git LFS builds, then fails every session on the model's checksum.
+  requireLfsContent(root);
   if (dryRun) {
     process.stdout.write(`Would point ${updater.currentLink} at ${root} and write the launcher ${updater.launcherPath}.\n`);
     return updater.currentLink;
@@ -184,6 +189,125 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
   process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);
 }
 
+/** Rerail's databases in its home, with every file named after them: WAL, shared memory, journal, `.restoring`, copies. */
+const HOME_DATABASE = /^(?:rerail|harness)\.sqlite/u;
+
+/** A directory itself, never a link to one. */
+function isRealDirectory(path: string): boolean {
+  try {
+    return lstatSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every checkout the database at `path` records, read before the database is deleted, or why they could not be read.
+ * The connection is a writer's so that, as the last one, its close removes the `-wal` and `-shm` its open needed: a dry
+ * run leaves the files as it found them. Nothing else in this process has the file open.
+ */
+function recordedCheckouts(path: string): { checkouts: string[]; problem?: string } {
+  if (!existsSync(path)) return { checkouts: [] };
+  let client: Database.Database | undefined;
+  try {
+    client = new Database(path, { fileMustExist: true });
+    client.pragma("busy_timeout = 5000");
+    const rows = client.prepare("SELECT checkout_path AS path FROM checkouts ORDER BY checkout_path").all() as Array<{ path: unknown }>;
+    return { checkouts: rows.flatMap(row => (typeof row.path === "string" ? [row.path] : [])) };
+  } catch (error) {
+    return { checkouts: [], problem: error instanceof Error ? error.message : String(error) };
+  } finally {
+    client?.close();
+  }
+}
+
+/**
+ * `<checkout>/.rerail/sessions` when the checkout and its `.rerail` are real folders: a link at either is never
+ * followed, so a link elsewhere cannot point the deletion at anything outside the checkout. The ledger itself may be a
+ * link; deleting it removes the link, never what it points at.
+ */
+function sessionLedger(checkout: string): string | undefined {
+  const folder = join(checkout, ".rerail");
+  if (!isAbsolute(checkout) || !isRealDirectory(checkout) || !isRealDirectory(folder)) return undefined;
+  const ledger = join(folder, "sessions");
+  return pathExists(ledger) ? ledger : undefined;
+}
+
+/**
+ * What `--delete-data` deletes for good where the uninstall would back up, decided before anything goes so `--dry-run`
+ * says the same as the real run: the session ledgers of every checkout the database records, the Rerail home's
+ * databases, every `~/.rerail-clean-*` backup, and the content store `RERAIL_CONTENT_STORE_PATH` names. The machine-wide
+ * cache folder goes with the installation (`removeInstallation`), unless another daemon holds it.
+ */
+function planDataDeletion(home: string): { remove: Array<{ path: string; what: string; ledger?: true }>; notes: string[] } {
+  const remove: Array<{ path: string; what: string; ledger?: true }> = [];
+  const notes: string[] = [];
+  const database = join(home, RERAIL_DATABASE_FILE);
+  const { checkouts, problem } = recordedCheckouts(database);
+  if (problem !== undefined) notes.push(`Could not read the checkouts recorded in ${database} (${problem}); their .rerail/sessions folders stay.`);
+  for (const checkout of checkouts) {
+    const ledger = sessionLedger(checkout);
+    if (ledger !== undefined) remove.push({ path: ledger, what: `the session ledgers of ${checkout}`, ledger: true });
+  }
+  const store = contentStoreOverride();
+  const fromMainCache = store === undefined ? "" : relative(mainContentStoreDirectory(), store);
+  // A store inside the machine-wide cache folder goes with that folder in `removeInstallation`, under its guard.
+  if (store !== undefined && (fromMainCache === ".." || fromMainCache.startsWith(`..${sep}`) || isAbsolute(fromMainCache))) {
+    const holder = cacheHolder(dirname(store));
+    const files = ["", "-wal", "-shm", "-journal"].map(suffix => `${store}${suffix}`).filter(pathExists);
+    if (holder !== undefined && files.length > 0) notes.push(`Kept ${store} (the content cache): another Rerail daemon, pid ${holder}, still uses it.`);
+    else for (const path of files) remove.push({ path, what: "the content cache" });
+  }
+  let userFiles: string[];
+  try {
+    userFiles = readdirSync(codingAgentHome());
+  } catch {
+    userFiles = [];
+  }
+  for (const name of userFiles.filter(entry => entry.startsWith(".rerail-clean-")).sort()) {
+    remove.push({ path: join(codingAgentHome(), name), what: "a backup of rules and history" });
+  }
+  const databases = existsSync(home) ? readdirSync(home).filter(name => HOME_DATABASE.test(name)).sort() : [];
+  for (const name of databases) {
+    remove.push({ path: join(home, name), what: name.startsWith("harness.") ? "the coding agents' recovery records" : "rules and every repository's history" });
+  }
+  return { remove, notes };
+}
+
+/**
+ * `install --remove --delete-data`: stop the daemon, then delete for good what the uninstall otherwise backs up, with
+ * the session ledgers in recorded checkouts and every earlier backup (`planDataDeletion`). The checkouts are read
+ * after the stop and before the database goes. A checkout's `.rerail` goes too once the ledgers were all it held.
+ * Links are removed, never followed (`fs.rm` does not follow them inside a folder either).
+ */
+async function deleteRulesAndHistory(home: string, dryRun: boolean): Promise<void> {
+  if (dryRun) process.stdout.write("Would stop the Rerail daemon.\n");
+  else process.stdout.write(await stopDaemon(home) === "stopped" ? "Stopped the Rerail daemon.\n" : "The Rerail daemon was not running.\n");
+  const { remove, notes } = planDataDeletion(home);
+  if (dryRun) {
+    for (const { path, what } of remove) process.stdout.write(`Would delete ${path} (${what}).\n`);
+    for (const note of notes) process.stdout.write(`${note}\n`);
+    return;
+  }
+  const failed: Array<{ path: string; reason: string }> = [];
+  for (const { path, what, ledger } of remove) {
+    try {
+      await rm(path, { recursive: true, force: true, maxRetries: 10 });
+      process.stdout.write(`Deleted ${path} (${what}).\n`);
+    } catch (error) {
+      failed.push({ path, reason: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+    // Only an empty `.rerail` goes: anything else in it is not the ledgers.
+    if (ledger) await rmdir(dirname(path)).catch(() => undefined);
+  }
+  if (remove.length === 0) process.stdout.write("No rules, history or backups to delete.\n");
+  for (const note of notes) process.stdout.write(`${note}\n`);
+  for (const { path, reason } of failed) {
+    process.stdout.write(`Could not delete ${path} (${reason}). Close every coding agent and terminal still running Rerail, then run: ${cleanupCommand(path, false)}\n`);
+  }
+}
+
 /**
  * What the uninstall deletes from the installation, each with what it is, in the order it goes. A folder with `ours`
  * goes whole only when everything in it is Rerail's; otherwise only Rerail's entries go and the folder stays, so a
@@ -222,7 +346,7 @@ const RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set(["node_modules", "
  * `.old` a write cut short leaves beside it.
  */
 const RERAIL_HOME_ENTRY =
-  /^(?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\.json|daemon\.log.*|(?:harness|rerail)\.sqlite.*|(?:start|update)\.lock|bin|current|versions|packs|profiles|active-profile|device-secrets)(?:\.\d+(?:\.[0-9a-f-]+)?\.(?:tmp|old))?$/u;
+  /^(?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules|scrub-hint)\.json|daemon\.log.*|(?:harness|rerail)\.sqlite.*|(?:start|update)\.lock|bin|current|versions|packs|profiles|active-profile|device-secrets)(?:\.\d+(?:\.[0-9a-f-]+)?\.(?:tmp|old))?$/u;
 
 /**
  * The command that finishes removing `path` by hand. PowerShell: single quotes expand nothing, and `-LiteralPath` reads
@@ -370,6 +494,9 @@ async function runRefresh(context: SetupContext): Promise<number> {
   // from then on PATH is the person's: a block they took out stays out.
   const pathLine = await repairLauncherPath(context);
   if (pathLine !== undefined) process.stdout.write(`${pathLine}\n`);
+  // After an update to a version that scrubs what it stores: once, the hint to scrub what earlier versions stored.
+  const scrubHint = scrubHintOnce(context.home);
+  if (scrubHint !== undefined) process.stdout.write(scrubHint);
   for (const { agent, message } of result.failures) {
     process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);
   }
@@ -394,7 +521,7 @@ async function repairLauncherPath(context: SetupContext): Promise<string | undef
 export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: ["--dry-run", "--remove", "--refresh"], options: ["--root", "--agents"] },
+    { flags: ["--dry-run", "--remove", "--refresh", "--delete-data"], options: ["--root", "--agents"] },
     argument => `Unknown install option: ${argument}`,
   );
   if (flags.has("--refresh")) {
@@ -405,9 +532,16 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
   const rootArgument = options.get("--root");
   const explicitRoot = rootArgument === undefined ? undefined : resolve(rootArgument);
   const remove = flags.has("--remove");
+  const deleteData = flags.has("--delete-data");
+  if (deleteData && !remove) throw new Error("install --delete-data goes with --remove");
   const root = explicitRoot === undefined
     ? registrationRoot(context)
     : await activateExplicitRoot(context, explicitRoot, remove, parsed.dryRun);
+  // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
+  // checkout registered with `--root`, leaves the shared rules and history in place.
+  const uninstall = remove && parsed.hosts === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
+  // Checked before anything changes: the data is everyone's, so only the whole uninstall deletes it.
+  if (deleteData && !uninstall) throw new Error("install --delete-data deletes every repository's history, so it only goes with removing Rerail from every coding agent: drop --agents, and --root unless it names the active install");
   process.stdout.write(`${remove ? "Removing Rerail from" : "Connecting Rerail to"} coding agents for ${root}${parsed.dryRun ? " (dry run)" : ""}\n`);
   const report = remove
     ? await unregisterHarnesses(registrationOptions(root, codingAgentHome(), parsed))
@@ -415,11 +549,9 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
   printReport(report, parsed.dryRun);
   // What `rerail install` found or was named is seen, so set-up run again connects no agent behind this choice.
   if (!parsed.dryRun) await recordSeenCodingAgents(context.home, [...detectHarnesses(codingAgentHome()), ...(parsed.hosts ?? [])]);
-  // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
-  // checkout registered with `--root`, leaves the shared rules and history in place.
-  const uninstall = remove && parsed.hosts === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
   if (uninstall) {
-    await backUpRulesAndHistory(context.home, parsed.dryRun);
+    if (deleteData) await deleteRulesAndHistory(context.home, parsed.dryRun);
+    else await backUpRulesAndHistory(context.home, parsed.dryRun);
     const binDir = dirname(context.updater.launcherPath);
     const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);
     if (removed !== undefined) process.stdout.write(`${removed}\n`);

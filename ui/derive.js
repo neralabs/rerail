@@ -40,7 +40,8 @@ export function rulePrefix(id) {
 /** Every rule, either kind, carries one mode: what Rerail does on a violation. */
 export const ruleMode = stored => stored.rule.mode;
 
-export const MODE_LABEL = { log: "Log", steer: "Steer", block: "Block" };
+/** A mode as the dashboard names it. Block steers until blocking ships, so it says so wherever a rule is on it. */
+export const MODE_LABEL = { log: "Log", steer: "Steer", block: "Block (steers for now)" };
 export const modeLabel = stored => MODE_LABEL[ruleMode(stored)] ?? ruleMode(stored);
 export const isLog = stored => ruleMode(stored) === "log";
 /** How Rerail handled one past violation: by the mode recorded with it, since the rule may have changed mode. Block shows as Steered (not in this version). */
@@ -50,7 +51,7 @@ export const violationOutcome = finding => (finding.mode === "log" ? "logged" : 
 export const MODE_PLAIN = {
   log: "Rerail records the violation for you. Your coding agent isn’t told.",
   steer: "Rerail tells the coding agent as it works, and the coding agent fixes it before moving on.",
-  block: "Rerail stops the coding agent before it acts.",
+  block: "Block is not in this release: Rerail steers instead, telling the coding agent as it works, as on Steer.",
 };
 
 /** Whether a stored rule is in pack `packId` here: the pack added it at one of its folders. */

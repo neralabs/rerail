@@ -95,6 +95,11 @@ export type RulesDump = z.infer<typeof rulesDumpSchema>;
 export interface RulesDumpImportReport {
   readonly library: number;
   readonly repositories: number;
+  /**
+   * What the dump puts on `block`, each once in dump order: library rules by id, and repository settings by their
+   * target (`<rule id>`, or `pack <pack id>`). Block steers until block enforcement lands, so the importer says so.
+   */
+  readonly onBlock: readonly string[];
 }
 
 /**
@@ -202,5 +207,10 @@ export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, va
       }
     }
   }, { behavior: "immediate" });
-  return { library: documents.length, repositories: dump.repositories.length };
+  const onBlock = new Set([
+    ...documents.filter(({ document }) => document.rule.mode === "block").map(({ document }) => document.rule.id),
+    ...dump.repositories.flatMap(repository => repository.settings.filter(setting => setting.mode === "block")
+      .map(setting => (setting.targetKind === "pack" ? `pack ${setting.targetId}` : setting.targetId))),
+  ]);
+  return { library: documents.length, repositories: dump.repositories.length, onBlock: [...onBlock] };
 }

@@ -29,6 +29,7 @@ import type {
 import { fixturesPath } from "../../support/oracles.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";
+import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
 import * as native from "../../../src/engine/native/native.js";
 
 
@@ -1416,6 +1417,25 @@ describe("mechanical code rule regressions", () => {
         expect.stringMatching(/^rerail: repository storage attached in \d+ ms \(discovery 12 ms, publication 34 ms\)\n$/u),
         expect.stringMatching(/^rerail: repository storage not attached in \d+ ms \(discovery 12 ms, publication 34 ms\)\n$/u),
       ]);
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("attaches the content store with the secret-like names it must never hold", async () => {
+    const { enforcer } = await fixture();
+    const passed: unknown[] = [];
+    const workspace = Object.assign(pagingWorkspace((cursor) => openPage(cursor, 1)), {
+      enableStorageAsync: async (_root: string, _storePath: string, secretNames: unknown) => {
+        passed.push(secretNames);
+        return { attached: true, discoveryMilliseconds: 0, publicationMilliseconds: 0 };
+      },
+    });
+    const binding = nativeWorkspaces(workspace);
+    try {
+      await enforcer.openWorkspace("secret-names");
+      expect(passed).toEqual([{ files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES }]);
     } finally {
       binding.mockRestore();
       await enforcer.close();

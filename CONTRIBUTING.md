@@ -123,10 +123,10 @@ is open to others again.
    changes.
 5. Run the checks in [Before you open a pull request](#before-you-open-a-pull-request).
 6. Open a pull request against `main` that links the issue (`Fixes #123`) and says how you tested the change.
-7. A code owner reviews it; the `neralabs-reviewer` bot may also comment, but its review never approves. Push fixes to
-   the same branch. Pack data the pull request stages is published by a maintainer first
-   ([How pack data is published](#how-pack-data-is-published)); once a code owner approves it and CI passes, it is
-   squash-merged.
+7. A code owner reviews it; the `neralabs-reviewer` bot may also comment (never on a pull request from a fork), but
+   its review never approves. Push fixes to the same branch. Pack data the pull request stages is published by a
+   maintainer first ([How pack data is published](#how-pack-data-is-published)); once a code owner approves it and CI
+   passes, it is squash-merged.
 
 **From a fork** (anyone): steps 1, 4 and 5 as above, on a branch in your fork, then open a pull request from it or link
 the branch in the issue ([Proposing a change from your fork](#proposing-a-change-from-your-fork)).
@@ -161,7 +161,8 @@ language conformance fixtures under [`fixtures/`](fixtures/) (test data, never p
 Install [Git LFS](https://git-lfs.com) before you clone, and run `git lfs install` once. The embedding model's weights
 (`model/model.safetensors`) and the engine's Unicode names table (`native/src/code_rule_dsl/value/names/names.bin`,
 compiled into the engine) are stored in LFS (`.gitattributes`); without it a checkout holds pointer files, and neither
-the engine build nor the model works. In a checkout made without it, run `git lfs pull`.
+the engine build nor the model works: `npm run build:native` and `rerail install --root` stop on a pointer, naming the
+file. In a checkout made without it, run `git lfs install && git lfs pull`.
 
 ```sh
 git clone https://github.com/neralabs/rerail.git

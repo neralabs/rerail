@@ -254,6 +254,7 @@ fn stored_workspace(
         workspace_id,
         snapshot_id: snapshot,
         owner,
+        secret_names: Default::default(),
         _maintenance: None,
     });
     workspace.add_code_rule(code_rule, None).unwrap();

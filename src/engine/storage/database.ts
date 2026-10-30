@@ -101,7 +101,8 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
  * What a writer owns: the file mode, WAL, and the connection's integrity settings. The file and every file named after
  * it (WAL, journal, pre-update copies) lose any group or other access (`keepFilesPrivate`); SQLite gives a WAL it
  * creates the database file's mode. The rollback check runs again in WAL mode: a file a rollback left in
- * rollback-journal mode holds no lock for a connection between its reads.
+ * rollback-journal mode holds no lock for a connection between its reads. `secure_delete` zeroes what a delete frees
+ * (cells and pages), so deleted history does not linger in free space; it costs writes only on deletes.
  */
 function prepareWriter(database: RerailDatabase, path: string): void {
   keepFilesPrivate(dirname(path), [basename(path)]);
@@ -109,6 +110,7 @@ function prepareWriter(database: RerailDatabase, path: string): void {
   refuseWhileRestoring(database.$client, path);
   database.run(sql`PRAGMA foreign_keys = ON`);
   database.run(sql`PRAGMA synchronous = FULL`);
+  database.run(sql`PRAGMA secure_delete = ON`);
 }
 
 /** Open the Node-owned SQLite database without applying Rerail's project schema. */
@@ -436,4 +438,18 @@ export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds
     }
     return { sessions, openSessions };
   }, { behavior: "immediate" });
+}
+
+/**
+ * Rewrite the file so what deletes freed is gone from disk, not only from queries: checkpoint the WAL into the file and
+ * empty it, `VACUUM` (same file, same inode, so connections holding it keep working), then checkpoint and empty the WAL
+ * that `VACUUM` filled. False when another connection's read kept the WAL from being emptied: until it is, earlier
+ * frames of the deleted rows may still be in `-wal`. Runs on `database`'s own connection, never a second descriptor.
+ */
+export function eraseFreedPages(database: RerailDatabase): boolean {
+  const client = database.$client;
+  client.pragma("wal_checkpoint(TRUNCATE)");
+  client.exec("VACUUM");
+  const [result] = client.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
+  return result !== undefined && result.busy === 0;
 }

@@ -27,6 +27,7 @@ import type { CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { normalizeFolder, type LibraryRule, type RuleApprovalStatus } from "../engine/catalog/repository-model.js";
+import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { approvalKey, approvalStatus, readApprovals } from "../engine/catalog/rule-approval.js";
 import { addAttachment, setUpRepository } from "../engine/catalog/rule-configuration.js";
@@ -495,6 +496,8 @@ export interface AddedRule {
   folder: string;
   /** Whether adding the rule set the repository up, with this rule as its only one. */
   setUp: boolean;
+  /** The mode the rule's content sets; `block` steers until block enforcement lands. */
+  mode: RuleMode;
   /**
    * How the stored content stands: `approved` when it is content the person approved already, else `pending`, with
    * `approvedAt` set when content approved before runs meanwhile.
@@ -530,7 +533,7 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     if (setUp) setUpRepository(database, checkout.repositoryKey, { packs: [], rules: [attachment] });
     else addAttachment(database, { repositoryKey: checkout.repositoryKey, ...attachment });
     const approval = approvalStatus(stored.contentHash, readApprovals(database, [draft.rule.id]).get(approvalKey("library", draft.rule.id)));
-    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp, approval };
+    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp, mode: draft.rule.mode, approval };
   } finally {
     database.$client.close();
   }
@@ -621,6 +624,7 @@ export async function runRuleDraftCommand(
   else if (added.approval.approvedAt === null) stdout.write(`● Added ${added.ruleId} to ${where}. It runs once you approve it.\n`);
   else stdout.write(`● Updated ${added.ruleId} in ${where}. The change runs once you approve it; until then the content you approved before runs.\n`);
   if (added.setUp) stdout.write(`  ${added.repositoryName} was not set up, so it is now set up with this rule.\n`);
+  if (added.mode === "block") stdout.write(`  ${added.ruleId} is on Block. ${BLOCK_STEERS_NOTE}\n`);
   if (added.approval.state === "pending") stdout.write(`  Approve it in the dashboard, or with: rerail rules approve ${added.ruleId}\n`);
   // The same dashboard the footer and steers link to, scoped to this checkout's repository when the daemon knows it.
   const dashboard = await readRulesDashboard({ cwd: repo });

@@ -18,7 +18,7 @@ import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState }
 import { autostartDaemon } from "./daemon-control.js";
 import { SteerRuleSchema } from "./event-protocol.js";
 import {
-  CodeRuleBridge, generatedEditPaths, type Preimage, type RewoundEdit, type SourceObservationCache,
+  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
@@ -37,6 +37,7 @@ import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { makeLedgerFolder, openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 import { keepPrivate } from "../engine/storage/private-files.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
+import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { RepositoryStartWatch } from "./repository-start.js";
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../engine/native/semantic-primitives.js";
@@ -246,6 +247,47 @@ type LedgerEntry =
 export function compactValidated<T>(value: unknown): T {
   // Zod has already validated this value; the round-trip removes explicit undefined keys for exact optional types.
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/**
+ * A ledger entry as it is written to disk: a sample's text and a delivery's content are scrubbed of secrets
+ * (`scrubSecrets`), and a code-rule call's preimages take their ledger form (`ledgerPreimage`). The session keeps the
+ * original in memory, so matching and steers see it. Other entries are written as they are; `entry` itself when
+ * nothing changed.
+ */
+function ledgerEntryForDisk(entry: LedgerEntry): LedgerEntry {
+  if (entry.type === "sample") {
+    const text = scrubSecrets(entry.item.text);
+    return text === entry.item.text ? entry : { ...entry, item: { ...entry.item, text } };
+  }
+  if (entry.type === "delivery") {
+    const content = scrubSecrets(entry.delivery.content);
+    return content === entry.delivery.content ? entry : { ...entry, delivery: { ...entry.delivery, content } };
+  }
+  if (entry.type === "policy-call" && entry.preimages !== undefined) {
+    const { preimages } = entry;
+    const stored = Object.entries(preimages).map(([path, preimage]) => [path, ledgerPreimage(preimage)] as const);
+    return stored.every(([path, preimage]) => preimage === preimages[path]) ? entry : { ...entry, preimages: Object.fromEntries(stored) };
+  }
+  return entry;
+}
+
+/**
+ * One line of an existing session ledger as `rerail scrub` rewrites it: an entry this build reads, in its disk form
+ * (`ledgerEntryForDisk`); undefined when the line stays as it is (unchanged, or not an entry this build knows).
+ */
+export function scrubbedLedgerLine(line: string): string | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  const parsed = LedgerEntrySchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  const entry = compactValidated<LedgerEntry>(parsed.data);
+  const stored = ledgerEntryForDisk(entry);
+  return stored === entry ? undefined : JSON.stringify(stored);
 }
 
 class MutableContentSource implements ContentSource {
@@ -1549,7 +1591,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       sessionId,
       eventId: event.eventId,
       kind: event.kind,
-      payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : event,
+      // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
+      payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
     }, state.descriptor);
     await this.#append(state, { type: "event", eventId: event.eventId });
     state.processed.add(event.eventId);
@@ -1842,6 +1885,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async #append(state: RuntimeSessionState, entry: LedgerEntry): Promise<void> {
-    await appendJsonLine(state.ledgerPath, entry, state.ledgerAppendState);
+    await appendJsonLine(state.ledgerPath, ledgerEntryForDisk(entry), state.ledgerAppendState);
   }
 }
