@@ -63,6 +63,11 @@ pub(super) struct PackedBatch {
     pub(super) source: Vec<u8>,
     pub(super) line_starts: Vec<u32>,
     pub(super) supertypes: Vec<BatchSupertype>,
+    /// The files' derived classes (`TapeDoc::with_labels`) over the batch's nodes: per class from
+    /// `DERIVED_CLASS_BASE`, `derived_words` words of bits, class after class.
+    pub(super) derived: Vec<u32>,
+    pub(super) derived_classes: u32,
+    pub(super) derived_words: u32,
     pub(super) files: Vec<BatchFile>,
     pub(super) words: Vec<u32>,
     pub(super) longs: Vec<u64>,
@@ -100,6 +105,31 @@ const DURABLE_PROPERTY_PAGE_CAPACITY: u32 = 2_097_152;
 const DURABLE_OUTPUT_BYTE_PAGE_CAPACITY: u32 = 64 * 1024 * 1024;
 
 impl PackedBatch {
+    /// Metal's supertypes buffer and files: with derived classes, the buffer starts with them as
+    /// the interpreter's `has_supertype` reads them (one record of the class and word counts, then
+    /// the bits), and each file's supertypes start past them.
+    pub(super) fn metal_supertypes(&self) -> (std::borrow::Cow<'_, [BatchSupertype]>, std::borrow::Cow<'_, [BatchFile]>) {
+        if self.derived_classes == 0 {
+            return (std::borrow::Cow::Borrowed(&self.supertypes), std::borrow::Cow::Borrowed(&self.files));
+        }
+        let prefix = 1 + self.derived.len().div_ceil(2);
+        let mut supertypes = Vec::with_capacity(prefix + self.supertypes.len());
+        supertypes.push(BatchSupertype {
+            node: self.derived_classes,
+            kind: self.derived_words,
+        });
+        supertypes.extend(self.derived.chunks(2).map(|pair| BatchSupertype {
+            node: pair[0],
+            kind: pair.get(1).copied().unwrap_or(0),
+        }));
+        supertypes.extend_from_slice(&self.supertypes);
+        let mut files = self.files.clone();
+        for file in &mut files {
+            file.supertype_start += prefix as u32;
+        }
+        (std::borrow::Cow::Owned(supertypes), std::borrow::Cow::Owned(files))
+    }
+
     pub(super) fn arena_start(&self, kind: ArenaKind) -> u32 {
         self.global_arenas.arenas[kind as usize].start
     }
@@ -218,6 +248,8 @@ impl PackedBatch {
             ..Self::default()
         };
         let mut navigation = [0usize; 4];
+        // Per derived class, the batch's nodes that have it.
+        let mut derived: Vec<Vec<u32>> = Vec::new();
         for file in 0..file_count {
             let tape = load(file)?;
             let node_start = checked_u32(navigation[0])?;
@@ -239,13 +271,24 @@ impl PackedBatch {
             batch
                 .supertypes
                 .extend(
-                    tape.transducer_classes()
-                        .into_iter()
+                    tape.transducer_supertypes()
                         .map(|(node, kind)| BatchSupertype {
                             node: node_start + node,
                             kind: u32::from(kind),
                         }),
                 );
+            for (class, bits) in tape.transducer_labels().iter().enumerate() {
+                if derived.len() <= class {
+                    derived.resize_with(class + 1, Vec::new);
+                }
+                for (index, &word) in bits.iter().enumerate() {
+                    let mut word = word;
+                    while word != 0 {
+                        derived[class].push(node_start + (index * 64) as u32 + word.trailing_zeros());
+                        word &= word - 1;
+                    }
+                }
+            }
             let mut local_children = Vec::new();
             for node in 0..tape.transducer_len() as u32 {
                 let child_start = checked_u32(navigation[1] + local_children.len())?;
@@ -291,6 +334,17 @@ impl PackedBatch {
                 supertype_count: checked_u32(batch.supertypes.len() - first_supertype)?,
             });
             after_file(&mut batch)?;
+        }
+        if !derived.is_empty() {
+            let words = navigation[0].div_ceil(32).max(1);
+            batch.derived = vec![0; derived.len() * words];
+            for (class, nodes) in derived.iter().enumerate() {
+                for &node in nodes {
+                    batch.derived[class * words + node as usize / 32] |= 1 << (node % 32);
+                }
+            }
+            batch.derived_classes = checked_u32(derived.len())?;
+            batch.derived_words = checked_u32(words)?;
         }
         for program in programs {
             let word_start = checked_u32(batch.words.len())?;

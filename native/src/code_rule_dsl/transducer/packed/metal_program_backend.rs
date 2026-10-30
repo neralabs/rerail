@@ -711,10 +711,11 @@ pub(super) fn execute_packed_with_result_limits(
     let program_buffers = engine.program_buffers(device, &batch)?;
     let task_buffer = MappedBuffer::from_slice(device, &batch.tasks)?;
     let header_buffer = MappedBuffer::from_slice(device, &[batch.header])?;
-    let file_buffer = MappedBuffer::from_slice(device, &batch.files)?;
+    let (supertypes, files) = batch.metal_supertypes();
+    let file_buffer = MappedBuffer::from_slice(device, &files)?;
     let node_buffer = MappedBuffer::from_slice(device, &batch.nodes)?;
     let child_buffer = MappedBuffer::from_slice(device, &batch.children)?;
-    let supertype_buffer = MappedBuffer::from_slice(device, &batch.supertypes)?;
+    let supertype_buffer = MappedBuffer::from_slice(device, &supertypes)?;
     let pending_buffer = &workspace.pending;
     let capture_buffer = &workspace.captures;
     let cursor_buffer = &workspace.cursors;

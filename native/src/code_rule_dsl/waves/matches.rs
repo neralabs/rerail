@@ -3,7 +3,7 @@
 //! with the prefilter (`prefilter::select`, SQL over the tapes' published rows), evaluates every
 //! clause's label passes over the chunk's tapes together (`LoweredWave`), and registers the
 //! clauses' root programs from those candidates as the chunk's `demand(batch)` (the CPU JIT, over
-//! the chunk's files in one execution; it reads the labels as classes, `transducer_classes`). The step's SQL reads
+//! the chunk's files in one execution; it tests each label as one bit of the batch, `PackedBatch::derived`). The step's SQL reads
 //! the batch's terminal matches into `match(clause, d, node)`; the loop records the relation as one
 //! fact family per clause (`partitions`) and `statistics` writes their row estimates to
 //! `fact_stats`, where the demand relations read them.

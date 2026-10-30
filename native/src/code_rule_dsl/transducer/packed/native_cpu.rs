@@ -170,6 +170,11 @@ pub(super) struct NativeTaskContext {
     pub output_bytes: *mut u8,
     pub output_byte_quota_limit: u32,
     pub status: *mut TaskStatus,
+    /// The batch's derived classes (`PackedBatch::derived`), which `SUPERTYPE` of a derived class
+    /// tests as one bit.
+    pub derived: *const u32,
+    pub derived_classes: u32,
+    pub derived_words: u32,
 }
 
 // Each packed task owns disjoint mutable ranges. Shared pointers are read-only.
@@ -932,7 +937,49 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
                         .ins()
                         .brif(keep, next.unwrap_or(resume), &[], resume, &[]);
                 }
+                StructuralOperation::Supertype { kind } if kind >= crate::code_rule_dsl::tape::DERIVED_CLASS_BASE => {
+                    // A derived class is one bit of the batch's bitsets; a class past them is absent.
+                    let class = u32::from(kind - crate::code_rule_dsl::tape::DERIVED_CLASS_BASE);
+                    let classes = function.ins().load(
+                        types::I32,
+                        flags,
+                        task,
+                        mem::offset_of!(NativeTaskContext, derived_classes) as i32,
+                    );
+                    let present = function
+                        .ins()
+                        .icmp_imm(IntCC::UnsignedGreaterThan, classes, i64::from(class));
+                    let test = function.create_block();
+                    function.ins().brif(present, test, &[], resume, &[]);
+                    function.switch_to_block(test);
+                    let bits = context_pointer(
+                        &mut function,
+                        task,
+                        mem::offset_of!(NativeTaskContext, derived),
+                    );
+                    let words = function.ins().load(
+                        types::I32,
+                        flags,
+                        task,
+                        mem::offset_of!(NativeTaskContext, derived_words) as i32,
+                    );
+                    let row = function.ins().imul_imm(words, i64::from(class));
+                    let column = function.ins().ushr_imm(current, 5);
+                    let index = function.ins().iadd(row, column);
+                    let offset = function.ins().imul_imm(index, 4);
+                    let offset = function.ins().uextend(pointer_type, offset);
+                    let address = function.ins().iadd(bits, offset);
+                    let word = function.ins().load(types::I32, flags, address, 0);
+                    let shift = function.ins().band_imm(current, 31);
+                    let bit = function.ins().ushr(word, shift);
+                    let bit = function.ins().band_imm(bit, 1);
+                    function
+                        .ins()
+                        .brif(bit, next.unwrap_or(resume), &[], resume, &[]);
+                }
                 StructuralOperation::Supertype { kind } => {
+                    // The batch's memberships are sorted by (node, kind), as the interpreters'
+                    // binary search reads them: the lower bound of (current, kind), then one test.
                     let memberships = context_pointer(
                         &mut function,
                         task,
@@ -944,81 +991,101 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
                         task,
                         mem::offset_of!(NativeTaskContext, supertype_count) as i32,
                     );
+                    let key = |function: &mut FunctionBuilder<'_>, node: cranelift_codegen::ir::Value, kind: cranelift_codegen::ir::Value| {
+                        let node = function.ins().uextend(types::I64, node);
+                        let node = function.ins().ishl_imm(node, 32);
+                        let kind = function.ins().uextend(types::I64, kind);
+                        function.ins().bor(node, kind)
+                    };
+                    let member = |function: &mut FunctionBuilder<'_>, index: cranelift_codegen::ir::Value| {
+                        let stride = function
+                            .ins()
+                            .imul_imm(index, mem::size_of::<MetalSupertype>() as i64);
+                        let stride = function.ins().uextend(pointer_type, stride);
+                        let membership = function.ins().iadd(memberships, stride);
+                        let node = function.ins().load(
+                            types::I32,
+                            flags,
+                            membership,
+                            mem::offset_of!(MetalSupertype, node) as i32,
+                        );
+                        let kind = function.ins().load(
+                            types::I32,
+                            flags,
+                            membership,
+                            mem::offset_of!(MetalSupertype, kind) as i32,
+                        );
+                        (node, kind)
+                    };
+                    let wanted = function.ins().iconst(types::I32, i64::from(kind));
+                    let target = key(&mut function, current, wanted);
+                    let search = function.create_block();
+                    function.append_block_param(search, types::I32);
+                    function.append_block_param(search, types::I32);
+                    let probe = function.create_block();
+                    function.append_block_param(probe, types::I32);
+                    function.append_block_param(probe, types::I32);
+                    let finish = function.create_block();
+                    function.append_block_param(finish, types::I32);
+                    let test = function.create_block();
+                    function.append_block_param(test, types::I32);
+                    let zero = function.ins().iconst(types::I32, 0);
+                    function
+                        .ins()
+                        .jump(search, &[zero.into(), membership_count.into()]);
+                    function.switch_to_block(search);
+                    let low = function.block_params(search)[0];
+                    let high = function.block_params(search)[1];
+                    let open = function.ins().icmp(IntCC::UnsignedLessThan, low, high);
+                    function.ins().brif(
+                        open,
+                        probe,
+                        &[low.into(), high.into()],
+                        finish,
+                        &[low.into()],
+                    );
+                    function.switch_to_block(probe);
+                    let low = function.block_params(probe)[0];
+                    let high = function.block_params(probe)[1];
+                    let width = function.ins().isub(high, low);
+                    let half = function.ins().ushr_imm(width, 1);
+                    let middle = function.ins().iadd(low, half);
+                    let (node, member_kind) = member(&mut function, middle);
+                    let probed = key(&mut function, node, member_kind);
+                    let below = function.ins().icmp(IntCC::UnsignedLessThan, probed, target);
+                    let past = function.ins().iadd_imm(middle, 1);
+                    let low = function.ins().select(below, past, low);
+                    let high = function.ins().select(below, high, middle);
+                    function.ins().jump(search, &[low.into(), high.into()]);
+                    function.switch_to_block(finish);
+                    let low = function.block_params(finish)[0];
+                    let in_range =
+                        function
+                            .ins()
+                            .icmp(IntCC::UnsignedLessThan, low, membership_count);
+                    function
+                        .ins()
+                        .brif(in_range, test, &[low.into()], resume, &[]);
+                    function.switch_to_block(test);
+                    let low = function.block_params(test)[0];
+                    let (node, member_kind) = member(&mut function, low);
                     let node_count = function.ins().load(
                         types::I32,
                         flags,
                         task,
                         mem::offset_of!(NativeTaskContext, node_count) as i32,
                     );
-                    let scan = function.create_block();
-                    function.append_block_param(scan, types::I32);
-                    let inspect = function.create_block();
-                    function.append_block_param(inspect, types::I32);
+                    let valid_node = function.ins().icmp(IntCC::UnsignedLessThan, node, node_count);
                     let compare = function.create_block();
-                    function.append_block_param(compare, types::I32);
-                    function.append_block_param(compare, types::I32);
-                    let zero = function.ins().iconst(types::I32, 0);
-                    function.ins().jump(scan, &[zero.into()]);
-                    function.switch_to_block(scan);
-                    let index = function.block_params(scan)[0];
-                    let in_range =
-                        function
-                            .ins()
-                            .icmp(IntCC::UnsignedLessThan, index, membership_count);
                     function
                         .ins()
-                        .brif(in_range, inspect, &[index.into()], resume, &[]);
-                    function.switch_to_block(inspect);
-                    let index = function.block_params(inspect)[0];
-                    let stride = function
-                        .ins()
-                        .imul_imm(index, mem::size_of::<MetalSupertype>() as i64);
-                    let stride = function.ins().uextend(pointer_type, stride);
-                    let membership = function.ins().iadd(memberships, stride);
-                    let member_node = function.ins().load(
-                        types::I32,
-                        flags,
-                        membership,
-                        mem::offset_of!(MetalSupertype, node) as i32,
-                    );
-                    let valid_node =
-                        function
-                            .ins()
-                            .icmp(IntCC::UnsignedLessThan, member_node, node_count);
-                    function.ins().brif(
-                        valid_node,
-                        compare,
-                        &[index.into(), member_node.into()],
-                        invalid_input,
-                        &[],
-                    );
+                        .brif(valid_node, compare, &[], invalid_input, &[]);
                     function.switch_to_block(compare);
-                    let index = function.block_params(compare)[0];
-                    let member_node = function.block_params(compare)[1];
-                    let stride = function
-                        .ins()
-                        .imul_imm(index, mem::size_of::<MetalSupertype>() as i64);
-                    let stride = function.ins().uextend(pointer_type, stride);
-                    let membership = function.ins().iadd(memberships, stride);
-                    let member_kind = function.ins().load(
-                        types::I32,
-                        flags,
-                        membership,
-                        mem::offset_of!(MetalSupertype, kind) as i32,
-                    );
-                    let same_node = function.ins().icmp(IntCC::Equal, member_node, current);
-                    let same_kind =
-                        function
-                            .ins()
-                            .icmp_imm(IntCC::Equal, member_kind, i64::from(kind));
-                    let matched = function.ins().band(same_node, same_kind);
-                    let advance = function.create_block();
+                    let found = key(&mut function, node, member_kind);
+                    let matched = function.ins().icmp(IntCC::Equal, found, target);
                     function
                         .ins()
-                        .brif(matched, next.unwrap_or(resume), &[], advance, &[]);
-                    function.switch_to_block(advance);
-                    let index = function.ins().iadd_imm(index, 1);
-                    function.ins().jump(scan, &[index.into()]);
+                        .brif(matched, next.unwrap_or(resume), &[], resume, &[]);
                 }
                 StructuralOperation::AbsentField { field } => {
                     let child_start = function.ins().load(
@@ -2958,6 +3025,9 @@ fn execute_batch_packed_with_work_limit(
         };
         context.output_byte_quota_limit = batch.evaluation_limit(task, ArenaKind::OutputByte);
         context.status = &mut statuses[task_index];
+        context.derived = batch.derived.as_ptr();
+        context.derived_classes = batch.derived_classes;
+        context.derived_words = batch.derived_words;
         contexts.push((task.program as usize, context));
     }
     let allocation_elapsed = allocation_started.elapsed();
@@ -3762,6 +3832,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -3861,6 +3934,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(
@@ -3967,6 +4043,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -4159,6 +4238,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -4301,6 +4383,9 @@ mod tests {
                 output_bytes: std::ptr::null_mut(),
                 output_byte_quota_limit: 0,
                 status: &mut status,
+                derived: std::ptr::null(),
+                derived_classes: 0,
+                derived_words: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -4418,6 +4503,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -4514,6 +4602,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);
@@ -4628,6 +4719,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);
@@ -4803,6 +4897,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         unsafe {
             assert_eq!((compiled.cursor_equal)(&mut context, 2, 3), 1);
@@ -5067,6 +5164,9 @@ mod tests {
                 output_bytes: std::ptr::null_mut(),
                 output_byte_quota_limit: 0,
                 status: &mut status,
+                derived: std::ptr::null(),
+                derived_classes: 0,
+                derived_words: 0,
             };
             compiled.execute(&mut context);
             status
@@ -5294,6 +5394,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -5500,6 +5603,9 @@ mod tests {
                 output_bytes: std::ptr::null_mut(),
                 output_byte_quota_limit: 0,
                 status: &mut status,
+                derived: std::ptr::null(),
+                derived_classes: 0,
+                derived_words: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0, "operation {operation} mode {mode}");
@@ -6455,6 +6561,9 @@ mod tests {
                 output_bytes: std::ptr::null_mut(),
                 output_byte_quota_limit: 0,
                 status: &mut status,
+                derived: std::ptr::null(),
+                derived_classes: 0,
+                derived_words: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -6559,6 +6668,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -6677,6 +6789,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -6797,6 +6912,9 @@ mod tests {
                 output_bytes: std::ptr::null_mut(),
                 output_byte_quota_limit: 0,
                 status: &mut status,
+                derived: std::ptr::null(),
+                derived_classes: 0,
+                derived_words: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -6888,6 +7006,9 @@ mod tests {
             output_bytes: std::ptr::null_mut(),
             output_byte_quota_limit: 0,
             status: &mut status,
+            derived: std::ptr::null(),
+            derived_classes: 0,
+            derived_words: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);

@@ -2252,25 +2252,11 @@ impl TapeDoc {
         self.supertypes.iter().copied()
     }
 
-    /// The tape's classes as the packed image lists them, ordered by (node, class): the grammar's
-    /// supertypes and, after a node's, its derived classes (`with_labels`), which sort above every
-    /// grammar class. The CPU backends read labels from here; Metal's label passes carry their own.
-    pub(super) fn transducer_classes(&self) -> Vec<(u32, u16)> {
-        let mut classes = self.supertypes.to_vec();
-        for (label, bits) in self.labels.iter().enumerate() {
-            let class = DERIVED_CLASS_BASE + label as u16;
-            for (index, &word) in bits.iter().enumerate() {
-                let mut word = word;
-                while word != 0 {
-                    classes.push(((index * 64) as u32 + word.trailing_zeros(), class));
-                    word &= word - 1;
-                }
-            }
-        }
-        if !self.labels.is_empty() {
-            classes.sort_unstable();
-        }
-        classes
+    /// The derived classes (`with_labels`): per class from `DERIVED_CLASS_BASE`, a bitset over the
+    /// nodes. The packed batch carries them as bitsets over its nodes, which every backend tests
+    /// directly (`PackedBatch::derived`).
+    pub(super) fn transducer_labels(&self) -> &[Vec<u64>] {
+        &self.labels
     }
 
     // The packed runtime's class test (Phase 4).
