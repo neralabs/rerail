@@ -178,6 +178,19 @@ describe("licences", () => {
     expect(licenceTexts(cache, "twigphp/Twig", COMMIT).spdx).toBe("BSD-3-Clause");
   });
 
+  it("read 0BSD's unconditional grant as 0BSD, and not ISC's, which goes on to a condition", () => {
+    const cache = scratch();
+    // gatsby at 72b3586: the sample is under starters/gatsby-starter-minimal-ts/, whose LICENSE is 0BSD.
+    const starter = "72b35862556e866644e79b63cd410f1920689dc9";
+    const path = join(cache, "licences", "gatsbyjs/gatsby", starter, "starters/gatsby-starter-minimal-ts/LICENSE");
+    mkdirSync(join(path, ".."), { recursive: true });
+    const grant = "Permission to use, copy, modify, and/or distribute this software for any\npurpose with or without fee is hereby granted";
+    writeFileSync(path, `The BSD Zero Clause License (0BSD)\n\nCopyright (c) 2022 Gatsby Inc.\n\n${grant}.\n`);
+    expect(licenceTexts(cache, "gatsbyjs/gatsby", starter).spdx).toBe("0BSD");
+    writeFileSync(path, `ISC License\n\n${grant}, provided that the above\ncopyright notice and this permission notice appear in all copies.\n`);
+    expect(() => licenceTexts(cache, "gatsbyjs/gatsby", starter)).toThrow(/do not read as 0BSD/u);
+  });
+
   it("are claimed in SAMPLES.md and LICENSES.md as texts only for the repositories whose texts the archive holds", () => {
     const samples = [sample({ source: { ...sample().source, repo: "a/x" } }), sample({ path: "b.py", source: { ...sample().source, repo: "b/y", path: "b.py" } })];
     const lock = { sha256: "f".repeat(64), files: 4, bytes: 10 };
