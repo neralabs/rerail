@@ -13,7 +13,7 @@
 
 use super::unparenthesized;
 
-use super::super::options::PythonTyping;
+use super::super::options::{DEFAULT_PYTHON_MINOR, PythonTyping};
 use super::super::{
     Annotation, BuildError, Builder, DEADLINE_INTERVAL, Import, MAX_BUILD_DEPTH, NodeRef, Reading,
     ScopeTable, annotation_offset,
@@ -837,9 +837,13 @@ impl Classifier<'_> {
                         self.walk(item, non, found)?;
                     }
                 }
-                // Stub tables carry their target minor. Outside stubs, 0 means the latest
-                // grammar, which has no legacy keyword fields.
-                let legacy = matches!(self.table.reading.python_minor, 1..13)
+                // Stub tables carry their target minor; outside stubs, tables are shared across
+                // versions and read the default target, as the scope builder does.
+                let minor = match self.table.reading.python_minor {
+                    0 => DEFAULT_PYTHON_MINOR,
+                    minor => minor,
+                };
+                let legacy = minor < 13
                     && match positional.as_slice() {
                         [_] => true,
                         [_, second] => {
