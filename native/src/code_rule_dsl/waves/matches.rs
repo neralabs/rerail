@@ -172,19 +172,36 @@ impl Wave {
         })?;
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("1.tapes");
-        let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
-        crate::code_rule_dsl::prof::release();
-        crate::code_rule_dsl::prof::peak("2.candidates");
         let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
-        // A clause's labels are needed only where its root program starts.
-        let active = candidates.iter().map(|clause| clause.iter().map(|nodes| !nodes.is_empty()).collect()).collect::<Vec<Vec<bool>>>();
-        let views = crate::code_rule_dsl::prof::time("demand.labels", || -> StoreResult<_> { Ok(match self.backend {
-            #[cfg(target_os = "macos")]
-            ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground => {
-                labelled_metal(&self.lowered, &docs, &active).map_err(invalid)?
-            }
-            _ => self.lowered.labelled(&docs, &active).map_err(invalid)?,
-        }) })?;
+        let metal = cfg!(target_os = "macos")
+            && matches!(self.backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground);
+        let (candidates, views) = if metal {
+            // On Metal the labels are a dense pass over every node, which costs the same with every
+            // clause active (06 S7: ~0.9 s either way), so they run beside the candidates' SQL, a
+            // single connection's work, rather than after it (decision 0023).
+            let active = vec![vec![true; docs.len()]; self.plans.len()];
+            std::thread::scope(|scope| -> StoreResult<_> {
+                let labelling = scope.spawn(|| {
+                    crate::code_rule_dsl::prof::time("demand.labels", || {
+                        #[cfg(target_os = "macos")]
+                        return labelled_metal(&self.lowered, &docs, &active).map_err(invalid);
+                        #[cfg(not(target_os = "macos"))]
+                        return self.lowered.labelled(&docs, &active).map_err(invalid);
+                    })
+                });
+                let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes));
+                let views = labelling.join().map_err(|_| StoreError::Invalid("the labels' thread panicked".to_owned()))?;
+                Ok((candidates?, views?))
+            })?
+        } else {
+            let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
+            crate::code_rule_dsl::prof::release();
+            crate::code_rule_dsl::prof::peak("2.candidates");
+            // A clause's labels are needed only where its root program starts.
+            let active = candidates.iter().map(|clause| clause.iter().map(|nodes| !nodes.is_empty()).collect()).collect::<Vec<Vec<bool>>>();
+            let views = crate::code_rule_dsl::prof::time("demand.labels", || self.lowered.labelled(&docs, &active).map_err(invalid))?;
+            (candidates, views)
+        };
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3.labels");
         let programs = self.lowered.programs();
