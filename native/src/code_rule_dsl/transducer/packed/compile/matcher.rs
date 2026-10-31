@@ -1199,22 +1199,37 @@ fn to_sets(bits: &[u32], labels: usize, words: usize, tapes: &[TapeDoc]) -> Vec<
 
 /// `to_sets` the other way.
 fn to_words(sets: &[Arc<Vec<Vec<u64>>>], labels: usize, words: usize, tapes: &[TapeDoc]) -> Vec<u32> {
+    use rayon::prelude::*;
     let mut bits = vec![0_u32; labels * words];
-    let mut base = 0;
-    for (tape, sets) in tapes.iter().zip(sets) {
-        for (label, set) in sets.iter().enumerate().take(labels) {
+    if words == 0 {
+        return bits;
+    }
+    let bases = tapes
+        .iter()
+        .scan(0, |base, tape| {
+            let at = *base;
+            *base += tape.transducer_len();
+            Some(at)
+        })
+        .collect::<Vec<_>>();
+    // Label-major: each label's row is its own (06 S7: one thread, ~10 ms a level).
+    bits.par_chunks_mut(words).enumerate().for_each(|(label, row)| {
+        for (&base, sets) in bases.iter().zip(sets) {
+            let Some(set) = sets.get(label) else { continue };
             for (k, &value) in set.iter().enumerate() {
+                if value == 0 {
+                    continue;
+                }
                 let bit = base + 64 * k;
                 let wide = u128::from(value) << (bit % 32);
                 for part in 0..3 {
-                    if let Some(word) = bits.get_mut(label * words + bit / 32 + part) {
+                    if let Some(word) = row.get_mut(bit / 32 + part) {
                         *word |= (wide >> (32 * part)) as u32;
                     }
                 }
             }
         }
-        base += tape.transducer_len();
-    }
+    });
     bits
 }
 
