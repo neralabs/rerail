@@ -1441,15 +1441,52 @@ fn sweep_with(
         .iter()
         .map(|&(_, clause, id)| walks[&(std::ptr::from_ref(clause) as usize, id)].as_ref())
         .collect::<Vec<_>>();
+    // The labels each pass reads (by index in `sets`): its walk's label class tests, its domain,
+    // or its complement's source; `None` where it is not a walk (any). A pass reads the same
+    // labels at a node as when it last ran there unless one of them changed since, and then it
+    // writes the same verdicts: it is skipped (a sweep's second pass mostly confirms the first).
+    let reads = passes
+        .iter()
+        .enumerate()
+        .map(|(pass, &(_, clause, id))| match clause.labels.def(id) {
+            Label::Complement(of) => Some(vec![usize::from(*of - LABEL_BASE)]),
+            Label::Roots(_, starts) | Label::Targets(_, starts) => pass_walks[pass].map(|(walk, _)| {
+                let mut reads = walk
+                    .words
+                    .iter()
+                    .filter_map(|&word| {
+                        let (op, _, arg) = split(word);
+                        (op == SUPERTYPE && arg >= LABEL_BASE).then(|| usize::from(arg - LABEL_BASE))
+                    })
+                    .collect::<Vec<_>>();
+                if let Domain::Label(label) = starts {
+                    reads.push(usize::from(*label - LABEL_BASE));
+                }
+                reads.sort_unstable();
+                reads.dedup();
+                reads
+            }),
+            _ => Some(Vec::new()),
+        })
+        .collect::<Vec<_>>();
     drop(stage);
     let _run = crate::code_rule_dsl::prof::Stage::start("sweep.run");
     let mut frames = Frames::default();
     let mut marks = Vec::new();
     let mut reverse = complements;
+    // The labels a sweep changed, and those the one before it changed (every label before the
+    // first).
+    let mut changed_before = vec![true; sets.len()];
+    let mut changed_now = vec![false; sets.len()];
     for _sweep in 0..=len + 1 {
         crate::code_rule_dsl::prof::count("sweep.sweeps", 1);
         let mut changed = false;
         let mut run = |&(node, pass): &(u32, u32)| -> Result<(), Error> {
+            if let Some(reads) = &reads[pass as usize]
+                && !reads.iter().any(|&label| changed_before[label] || changed_now[label])
+            {
+                return Ok(());
+            }
             let (_, clause, id) = passes[pass as usize];
             let target = usize::from(id - LABEL_BASE);
             let marked = match clause.labels.def(id) {
@@ -1460,6 +1497,7 @@ fn sweep_with(
                     if was != set {
                         bits[node as usize / 64] ^= 1 << (node % 64);
                         changed = true;
+                changed_now[target] = true;
                     }
                     return Ok(());
                 }
@@ -1471,6 +1509,7 @@ fn sweep_with(
                         if complements && has(sets, id, node) {
                             Arc::make_mut(sets)[target][node as usize / 64] &= !(1 << (node % 64));
                             changed = true;
+                changed_now[target] = true;
                         }
                         return Ok(());
                     }
@@ -1503,6 +1542,7 @@ fn sweep_with(
                         if (bits[node as usize / 64] >> (node % 64) & 1 != 0) != set {
                             bits[node as usize / 64] ^= 1 << (node % 64);
                             changed = true;
+                changed_now[target] = true;
                         }
                         return Ok(());
                     }
@@ -1514,6 +1554,7 @@ fn sweep_with(
                 if !has(sets, id, node) {
                     Arc::make_mut(sets)[target][node as usize / 64] |= 1 << (node % 64);
                     changed = true;
+                changed_now[target] = true;
                 }
             }
             marks = marked;
@@ -1534,6 +1575,8 @@ fn sweep_with(
         if !changed {
             return Ok(());
         }
+        std::mem::swap(&mut changed_before, &mut changed_now);
+        changed_now.fill(false);
         reverse = complements || !reverse;
     }
     Err(Error::WorkLimit)
