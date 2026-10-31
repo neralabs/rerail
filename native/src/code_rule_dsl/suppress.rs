@@ -10,7 +10,7 @@ pub(crate) use clippy::ClippyIndex;
 pub(crate) use eslint::EslintDirectives;
 use napi::Result;
 use noqa::Noqa;
-pub(crate) use noqa::{NoqaIndex, parent_statement};
+pub(crate) use noqa::{NoqaIndex, PARENT_KINDS, parent_statement};
 pub(crate) use nosec::NosecIndex;
 pub(crate) use oxlint::OxlintDirectives;
 use phpcs::Phpcs;

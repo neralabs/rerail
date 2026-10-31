@@ -27,7 +27,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O24 | Phase 4 / 10 | Semantic predicates as labels from fact producers (06 S1, decision 0011) | open |
 | O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | closed (2026-10-30): sweeps in node order, 77 launches |
 | O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | closed (2026-10-30): labels only where a clause has candidates; sweeps on the CPU between GPU levels; 18.8 → 6.4 s on 8 fixtures |
-| O27 | Phase 4 / 10 | The findings layer's Unknown domains: syntax errors, capture anchors, `noqa` parents, report ceilings (06 S5, decision 0013) | open |
+| O27 | Phase 4 / 10 | The findings layer's Unknown domains: syntax errors, capture anchors, `noqa` parents, report ceilings (06 S5, decision 0013) | closed (2026-10-30): all four decided in SQL; Unknown only where W's clause fails |
 
 ## O1. Stale-fact detection after a crash
 
@@ -688,22 +688,22 @@ the CPU for the same fixtures.
 
 ## O27. The findings layer's Unknown domains
 
-06 S5's layer (decision 0013) publishes Coverage `Unknown` for a (rule, document) it does not
-decide yet, with no keys. On 48 fixtures that is 61 of 2928 domains, all syntax errors. What
-closes each:
-- **Syntax errors.** W reads around them: it drops the witnesses meeting an error region, and
-  fails a file it could not read. The layer needs the error regions as facts (`error(d, s, e)`)
-  and the same test on the witness's span; an unread file stays Unknown.
-- **Capture anchors.** The line is a capture's. `rerail_capture` holds the batch's captures, so the
-  match step can record the anchoring capture's bytes as it records `span`.
-- **`noqa` parent statements** (`suppress.noqa.parent`). The offset is the enclosing import or
-  expression statement's start: a fact per matched node, from the core facts' ancestors.
-- **Report ceilings** (`reportCountGt`). The keys collapse W's violations, so the count is W's
-  violations, not keys. This needs a count per rule, which fits a full-SQL layer.
+**Closed (2026-10-30).** The first version of 06 S5's layer published Coverage `Unknown` for four
+cases it did not decide; on 48 fixtures that was 61 of 2928 domains, all syntax errors. Each is now
+SQL over facts (decision 0013):
+- **Syntax errors.** `error(d, s, e)` holds the file's regions; a witness of a clause reading around
+  them is dropped where its span meets one, by W's three overlap cases. A file W's parser did not
+  read, and a clause not sound under errors, fail in W, and stay `Unknown` (`source-incomplete`).
+  On 48 fixtures: 30 such domains, each one W fails.
+- **Capture anchors.** The wave's one capture-anchored clause (W605's format spec) anchors at a
+  regex group with `each`. `group(c, d, n, s)` holds each binding's start, one violation each. A
+  metavariable capture anchor is refused by `Layer::new` until a clause with one lowers, since its
+  binding is not in the match facts.
+- **`noqa` parent statements.** `stmt(d, s, e)` holds the file's import and expression statements;
+  the innermost holding the anchored byte is the one no deeper one holds.
+- **Report ceilings.** `total(r, x)` counts each rule's violations over the scope, and
+  `ceiling(r, m)` gates the rule's findings.
 - **Kept approximations:**
   - W's `noqa` mapping takes the first range holding an offset, and the layer takes every one
     (equal where ranges do not overlap);
   - the module comes from the scope's documents, not a host's `module`.
-
-Closure: on the S7 sample, no Unknown except unread files, with keys equal to W's.
-

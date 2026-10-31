@@ -72,10 +72,15 @@ fn clauses() -> (Vec<Clause>, Vec<GrammarMatcher>) {
 
 /// The Python pack's lowered AST clauses, with W's matcher and the findings layer's shape for each.
 fn shaped() -> (Vec<Clause>, Vec<GrammarMatcher>, Vec<Shape>) {
+    shaped_from(&policies())
+}
+
+/// The lowered AST clauses of `policies`, with W's matcher and the findings layer's shape for each.
+fn shaped_from(policies: &[(String, crate::code_rule_dsl::CompiledCodeRuleDsl)]) -> (Vec<Clause>, Vec<GrammarMatcher>, Vec<Shape>) {
     let mut clauses = Vec::new();
     let mut grammars = Vec::new();
     let mut shapes = Vec::new();
-    for (policy, compiled) in policies() {
+    for (policy, compiled) in policies {
         for (at, clause) in compiled.inner.clauses.iter().enumerate() {
             let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
             for (index, grammar) in matchers.iter().enumerate().filter(|(_, matcher)| matcher.language == GrammarDialect::Python) {
@@ -107,8 +112,29 @@ fn oracle(grammar: &GrammarMatcher, tape: &crate::code_rule_dsl::tape::TapeDoc) 
 fn ingested(default: usize) -> (ContentStore, Vec<String>) {
     let dir = temp("fixtures");
     let paths = fixtures(&dir, default);
+    pushed(&dir, paths)
+}
+
+/// `sources`, written as `f<n>.py`, pushed through the families into a fresh store.
+fn ingested_sources(sources: &[&str]) -> (ContentStore, Vec<String>) {
+    let dir = temp("sources");
+    std::fs::create_dir_all(&dir).unwrap();
+    let paths = sources
+        .iter()
+        .enumerate()
+        .map(|(n, source)| {
+            let path = format!("f{n:03}.py");
+            std::fs::write(dir.join(&path), source).unwrap();
+            path
+        })
+        .collect();
+    pushed(&dir, paths)
+}
+
+/// The files `paths` of `dir` pushed through the families into a fresh store.
+fn pushed(dir: &Path, paths: Vec<String>) -> (ContentStore, Vec<String>) {
     let store = ContentStore::open(&temp("store").with_extension("sqlite")).unwrap();
-    let root = directory_root(&store, &dir).unwrap();
+    let root = directory_root(&store, dir).unwrap();
     Families::default().push(&store, WS, root, 8, |_| Ok(Vec::new())).unwrap();
     (store, paths)
 }
@@ -287,46 +313,97 @@ fn policies() -> Vec<(String, crate::code_rule_dsl::CompiledCodeRuleDsl)> {
 }
 
 /// 06 S5's gate: the findings layer over the wave's matches gives, for every (rule, file) it
-/// decides, the keys of W's violations of the same clauses on the same files, as sets.
+/// decides, the keys of W's violations of the same clauses on the same files, as sets; the
+/// (rule, file)s it leaves `Unknown` are those where W's clause fails. W is evaluated one file at a
+/// time (a file W cannot read fails its evaluation, which then reports no other file's violations).
 #[test]
 fn the_findings_are_ws_violations() {
-    use serde_json::json;
     let (store, paths) = ingested(8);
-    let (clauses, _, shapes) = shaped();
-    let documents = documents(&store, WS, &paths).unwrap();
+    findings_gate(&store, &paths, &policies(), false);
+}
+
+/// The anchors, suppressions and report ceilings the fixtures do not reach, on sources written for
+/// them: a format spec's backslashes (W605's regex group, one violation each), `noqa` comments
+/// (codes, blanket, file exemptions, the enclosing statement's), `nosec`, `rerail-ignore`, and two
+/// copies of E722 whose report ceilings lie on either side of their count. W reads the files in one
+/// snapshot, so a ceiling counts over all of them.
+#[test]
+fn the_findings_follow_ws_anchors_suppressions_and_ceilings() {
+    let sources = [
+        "x = f\"{1:\\d}\"\ny = f\"{2:\\q\\w}\"\nz = f\"{3:>10}\"\nw = f\"{4:\\d}\"  # noqa: W605\n",
+        "try:\n    pass\nexcept:  # noqa: E722\n    pass\ntry:\n    pass\nexcept:  # noqa\n    pass\ntry:\n    pass\nexcept:  # noqa: F401\n    pass\ntry:\n    pass\nexcept:\n    pass\n",
+        "# ruff: noqa: E731\nf = lambda: 0\ng = lambda: 1\n",
+        "f = lambda: 0  # noqa: E731\ng = (  # noqa: E731\n    lambda: 1\n)\nh = lambda: 2\nimport os, sys  # noqa: E401\nimport os, sys\n",
+        "import pickle  # nosec\nimport subprocess  # nosec B404\nimport telnetlib\nassert True  # nosec B101\nassert True  # nosec B999\n",
+        "try:\n    pass\nexcept:  # rerail-ignore ruff-e722-bare-except\n    pass\ntry:\n    pass\nexcept:  # rerail-ignore probe-e722-low -- reason\n    pass\n",
+        "s = \"\"\"\nmultiline\n\"\"\"  # noqa: W605\nt = '\\d'\n",
+    ];
+    let (store, paths) = ingested_sources(&sources);
+    let mut policies = policies();
+    let e722 = std::fs::read_to_string(pack().join("candidates/rules/ruff-e722-bare-except.json"))
+        .or_else(|_| std::fs::read_to_string(pack().join("rules/ruff-e722-bare-except.json")))
+        .unwrap();
+    let e731 = std::fs::read_to_string(pack().join("candidates/rules/ruff-e731-lambda-assignment.json"))
+        .or_else(|_| std::fs::read_to_string(pack().join("rules/ruff-e731-lambda-assignment.json")))
+        .unwrap();
+    let probe = |text: &str, id: &str, edit: &dyn Fn(&mut serde_json::Value)| {
+        let mut document: serde_json::Value = serde_json::from_str(text).unwrap();
+        document["id"] = serde_json::json!(id);
+        edit(&mut document);
+        let compiled = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+        (id.to_owned(), compiled)
+    };
+    let ceiling = |gt: u64| {
+        move |document: &mut serde_json::Value| {
+            let clauses = document["clauses"].as_array_mut().unwrap();
+            clauses.push(serde_json::json!({ "id": "report", "define": { "report_when": { "count": { "gt": gt } } } }));
+        }
+    };
+    let parent = |document: &mut serde_json::Value| {
+        for clause in document["clauses"].as_array_mut().unwrap() {
+            if let Some(noqa) = clause.pointer_mut("/violation/suppress/noqa") {
+                noqa["parent"] = serde_json::json!("statement");
+            }
+        }
+    };
+    policies.push(probe(&e722, "probe-e722-low", &ceiling(2)));
+    policies.push(probe(&e722, "probe-e722-high", &ceiling(50)));
+    policies.push(probe(&e731, "probe-e731-parent", &parent));
+    findings_gate(&store, &paths, &policies, true);
+}
+
+/// Runs the wave and the findings layer over `paths` with the clauses of `policies`, and compares
+/// the keys with W's violations (one snapshot of every file when `together`, else one per file).
+fn findings_gate(store: &ContentStore, paths: &[String], policies: &[(String, crate::code_rule_dsl::CompiledCodeRuleDsl)], together: bool) {
+    use serde_json::json;
+    let (clauses, _, shapes) = shaped_from(policies);
+    let documents = documents(store, WS, paths).unwrap();
     let mut wave = Wave::new(&clauses, ExecutionBackend::CpuJit).unwrap();
-    let program = wave.program(&store).unwrap();
+    let program = wave.program(store).unwrap();
     let backing = Backing::default();
-    let scope = backing.enter(&store);
+    let scope = backing.enter(store);
     let lease = scope.pool().take().unwrap();
     let limits = Limits { max_waves: 1, ..Limits::default() };
-    run(&lease, &store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(&store, WS, chunk)).unwrap();
-    let layer = Layer::new(shapes);
-    let findings_program = layer.program(&store).unwrap();
+    run(&lease, store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(store, WS, chunk)).unwrap();
+    let layer = Layer::new(shapes).unwrap();
+    let findings_program = layer.program(store).unwrap();
     let started = std::time::Instant::now();
-    let (findings, outcome) = layer.findings(&lease, &store, WS, &documents, &findings_program).unwrap();
+    let (findings, outcome) = layer.findings(&lease, store, WS, &documents, &findings_program).unwrap();
     let elapsed = started.elapsed();
     let path = documents.iter().map(|d| (d.key, d.path.clone())).collect::<BTreeMap<_, _>>();
     let ours = findings.keys.iter().map(|k| (k.rule.clone(), k.code.clone(), path[&k.doc].clone(), k.line)).collect::<BTreeSet<_>>();
 
-    // W's violations of the wave's clauses, keyed alike, on the (rule, file)s the layer decided.
     let names = clauses.iter().map(|c| c.name.clone()).collect::<BTreeSet<_>>();
-    let tapes = paths.iter().map(|path| Families::stored(&store, WS, path).unwrap().unwrap()).collect::<Vec<_>>();
-    // One snapshot per file: a file W cannot read fails its evaluation, which reports no other
-    // file's violations; the layer decides each (rule, file) apart.
-    let snapshots = paths
-        .iter()
-        .zip(&tapes)
-        .map(|(path, tape)| {
-            json!({
-                "facts": [],
-                "files": [{ "language": "python", "path": path, "source": ast_grep_core::Doc::get_source(&tape.doc) }],
-                "format": "rerail.repository-snapshot/v1",
-                "revision": 0,
-            })
-            .to_string()
-        })
-        .collect::<Vec<_>>();
+    let tapes = paths.iter().map(|path| Families::stored(store, WS, path).unwrap().unwrap()).collect::<Vec<_>>();
+    let file = |path: &String, tape: &Arc<crate::code_rule_dsl::facts::families::Tape>| {
+        json!({ "language": "python", "path": path, "source": ast_grep_core::Doc::get_source(&tape.doc) })
+    };
+    let snapshot = |files: Vec<serde_json::Value>| json!({ "facts": [], "files": files, "format": "rerail.repository-snapshot/v1", "revision": 0 }).to_string();
+    let snapshots = if together {
+        vec![snapshot(paths.iter().zip(&tapes).map(|(path, tape)| file(path, tape)).collect())]
+    } else {
+        paths.iter().zip(&tapes).map(|(path, tape)| snapshot(vec![file(path, tape)])).collect()
+    };
     let complete = findings
         .coverage
         .iter()
@@ -334,7 +411,8 @@ fn the_findings_are_ws_violations() {
         .map(|((rule, doc), _)| (rule.clone(), path[doc].clone()))
         .collect::<BTreeSet<_>>();
     let mut ws = BTreeSet::new();
-    for (policy, compiled) in policies() {
+    let mut failed = BTreeSet::new();
+    for (policy, compiled) in policies {
         for snapshot in &snapshots {
             let result: serde_json::Value = serde_json::from_str(&compiled.evaluate(snapshot.clone(), "report".to_owned()).unwrap()).unwrap();
             for v in result["violations"].as_array().unwrap() {
@@ -343,17 +421,26 @@ fn the_findings_are_ws_violations() {
                     ws.insert((rule, v["code"].as_str().unwrap().to_owned(), file, v["span"]["startLine"].as_u64().unwrap() as usize));
                 }
             }
+            for f in result["failures"].as_array().unwrap() {
+                if names.contains(&format!("{policy}/{}", f["clauseId"].as_str().unwrap_or_default())) {
+                    failed.insert((compiled.inner.id.clone(), f["path"].as_str().unwrap_or_default().to_owned(), f["code"].as_str().unwrap_or_default().to_owned()));
+                }
+            }
         }
     }
     let mut unknown = BTreeMap::new();
-    for coverage in findings.coverage.values() {
+    let mut unexplained = Vec::new();
+    for ((rule, doc), coverage) in &findings.coverage {
         if let Coverage::Unknown(reason) = coverage {
             *unknown.entry(reason.clone()).or_insert(0) += 1;
+            if !failed.contains(&(rule.clone(), path[doc].clone(), reason.clone())) {
+                unexplained.push(format!("{rule} in {}: {reason}, W did not fail", path[doc]));
+            }
         }
     }
     eprintln!(
-        "S5 findings: {} clauses on {} fixtures in {elapsed:?} ({} waves): {} keys, W {}; {} only ours, {} only W; \
-         {} (rule, file)s complete, unknown {unknown:?}; {} families changed",
+        "S5 findings: {} clauses on {} files in {elapsed:?} ({} waves): {} keys, W {}; {} only ours, {} only W; \
+         {} (rule, file)s complete, unknown {unknown:?} ({} where W does not fail); {} families changed",
         clauses.len(),
         documents.len(),
         outcome.waves,
@@ -362,6 +449,7 @@ fn the_findings_are_ws_violations() {
         ours.difference(&ws).count(),
         ws.difference(&ours).count(),
         complete.len(),
+        unexplained.len(),
         outcome.changed.len(),
     );
     let text = paths.iter().zip(&tapes).map(|(path, tape)| (path.clone(), ast_grep_core::Doc::get_source(&tape.doc).clone())).collect::<BTreeMap<_, _>>();
@@ -369,13 +457,17 @@ fn the_findings_are_ws_violations() {
         let line = text[&key.2].lines().nth(key.3).unwrap_or_default();
         eprintln!("  {} {key:?}: {}", if ours.contains(key) { "only ours" } else { "only W" }, line.trim());
     }
+    for line in unexplained.iter().take(10) {
+        eprintln!("  {line}");
+    }
     assert_eq!(ours, ws);
+    assert!(unexplained.is_empty());
     for rule in findings.coverage.keys().map(|(rule, _)| rule).collect::<BTreeSet<_>>() {
         let family = family_name(WS, FINDINGS, &format!("finding:{rule}"));
         assert!(store.derivation_valid(&family).unwrap(), "{family}");
     }
     // The same matches again: no finding family changes, so nothing downstream reruns.
-    let (again, outcome) = layer.findings(&lease, &store, WS, &documents, &findings_program).unwrap();
+    let (again, outcome) = layer.findings(&lease, store, WS, &documents, &findings_program).unwrap();
     assert_eq!(again.keys, findings.keys);
     assert!(outcome.changed.is_empty(), "{:?}", outcome.changed);
 }

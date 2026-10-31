@@ -259,7 +259,7 @@ pub(crate) struct NoqaIndex {
 
 /// The statements whose start is a violation's parent offset (Ruff's `set_parent`: an import
 /// statement for F401 and F811, the `__all__` definition for F822).
-const PARENT_KINDS: &[&str] = &[
+pub(crate) const PARENT_KINDS: &[&str] = &[
     "import_statement",
     "import_from_statement",
     "future_import_statement",

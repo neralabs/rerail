@@ -391,6 +391,11 @@ impl SyntaxErrors {
         self.regions.is_empty()
     }
 
+    /// The merged regions, by start.
+    pub(super) fn regions(&self) -> &[Range<usize>] {
+        &self.regions
+    }
+
     /// Whether any of the file ranges a node stands for meets a region (`overlaps`).
     pub(super) fn meets(&self, ranges: &FileRanges) -> bool {
         ranges.iter().any(|range| self.overlaps(range))
