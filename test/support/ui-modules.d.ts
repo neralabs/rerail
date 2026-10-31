@@ -152,8 +152,13 @@ declare module "*/ui/attachments.js" {
   /** The page's rule pack writes; `toast` and `invalidate` are the page's. */
   export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
     setUpRecommended(): Promise<void>;
-    keepPack(id: string, keep: boolean, message: string): Promise<void> | undefined;
+    keepPack(id: string, keep: boolean, message: string, failed?: string): Promise<void> | undefined;
   };
+}
+
+declare module "*/ui/format.js" {
+  /** A failure toast: what did not happen, then the error as a sentence. */
+  export function failed(what: string, error: unknown): string;
 }
 
 declare module "*/ui/settings-writes.js" {
@@ -163,9 +168,9 @@ declare module "*/ui/settings-writes.js" {
   export function packSwitchWrites(packId: string, enabled: boolean): SettingPut[];
   /** The page's rule setting writes; `toast`, `invalidate` and `owner` are the page's. */
   export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: () => "repository" | "checkout" }): {
-    setEnabled(ids: readonly string[], enabled: boolean, label: string): Promise<void>;
-    setPackEnabled(packId: string, enabled: boolean, label: string): Promise<void>;
-    setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string): Promise<void>;
+    setEnabled(ids: readonly string[], enabled: boolean, label: string, failed?: string): Promise<void>;
+    setPackEnabled(packId: string, enabled: boolean, label: string, failed?: string): Promise<void>;
+    setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string, failed?: string): Promise<void>;
   };
 }
 

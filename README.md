@@ -107,6 +107,8 @@ Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; 
 
 Rerail works with five coding agents: Claude Code, Codex, Cursor, OMP (Oh My Pi) and Pi. Set-up connects the ones it finds, or the ones you name (`--agents claude-code,codex,cursor,omp,pi`). It backs up each config before changing it, and `rerail install --remove` takes everything out again.
 
+Pi's [package gallery](https://pi.dev/packages) installs Rerail too, with `pi install npm:@neralabs/rerail`; `/rerail-start` in a Pi session then finishes set-up and swaps that entry for the managed install, so `rerail update` governs the version. See [Installing Rerail](docs/installation.md#from-pis-package-gallery).
+
 | Agent | Integration | In-session commands | Status line |
 | --- | --- | --- | --- |
 | Claude Code | `.claude-plugin`, `hooks/claude.json`; commands in `~/.claude/commands/` | `/rerail-*` | Yes |

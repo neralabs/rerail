@@ -1,0 +1,324 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-log014-exc-info-outside-except-handler",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove exc_info from logging calls made outside an except handler; with no active exception it only logs a meaningless None traceback.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "exc-info-outside-except-handler",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "logger-object": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "resolves": {
+                      "import": [
+                        "logging.getLogger",
+                        "logging.Logger"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logger-object"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "logging",
+                      "flask.current_app.logger"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$"
+                    },
+                    {
+                      "kind": "attribute",
+                      "regex": "\\W(log|LOG)\\w*$|(logger|logging|LOGGER|LOGGING)$",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "name-chain",
+                        "not": {
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "(?s)."
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "not": {
+                    "resolves": {
+                      "import": true
+                    }
+                  }
+                }
+              ]
+            },
+            "name-chain": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain"
+                  }
+                }
+              ]
+            },
+            "level-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "regex": "\\W(debug|critical|error|exception|info|warn|warning)$",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logger-object",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "logging.debug",
+                      "logging.critical",
+                      "logging.error",
+                      "logging.exception",
+                      "logging.info",
+                      "logging.warn",
+                      "logging.warning",
+                      "logging.log"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "level-callee"
+                  }
+                }
+              ]
+            },
+            "prefixed-string": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[fFtT]"
+              }
+            },
+            "truthy-literal": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "true"
+                    },
+                    {
+                      "kind": "ellipsis"
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "integer"
+                        },
+                        {
+                          "kind": "float"
+                        }
+                      ],
+                      "value": {
+                        "truthy": true
+                      }
+                    },
+                    {
+                      "kind": "string",
+                      "not": {
+                        "matches": "prefixed-string"
+                      },
+                      "value": {
+                        "truthy": true
+                      }
+                    },
+                    {
+                      "kind": "concatenated_string",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "string",
+                          "matches": "prefixed-string"
+                        }
+                      },
+                      "value": {
+                        "truthy": true
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "truthy-literal"
+                  }
+                }
+              ]
+            },
+            "exc-info-kw": {
+              "kind": "keyword_argument",
+              "regex": "^exc_info\\b"
+            },
+            "kw-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "exc-info-kw",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "truthy-literal"
+                      },
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "argument_list",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "call",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "level-callee"
+                          }
+                        }
+                      },
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "matches": "exc-info-kw"
+                        }
+                      },
+                      "capture": "K"
+                    },
+                    {
+                      "matches": "kw-in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "not": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "except_clause"
+              }
+            },
+            "any": [
+              {
+                "matches": "exc-info-kw",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "truthy-literal"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "level-callee"
+                    }
+                  }
+                },
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "exc-info-kw"
+                  }
+                },
+                "pattern": "$K"
+              },
+              {
+                "matches": "kw-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.K",
+        "code": "LOG014",
+        "message": "Remove this `exc_info` argument: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled.",
+        "each": "K",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "LOG014"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -525,6 +525,7 @@ async function connect(run: Run, repository: Repository | undefined, again = fal
     ...(again && named === undefined ? { added: codingAgents(result.changed) } : {}),
     failed: result.failures.map(({ agent, message, file }) => ({ agent: { id: agent, name: CODING_AGENT_NAMES[agent] }, message, ...(file === undefined ? {} : { file }) })),
     codexTrust: result.codexTrust,
+    ompPlugin: result.ompPlugin,
     anyFound: found.length > 0,
     worksWith: codingAgents(HARNESSES),
   };

@@ -1,0 +1,157 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi050-no-return-argument-annotation-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Never instead of NoReturn for parameter annotations in stub files; NoReturn describes a function that never returns, which makes little sense for a parameter.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "no-return-argument-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuU]{0,2}['\"]",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuU]{0,2}['\"]"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "no-return-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.NoReturn",
+                  "typing_extensions.NoReturn",
+                  "_typeshed.NoReturn"
+                ]
+              }
+            },
+            "no-return-expr": {
+              "any": [
+                {
+                  "matches": "no-return-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "no-return-expr"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "no-return-ref",
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "type",
+                    "any": [
+                      {
+                        "kind": "typed_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "matches": "plain-string",
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "type",
+                    "any": [
+                      {
+                        "kind": "typed_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ]
+                  }
+                },
+                "parse": {
+                  "grammar": "annotation",
+                  "kind": "expression_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "no-return-expr"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI050",
+        "message": "Annotate this parameter as `Never` instead of `NoReturn`, importing it from `typing_extensions` (or `typing` on Python 3.11+); the two are equivalent for type checkers.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI050"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -55,6 +55,7 @@ export function fakeSetupEnvironment(options: {
         all: [...connected],
         failures: agents.filter(id => unreadable.has(id)).map(agent => ({ agent, message: "Unexpected token '/'", file: `/home/me/.${agent}/settings.json` })),
         codexTrust: changed.includes("codex"),
+        ompPlugin: false,
       };
     },
     sessionsApproved: () => approved,

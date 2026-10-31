@@ -1,0 +1,419 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi055-unnecessary-type-union",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Combine several type-of-class members of a union into one type over the union of those classes; the meaning is unchanged and the annotation is shorter.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "define-union-helpers",
+      "define": {
+        "language": "python",
+        "utils": {
+          "union-head": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {"import": ["typing.Union", "typing_extensions.Union", "_typeshed.Union"]}
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {"stopBy": "neighbor", "matches": "union-head"}
+              }
+            ]
+          },
+          "pipe-bin": {
+            "kind": "binary_operator",
+            "has": {"stopBy": "neighbor", "field": "operator", "regex": "^\\|$"}
+          },
+          "pipe": {"any": [{"matches": "pipe-bin"}, {"kind": "union_type"}]},
+          "union-sub": {
+            "any": [
+              {
+                "kind": "subscript",
+                "has": {"stopBy": "neighbor", "field": "value", "matches": "union-head"}
+              },
+              {"kind": "generic_type", "has": {"stopBy": "neighbor", "matches": "union-head"}}
+            ]
+          },
+          "union": {"any": [{"matches": "pipe"}, {"matches": "union-sub"}]},
+          "sole-tuple": {
+            "kind": "tuple",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript",
+                  "matches": "union-sub",
+                  "not": {"has": {"stopBy": "neighbor", "regex": "^,$"}}
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter",
+                    "all": [
+                      {"not": {"has": {"stopBy": "neighbor", "regex": "^,$"}}},
+                      {"inside": {"stopBy": "neighbor", "matches": "union-sub"}}
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "in-union": {
+            "any": [
+              {"inside": {"stopBy": "neighbor", "matches": "pipe-bin"}},
+              {"inside": {"stopBy": "neighbor", "kind": "subscript", "matches": "union-sub"}},
+              {"inside": {"stopBy": "neighbor", "matches": "sole-tuple"}},
+              {
+                "inside": {"stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "in-union"}
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {"kind": "union_type"},
+                      {
+                        "kind": "type_parameter",
+                        "inside": {"stopBy": "neighbor", "matches": "union-sub"}
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "type-head": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {"global": ["type"], "import": ["builtins.type"]}
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {"stopBy": "neighbor", "matches": "type-head"}
+              }
+            ]
+          },
+          "type-sub": {
+            "kind": "subscript",
+            "has": {"stopBy": "neighbor", "field": "value", "matches": "type-head"},
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [{"regex": "^,$"}, {"kind": "tuple"}, {"kind": "list_splat"}]
+              }
+            }
+          },
+          "type-gen": {
+            "kind": "generic_type",
+            "has": {"stopBy": "neighbor", "matches": "type-head"},
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {"regex": "^,$"},
+                        {
+                          "kind": "type",
+                          "has": {"stopBy": "neighbor", "any": [{"kind": "tuple"}, {"kind": "splat_type"}]}
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "type-member": {"any": [{"matches": "type-sub"}, {"matches": "type-gen"}]},
+          "flat": {
+            "any": [
+              {"kind": "parenthesized_expression"},
+              {"kind": "type"},
+              {"kind": "type_parameter"},
+              {"matches": "pipe"},
+              {"matches": "union-sub"},
+              {"matches": "sole-tuple"}
+            ]
+          },
+          "types-in": {
+            "any": [
+              {"matches": "type-member"},
+              {"matches": "flat", "has": {"stopBy": "neighbor", "matches": "types-in"}}
+            ]
+          },
+          "many-types": {
+            "matches": "flat",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {"matches": "many-types"},
+                {"matches": "types-in", "precedes": {"stopBy": "end", "matches": "types-in"}}
+              ]
+            }
+          },
+          "bad-union": {
+            "all": [{"matches": "union"}, {"matches": "many-types"}, {"not": {"matches": "in-union"}}]
+          },
+          "tc-test": {
+            "any": [
+              {"kind": "identifier", "regex": "^TYPE_CHECKING$"},
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "import": [
+                    "typing.TYPE_CHECKING",
+                    "typing_extensions.TYPE_CHECKING",
+                    "_typeshed.TYPE_CHECKING"
+                  ]
+                }
+              },
+              {
+                "kind": "attribute",
+                "has": {"stopBy": "neighbor", "field": "attribute", "regex": "^TYPE_CHECKING$"}
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {"stopBy": "neighbor", "matches": "tc-test"}
+              }
+            ]
+          },
+          "in-tc-block": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "if_statement",
+              "field": "consequence",
+              "has": {"stopBy": "neighbor", "field": "condition", "matches": "tc-test"}
+            }
+          },
+          "in-type-statement": {
+            "any": [
+              {"inside": {"stopBy": "end", "kind": "type_alias_statement"}},
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "field": "type_parameters",
+                  "any": [{"kind": "function_definition"}, {"kind": "class_definition"}]
+                }
+              }
+            ]
+          },
+          "in-annotation-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "field": "type",
+                  "any": [
+                    {"kind": "assignment"},
+                    {"kind": "typed_parameter"},
+                    {"kind": "typed_default_parameter"}
+                  ]
+                }
+              },
+              {"inside": {"stopBy": "end", "field": "return_type", "kind": "function_definition"}}
+            ]
+          },
+          "in-local-annotation": {
+            "inside": {
+              "stopBy": "end",
+              "field": "type",
+              "kind": "assignment",
+              "inside": {
+                "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                "kind": "function_definition"
+              }
+            }
+          },
+          "future-file": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "module",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "future_import_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {"kind": "dotted_name", "regex": "^annotations$"},
+                    {
+                      "kind": "aliased_import",
+                      "has": {"stopBy": "neighbor", "kind": "dotted_name", "regex": "^annotations$"}
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "in-string-annotation": {
+            "matches": "plain-string",
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [{"matches": "bad-union", "capture": "UNION"}, {"matches": "in-string-annotation"}]
+              }
+            }
+          },
+          "escaped-or-concatenated": {
+            "any": [
+              {"kind": "concatenated_string"},
+              {
+                "kind": "string",
+                "regex": "^[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)"
+              }
+            ]
+          },
+          "plain-string": {
+            "kind": "string",
+            "not": {"regex": "^[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)"}
+          },
+          "pipe-flat": {"any": [{"kind": "parenthesized_expression"}, {"matches": "pipe-bin"}]},
+          "pipe-types-in": {
+            "any": [
+              {"matches": "type-member"},
+              {"matches": "pipe-flat", "has": {"stopBy": "neighbor", "matches": "pipe-types-in"}}
+            ]
+          },
+          "pipe-many-types": {
+            "matches": "pipe-flat",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {"matches": "pipe-many-types"},
+                {
+                  "matches": "pipe-types-in",
+                  "precedes": {"stopBy": "end", "matches": "pipe-types-in"}
+                }
+              ]
+            }
+          },
+          "in-pipe": {
+            "any": [
+              {"inside": {"stopBy": "neighbor", "matches": "pipe-bin"}},
+              {
+                "inside": {"stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "in-pipe"}
+              }
+            ]
+          },
+          "bad-pipe-union": {
+            "all": [
+              {"matches": "pipe-bin"},
+              {"matches": "pipe-many-types"},
+              {"not": {"matches": "in-pipe"}}
+            ]
+          },
+          "in-relocated-annotation": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {"matches": "bad-pipe-union", "capture": "UNION"},
+                  {"matches": "in-relocated-annotation"}
+                ]
+              }
+            }
+          },
+          "in-escaped-or-concatenated-annotation": {
+            "any": [
+              {
+                "matches": "escaped-or-concatenated",
+                "all": [{"matches": "in-relocated-annotation"}]
+              },
+              {
+                "matches": "plain-string",
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {"stopBy": "end", "matches": "in-escaped-or-concatenated-annotation"}
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unnecessary-type-union-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {"path": {"regex": "\\.pyi$"}},
+          "rule": {
+            "matches": "bad-union",
+            "any": [
+              {"matches": "in-annotation-slot"},
+              {"matches": "in-type-statement"},
+              {"matches": "in-tc-block"}
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI055",
+        "message": "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same.",
+        "suppress": {"noqa": {"codes": ["PYI055"]}}
+      }
+    },
+    {
+      "id": "unnecessary-type-union",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {"path": {"notRegex": "\\.pyi$"}},
+          "rule": {
+            "matches": "bad-union",
+            "any": [
+              {"matches": "in-local-annotation"},
+              {"all": [{"matches": "future-file"}, {"matches": "in-annotation-slot"}]},
+              {"matches": "in-type-statement"},
+              {"matches": "in-tc-block"}
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI055",
+        "message": "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same.",
+        "suppress": {"noqa": {"codes": ["PYI055"]}}
+      }
+    },
+    {
+      "id": "unnecessary-type-union-in-string",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "in-string-annotation"}}},
+      "violation": {
+        "anchor": "capture.UNION",
+        "code": "PYI055",
+        "message": "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same.",
+        "suppress": {"noqa": {"codes": ["PYI055"]}},
+        "each": "UNION"
+      }
+    },
+    {
+      "id": "unnecessary-type-union-in-escaped-or-concatenated-string",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "in-escaped-or-concatenated-annotation"}}},
+      "violation": {
+        "anchor": "capture.UNION",
+        "code": "PYI055",
+        "message": "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same.",
+        "suppress": {"noqa": {"codes": ["PYI055"]}},
+        "each": "UNION"
+      }
+    }
+  ]
+}
