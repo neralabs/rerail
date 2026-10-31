@@ -252,8 +252,10 @@ impl PackedBatch {
             ..Self::default()
         };
         let mut navigation = [0usize; 4];
-        // Per derived class, the batch's nodes that have it.
-        let mut derived: Vec<Vec<u32>> = Vec::new();
+        // Per file, its first node and its derived classes' bits, copied as shifted words after
+        // every file is placed (06 S7: bit by bit, 0.7 s of 1.3 s of roots).
+        let mut derived: Vec<(u32, Arc<Vec<Vec<u64>>>)> = Vec::new();
+        let stage = crate::code_rule_dsl::prof::Stage::start("batch.files");
         for file in 0..file_count {
             let tape = load(file)?;
             let node_start = checked_u32(navigation[0])?;
@@ -281,17 +283,8 @@ impl PackedBatch {
                             kind: u32::from(kind),
                         }),
                 );
-            for (class, bits) in tape.transducer_labels().iter().enumerate() {
-                if derived.len() <= class {
-                    derived.resize_with(class + 1, Vec::new);
-                }
-                for (index, &word) in bits.iter().enumerate() {
-                    let mut word = word;
-                    while word != 0 {
-                        derived[class].push(node_start + (index * 64) as u32 + word.trailing_zeros());
-                        word &= word - 1;
-                    }
-                }
+            if !tape.transducer_labels().is_empty() {
+                derived.push((node_start, tape.transducer_labels_shared()));
             }
             let mut local_children = Vec::new();
             for node in 0..tape.transducer_len() as u32 {
@@ -339,17 +332,38 @@ impl PackedBatch {
             });
             after_file(&mut batch)?;
         }
-        if !derived.is_empty() {
+        drop(stage);
+        let stage = crate::code_rule_dsl::prof::Stage::start("batch.derived");
+        let classes = derived.iter().map(|(_, labels)| labels.len()).max().unwrap_or(0);
+        if classes > 0 {
             let words = navigation[0].div_ceil(32).max(1);
-            batch.derived = vec![0; derived.len() * words];
-            for (class, nodes) in derived.iter().enumerate() {
-                for &node in nodes {
-                    batch.derived[class * words + node as usize / 32] |= 1 << (node % 32);
+            batch.derived = vec![0; classes * words];
+            for (node_start, labels) in &derived {
+                for (class, bits) in labels.iter().enumerate() {
+                    let row = &mut batch.derived[class * words..(class + 1) * words];
+                    for (index, &word) in bits.iter().enumerate() {
+                        if word == 0 {
+                            continue;
+                        }
+                        let at = *node_start as usize + index * 64;
+                        for (half, value) in [(0, word as u32), (32, (word >> 32) as u32)] {
+                            if value == 0 {
+                                continue;
+                            }
+                            let (slot, shift) = ((at + half) / 32, (at + half) % 32);
+                            row[slot] |= value << shift;
+                            if shift > 0 && value >> (32 - shift) != 0 {
+                                row[slot + 1] |= value >> (32 - shift);
+                            }
+                        }
+                    }
                 }
             }
-            batch.derived_classes = checked_u32(derived.len())?;
+            batch.derived_classes = checked_u32(classes)?;
             batch.derived_words = checked_u32(words)?;
         }
+        drop(stage);
+        let stage = crate::code_rule_dsl::prof::Stage::start("batch.programs");
         for program in programs {
             let word_start = checked_u32(batch.words.len())?;
             let long_start = checked_u32(batch.longs.len())?;
@@ -575,6 +589,8 @@ impl PackedBatch {
                 flags: program_flags(program),
             });
         }
+        drop(stage);
+        let _tasks = crate::code_rule_dsl::prof::Stage::start("batch.tasks");
         for (file, file_anchors) in anchors.iter().enumerate() {
             for (program, roots) in file_anchors.iter().enumerate() {
                 let roots = roots.as_ref();

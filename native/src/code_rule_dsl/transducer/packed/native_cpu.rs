@@ -2764,13 +2764,13 @@ fn cache_key(program: &Program) -> String {
     format!(
         "cpu-jit:{FORMAT_VERSION}:{}:{}",
         std::env::consts::ARCH,
-        program.canonical_digest("", b"")
+        program.plain_digest()
     )
 }
 
 /// One key for a batch's programs (`compilation::request`).
 pub(super) fn batch_key(programs: &[Program]) -> String {
-    programs.iter().map(|program| program.canonical_digest("", b"")).collect::<Vec<_>>().join(",")
+    programs.iter().map(|program| program.plain_digest()).collect::<Vec<_>>().join(",")
 }
 
 /// Whether every one of `programs` is compiled (`compile_cached`), without compiling any.
@@ -2780,7 +2780,8 @@ pub(super) fn compiled(programs: &[Program]) -> Result<bool, Error> {
 }
 
 pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLine>, Error> {
-    let key = cache_key(program);
+    crate::code_rule_dsl::prof::count("jit.programs", 1);
+    let key = crate::code_rule_dsl::prof::time("jit.key", || cache_key(program));
     if let Some(compiled) = CPU_JIT_CACHE
         .lock()
         .map_err(|_| Error::BackendFailure)?
@@ -2789,8 +2790,9 @@ pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLi
     {
         return Ok(compiled);
     }
-    let native = super::native_ir::lower(program).map_err(|_| Error::BackendFailure)?;
-    let compiled = Arc::new(compile_straight_line(&native)?);
+    crate::code_rule_dsl::prof::count("jit.misses", 1);
+    let native = crate::code_rule_dsl::prof::time("jit.lower", || super::native_ir::lower(program)).map_err(|_| Error::BackendFailure)?;
+    let compiled = Arc::new(crate::code_rule_dsl::prof::time("jit.straight_line", || compile_straight_line(&native))?);
     let mut cache = CPU_JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(existing) = cache.get(&key) {
         return Ok(Arc::clone(existing));
@@ -2868,11 +2870,15 @@ fn execute_batch_packed_with_work_limit(
     result_limits: Option<&[u32]>,
     work_limit: u32,
 ) -> Result<PackedExecution, Error> {
+    let stage = crate::code_rule_dsl::prof::Stage::start("jit.batch");
     let mut batch = PackedBatch::new(programs, files, anchors)?;
+    drop(stage);
+    crate::code_rule_dsl::prof::count("jit.tasks", batch.tasks.len());
     if batch.tasks.is_empty() {
         return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
     }
-    let totals = batch.assign_workspace_with_result_limits(programs, result_limits)?;
+    let totals = crate::code_rule_dsl::prof::time("jit.assign", || batch.assign_workspace_with_result_limits(programs, result_limits))?;
+    let setup = crate::code_rule_dsl::prof::Stage::start("jit.setup");
     if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
             "TEMPO_PACKED_BATCH_PROFILE backend=cpu programs={} tasks={} workspaceBytes={}",
@@ -2881,11 +2887,14 @@ fn execute_batch_packed_with_work_limit(
             batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
         );
     }
-    let compiled = programs
-        .iter()
+    // A cold process compiles each program once (06 S7: 71 programs, 0.3 s); they compile in
+    // parallel.
+    let compiled = crate::code_rule_dsl::prof::time("jit.compile", || programs
+        .par_iter()
         .map(compile_cached)
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect::<Result<Vec<_>, Error>>())?;
     let allocation_started = std::time::Instant::now();
+    let regions = crate::code_rule_dsl::prof::Stage::start("jit.regions");
     let mut pending = DemandZeroRegion::<PendingRecord>::new(totals.pending as usize)?;
     let mut captures = DemandZeroRegion::<LinkRecord>::new(totals.captures as usize)?;
     let mut cursors = DemandZeroRegion::<LinkRecord>::new(totals.cursors as usize)?;
@@ -2919,6 +2928,8 @@ fn execute_batch_packed_with_work_limit(
                 .ok_or(Error::BackendCapacity)?;
         }
     }
+    drop(regions);
+    let _contexts = crate::code_rule_dsl::prof::Stage::start("jit.contexts");
     let mut contexts = Vec::with_capacity(batch.tasks.len());
 
     for (task_index, task) in batch.tasks.iter().enumerate() {
@@ -3046,6 +3057,7 @@ fn execute_batch_packed_with_work_limit(
         context.derived_words = batch.derived_words;
         contexts.push((task.program as usize, context));
     }
+    drop(_contexts);
     let allocation_elapsed = allocation_started.elapsed();
     let entries = compiled
         .iter()
@@ -3061,6 +3073,8 @@ fn execute_batch_packed_with_work_limit(
         .map(|_| Mutex::new(()))
         .collect::<Vec<_>>();
     let execution_started = std::time::Instant::now();
+    drop(setup);
+    let run = crate::code_rule_dsl::prof::Stage::start("jit.run");
     let task_outputs = WORK_POOL.install(|| {
         contexts
             .par_iter_mut()
@@ -3130,6 +3144,8 @@ fn execute_batch_packed_with_work_limit(
             })
             .collect::<Result<Vec<_>, Error>>()
     })?;
+    drop(run);
+    let _compact = crate::code_rule_dsl::prof::Stage::start("jit.compact");
     let mut compact_results = Vec::new();
     let mut compact_captures = Vec::new();
     let mut compact_properties = Vec::new();

@@ -768,6 +768,20 @@ pub(in crate::code_rule_dsl) struct Program {
     output_program: output::OutputProgram,
     tree_sitter_query: bool,
     ast_pattern: Option<PackedPattern>,
+    /// `canonical_digest("", b"")`, once (`plain_digest`).
+    digest: DigestMemo,
+}
+
+/// A program's plain digest, computed once: the CPU JIT's cache, the compilation requests and
+/// the batch keys each read it per execution (06 S7: ~12 k SHA-256 digests, 0.35 s of 1.1 s of
+/// roots). A clone starts empty, so a clone that is then changed digests itself.
+#[derive(Default)]
+struct DigestMemo(std::sync::OnceLock<String>);
+
+impl Clone for DigestMemo {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 #[derive(Clone)]
@@ -1699,6 +1713,7 @@ impl Program {
         }
         let mut program = Self::compile_navigation()?;
         program.ast_pattern = Some(PackedPattern::lower(&pattern.node));
+        program.digest = DigestMemo::default();
         program.validate()?;
         Ok(program)
     }
@@ -1780,9 +1795,15 @@ impl Program {
             },
             tree_sitter_query: false,
             ast_pattern: None,
+            digest: DigestMemo::default(),
         };
         program.validate()?;
         Ok(program)
+    }
+
+    /// `canonical_digest("", b"")`, computed once per program value (`DigestMemo`).
+    pub(in crate::code_rule_dsl) fn plain_digest(&self) -> &str {
+        self.digest.0.get_or_init(|| self.canonical_digest("", b""))
     }
 
     pub(in crate::code_rule_dsl) fn canonical_digest(&self, language: &str, scm_source: &[u8]) -> String {
@@ -2052,6 +2073,7 @@ impl Program {
             .map(value::CaptureProgram::lower)
             .collect();
         self.capture_predicates = capture_predicates;
+        self.digest = DigestMemo::default();
         self.validate()?;
         Ok(self)
     }
@@ -2059,6 +2081,7 @@ impl Program {
     fn with_directives(mut self, directives: Vec<Directive>) -> Result<Self, Error> {
         self.output_program = output::OutputProgram::lower(&directives, &self.strings)?;
         self.directives = directives;
+        self.digest = DigestMemo::default();
         self.validate()?;
         Ok(self)
     }
@@ -2086,6 +2109,7 @@ impl Program {
 
     fn with_tree_sitter_query_semantics(mut self) -> Result<Self, Error> {
         self.tree_sitter_query = true;
+        self.digest = DigestMemo::default();
         self.validate()?;
         Ok(self)
     }

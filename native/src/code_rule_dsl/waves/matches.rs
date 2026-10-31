@@ -229,6 +229,7 @@ impl Wave {
                     nodes.sort_unstable();
                     nodes.dedup();
                 });
+                crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
                 Ok(out)
             })
             .collect()

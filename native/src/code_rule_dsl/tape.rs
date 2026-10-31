@@ -2259,6 +2259,11 @@ impl TapeDoc {
         &self.labels
     }
 
+    /// The labels, shared (`transducer_labels`).
+    pub(super) fn transducer_labels_shared(&self) -> Arc<Vec<Vec<u64>>> {
+        Arc::clone(&self.labels)
+    }
+
     // The packed runtime's class test (Phase 4).
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_has_supertype(&self, node: u32, kind: u16) -> bool {
