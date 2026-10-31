@@ -1387,26 +1387,37 @@ fn sweep_with(
         .enumerate()
         .flat_map(|(at, level)| level.iter().map(move |&(clause, id)| (at, clause, id)))
         .collect::<Vec<_>>();
-    let mut entries: Vec<(u32, u32)> = Vec::new();
-    let no_labels = vec![Vec::new(); 0];
-    for (pass, &(_, clause, id)) in passes.iter().enumerate() {
-        let pass = u32::try_from(pass).map_err(|_| Error::BackendCapacity)?;
-        {
-            let starts: Box<dyn Iterator<Item = u32>> = match clause.labels.def(id) {
-                Label::Roots(_, Domain::Kinds(kinds)) | Label::Targets(_, Domain::Kinds(kinds)) => {
-                    Box::new(domain(&Domain::Kinds(kinds.clone()), tape, &no_labels).collect::<Vec<_>>().into_iter())
-                }
-                Label::Empty => Box::new(std::iter::empty()),
-                _ => Box::new(0..len),
-            };
+    // Each pass's starts: none, every node, or a node of its kinds; and its entry test. Built node
+    // by node, the entries are in (node, pass) order without a sort (sorting them was ~70% of
+    // building them on S7).
+    let starts = passes
+        .iter()
+        .map(|&(_, clause, id)| {
             let entry = match clause.labels.def(id) {
                 Label::Roots(program, _) | Label::Targets(program, _) => Some(Entry::of(program)),
                 _ => None,
             };
-            entries.extend(starts.filter(|&node| entry.as_ref().is_none_or(|entry| entry.admits(tape, node))).map(|node| (node, pass)));
+            let kinds = match clause.labels.def(id) {
+                Label::Roots(_, Domain::Kinds(kinds)) | Label::Targets(_, Domain::Kinds(kinds)) => Some(Some(kinds)),
+                Label::Empty => None,
+                _ => Some(None),
+            };
+            (kinds, entry)
+        })
+        .collect::<Vec<_>>();
+    let mut entries: Vec<(u32, u32)> = Vec::new();
+    for node in 0..len {
+        let kind = tape.transducer_kind(node);
+        for (pass, (kinds, entry)) in starts.iter().enumerate() {
+            let Some(kinds) = kinds else { continue };
+            if kinds.is_some_and(|kinds| kinds.binary_search(&kind).is_err()) {
+                continue;
+            }
+            if entry.as_ref().is_none_or(|entry| entry.admits(tape, node)) {
+                entries.push((node, u32::try_from(pass).map_err(|_| Error::BackendCapacity)?));
+            }
         }
     }
-    entries.sort_unstable();
     crate::code_rule_dsl::prof::count("sweep.entry_count", entries.len());
     drop(stage);
     let stage = crate::code_rule_dsl::prof::Stage::start("sweep.walks");
@@ -1425,6 +1436,11 @@ fn sweep_with(
             ((std::ptr::from_ref(clause) as usize, id), walk)
         })
         .collect::<BTreeMap<_, _>>();
+    // Each pass's walk, by its index: no map lookup per (node, pass).
+    let pass_walks = passes
+        .iter()
+        .map(|&(_, clause, id)| walks[&(std::ptr::from_ref(clause) as usize, id)].as_ref())
+        .collect::<Vec<_>>();
     drop(stage);
     let _run = crate::code_rule_dsl::prof::Stage::start("sweep.run");
     let mut frames = Frames::default();
@@ -1460,8 +1476,7 @@ fn sweep_with(
                     }
                     let targets = matches!(clause.labels.def(id), Label::Targets(..));
                     marks.clear();
-                    let walked = walks[&(std::ptr::from_ref(clause) as usize, id)]
-                        .as_ref()
+                    let walked = pass_walks[pass as usize]
                         .is_some_and(|(walk, texts)| {
                             let emit = if targets { Emit::Captures } else { Emit::Start };
                             walk.run(tape, sets, texts, node, emit, &mut frames, &mut |node| marks.push(node)).is_ok()
