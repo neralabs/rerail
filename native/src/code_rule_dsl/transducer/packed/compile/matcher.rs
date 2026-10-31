@@ -662,6 +662,12 @@ impl LoweredMatcher {
 
 #[cfg(target_os = "macos")]
 impl LoweredWave {
+    /// Starts compiling the Metal label passes' pipelines, so a wave's first labels need not wait
+    /// for them (`label_passes::warm`).
+    pub(in crate::code_rule_dsl) fn warm_metal() {
+        metal_program_backend::label_passes::warm();
+    }
+
     /// Every clause's labels over the batch on Metal, in one command buffer (as `roots_metal`'s,
     /// without the roots), as views of its tapes the root programs read: `demand(batch)` then runs
     /// the roots with their results (captures, spans), which a label keeps only as bits.
@@ -918,7 +924,9 @@ fn apart<'a>(
         }
         flush(&mut segment, &mut outcome)?;
         let mut sets = to_sets(&outcome.labels, labels, words, tapes);
-        for (at, (tape, sets)) in tapes.iter().zip(sets.iter_mut()).enumerate() {
+        // A file's sweep reads and marks its own labels only, so the files sweep in parallel.
+        use rayon::prelude::*;
+        tapes.par_iter().zip(sets.par_iter_mut()).enumerate().try_for_each(|(at, (tape, sets))| {
             let levels = levels
                 .iter()
                 .map(|level| {
@@ -934,7 +942,8 @@ fn apart<'a>(
             if levels.iter().any(|level| !level.is_empty()) {
                 sweep(&levels, tape, sets)?;
             }
-        }
+            Ok::<_, Error>(())
+        })?;
         outcome.labels = to_words(&sets, labels, words, tapes);
     }
     flush(&mut segment, &mut outcome)?;

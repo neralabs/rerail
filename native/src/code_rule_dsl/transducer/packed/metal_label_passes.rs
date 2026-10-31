@@ -93,6 +93,15 @@ fn complements(levels: &[Vec<Pass<'_>>]) -> bool {
 /// directions alternate), one that turns once in the third, and one more sees nothing change.
 const SWEEPS: usize = 4;
 
+/// A label level's interpreter lanes, and the states of each transient kind a task may hold
+/// (O28). A lane takes tasks from the level's cursor, one after another, and reserves its states
+/// up front, so lanes times states is the arena: 64 lanes of 65,536 states left a level of 10^5
+/// tasks on two SIMD groups. 1,024 lanes of 4,096 states hold the same records, sixteen times as
+/// wide. A task that needs more fails its batch, which runs again as before (`WIDE`).
+const NARROW: (usize, Option<u32>) = (1024, Some(4096));
+/// The program backend's lanes and states: every task's worst case.
+const WIDE: (usize, Option<u32>) = (EXECUTION_LANES, None);
+
 #[derive(Debug, Default)]
 pub(in crate::code_rule_dsl) struct Outcome {
     /// Every label's words after the passes.
@@ -105,6 +114,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) waits: [usize; 3],
     /// Rounds encoded per recursive group.
     pub(in crate::code_rule_dsl) rounds: usize,
+    /// Whether a task outgrew `NARROW`'s states, so the batch ran again with `WIDE`'s.
+    pub(in crate::code_rule_dsl) widened: bool,
 }
 
 #[repr(C)]
@@ -142,6 +153,20 @@ const LAUNCHES: usize = 560;
 const MOST_ROUNDS: usize = 64;
 /// Bytes of per-level uploads one command buffer carries before the host waits for it.
 const SEGMENT_BYTES: usize = 64 << 20;
+
+/// Compiles the label passes' pipelines (the interpreter, the sweep and the label kernels) on a
+/// thread, once a process: each is compiled from source, 0.6 s together, and a pass that needs
+/// one before it is ready waits for the rest of its compile (they are cached behind locks).
+pub(in crate::code_rule_dsl) fn warm() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        std::thread::spawn(|| {
+            let _ = compile_interpreter_cached();
+            let _ = pipelines();
+            let _ = compile_sweep_cached();
+        });
+    });
+}
 
 fn pipelines() -> Result<Vec<ComputePipelineState>, Error> {
     static PIPELINES: Mutex<Option<Vec<ComputePipelineState>>> = Mutex::new(None);
@@ -261,6 +286,8 @@ struct Runner<'a> {
     /// By the level's address in the plan; `None` for a level with no tasks.
     prepared: HashMap<usize, Option<Prepared>>,
     segment_bytes: usize,
+    /// A level's lanes and each task's states; a sweeping group's are always `WIDE`.
+    lanes: (usize, Option<u32>),
     encoded: bool,
     outcome: Outcome,
 }
@@ -353,8 +380,17 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
     let mut rounds = plan_rounds(0, &wanted);
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
+    let mut lanes = NARROW;
     loop {
-        let mut outcome = encode(device, plan, files, &rounds)?;
+        let mut outcome = match encode(device, plan, files, &rounds, lanes) {
+            // A task's states outgrew the narrow lanes' (or another task failed, which fails again).
+            Err(Error::BackendFailure) if lanes != WIDE => {
+                lanes = WIDE;
+                continue;
+            }
+            outcome => outcome?,
+        };
+        outcome.widened = lanes == WIDE;
         used += outcome.dispatches;
         buffers += outcome.command_buffers;
         if outcome.waits[1] == 0 {
@@ -373,7 +409,8 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
 }
 
 /// The clause's passes in one command buffer, each recursive group as `rounds` rounds.
-fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize]) -> Result<Outcome, Error> {
+/// `lanes`: a level's lanes and each task's states (`NARROW`, `WIDE`).
+fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize], lanes: (usize, Option<u32>)) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
     let queue = device.new_command_queue();
@@ -406,6 +443,7 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize])
         programs: Vec::new(),
         prepared: HashMap::new(),
         segment_bytes: 0,
+        lanes,
         encoded: false,
         outcome: Outcome {
             words,
@@ -656,7 +694,9 @@ impl Runner<'_> {
                 self.orders.insert(key, order);
             }
             batch.header.supertype_count = self.tapes.supertype_count;
-            let totals = batch.assign_workspace_with_result_limits_and_lanes(&programs, None, EXECUTION_LANES)?;
+            let (lanes, states) = if sweep.is_some() { WIDE } else { self.lanes };
+            batch.state_cap = states;
+            let totals = batch.assign_workspace_with_result_limits_and_lanes(&programs, None, lanes)?;
             let seen = (totals, batch.header.scheduler_byte_count, batch.header.workspace_byte_count, batch.tasks.len());
             widest_seen = Some(match widest_seen {
                 None => seen,

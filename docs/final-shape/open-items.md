@@ -28,6 +28,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | closed (2026-10-30): sweeps in node order, 77 launches |
 | O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | closed (2026-10-30): labels only where a clause has candidates; sweeps on the CPU between GPU levels; 18.8 → 6.4 s on 8 fixtures |
 | O27 | Phase 4 / 10 | The findings layer's Unknown domains: syntax errors, capture anchors, `noqa` parents, report ceilings (06 S5, decision 0013) | closed (2026-10-30): all four decided in SQL; Unknown only where W's clause fails |
+| O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open: lanes 16x wider, sweeps in parallel, pipelines warmed; host planning and the sweeps' CPU walk remain |
 
 ## O1. Stale-fact detection after a crash
 
@@ -708,3 +709,59 @@ SQL over facts (decision 0013):
   - W's `noqa` mapping takes the first range holding an offset, and the layer takes every one
     (equal where ranges do not overlap);
   - the module comes from the scope's documents, not a host's `module`.
+
+## O28. The wave's labels on Metal are no faster than on the CPU
+
+**Found (2026-10-30), by profiling** (timers per segment, `sample` stacks, then an optimized
+build).
+- **The measurements were unoptimized.** This crate builds at opt-level 0 in tests; only its
+  dependencies are optimized. Every host number so far (sizing, the CPU sweeps, the CPU
+  baseline itself) was therefore of unoptimized code. Only the GPU's own time was real.
+  - `cargo test --profile profiling` builds this crate at opt-level 3, incrementally and without
+    LTO.
+  - Optimized, on 8 fixtures at load about 80: the CPU wave's labels take 1.88 s and Metal's
+    3.42 s.
+- **The interpreter ran 64 lanes.** A lane is a persistent thread that takes tasks from the
+  level's cursor, and the program backend's `EXECUTION_LANES` is 64. So a level of 686 K tasks ran
+  on two SIMD groups, about 10 K tasks a thread: 1.23 s of GPU time over 9 segments.
+  - Lanes were bound by memory, not by the GPU. A lane reserves its transient states up front.
+    Each task's state limit is its work estimate, `nodes × words × 4096`, capped at 65,536, so
+    nearly every task got the cap.
+  - So 64 lanes already held 4 M records per kind, and 4,096 lanes would need 268 M.
+- **First use compiles the pipelines.** Building the interpreter and label pipelines from source
+  takes 0.57 s, once per process, inside the first label segment.
+
+**Fixed:**
+- **Narrow lanes.** Label levels run 1,024 lanes of at most 4,096 states each (`NARROW` in
+  `metal_label_passes`), the same records as before over sixteen times the lanes.
+  - A task that needs more fails its batch, which runs again with the old sizing (`WIDE`,
+    `Outcome::widened`). Sweeping groups keep `WIDE`.
+  - 2,048 states fail on the fixtures and 4,096 hold; no gate widened.
+  - The GPU's time on 8 fixtures went from 1,232 ms to 233 ms.
+- **The CPU sweeps between GPU segments run each file on its own thread** (rayon): a file's sweep
+  reads and marks only its own labels. 0.63 s became 0.23 s.
+- **The pipelines compile on a thread when a Metal wave is made** (`label_passes::warm`), so they
+  overlap the push and the prefilter.
+
+**Result** (optimized, 8 fixtures, load about 40), with 0 differ on every gate:
+
+| | Before | After |
+|---|---|---|
+| Whole wave, CPU (load about 80 before) | 2.58 s | 1.38–1.54 s |
+| Whole wave, Metal (load about 80 before) | 4.37 s | 0.92–0.98 s |
+| Labels, Metal, without the compile | | about 0.96 s |
+| Labels, CPU | | 1.10 s |
+| Labels, Metal, one chunk of one document | | 57 ms |
+
+The S2 parity gate (87 clauses one at a time, 60 fixtures) runs without widening any batch.
+S6's bench audits 48 fixtures cold in 1.79 s of CPU time on Metal, against 2.27 s on the CPU.
+
+**Left**, which is why this stays open. Metal is now faster than the CPU, but not by much.
+- **Host planning per task.** `size()` builds a `PackedBatch` and assigns workspace for each of
+  686 K tasks, 287 ms. The tasks are (program, node) pairs a kernel could enumerate from each
+  level's domains.
+- **The GPU's interpreter.** One thread runs one task, and threads diverge. 226 ms remain.
+- **The sweeps' CPU walk.** 227 ms, one file's group setting the time.
+- **Conversions between label words and sets** around each CPU sweep, about 0.2 s.
+- **The CPU path's labels are single-threaded.** A parallel CPU path would move the comparison.
+

@@ -23,6 +23,17 @@ debug = true
 [profile.debugging.package."*"]
 opt-level = 3
 
+# Timings (`cargo test --profile profiling`): this crate optimized too, built incrementally and in
+# parallel rather than as a release (no LTO), so a measurement is of optimized code without a
+# release's link time. Unoptimized test builds run host code many times slower than shipped.
+[profile.profiling]
+inherits = "dev"
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+incremental = true
+codegen-units = 256
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

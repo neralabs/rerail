@@ -87,6 +87,10 @@ pub(super) struct PackedBatch {
     pub(super) evaluations: Vec<MetalEvaluation>,
     pub(super) evaluation_lanes: Vec<MetalEvaluation>,
     pub(super) global_arenas: MetalGlobalArenas,
+    /// The most states of each transient kind a task may hold (pending paths, captures, cursors,
+    /// ...): 65,536 where `None`. A lane reserves the most of its evaluations' up front, so the
+    /// cap bounds a dispatch's lanes (`metal_label_passes`).
+    pub(super) state_cap: Option<u32>,
 }
 
 fn checked_u32(value: usize) -> Result<u32, Error> {
@@ -823,7 +827,7 @@ impl PackedBatch {
                     if operations == 0 {
                         0
                     } else {
-                        task.workspace_work_estimate.min(65_536)
+                        task.workspace_work_estimate.min(self.state_cap.unwrap_or(65_536))
                     }
                 };
                 let pending_states = work_capacity(facts.pending_operations);
