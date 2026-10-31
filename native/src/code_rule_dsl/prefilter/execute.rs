@@ -40,17 +40,42 @@ pub(super) fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut
     let mut populated = vec![false; statement.stages.len()];
     let mut live_count = 0usize;
     let mut owner_created = false;
+    // Past the last query, a release only frees what the cleanup below drops whole: unless a later
+    // stage reads the relations, its row-by-row DELETE from the ownership table is skipped
+    // (06 S7: ~185 ms of the candidates' critical path).
+    let actions = &statement.schedule.actions;
+    let last_query = actions.iter().rposition(|action| matches!(action, Action::Query(_)));
+    let tail_reads = last_query.is_some_and(|last| {
+        actions[last..].iter().any(|action| match action {
+            Action::Prepare(i) => {
+                let sql = &statement.stages[*i].sql;
+                statement.stages[*i].temporary
+                    || sql.contains(super::lower::ownership::STORE)
+                    || relation_names.iter().any(|name| sql.contains(name))
+            }
+            _ => false,
+        })
+    });
+    let releases_until = match last_query {
+        Some(last) if !tail_reads => last,
+        _ => actions.len(),
+    };
     let result = (|| {
         request(db, &statement.files)?;
         for sql in &statement.ownership.setup {
             db.execute_batch(sql)?;
             owner_created = true;
         }
+        let mut at = 0;
         for actions in statement
             .schedule
             .actions
             .chunk_by(|a, b| matches!(a, Action::Release(_)) && matches!(b, Action::Release(_)))
         {
+            at += actions.len();
+            if at > releases_until + 1 && matches!(actions[0], Action::Release(_)) {
+                continue;
+            }
             match actions[0] {
                 Action::Prepare(i) => {
                     let _timer = crate::code_rule_dsl::prof::Stage::start("sql.prepare");
@@ -128,7 +153,7 @@ pub(super) fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut
             }
             debug_assert!(live_count <= statement.schedule.peak_relations);
         }
-        debug_assert_eq!(live_count, 0);
+        debug_assert!(releases_until < actions.len() || live_count == 0);
         Ok(())
     })();
     for (i, stage) in statement.stages.iter().enumerate().rev() {
