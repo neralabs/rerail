@@ -12,3 +12,5 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0011 | Composite matchers lower to node-label passes plus positive walking programs | accepted |
 | 0012 | Compilation runs in the background, on demand; the interpreter runs until it is ready | accepted |
 | 0013 | Findings are one stratified SQL layer over the match facts, from facts of the tape | accepted |
+| 0014 | The slice's entry points keep the wave's rows per scope; a warm run evaluates changed documents only | accepted |
+| 0015 | Short label programs run as micro walks, one thread per (pass, start); workspaces are untouched by the host | accepted |
