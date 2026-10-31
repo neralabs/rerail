@@ -754,7 +754,9 @@ fn metal<'a>(
         .collect::<Vec<_>>();
     let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
-    let no_labels = empty_sets(tapes, labels);
+    // A label domain is bounded by its kinds below (`Labels::bound`), so `domain` reads no labels
+    // here: none are held (dense empty sets were 34 MB through every run on S7; O30).
+    let no_labels = vec![Vec::<Vec<u64>>::new(); tapes.len()];
     // A pass's roots: its domain's nodes. A label domain's program tests the label first, so on
     // Metal, where the label is not known before the command buffer runs, it starts at the nodes
     // of the kinds the label can have (`Labels::bound`).
@@ -880,7 +882,7 @@ fn metal<'a>(
         // The wave's labels: a recursive group that sweeps runs on the CPU's sweep, each file a
         // walk in node order, between the GPU's wide levels (O26).
         Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active)?,
-        None => run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: None, rows: None, buffers: None }, tapes)?,
+        None => run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: Default::default(), rows: None, buffers: None }, tapes)?,
     };
     let found = (0..clauses.len())
         .map(|at| {
@@ -910,7 +912,13 @@ fn metal<'a>(
 #[cfg(target_os = "macos")]
 fn mark(at: &str) {
     if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
-        eprintln!("  FOOTPRINT {at}: {} MB (high-water {} MB)", crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
+        let _ = tikv_jemalloc_ctl::epoch::advance();
+        eprintln!(
+            "  FOOTPRINT {at}: {} MB (high-water {} MB); heap live {} MB",
+            crate::code_rule_dsl::prof::footprint_mb(),
+            crate::code_rule_dsl::prof::max_footprint_mb(),
+            tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20
+        );
     }
 }
 
@@ -933,7 +941,7 @@ fn apart<'a>(
     }
     let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
-    let mut outcome = Outcome { labels: vec![0; labels * words], words, ..Outcome::default() };
+    let mut outcome = Outcome { labels: Vec::new(), words, ..Outcome::default() };
     let mut segment = (Vec::new(), Vec::new());
     // The runs label the same tapes, so a text row evaluated by one serves the rest (and the
     // sweeps between them, each a file's slice of it).
@@ -957,11 +965,13 @@ fn apart<'a>(
             patterns: patterns.clone(),
             steps: std::mem::take(&mut segment.0),
             chains: std::mem::take(&mut segment.1),
-            initial: Some(std::mem::take(&mut outcome.labels)),
+            // The labels so far, none before the first run (`Plan::initial`).
+            initial: std::cell::Cell::new(Some(std::mem::take(&mut outcome.labels)).filter(|labels| !labels.is_empty())),
             rows: Some(&rows),
             buffers: Some(&kept),
         };
         let before = crate::code_rule_dsl::prof::footprint_mb();
+        mark("plan");
         let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
         if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
             let _ = tikv_jemalloc_ctl::epoch::advance();

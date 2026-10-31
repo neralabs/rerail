@@ -72,7 +72,10 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     pub(in crate::code_rule_dsl) chains: Vec<(Option<Vec<u16>>, bool)>,
     /// The labels' words before the passes (as `Outcome::labels`), where steps before them ran
     /// elsewhere; empty otherwise.
-    pub(in crate::code_rule_dsl) initial: Option<Vec<u32>>,
+    /// The labels so far, none where they start empty (the prefix starts zeroed). A successful
+    /// run's labels come back in the same allocation (`Outcome::labels`), so the host never holds
+    /// two copies.
+    pub(in crate::code_rule_dsl) initial: std::cell::Cell<Option<Vec<u32>>>,
     /// Text rows evaluated by earlier runs over the same files (`TextRows`), shared by them.
     pub(in crate::code_rule_dsl) rows: Option<&'a TextRows>,
     /// Buffers that earlier runs over the same files left for the next (`RunBuffers`).
@@ -563,11 +566,13 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
 /// `RERAIL_FOOTPRINT`: the footprint now and its high-water mark at a point in a run.
 fn mark(at: &str) {
     if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
+        let _ = tikv_jemalloc_ctl::epoch::advance();
         eprintln!(
-            "  FOOTPRINT {at}: {} MB (high-water {} MB); Metal buffers {} MB",
+            "  FOOTPRINT {at}: {} MB (high-water {} MB); Metal buffers {} MB; heap live {} MB",
             crate::code_rule_dsl::prof::footprint_mb(),
             crate::code_rule_dsl::prof::max_footprint_mb(),
-            super::super::metal_backend::reserved_mb()
+            super::super::metal_backend::reserved_mb(),
+            tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20
         );
         if let Some(path) = std::env::var_os("RERAIL_HOLD_FLUSH").filter(|_| at == "flushed") {
             eprintln!("FLUSH holding, pid {}", std::process::id());
@@ -658,6 +663,7 @@ fn encode(
         count("mem.counts_mb", plan.counts * runner.nodes * 4 >> 20);
     }
     crate::code_rule_dsl::prof::time("gpu.size", || runner.size(plan))?;
+    mark("sized");
     let _encode = crate::code_rule_dsl::prof::Stage::start("gpu.encode");
     for (group, ((recursive, levels), &rounds)) in plan.steps.iter().zip(rounds).enumerate() {
         if !recursive {
@@ -715,12 +721,17 @@ fn encode(
         })
         .count();
     runner.outcome.waits[1] = runner.flag(3) as usize + unsettled;
-    runner.outcome.labels = unsafe {
-        std::slice::from_raw_parts(
-            runner.tapes.supertypes.buffer.contents().cast::<u32>().add(2),
-            plan.labels * words,
-        )
-        .to_vec()
+    let result = unsafe {
+        std::slice::from_raw_parts(runner.tapes.supertypes.buffer.contents().cast::<u32>().add(2), plan.labels * words)
+    };
+    // Into the plan's initial labels where it can take them (no second host copy of the labels).
+    runner.outcome.labels = match plan.initial.take() {
+        Some(mut labels) => {
+            labels.clear();
+            labels.extend_from_slice(result);
+            labels
+        }
+        None => result.to_vec(),
     };
     if let (Some(buffers), Some((files, supertypes))) = (plan.buffers, runner.tapes.base.take()) {
         let kept = Kept {
@@ -776,10 +787,13 @@ fn tapes(device: &Device, files: &[TapeDoc], plan: &Plan<'_>, words: usize, kept
     unsafe {
         let head = supertypes.buffer.contents().cast::<MetalSupertype>();
         head.write(MetalSupertype { node: plan.labels as u32, kind: words as u32 });
-        if let Some(initial) = plan.initial.as_ref() {
+        let initial = plan.initial.take();
+        if let Some(initial) = initial.as_ref() {
             let length = initial.len().min(plan.labels * words);
             std::ptr::copy_nonoverlapping(initial.as_ptr(), head.add(1).cast::<u32>(), length);
         }
+        // Back for a retry, which builds the prefix again.
+        plan.initial.set(initial);
         std::ptr::copy_nonoverlapping(base_supertypes.as_ptr(), head.add(prefix), base_supertypes.len());
     }
     let mut batch_files = base_files.clone();
