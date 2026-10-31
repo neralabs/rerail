@@ -170,7 +170,9 @@ impl Wave {
                 })
                 .collect::<StoreResult<Vec<Arc<Tape>>>>()
         })?;
+        crate::code_rule_dsl::prof::peak("1.tapes");
         let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
+        crate::code_rule_dsl::prof::peak("2.candidates");
         let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
         // A clause's labels are needed only where its root program starts.
         let active = candidates.iter().map(|clause| clause.iter().map(|nodes| !nodes.is_empty()).collect()).collect::<Vec<Vec<bool>>>();
@@ -181,6 +183,7 @@ impl Wave {
             }
             _ => self.lowered.labelled(&docs, &active).map_err(invalid)?,
         }) })?;
+        crate::code_rule_dsl::prof::peak("3.labels");
         let programs = self.lowered.programs();
         let anchors = (0..views.len())
             .map(|file| candidates.iter().map(|clause| clause[file].clone()).collect::<Vec<_>>())

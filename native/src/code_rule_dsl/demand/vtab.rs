@@ -8,7 +8,7 @@ use super::super::language::adapter::{Adapter, ValueRules, with_adapter};
 use super::super::language::Family;
 use super::super::transducer::packed::{
     Error as PackedError, ExecutionBackend, Program, execute_with_backend_packed_result_limits,
-    packed_workspace_fits,
+    packed_workspace_bytes, packed_workspace_fits,
 };
 use super::super::tape::TapeDoc;
 use super::super::value::structure::Equality;
@@ -110,6 +110,9 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     result_limits: Vec<u32>,
     failure_injections: HashMap<usize, String>,
 }
+
+/// The workspace bytes one execution's files may take together (`execution_partitions`).
+const RANGE_BYTES: u64 = 64 << 20;
 
 /// `0..file_count` as the ranges that fit, in order: a range that does not fit is halved.
 fn stable_partition_ranges(file_count: usize, fits: impl Fn(&Range<usize>) -> bool) -> Vec<Range<usize>> {
@@ -283,20 +286,32 @@ impl PackedDemand {
             .collect()
     }
 
+    /// The file ranges that run as one execution each: consecutive files whose workspaces
+    /// together stay within `RANGE_BYTES`, each file sized once on its own (06 S7: halving the
+    /// whole chunk built its batch at every level, 2.4 s, and a range that only had to fit the
+    /// `u32` totals held a workspace of gigabytes). A file over the budget, or too large to size,
+    /// runs alone (and in program groups, `program_groups`, where it does not fit).
     fn execution_partitions(&self) -> (Vec<Range<usize>>, Vec<HardPartition>) {
-        let ranges = stable_partition_ranges(self.files.len(), |range| {
-            let fit = packed_workspace_fits(
-                &self.programs,
-                &self.files[range.clone()],
-                &self.anchors[range.clone()],
-                &self.result_limits,
-            );
-            fit.is_ok()
-                || !matches!(
-                    fit,
-                    Err(PackedError::BackendCapacity | PackedError::BackendFailure)
-                )
-        });
+        use rayon::prelude::*;
+        let bytes = (0..self.files.len())
+            .into_par_iter()
+            .map(|file| {
+                packed_workspace_bytes(&self.programs, &self.files[file..=file], &self.anchors[file..=file], &self.result_limits)
+                    .unwrap_or(u64::MAX)
+            })
+            .collect::<Vec<_>>();
+        let mut ranges = Vec::new();
+        let (mut start, mut total) = (0, 0_u64);
+        for (file, &size) in bytes.iter().enumerate() {
+            if file > start && total.saturating_add(size) > RANGE_BYTES {
+                ranges.push(start..file);
+                (start, total) = (file, 0);
+            }
+            total = total.saturating_add(size);
+        }
+        if start < self.files.len() || ranges.is_empty() {
+            ranges.push(start..self.files.len());
+        }
         let partitions = self.partition_records(&ranges);
         (ranges, partitions)
     }
@@ -357,6 +372,7 @@ impl PackedDemand {
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground
         );
         let (partition_ranges, partitions) = crate::code_rule_dsl::prof::time("demand.partitions", || self.execution_partitions());
+        crate::code_rule_dsl::prof::count("demand.ranges", partition_ranges.len());
         let mut counters = PackedExecutionCounters {
             registrations: 1,
             virtual_table_scans: 0,

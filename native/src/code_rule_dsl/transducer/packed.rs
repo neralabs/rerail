@@ -92,7 +92,7 @@ pub(in crate::code_rule_dsl) use compile_matcher::{LoweredMatcher, LoweredWave};
 // A label program's walk without the interpreter's machinery (O28).
 #[path = "packed/compile/micro.rs"]
 mod compile_micro;
-pub(in crate::code_rule_dsl) use compile_micro::{Frames, Micro, steps as micro_steps};
+pub(in crate::code_rule_dsl) use compile_micro::{Emit, Frames, Micro, steps as micro_steps};
 #[cfg(test)]
 #[path = "packed/compile/matcher_tests.rs"]
 mod compile_matcher_tests;
@@ -3661,6 +3661,19 @@ pub(in crate::code_rule_dsl) fn packed_workspace_fits(
     batch
         .assign_workspace_with_result_limits(programs, Some(result_limits))
         .map(|_| ())
+}
+
+/// The bytes a packed workspace for `programs` on `files` takes (`packed_workspace_fits`'s
+/// batch, sized): what an execution of them holds while it runs.
+pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: &[u32],
+) -> Result<u64, Error> {
+    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let totals = batch.assign_workspace_with_result_limits(programs, Some(result_limits))?;
+    batch.workspace_allocation_bytes(totals).ok_or(Error::BackendCapacity)
 }
 
 pub(in crate::code_rule_dsl) fn execute_with_backend_packed_result_limits(

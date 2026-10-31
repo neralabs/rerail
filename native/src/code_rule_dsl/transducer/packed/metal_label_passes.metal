@@ -101,7 +101,7 @@ static uint micro_next(device const Node* nodes,device const uint* children,thre
   return MICRO_NONE;
 }
 
-kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],constant Shape& shape [[buffer(10)]],uint tid [[thread_position_in_grid]]){
+kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],constant Shape& shape [[buffer(11)]],uint tid [[thread_position_in_grid]]){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   if(tid>=shape.itemCount)return;
   uint low=0u,high=shape.targetCount;while(high-low>1u){uint middle=(low+high)/2u;if(passes[middle].itemStart<=tid)low=middle;else high=middle;}
@@ -142,9 +142,13 @@ kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint
         case 48u:{if(depth==MICRO_FRAMES)MICRO_FAIL MicroFrame frame=path;frame.pc=arg;frame.resume=0u;stack[depth++]=frame;}break;
         case 49u:path.pc=arg;continue;
         case 64u:
+          // As label_sink routes: 0 the start (once), 1 the captured nodes, 2 a tally by start,
+          // 3 a tally by captured node, one each path.
           if(pass.targets==0u){mark(bits,start);return;}
-          if(path.captured>0u)mark(bits,path.capture0);
-          if(path.captured>1u)mark(bits,path.capture1);
+          if(pass.targets==1u){if(path.captured>0u)mark(bits,path.capture0);if(path.captured>1u)mark(bits,path.capture1);}
+          else{device atomic_uint* tally=counts+pass.target*shape.nodeCount;
+            if(pass.targets==2u)atomic_fetch_add_explicit(&tally[start],1u,memory_order_relaxed);
+            else{if(path.captured>0u)atomic_fetch_add_explicit(&tally[path.capture0],1u,memory_order_relaxed);if(path.captured>1u)atomic_fetch_add_explicit(&tally[path.capture1],1u,memory_order_relaxed);}}
           alive=false;break;
         default:MICRO_FAIL
       }

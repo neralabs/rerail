@@ -235,8 +235,8 @@ struct Prepared {
     result_capacity: usize,
 }
 
-/// A level's micro walks (`label_micro`): per pass {word start, word count, scratch label,
-/// targets, item start, item count, first text slot, 0}, the passes' words, and their starts
+/// A level's micro walks (`label_micro`): per pass {word start, word count, scratch label or
+/// count slot, mode (as `label_sink`'s routes), item start, item count, first text slot, 0}, the passes' words, and their starts
 /// (global nodes).
 struct Walks {
     passes: MappedBuffer,
@@ -690,7 +690,7 @@ impl Runner<'_> {
                 // Each distinct (value, kind)'s slot row, computed once for the run's levels.
                 let mut rows = HashMap::<String, Option<u32>>::new();
                 passes.retain(|&(program, roots, mode, target)| {
-                    let Some(walk) = (mode < 2).then(|| Micro::of(program)).flatten() else { return true };
+                    let Some(walk) = Micro::of(program) else { return true };
                     // The walk's slots as rows of `texts`, contiguous from `text_start`; a row
                     // already computed for another pass is copied.
                     let mut own = Vec::new();
@@ -1107,7 +1107,7 @@ impl Runner<'_> {
         let tapes = &self.tapes;
         let (nodes, children, supertypes, files) =
             (tapes.nodes.buffer.clone(), tapes.children.buffer.clone(), tapes.supertypes.buffer.clone(), tapes.files.buffer.clone());
-        let (scratch, flags) = (self.scratch.buffer.clone(), self.flags.buffer.clone());
+        let (scratch, flags, counts) = (self.scratch.buffer.clone(), self.flags.buffer.clone(), self.counts.buffer.clone());
         let buffers = [
             (&nodes, 0),
             (&children, 0),
@@ -1119,6 +1119,7 @@ impl Runner<'_> {
             (&scratch, 0),
             (&flags, 0),
             (&texts, 0),
+            (&counts, 0),
         ];
         self.kernel(3, &buffers, shape, shape.item_count as usize);
     }

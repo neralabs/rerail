@@ -68,6 +68,28 @@ enum Resume {
     Following { next: u32, named: bool },
 }
 
+/// What a walk marks at each path that emits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) enum Emit {
+    /// The start, once: a roots label (the walk stops at the first).
+    Start,
+    /// The start, at every path: a count by root.
+    EveryStart,
+    /// Each node the path captured: a targets label, or a count by captured node.
+    Captures,
+}
+
+impl Emit {
+    /// A pass's mode as `metal_label_passes` routes it: 0 roots, 1 captured, 2 and 3 counts.
+    pub(in crate::code_rule_dsl) fn of_mode(mode: u32) -> Self {
+        match mode {
+            0 => Self::Start,
+            2 => Self::EveryStart,
+            _ => Self::Captures,
+        }
+    }
+}
+
 /// A walk's frames, kept between walks so a sweep allocates them once.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Frames(Vec<(State, Resume)>);
@@ -193,15 +215,15 @@ impl Micro {
     }
 
     /// The walk from `start` on `tape`, whose labels (classes from `DERIVED_CLASS_BASE`) are
-    /// `labels` and whose text slots are `texts` (`Micro::texts`): `mark` takes each output's start (`targets` false), or each node an output
-    /// captured.
+    /// `labels` and whose text slots are `texts` (`Micro::texts`): `mark` takes what `emit` says of
+    /// each output (a count tallies one call a mark).
     pub(in crate::code_rule_dsl) fn run(
         &self,
         tape: &TapeDoc,
         labels: &[Vec<u64>],
         texts: &[Vec<u64>],
         start: u32,
-        targets: bool,
+        emit: Emit,
         frames: &mut Frames,
         mark: &mut impl FnMut(u32),
     ) -> Result<(), Overflow> {
@@ -294,11 +316,14 @@ impl Micro {
                         continue;
                     }
                     EMIT => {
-                        if !targets {
-                            mark(start);
-                            return Ok(());
+                        match emit {
+                            Emit::Start => {
+                                mark(start);
+                                return Ok(());
+                            }
+                            Emit::EveryStart => mark(start),
+                            Emit::Captures => state.captures[..usize::from(state.captured)].iter().for_each(|&node| mark(node)),
                         }
-                        state.captures[..usize::from(state.captured)].iter().for_each(|&node| mark(node));
                         false
                     }
                     _ => return Err(Overflow("operation")),

@@ -128,6 +128,7 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
     }
     // The paths that may have changed: every path of the root when cold, else the observer's.
     let old = if cold { None } else { store.binding(&tree_name(scope, ""))? };
+    prof::peak("0.start");
     let ingested = prof::time("slice.push", || Families::default().push(store, scope, root, PUSH_WAVES, |_| Ok(Vec::new())))?;
     let changes = store.tree_changes_since(old, root)?;
     let kept = kept_documents(&lease, scope)?;
@@ -157,8 +158,10 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
         remember(&lease, scope, &rules.digest, &documents)
     })?;
 
+    prof::peak("4.wave");
     let emitted = rules.layer.program(store)?;
     let (findings, layer) = prof::time("slice.layer", || rules.layer.findings(&lease, store, scope, &documents, &emitted))?;
+    prof::peak("5.layer");
     Ok(Run {
         findings,
         paths: documents.iter().map(|d| (d.key, d.path.clone())).collect(),

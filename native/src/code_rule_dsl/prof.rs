@@ -76,3 +76,16 @@ pub(in crate::code_rule_dsl) fn count_named(stage: String, amount: usize) {
         stages.entry(stage).or_default().1 += amount;
     }
 }
+
+/// Records the process's peak resident memory so far, in MB, as `stage`'s count (the largest seen).
+pub(in crate::code_rule_dsl) fn peak(stage: &str) {
+    if *ON {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        // macOS reports bytes; Linux, kilobytes.
+        let mb = if cfg!(target_os = "macos") { usage.ru_maxrss as usize >> 20 } else { usage.ru_maxrss as usize >> 10 };
+        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let entry = stages.entry(format!("peak_mb.{stage}")).or_default();
+        entry.1 = entry.1.max(mb);
+    }
+}

@@ -405,6 +405,9 @@ fn micro_walks_are_the_interpreters_label_outputs() {
     let active = vec![vec![true; tapes.len()]; lowered.len()];
     let views = wave.labelled(&tapes, &active).unwrap();
     let programs = wave.label_programs();
+    // The count programs: their marks are tallies, compared with multiplicity.
+    let counts = wave.count_programs();
+    let counted = programs.iter().filter(|(program, _)| counts.contains(&std::ptr::from_ref(*program))).count();
     let micro = programs.iter().map(|(program, targets)| Micro::of(program).map(|m| (m, *targets))).collect::<Vec<_>>();
     let (mut compared, mut overflowed, mut marked) = (0_usize, 0_usize, 0_usize);
     let mut frames = Frames::default();
@@ -413,16 +416,24 @@ fn micro_walks_are_the_interpreters_label_outputs() {
             let Some((walk, targets)) = walk else { continue };
             let Some(texts) = walk.texts(program, view) else { continue };
             for node in 0..view.transducer_len() as u32 {
-                let expected = program
-                    .execute_roots(view, [node])
-                    .unwrap()
+                // A label's marks as a set; a count's as a multiset (each output tallies).
+                let outputs = program.execute_roots(view, [node]).unwrap();
+                let mut expected = outputs
                     .iter()
-                    .flat_map(|output| if *targets { output.captures.iter().map(|c| c.node).collect() } else { vec![output.start] })
-                    .collect::<BTreeSet<_>>();
-                let mut found = BTreeSet::new();
-                match walk.run(view, view.transducer_labels(), &texts, node, *targets, &mut frames, &mut |n| {
-                    found.insert(n);
-                }) {
+                    .flat_map(|output| if *targets == Emit::Captures { output.captures.iter().map(|c| c.node).collect() } else { vec![output.start] })
+                    .collect::<Vec<_>>();
+                if *targets == Emit::Start {
+                    expected.truncate(1);
+                }
+                let mut found = Vec::new();
+                let result = walk.run(view, view.transducer_labels(), &texts, node, *targets, &mut frames, &mut |n| found.push(n));
+                expected.sort_unstable();
+                found.sort_unstable();
+                if *targets == Emit::Captures && !counts.contains(&std::ptr::from_ref(*program)) {
+                    expected.dedup();
+                    found.dedup();
+                }
+                match result {
                     Ok(()) => {
                         assert_eq!(found, expected, "program {:?} at node {node}", program.words);
                         compared += 1;
@@ -438,7 +449,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
     }
     let eligible = micro.iter().filter(|m| m.is_some()).count();
     let texts = micro.iter().flatten().filter(|(m, _)| !m.texts.is_empty()).count();
-    eprintln!("micro: {texts} of the walks test text");
+    eprintln!("micro: {texts} of the walks test text; {counted} of the programs count");
     eprintln!("micro: {eligible} of {} label programs; {compared} starts compared, {marked} marks, {overflowed} overflowed", programs.len());
     assert!(eligible * 2 > programs.len(), "most label programs are micro walks");
     assert!(compared > 100_000 && overflowed * 100 < compared);

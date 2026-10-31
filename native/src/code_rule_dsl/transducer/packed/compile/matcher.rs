@@ -480,16 +480,30 @@ impl LoweredWave {
         self.labels
     }
 
-    /// Every clause's label programs with their domains, and whether each marks the nodes it
-    /// captures (a targets label) rather than its starts.
+    /// The count programs among `label_programs`, by address.
     #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn label_programs(&self) -> Vec<(&Program, bool)> {
+    pub(in crate::code_rule_dsl) fn count_programs(&self) -> BTreeSet<*const Program> {
         self.clauses
             .iter()
             .flat_map(|clause| clause.labels.defs.iter())
             .filter_map(|label| match label {
-                Label::Roots(program, _) => Some((program, false)),
-                Label::Targets(program, _) => Some((program, true)),
+                Label::Count { program, .. } => Some(std::ptr::from_ref(program)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every clause's label and count programs, with what each marks (`Emit`).
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn label_programs(&self) -> Vec<(&Program, Emit)> {
+        self.clauses
+            .iter()
+            .flat_map(|clause| clause.labels.defs.iter())
+            .filter_map(|label| match label {
+                Label::Roots(program, _) => Some((program, Emit::Start)),
+                Label::Targets(program, _) => Some((program, Emit::Captures)),
+                Label::Count { program, by: Tally::Start, .. } => Some((program, Emit::EveryStart)),
+                Label::Count { program, by: Tally::Capture, .. } => Some((program, Emit::Captures)),
                 _ => None,
             })
             .collect()
@@ -1236,7 +1250,10 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
                     marks.clear();
                     let walked = walks[&(std::ptr::from_ref(clause) as usize, id)]
                         .as_ref()
-                        .is_some_and(|(walk, texts)| walk.run(tape, sets, texts, node, targets, &mut frames, &mut |node| marks.push(node)).is_ok());
+                        .is_some_and(|(walk, texts)| {
+                            let emit = if targets { Emit::Captures } else { Emit::Start };
+                            walk.run(tape, sets, texts, node, emit, &mut frames, &mut |node| marks.push(node)).is_ok()
+                        });
                     if !walked {
                         marks.clear();
                         let view = tape.with_labels(Arc::clone(sets));
