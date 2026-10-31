@@ -211,19 +211,25 @@ impl Wave {
     ) -> StoreResult<Vec<Vec<Vec<u32>>>> {
         let ids = tapes.iter().map(|tape| tape.id).collect::<Vec<_>>();
         let plans = self.plans.iter().map(Arc::as_ref).collect::<Vec<_>>();
-        let rows = crate::code_rule_dsl::prefilter::select(graph.store(), self.lang, &plans, &ids)?;
-        let position = |row: i64| ids.iter().position(|id| id.row() == row);
-        rows.into_iter()
+        let rows = crate::code_rule_dsl::prof::time("candidates.select", || crate::code_rule_dsl::prefilter::select(graph.store(), self.lang, &plans, &ids))?;
+        let _sort = crate::code_rule_dsl::prof::Stage::start("candidates.sort");
+        let files = ids.iter().enumerate().map(|(file, id)| (id.row(), file)).collect::<std::collections::HashMap<_, _>>();
+        use rayon::prelude::*;
+        rows.into_par_iter()
             .enumerate()
             .map(|(clause, rows)| {
-                let mut out = vec![BTreeSet::new(); tapes.len()];
+                let mut out = vec![Vec::new(); tapes.len()];
                 for (row, node) in rows {
-                    let file = position(row).ok_or_else(|| StoreError::Corrupt(format!("candidate of tape {row} outside the chunk")))?;
+                    let file = *files.get(&row).ok_or_else(|| StoreError::Corrupt(format!("candidate of tape {row} outside the chunk")))?;
                     if self.lowered.starts(clause, &tapes[file].doc, node) {
-                        out[file].insert(node);
+                        out[file].push(node);
                     }
                 }
-                Ok(out.into_iter().map(|nodes| nodes.into_iter().collect()).collect())
+                out.iter_mut().for_each(|nodes| {
+                    nodes.sort_unstable();
+                    nodes.dedup();
+                });
+                Ok(out)
             })
             .collect()
     }

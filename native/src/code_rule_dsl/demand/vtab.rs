@@ -8,7 +8,7 @@ use super::super::language::adapter::{Adapter, ValueRules, with_adapter};
 use super::super::language::Family;
 use super::super::transducer::packed::{
     Error as PackedError, ExecutionBackend, Program, execute_with_backend_packed_result_limits,
-    packed_workspace_bytes, packed_workspace_fits,
+    packed_program_counts, packed_workspace_fits, packed_workspace_size,
 };
 use super::super::tape::TapeDoc;
 use super::super::value::structure::Equality;
@@ -286,41 +286,92 @@ impl PackedDemand {
             .collect()
     }
 
-    /// The file ranges that run as one execution each: consecutive files whose workspaces
-    /// together stay within `RANGE_BYTES`, each file sized once on its own (06 S7: halving the
-    /// whole chunk built its batch at every level, 2.4 s, and a range that only had to fit the
-    /// `u32` totals held a workspace of gigabytes). A file over the budget, or too large to size,
-    /// runs alone (and in program groups, `program_groups`, where it does not fit).
-    fn execution_partitions(&self) -> (Vec<Range<usize>>, Vec<HardPartition>) {
+    /// The file ranges that run as one execution each, from each file's workspace sized once on
+    /// its own and in parallel (06 S7: halving the whole chunk rebuilt its batch at every level,
+    /// 2.4 s). On Metal a range's workspaces together stay within `RANGE_BYTES`, as they are
+    /// allocated. The CPU's are demand-zero (pages only as used), so there a range only keeps
+    /// each record count within `u32` (halved, as a margin). A file that cannot be sized runs
+    /// alone, in program groups (`program_groups`). The third value: each file's bytes, or
+    /// `u64::MAX` where it could not be sized.
+    fn execution_partitions(&self) -> (Vec<Range<usize>>, Vec<HardPartition>, Vec<u64>) {
         use rayon::prelude::*;
-        let bytes = (0..self.files.len())
+        let metal = matches!(
+            self.backend,
+            ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground
+        );
+        let sizes = (0..self.files.len())
             .into_par_iter()
             .map(|file| {
-                packed_workspace_bytes(&self.programs, &self.files[file..=file], &self.anchors[file..=file], &self.result_limits)
-                    .unwrap_or(u64::MAX)
+                packed_workspace_size(&self.programs, &self.files[file..=file], &self.anchors[file..=file], &self.result_limits).ok()
             })
             .collect::<Vec<_>>();
+        let bytes = sizes.iter().map(|size| size.map_or(u64::MAX, |(bytes, _)| bytes)).collect::<Vec<_>>();
         let mut ranges = Vec::new();
-        let (mut start, mut total) = (0, 0_u64);
-        for (file, &size) in bytes.iter().enumerate() {
-            if file > start && total.saturating_add(size) > RANGE_BYTES {
+        let (mut start, mut total, mut counts) = (0, 0_u64, [0_u64; 15]);
+        for (file, size) in sizes.iter().enumerate() {
+            let fits = size.is_some_and(|(size, own)| {
+                if metal {
+                    total.saturating_add(size) <= RANGE_BYTES
+                } else {
+                    counts.iter().zip(own).all(|(sum, own)| sum + own <= u64::from(u32::MAX / 2))
+                }
+            });
+            // A file that cannot be sized ends the range before it and runs on its own.
+            if file > start && !fits {
                 ranges.push(start..file);
-                (start, total) = (file, 0);
+                (start, total, counts) = (file, 0, [0; 15]);
             }
-            total = total.saturating_add(size);
+            match size {
+                Some((size, own)) => {
+                    total = total.saturating_add(*size);
+                    counts.iter_mut().zip(own).for_each(|(sum, own)| *sum += own);
+                }
+                None => {
+                    ranges.push(file..file + 1);
+                    (start, total, counts) = (file + 1, 0, [0; 15]);
+                }
+            }
         }
         if start < self.files.len() || ranges.is_empty() {
             ranges.push(start..self.files.len());
         }
         let partitions = self.partition_records(&ranges);
-        (ranges, partitions)
+        if crate::code_rule_dsl::prof::on() {
+            for &size in &bytes {
+                crate::code_rule_dsl::prof::count(if size == u64::MAX { "demand.unsized" } else { "demand.sized_mb" }, if size == u64::MAX { 1 } else { (size >> 20) as usize });
+            }
+        }
+        (ranges, partitions, bytes)
     }
 
     /// The groups of programs that run on the files `range` together: all of them where they fit
     /// one workspace (or fail otherwise), else the longest runs that do, in order. A range that
     /// does not fit is one file (`execution_partitions`), whose tasks' states over every program
     /// can exceed a workspace's `u32` totals (06 S7: a 100 KB module of the standard library).
+    /// A file's programs in consecutive groups whose summed record counts (`packed_program_counts`,
+    /// one batch of the file) stay within `u32`, halved; a program over that alone is its own
+    /// group. Where the counts cannot be had, or a group still overflows when it runs, the fits
+    /// are searched (`program_groups_searched`, 06 S7: 1.0 s on four files).
     fn program_groups(&self, range: &Range<usize>) -> Vec<Range<usize>> {
+        let Ok(counts) = packed_program_counts(&self.programs, &self.files[range.clone()], &self.anchors[range.clone()]) else {
+            return self.program_groups_searched(range, 0..self.programs.len());
+        };
+        let mut groups = Vec::new();
+        let (mut start, mut sums) = (0, [0_u64; 15]);
+        for (program, own) in counts.iter().enumerate() {
+            if program > start && sums.iter().zip(own).any(|(sum, own)| sum + own > u64::from(u32::MAX / 2)) {
+                groups.push(start..program);
+                (start, sums) = (program, [0; 15]);
+            }
+            sums.iter_mut().zip(own).for_each(|(sum, own)| *sum += own);
+        }
+        if start < self.programs.len() {
+            groups.push(start..self.programs.len());
+        }
+        groups
+    }
+
+    fn program_groups_searched(&self, range: &Range<usize>, within: Range<usize>) -> Vec<Range<usize>> {
         let fits = |programs: &Range<usize>| {
             let anchors = self.anchors[range.clone()].iter().map(|file| file[programs.clone()].to_vec()).collect::<Vec<_>>();
             !matches!(
@@ -328,15 +379,14 @@ impl PackedDemand {
                 Err(PackedError::BackendCapacity | PackedError::BackendFailure)
             )
         };
-        let all = 0..self.programs.len();
-        if fits(&all) {
-            return vec![all];
+        if fits(&within) {
+            return vec![within];
         }
         let mut groups = Vec::new();
-        let mut start = 0;
-        while start < self.programs.len() {
+        let mut start = within.start;
+        while start < within.end {
             // The longest run from `start` that fits; one program at least, which fails alone.
-            let (mut low, mut high) = (start + 1, self.programs.len());
+            let (mut low, mut high) = (start + 1, within.end);
             while low < high {
                 let middle = low + (high - low).div_ceil(2);
                 if fits(&(start..middle)) {
@@ -371,7 +421,7 @@ impl PackedDemand {
             self.backend,
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground
         );
-        let (partition_ranges, partitions) = crate::code_rule_dsl::prof::time("demand.partitions", || self.execution_partitions());
+        let (partition_ranges, partitions, sizes) = crate::code_rule_dsl::prof::time("demand.partitions", || self.execution_partitions());
         crate::code_rule_dsl::prof::count("demand.ranges", partition_ranges.len());
         let mut counters = PackedExecutionCounters {
             registrations: 1,
@@ -391,27 +441,58 @@ impl PackedDemand {
         };
         // A range is one execution of every program; a file too large for one (its tasks' states
         // over a workspace's), one per group of programs that fits.
-        let executions = partition_ranges
+        let jobs = partition_ranges
             .iter()
             .flat_map(|range| {
-                // A range of several files fits (`execution_partitions` halves until it does); a
-                // single file may not.
-                let groups = if range.len() == 1 { self.program_groups(range) } else { vec![0..self.programs.len()] };
+                // A range of several files fits (each was sized); a single file that could not be
+                // sized may not.
+                let groups = if range.len() == 1 && sizes[range.start] == u64::MAX {
+                    crate::code_rule_dsl::prof::time("demand.groups", || self.program_groups(range))
+                } else {
+                    vec![0..self.programs.len()]
+                };
                 groups.into_iter().map(move |programs| (range.clone(), programs))
             })
-            .map(|(range, programs)| {
-                let anchors = self.anchors[range.clone()].iter().map(|file| file[programs.clone()].to_vec()).collect::<Vec<_>>();
-                let _roots = crate::code_rule_dsl::prof::Stage::start("demand.roots");
-                execute_with_backend_packed_result_limits(
-                    self.backend,
-                    &self.programs[programs.clone()],
-                    &self.files[range.clone()],
-                    &anchors,
-                    Some(&self.result_limits[programs.clone()]),
-                )
-                .map(|execution| (range.start, programs.start, execution))
-            })
-            .collect::<Result<Vec<_>, _>>();
+            .collect::<Vec<_>>();
+        let run = |range: Range<usize>, programs: Range<usize>| {
+            let anchors = self.anchors[range.clone()].iter().map(|file| file[programs.clone()].to_vec()).collect::<Vec<_>>();
+            let _roots = crate::code_rule_dsl::prof::Stage::start("demand.roots");
+            execute_with_backend_packed_result_limits(
+                self.backend,
+                &self.programs[programs.clone()],
+                &self.files[range.clone()],
+                &anchors,
+                Some(&self.result_limits[programs.clone()]),
+            )
+            .map(|execution| (range.start, programs.start, execution))
+        };
+        let execute = |(range, programs): &(Range<usize>, Range<usize>)| {
+            match run(range.clone(), programs.clone()) {
+                // The files' counts summed within the margin, yet the batch overflowed: each
+                // file on its own (each was sized alone, so each fits).
+                Err(PackedError::BackendCapacity) if range.len() > 1 => {
+                    crate::code_rule_dsl::prof::count("demand.range_splits", 1);
+                    range.clone().map(|file| run(file..file + 1, programs.clone())).collect::<Result<Vec<_>, _>>()
+                }
+                // A group of a file's programs whose summed counts were within the margin, yet
+                // overflowed: its fits searched.
+                Err(PackedError::BackendCapacity) if programs.len() > 1 => {
+                    crate::code_rule_dsl::prof::count("demand.group_splits", 1);
+                    self.program_groups_searched(range, programs.clone())
+                        .into_iter()
+                        .map(|group| run(range.clone(), group))
+                        .collect::<Result<Vec<_>, _>>()
+                }
+                other => other.map(|execution| vec![execution]),
+            }
+        };
+        // One at a time: in parallel the CPU's took 21 s of CPU time for 1.3 s and 2.4 GB of RSS
+        // on S7 (0017 and 0020).
+        let executions = jobs
+            .iter()
+            .map(execute)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|executions| executions.into_iter().flatten().collect::<Vec<_>>());
         let executions = match executions {
             Ok(executions) => {
                 counters.command_buffers = usize::from(metal) * executions.len();
@@ -444,6 +525,7 @@ impl PackedDemand {
         };
         let mut rows: Vec<PackedRow> = Vec::new();
         let mut structure_keys = HashMap::new();
+        let _rows = crate::code_rule_dsl::prof::Stage::start("demand.rows");
         for (file_start, program_start, execution) in executions {
             for local_file in 0..execution.file_count() {
                 let file = file_start + local_file;
@@ -808,19 +890,27 @@ impl PackedDemand {
                 }
             }
         }
+        drop(_rows);
+        let _documents = crate::code_rule_dsl::prof::Stage::start("demand.documents");
+        // Each source file's generated document, where its maps name exactly one: computed once
+        // per file rather than per row (06 S7: rows × maps took ~1.5 s).
+        let mut documents = HashMap::<usize, Option<usize>>::new();
+        for span in &self.document_maps {
+            documents
+                .entry(span.source_document)
+                .and_modify(|document| {
+                    if *document != Some(span.generated_document) {
+                        *document = None;
+                    }
+                })
+                .or_insert(Some(span.generated_document));
+        }
         for row in &mut rows {
             let Some(file) = row.file_index.and_then(|file| usize::try_from(file).ok()) else {
                 continue;
             };
-            let mut generated = self
-                .document_maps
-                .iter()
-                .filter(|span| span.source_document == file)
-                .map(|span| span.generated_document);
-            if let Some(document) = generated.next()
-                && generated.all(|candidate| candidate == document)
-            {
-                row.document_id = Some(document as i64);
+            if let Some(Some(document)) = documents.get(&file) {
+                row.document_id = Some(*document as i64);
             }
         }
         rows.extend(
@@ -830,6 +920,7 @@ impl PackedDemand {
                 .map(|(index, span)| PackedRow::document_map(token, index, *span)),
         );
         rows.insert(0, PackedRow::batch_status(token, true, None));
+        drop(_documents);
         MaterializedDemand {
             rows: Arc::new(rows),
             producer_kinds: Arc::new(self.producer_kinds.clone()),

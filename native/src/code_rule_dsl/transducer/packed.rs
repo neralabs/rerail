@@ -3665,6 +3665,29 @@ pub(in crate::code_rule_dsl) fn packed_workspace_fits(
 
 /// The bytes a packed workspace for `programs` on `files` takes (`packed_workspace_fits`'s
 /// batch, sized): what an execution of them holds while it runs.
+/// A packed workspace's size for `programs` on `files`: its bytes and its record counts
+/// (`PackedBatch::workspace_counts`).
+pub(in crate::code_rule_dsl) fn packed_workspace_size(
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: &[u32],
+) -> Result<(u64, [u64; 15]), Error> {
+    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let totals = batch.assign_workspace_with_result_limits(programs, Some(result_limits))?;
+    let bytes = batch.workspace_allocation_bytes(totals).ok_or(Error::BackendCapacity)?;
+    Ok((bytes, batch.workspace_counts(totals)))
+}
+
+/// Each program's record counts on `files` (`PackedBatch::program_counts`), from one batch.
+pub(in crate::code_rule_dsl) fn packed_program_counts(
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+) -> Result<Vec<[u64; 15]>, Error> {
+    packed_batch::PackedBatch::new(programs, files, anchors)?.program_counts(programs)
+}
+
 pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
     programs: &[Program],
     files: &[TapeDoc],

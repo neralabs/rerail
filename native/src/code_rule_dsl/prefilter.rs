@@ -119,13 +119,17 @@ pub(in crate::code_rule_dsl) fn select(
 ) -> StoreResult<Vec<Vec<(i64, u32)>>> {
     let files = tapes.iter().map(|tape| tape.row()).collect::<Vec<_>>();
     // Statistics only order the lowering, so reading them in their own snapshot is safe.
-    let statistics = store.candidate_transaction(false, |db| {
-        crate::code_rule_dsl::stats::inputs::Statistics::read(db, plans.iter().map(|plan| (lang, *plan)))
+    use crate::code_rule_dsl::prof::time;
+    let statistics = time("select.statistics", || {
+        store.candidate_transaction(false, |db| {
+            crate::code_rule_dsl::stats::inputs::Statistics::read(db, plans.iter().map(|plan| (lang, *plan)))
+        })
     })?;
-    let statement = lower::batch(plans, lang, &files, &statistics);
-    lab::capture::save(store, &statement)?;
+    let statement = time("select.lower", || lower::batch(plans, lang, &files, &statistics));
+    time("select.capture", || lab::capture::save(store, &statement))?;
     let mut rows = vec![Vec::new(); plans.len()];
-    execute::candidates(store, &statement, |plan, tape, pre| rows[plan].push((tape, pre as u32)))?;
+    time("select.execute", || execute::candidates(store, &statement, |plan, tape, pre| rows[plan].push((tape, pre as u32))))?;
+    crate::code_rule_dsl::prof::count("select.rows", rows.iter().map(Vec::len).sum());
     Ok(rows)
 }
 

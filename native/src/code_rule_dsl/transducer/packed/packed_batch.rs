@@ -696,6 +696,29 @@ impl ProgramCapacityFacts {
 }
 
 impl PackedBatch {
+    /// The record counts `workspace_allocation_bytes` sizes, in its order: each is a `u32`
+    /// arena's, so a batch whose counts sum past `u32::MAX` does not fit one workspace.
+    pub(super) fn workspace_counts(&self, totals: super::packed_workspace::WorkspaceTotals) -> [u64; 15] {
+        [
+            totals.pending,
+            totals.captures,
+            totals.cursors,
+            totals.repeats,
+            totals.query_states,
+            totals.query_members,
+            totals.queued_states,
+            totals.greedy_entries,
+            totals.value_states,
+            totals.results,
+            totals.candidates,
+            totals.output_captures,
+            totals.properties,
+            self.tasks.len() as u32,
+            self.header.workspace_byte_count,
+        ]
+        .map(u64::from)
+    }
+
     pub(super) fn workspace_allocation_bytes(
         &self,
         totals: super::packed_workspace::WorkspaceTotals,
@@ -760,15 +783,8 @@ impl PackedBatch {
         self.assign_workspace_with_result_limits_and_lanes(programs, result_limits, 0)
     }
 
-    pub(super) fn assign_workspace_with_result_limits_and_lanes(
-        &mut self,
-        programs: &[Program],
-        result_limits: Option<&[u32]>,
-        lanes_per_evaluation: usize,
-    ) -> Result<super::packed_workspace::WorkspaceTotals, Error> {
-        if result_limits.is_some_and(|limits| limits.len() != programs.len()) {
-            return Err(Error::InvalidAnchor);
-        }
+    /// Each task's capacities, in task order: what `assign_workspace_*` plans arenas from.
+    pub(super) fn task_capacities(&self, programs: &[Program]) -> Result<Vec<super::packed_workspace::TaskCapacities>, Error> {
         let facts = programs
             .iter()
             .map(ProgramCapacityFacts::new)
@@ -904,7 +920,47 @@ impl PackedBatch {
                     properties,
                 })
             })
-            .collect::<Result<Vec<_>, Error>>()?;
+            .collect::<Result<Vec<_>, Error>>();
+        capacities
+    }
+
+    /// Each program's record counts over its tasks (`workspace_counts`' order, before arenas are
+    /// shared or result limits applied): an upper bound that sums across programs and files.
+    pub(super) fn program_counts(&self, programs: &[Program]) -> Result<Vec<[u64; 15]>, Error> {
+        let mut counts = vec![[0_u64; 15]; programs.len()];
+        for (task, capacity) in self.tasks.iter().zip(self.task_capacities(programs)?) {
+            let own = [
+                capacity.pending,
+                capacity.captures,
+                capacity.cursors,
+                capacity.repeats,
+                capacity.query_states,
+                capacity.query_members,
+                capacity.queued_states,
+                capacity.greedy_entries,
+                capacity.value_states,
+                capacity.results,
+                capacity.candidates,
+                capacity.output_captures,
+                capacity.properties,
+                1,
+                capacity.output_bytes,
+            ];
+            counts[task.program as usize].iter_mut().zip(own).for_each(|(sum, own)| *sum += u64::from(own));
+        }
+        Ok(counts)
+    }
+
+    pub(super) fn assign_workspace_with_result_limits_and_lanes(
+        &mut self,
+        programs: &[Program],
+        result_limits: Option<&[u32]>,
+        lanes_per_evaluation: usize,
+    ) -> Result<super::packed_workspace::WorkspaceTotals, Error> {
+        if result_limits.is_some_and(|limits| limits.len() != programs.len()) {
+            return Err(Error::InvalidAnchor);
+        }
+        let capacities = self.task_capacities(programs)?;
         let shared_caps = (lanes_per_evaluation > 0).then(|| {
             let mut caps = [u32::MAX; ARENA_KIND_COUNT];
             caps[ArenaKind::Result as usize] = DURABLE_RESULT_PAGE_CAPACITY;
