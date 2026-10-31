@@ -925,8 +925,17 @@ fn apart<'a>(
     let words = nodes.div_ceil(32).max(1);
     let mut outcome = Outcome { labels: vec![0; labels * words], words, ..Outcome::default() };
     let mut segment = (Vec::new(), Vec::new());
-    // The runs label the same tapes, so a text row evaluated by one serves the rest.
+    // The runs label the same tapes, so a text row evaluated by one serves the rest (and the
+    // sweeps between them, each a file's slice of it).
     let rows = metal_program_backend::label_passes::TextRows::default();
+    let bases = tapes
+        .iter()
+        .scan(0_usize, |base, tape| {
+            let at = *base;
+            *base += tape.transducer_len();
+            Some(at)
+        })
+        .collect::<Vec<_>>();
     let flush = |segment: &mut (Vec<_>, Vec<_>), outcome: &mut Outcome| -> Result<(), Error> {
         if segment.0.is_empty() {
             return Ok(());
@@ -962,6 +971,23 @@ fn apart<'a>(
         flush(&mut segment, &mut outcome)?;
         let mut sets = crate::code_rule_dsl::prof::time("labels.to_sets", || to_sets(&outcome.labels, labels, words, tapes));
         crate::code_rule_dsl::prof::peak("3c.to_sets");
+        // The group's text rows over every file, where no run evaluated them: once each, not
+        // once a file.
+        {
+            let row_bases = bases.iter().map(|&base| base as u32).collect::<Vec<_>>();
+            for (clause, id) in levels.iter().flatten().copied() {
+                let (Label::Roots(program, _) | Label::Targets(program, _)) = clause.labels.def(id) else { continue };
+                let Some(walk) = Micro::of(program) else { continue };
+                for slot in 0..walk.texts.len() {
+                    let key = walk.slot_key(program, slot);
+                    if rows.lock().map_err(|_| Error::BackendFailure)?.contains_key(&key) {
+                        continue;
+                    }
+                    let row = metal_program_backend::label_passes::text_row(&walk, program, slot, tapes, &row_bases, words);
+                    rows.lock().map_err(|_| Error::BackendFailure)?.insert(key, row);
+                }
+            }
+        }
         // A file's sweep reads and marks its own labels only, so the files sweep in parallel.
         use rayon::prelude::*;
         let _sweep = crate::code_rule_dsl::prof::Stage::start("labels.sweep");
@@ -979,7 +1005,14 @@ fn apart<'a>(
                 })
                 .collect::<Vec<_>>();
             if levels.iter().any(|level| !level.is_empty()) {
-                sweep(&levels, tape, sets)?;
+                // The text rows the GPU runs evaluated over every file, sliced to this one.
+                let base = bases[at];
+                let texts = |walk: &Micro, program: &Program| {
+                    (0..walk.texts.len())
+                        .map(|slot| metal_program_backend::label_passes::text_slot(Some((&rows, base)), walk, program, slot, tape))
+                        .collect::<Option<Vec<_>>>()
+                };
+                sweep_with(&levels, tape, sets, &texts)?;
             }
             Ok::<_, Error>(())
         })?;
@@ -1197,6 +1230,16 @@ fn sweeps(levels: &[Vec<(&LoweredMatcher, u16)>]) -> bool {
 /// reach the rounds' fixpoint. A recursion along the tree settles in a sweep or two, not a node
 /// depth per round.
 fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<Vec<Vec<u64>>>) -> Result<(), Error> {
+    sweep_with(levels, tape, sets, &|walk, program| walk.texts(program, tape))
+}
+
+/// `sweep`, each walk's text slots from `texts` (on Metal, the runs' rows: `TextRows`).
+fn sweep_with(
+    levels: &[Vec<(&LoweredMatcher, u16)>],
+    tape: &TapeDoc,
+    sets: &mut Arc<Vec<Vec<u64>>>,
+    texts: &(dyn Fn(&Micro, &Program) -> Option<Vec<Vec<u64>>> + Sync),
+) -> Result<(), Error> {
     let complements = levels.iter().flatten().any(|&(clause, id)| matches!(clause.labels.def(id), Label::Complement(_)));
     let len = tape.transducer_len() as u32;
     // (node, level, pass) for every node a pass may start at; a label domain is tested at the node.
@@ -1231,7 +1274,7 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
             // With its text bits on this tape (`Micro::texts`).
             let walk = match clause.labels.def(id) {
                 Label::Roots(program, _) | Label::Targets(program, _) => {
-                    Micro::of(program).and_then(|walk| walk.texts(program, tape).map(|texts| (walk, texts)))
+                    Micro::of(program).and_then(|walk| texts(&walk, program).map(|texts| (walk, texts)))
                 }
                 _ => None,
             };

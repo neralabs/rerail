@@ -79,7 +79,67 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
 
 /// Each distinct text test's (`Micro::slot_key`) row of bits over a run's files, `None` where its
 /// evaluation failed: kept across the runs of one labelling (06 S7: 58 evaluations in 9 runs).
-pub(in crate::code_rule_dsl) type TextRows = std::cell::RefCell<HashMap<String, Option<std::rc::Rc<Vec<u32>>>>>;
+pub(in crate::code_rule_dsl) type TextRows = Mutex<HashMap<String, Option<std::sync::Arc<Vec<u32>>>>>;
+
+/// Slot `slot`'s bits over every file's nodes (files from `bases`, `words` words), in parallel;
+/// `None` where an evaluation failed.
+pub(in crate::code_rule_dsl) fn text_row(
+    walk: &Micro,
+    program: &Program,
+    slot: usize,
+    files: &[TapeDoc],
+    bases: &[u32],
+    words: usize,
+) -> Option<std::sync::Arc<Vec<u32>>> {
+    use rayon::prelude::*;
+    let _texts = crate::code_rule_dsl::prof::Stage::start("size.texts");
+    let per_file = files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>()?;
+    let mut bits = vec![0_u32; words];
+    for (file, base) in per_file.iter().zip(bases) {
+        for (index, &word) in file.iter().enumerate() {
+            let mut word = word;
+            while word != 0 {
+                let node = *base + (index * 64) as u32 + word.trailing_zeros();
+                bits[node as usize / 32] |= 1 << (node % 32);
+                word &= word - 1;
+            }
+        }
+    }
+    Some(std::sync::Arc::new(bits))
+}
+
+/// Slot `slot` of `walk` on the file whose nodes start at global `base`, from `rows` where a run
+/// evaluated it (`TextRows`: bits over every file's nodes), else evaluated on `tape` alone.
+pub(in crate::code_rule_dsl) fn text_slot(
+    rows: Option<(&TextRows, usize)>,
+    walk: &Micro,
+    program: &Program,
+    slot: usize,
+    tape: &TapeDoc,
+) -> Option<Vec<u64>> {
+    if let Some((rows, base)) = rows
+        && let Some(Some(bits)) = rows.lock().ok()?.get(&walk.slot_key(program, slot)).cloned()
+    {
+        let len = tape.transducer_len();
+        let at = |bit: usize| -> u64 {
+            let word = |i: usize| u128::from(bits.get(i).copied().unwrap_or(0));
+            let i = bit / 32;
+            ((word(i) | word(i + 1) << 32 | word(i + 2) << 64) >> (bit % 32)) as u64
+        };
+        crate::code_rule_dsl::prof::count("sweep.text_hits", 1);
+        return Some(
+            (0..len.div_ceil(64))
+                .map(|k| {
+                    let value = at(base + 64 * k);
+                    let left = len - 64 * k;
+                    if left < 64 { value & ((1 << left) - 1) } else { value }
+                })
+                .collect(),
+        );
+    }
+    crate::code_rule_dsl::prof::count("sweep.text_misses", 1);
+    walk.slot(program, slot, tape)
+}
 
 /// Whether a recursive group runs as sweeps: its passes are programs (or empty), whose results only
 /// add to their labels, or complements as well, where its programs mark their roots (a node's
@@ -727,7 +787,7 @@ impl Runner<'_> {
         // Each distinct (value, kind)'s row of bits over every file's nodes, evaluated once for
         // the run's levels (06 S7: per level, 58 evaluations); `None` where one failed.
         let own = TextRows::default();
-        let mut evaluated = plan.rows.unwrap_or(&own).borrow_mut();
+        let mut evaluated = plan.rows.unwrap_or(&own).lock().map_err(|_| Error::BackendFailure)?;
         for (key, mut passes, sweep) in batches {
             // A level's micro walks run as such (`label_micro`); its other programs are tasks.
             if self.micro && sweep.is_none() {
@@ -763,23 +823,7 @@ impl Runner<'_> {
                             None => {
                                 let bits = evaluated
                                     .entry(key.clone())
-                                    .or_insert_with(|| {
-                                        use rayon::prelude::*;
-                                        let _texts = crate::code_rule_dsl::prof::Stage::start("size.texts");
-                                        let per_file = files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>()?;
-                                        let mut bits = vec![0_u32; label_words];
-                                        for (file, base) in per_file.iter().zip(&bases) {
-                                            for (index, &word) in file.iter().enumerate() {
-                                                let mut word = word;
-                                                while word != 0 {
-                                                    let node = *base + (index * 64) as u32 + word.trailing_zeros();
-                                                    bits[node as usize / 32] |= 1 << (node % 32);
-                                                    word &= word - 1;
-                                                }
-                                            }
-                                        }
-                                        Some(std::rc::Rc::new(bits))
-                                    })
+                                    .or_insert_with(|| text_row(&walk, program, slot, files, &bases, label_words))
                                     .clone();
                                 let row = bits.map(|bits| {
                                     let row = slots;
