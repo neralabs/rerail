@@ -119,7 +119,7 @@ describe("licences", () => {
     expect(() => licenceTexts(cache, "django/django", COMMIT)).toThrow(/copyleft/u);
     write("dask/dask", "LICENSE.txt", "Permission is hereby granted, free of charge");
     expect(() => licenceTexts(cache, "dask/dask", COMMIT)).toThrow(/do not read as BSD-3-Clause/u);
-    expect(() => licenceTexts(cache, "someone/unknown", COMMIT)).toThrow(/no licence is recorded/u);
+    expect(() => licenceTexts(cache, "someone/unknown", COMMIT)).toThrow(/records no licence files for it/u);
   });
 
   it("are read at each commit from the files the table records for it, a package.json's `license` standing in for none", () => {
@@ -147,6 +147,50 @@ describe("licences", () => {
     expect(licenceTexts(cache, "sequelize/sequelize", "155381bd5ddfc8d4b7a6f1cd8385bfca60921ada")).toEqual({ spdx: "NONE", texts: [] });
   });
 
+  it("read BSD-3-Clause's non-endorsement clause however it wraps, as Twig's LICENSE before 2020 does", () => {
+    const cache = scratch();
+    // twigphp/Twig's LICENSE at d168660 (2020-01-31): "endorse or" ends a line, "promote" starts the next.
+    const path = join(cache, "licences", "twigphp/twig", COMMIT, "LICENSE");
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(
+      path,
+      [
+        "Copyright (c) 2009-2020 by the Twig Team.",
+        "",
+        "Redistribution and use in source and binary forms, with or without",
+        "modification, are permitted provided that the following conditions are",
+        "met:",
+        "",
+        "    * Redistributions of source code must retain the above copyright",
+        "      notice, this list of conditions and the following disclaimer.",
+        "",
+        "    * Redistributions in binary form must reproduce the above",
+        "      copyright notice, this list of conditions and the following",
+        "      disclaimer in the documentation and/or other materials provided",
+        "      with the distribution.",
+        "",
+        "    * The names of the contributors may not be used to endorse or",
+        "      promote products derived from this software without specific",
+        "      prior written permission.",
+        "",
+      ].join("\n"),
+    );
+    expect(licenceTexts(cache, "twigphp/Twig", COMMIT).spdx).toBe("BSD-3-Clause");
+  });
+
+  it("read 0BSD's unconditional grant as 0BSD, and not ISC's, which goes on to a condition", () => {
+    const cache = scratch();
+    // gatsby at 72b3586: the sample is under starters/gatsby-starter-minimal-ts/, whose LICENSE is 0BSD.
+    const starter = "72b35862556e866644e79b63cd410f1920689dc9";
+    const path = join(cache, "licences", "gatsbyjs/gatsby", starter, "starters/gatsby-starter-minimal-ts/LICENSE");
+    mkdirSync(join(path, ".."), { recursive: true });
+    const grant = "Permission to use, copy, modify, and/or distribute this software for any\npurpose with or without fee is hereby granted";
+    writeFileSync(path, `The BSD Zero Clause License (0BSD)\n\nCopyright (c) 2022 Gatsby Inc.\n\n${grant}.\n`);
+    expect(licenceTexts(cache, "gatsbyjs/gatsby", starter).spdx).toBe("0BSD");
+    writeFileSync(path, `ISC License\n\n${grant}, provided that the above\ncopyright notice and this permission notice appear in all copies.\n`);
+    expect(() => licenceTexts(cache, "gatsbyjs/gatsby", starter)).toThrow(/do not read as 0BSD/u);
+  });
+
   it("are claimed in SAMPLES.md and LICENSES.md as texts only for the repositories whose texts the archive holds", () => {
     const samples = [sample({ source: { ...sample().source, repo: "a/x" } }), sample({ path: "b.py", source: { ...sample().source, repo: "b/y", path: "b.py" } })];
     const lock = { sha256: "f".repeat(64), files: 4, bytes: 10 };
@@ -163,10 +207,10 @@ describe("licences", () => {
     const none = claims(() => undefined);
     expect(none.samplesMd).toContain("It holds no licence texts.");
     expect(none.samplesMd).not.toContain("with its repository's licence text");
-    expect(none.intro).toContain("where one was read (otherwise the licence the ESLint test set recorded)");
+    expect(none.intro).toContain("where one was read (otherwise the licence its test set recorded)");
 
     const some = claims((repo) => (repo === "a/x" ? text : []));
-    expect(some.samplesMd).toContain("It holds the licence text of a/x only; for every other repository it holds the licence id the ESLint test set recorded");
+    expect(some.samplesMd).toContain("It holds the licence text of a/x only; for every other repository it holds the licence id its test set recorded");
     expect(some.samplesMd).not.toContain("with its repository's licence text");
   });
 });
