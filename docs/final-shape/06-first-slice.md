@@ -441,6 +441,8 @@ Check: an edit to one file re-runs exactly that file's derivations and its claus
   | W's engine, one file per snapshot, in parallel | 710 | 14.6 s | 2.1 s |
   | The slice, Metal, 75 of the files (before 0017) | 361 (W 361) | 8.6 s | 22.3 s |
   | The slice, Metal, all 250 (after 0017) | 713 (W 710) | 19.6 s | 12.1 s |
+  | The slice, CPU, all 250 (after 0019) | 710 (W 710) | 28.0 s | 27.4 s |
+  | The slice, Metal, all 250 (after 0019) | 710 (W 710) | 13.9–15.1 s | 7.6–8.1 s |
 
   - Peak RSS: 972 MB on the CPU (O30). On Metal it was 3.9 GB before 0017 and is 1.4 GB after.
   - The gate takes 55 s; with `RERAIL_S7_BACKENDS=cpu,metal`, 58 s.

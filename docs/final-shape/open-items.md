@@ -28,9 +28,9 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | closed (2026-10-30): sweeps in node order, 77 launches |
 | O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | closed (2026-10-30): labels only where a clause has candidates; sweeps on the CPU between GPU levels; 18.8 → 6.4 s on 8 fixtures |
 | O27 | Phase 4 / 10 | The findings layer's Unknown domains: syntax errors, capture anchors, `noqa` parents, report ceilings (06 S5, decision 0013) | closed (2026-10-30): all four decided in SQL; Unknown only where W's clause fails |
-| O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open: micro walks with text slots, roots on the CPU (0015, 0017); S7 cold 12.1 s wall on Metal against 27.0 s; the partition search and first-run compiles remain |
+| O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open, narrowed (2026-10-31): 576 of 579 label programs walk (0015, 0017–0019), budgeted ranges; S7 7.6–8.1 s wall on Metal against 27.4 s; GPU labels 0.7–0.9 s, the rest host stages common to both backends (candidates 1.4 s, CPU roots 1.4 s, sweeps 0.6 s, push 0.7 s) |
 | O29 | Phase 4 / 9 | A recursive label through `not has not` settles one level deep: SIM300's `probably` misses `X == 1 + 2 + 3`, `X == [[1]]` (06 S7) | closed (2026-10-31): a sweep with complements sets or clears each roots verdict; S7 equal for every (rule, code) |
-| O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | open: for S8; Metal peaks at 1.4 GB |
+| O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | open: Metal 1.4 → 1.15–1.2 GB (0019: shared roots, no interpreter workspaces); the process holds ~400 MB before the wave (W's run, tapes); CPU labels still single-threaded |
 
 ## O1. Stale-fact detection after a crash
 
