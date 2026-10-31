@@ -371,7 +371,7 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 }
 
 const SOURCE: &str = include_str!("metal_label_passes.metal");
-const KERNELS: [&str; 6] = ["label_sink", "label_settle", "label_round", "label_micro", "label_micro_8", "label_micro_32"];
+const KERNELS: [&str; 7] = ["label_sink", "label_settle", "label_round", "label_micro", "label_micro_8", "label_micro_32", "label_micro_deep"];
 
 /// A walk's stack tier (`label_micro_8`, `label_micro_32`, `label_micro`): the fewest frames its
 /// static depth (`Micro::depth`) fits, 128 where it loops.
@@ -388,10 +388,16 @@ fn tier(depth: Option<usize>) -> usize {
 /// Each tier's kernel in `KERNELS`.
 const TIER_KERNELS: [usize; 3] = [4, 5, 3];
 
-/// The loop tier's threads (`MICRO_POOL`), each striding over the items with a 128-frame stack
-/// of 17 words a frame (`MicroFrame`) in `Runner::stacks`.
-const MICRO_POOL: usize = 1024;
-const MICRO_STACK_WORDS: usize = 128 * 17;
+/// The loop tier's threads (`MICRO_POOL`), each striding over the items with a 64-frame stack
+/// of 17 words a frame (`MicroFrame`) in `Runner::stacks`. The pool's threads are the kernel's
+/// occupancy: at 1024 threads of 128 frames the loop tier's 3% of S7's starts took ~280 ms of
+/// its ~350 ms on the GPU, 2048 of 64 ~150 ms. A run whose walk outgrows 64 frames runs again
+/// with the same stacks as 1024 of 128 (`label_micro_deep`, `MICRO_DEEP_POOL`).
+const MICRO_POOL: usize = 2048;
+const MICRO_STACK_WORDS: usize = 64 * 17;
+const MICRO_DEEP_POOL: usize = 1024;
+/// The deep pool's kernel in `KERNELS`.
+const DEEP_KERNEL: usize = 6;
 /// The launches a clause's encoding aims to stay within, below the evaluation's budget
 /// (`metal_launch_budget`); a recursive group's rounds are encoded from what is left.
 const LAUNCHES: usize = 560;
@@ -537,6 +543,8 @@ struct Runner<'a> {
     lanes: (usize, Option<u32>),
     /// Whether a level's micro walks run as such, and each level's, by its address.
     micro: bool,
+    /// Whether the loop tier runs with 128-frame stacks (`label_micro_deep`).
+    deep: bool,
     walks: HashMap<usize, Walks>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
@@ -639,13 +647,20 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let mut rounds = plan_rounds(0, &wanted);
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
-    let (mut lanes, mut micro) = (NARROW, true);
+    let (mut lanes, mut micro, mut deep) = (NARROW, true, false);
     loop {
-        let mut outcome = match encode(device, plan, files, &rounds, lanes, micro) {
+        let mut outcome = match encode(device, plan, files, &rounds, lanes, micro, deep) {
             // A task's states outgrew the narrow lanes' (or another task failed, which fails again).
             Err(Error::BackendFailure) if lanes != WIDE => {
                 crate::code_rule_dsl::prof::count("run.widened", 1);
                 lanes = WIDE;
+                continue;
+            }
+            // A loop walk outgrew the pool's 64 frames (or a walk its captures or steps): the
+            // pool's 128-frame stacks first.
+            Err(Error::BackendCapacity) if micro && !deep => {
+                crate::code_rule_dsl::prof::count("run.deep", 1);
+                deep = true;
                 continue;
             }
             // A micro walk outgrew its frames, captures or steps.
@@ -710,6 +725,7 @@ fn encode(
     rounds: &[usize],
     lanes: (usize, Option<u32>),
     micro: bool,
+    deep: bool,
 ) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
@@ -769,6 +785,7 @@ fn encode(
         segment_bytes: 0,
         lanes,
         micro,
+        deep,
         walks: HashMap::new(),
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
         encoded: false,
@@ -823,6 +840,7 @@ fn encode(
     mark("flushed");
     // A micro walk that outgrew its frames: the passes again on the interpreter.
     if runner.flag(0) & 2 != 0 {
+        crate::code_rule_dsl::prof::count("gpu.frames_overflow", 1);
         return Err(Error::BackendCapacity);
     }
     if runner.flag(0) != 0 {
@@ -987,6 +1005,20 @@ impl Runner<'_> {
         commit_checked(&self.command)?;
         wait_checked(&self.command)?;
         crate::code_rule_dsl::prof::count("gpu.commits", 1);
+        if crate::code_rule_dsl::prof::on() {
+            // The command buffer's time on the GPU (`GPUStartTime` to `GPUEndTime`).
+            unsafe extern "C" {
+                fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+                fn objc_msgSend();
+            }
+            let send: unsafe extern "C" fn(*const std::ffi::c_void, *mut std::ffi::c_void) -> f64 =
+                unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+            let object = std::ptr::from_ref::<metal::CommandBufferRef>(&self.command).cast::<std::ffi::c_void>();
+            let (start, end) = unsafe {
+                (send(object, sel_registerName(c"GPUStartTime".as_ptr())), send(object, sel_registerName(c"GPUEndTime".as_ptr())))
+            };
+            crate::code_rule_dsl::prof::count("gpu.device_us", ((end - start) * 1e6) as usize);
+        }
         self.outcome.command_buffers += 1;
         self.retained.clear();
         self.programs.clear();
@@ -1023,6 +1055,9 @@ impl Runner<'_> {
     }
 
     fn dispatch(&mut self, state: &ComputePipelineState, label: &str, buffers: &[(&Buffer, u64)], shape: Shape, threads: usize) {
+        if crate::code_rule_dsl::prof::on() {
+            crate::code_rule_dsl::prof::count_named(format!("threads.{label}"), threads);
+        }
         if threads == 0 {
             return;
         }
@@ -1574,8 +1609,12 @@ impl Runner<'_> {
             (&counts, 0),
             (&stacks, 0),
         ];
-        let threads = if tier == 2 { threads.min(MICRO_POOL) } else { threads };
-        self.kernel(TIER_KERNELS[tier], &buffers, shape, threads);
+        let (pipeline, threads) = match tier {
+            2 if self.deep => (DEEP_KERNEL, threads.min(MICRO_DEEP_POOL)),
+            2 => (TIER_KERNELS[2], threads.min(MICRO_POOL)),
+            _ => (TIER_KERNELS[tier], threads),
+        };
+        self.kernel(pipeline, &buffers, shape, threads);
         }
         Ok(())
     }

@@ -85,7 +85,9 @@ struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,t
 // siblings; 0 a forked path) where its candidates continue.
 // Eight cursors, as micro.rs's CURSORS.
 struct MicroFrame { uint pc,node,resume,named,next,end,cursors[8],capture0,capture1,captured; };
-constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=128u,MICRO_POOL=1024u;
+// The loop tier's pool: 2048 threads of 64 frames, or (a run that outgrew them) 1024 of 128 in
+// the same stacks (metal_label_passes.rs's MICRO_POOL, MICRO_DEEP_POOL).
+constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=64u,MICRO_POOL=2048u,MICRO_DEEP_FRAMES=128u,MICRO_DEEP_POOL=1024u;
 
 static bool micro_class(device const Supertype* supertypes,device const File* files,uint fileCount,uint node,uint kind){
   if(kind>=61440u){uint words=supertypes[0].kind;device const uint* bits=(device const uint*)(supertypes+1);return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;}
@@ -180,3 +182,4 @@ kernel void label_micro_32(device const Node* nodes [[buffer(0)]],device const u
 // its stack in device memory (`stacks`), so no thread memory is reserved for 128 frames per
 // thread in flight.
 kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device MicroFrame* stacks [[buffer(11)]],constant Shape& shape [[buffer(12)]],uint tid [[thread_position_in_grid]]){for(uint item=tid;item<shape.itemCount;item+=MICRO_POOL)micro_walk<MICRO_FRAMES>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_FRAMES,item);}
+kernel void label_micro_deep(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device MicroFrame* stacks [[buffer(11)]],constant Shape& shape [[buffer(12)]],uint tid [[thread_position_in_grid]]){for(uint item=tid;item<shape.itemCount;item+=MICRO_DEEP_POOL)micro_walk<MICRO_DEEP_FRAMES>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_DEEP_FRAMES,item);}
