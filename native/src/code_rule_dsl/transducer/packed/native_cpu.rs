@@ -3069,21 +3069,35 @@ fn execute_batch_packed_with_work_limit(
         properties: Vec<PropertyRecord>,
         bytes: Vec<u8>,
     }
-    let evaluation_locks = (0..batch.evaluations.len())
-        .map(|_| Mutex::new(()))
-        .collect::<Vec<_>>();
     let execution_started = std::time::Instant::now();
     drop(setup);
     let run = crate::code_rule_dsl::prof::Stage::start("jit.run");
+    // An evaluation's tasks share its arenas, so they run in order; its tasks are contiguous
+    // (`plan_shared_workspace`), so the evaluations run in parallel, each on one worker. Locking
+    // each task's evaluation instead parked the pool's workers on a few hot evaluations' locks
+    // (06 S7: a range's run ~4× its longest evaluation).
+    let mut spans = Vec::with_capacity(batch.evaluations.len());
+    {
+        let mut rest = &mut contexts[..];
+        let mut offset = 0_usize;
+        for evaluation in &batch.evaluations {
+            let (start, count) = (evaluation.task_start as usize, evaluation.task_count as usize);
+            if start != offset || count > rest.len() {
+                return Err(Error::BackendFailure);
+            }
+            let (head, tail) = std::mem::take(&mut rest).split_at_mut(count);
+            spans.push(head);
+            rest = tail;
+            offset += count;
+        }
+        if !rest.is_empty() {
+            return Err(Error::BackendFailure);
+        }
+    }
     let task_outputs = WORK_POOL.install(|| {
-        contexts
-            .par_iter_mut()
-            .enumerate()
-            .map(|(task_index, (program, context))| {
-                let evaluation = batch.tasks[task_index].evaluation as usize;
-                let _evaluation = evaluation_locks[evaluation]
-                    .lock()
-                    .map_err(|_| Error::BackendFailure)?;
+        spans
+            .into_par_iter()
+            .map(|span| span.iter_mut().map(|(program, context)| {
                 // The queue uses tombstones within a task. Keeping a full
                 // table of tombstones across roots turns each new insert into
                 // a capacity-length probe. These records reference only the
@@ -3141,9 +3155,12 @@ fn execute_batch_packed_with_work_limit(
                         .to_vec()
                     },
                 })
-            })
-            .collect::<Result<Vec<_>, Error>>()
-    })?;
+            }).collect::<Result<Vec<_>, Error>>())
+            .collect::<Result<Vec<Vec<_>>, Error>>()
+    })?
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
     drop(run);
     let _compact = crate::code_rule_dsl::prof::Stage::start("jit.compact");
     let mut compact_results = Vec::new();
