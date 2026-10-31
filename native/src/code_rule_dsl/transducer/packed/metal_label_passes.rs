@@ -26,11 +26,12 @@ use std::collections::HashMap;
 
 /// A pass writes the label `target` (an index, not a class); labels it reads are its classes.
 pub(in crate::code_rule_dsl) enum Pass<'a> {
-    /// A program's roots or captured nodes.
+    /// A program's roots or captured nodes. Its roots are shared with the passes of the same
+    /// domain (`matcher::labels_metal`), so a walk's items are one range for them all.
     Program {
         target: u32,
         program: &'a Program,
-        roots: Vec<Vec<u32>>,
+        roots: std::sync::Arc<Vec<Vec<u32>>>,
         captured: bool,
     },
     /// The nodes with between `min` and `max` of a program's outputs, by root or captured node,
@@ -39,7 +40,7 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
         target: u32,
         slot: u32,
         program: &'a Program,
-        roots: Vec<Vec<u32>>,
+        roots: std::sync::Arc<Vec<Vec<u32>>>,
         captured: bool,
         min: u32,
         max: u32,
@@ -236,7 +237,8 @@ struct Prepared {
 }
 
 /// A level's micro walks (`label_micro`): per pass {word start, word count, scratch label or
-/// count slot, mode (as `label_sink`'s routes), item start, item count, first text slot, 0}, the passes' words, and their starts
+/// count slot, mode (as `label_sink`'s routes), item start, item count, first text slot, first
+/// thread}, the passes' words, and their starts
 /// (global nodes).
 struct Walks {
     passes: MappedBuffer,
@@ -472,6 +474,14 @@ fn encode(
             ..Outcome::default()
         },
     };
+    if crate::code_rule_dsl::prof::on() {
+        use crate::code_rule_dsl::prof::count;
+        count("mem.nodes", runner.nodes);
+        count("mem.labels", plan.labels);
+        count("mem.counts", plan.counts);
+        count("mem.scratch_mb", plan.labels * words * 4 >> 20);
+        count("mem.counts_mb", plan.counts * runner.nodes * 4 >> 20);
+    }
     crate::code_rule_dsl::prof::time("gpu.size", || runner.size(plan))?;
     let _encode = crate::code_rule_dsl::prof::Stage::start("gpu.encode");
     for (group, ((recursive, levels), &rounds)) in plan.steps.iter().zip(rounds).enumerate() {
@@ -689,6 +699,9 @@ impl Runner<'_> {
                 let files = self.files;
                 // Each distinct (value, kind)'s slot row, computed once for the run's levels.
                 let mut rows = HashMap::<String, Option<u32>>::new();
+                let mut ranges = HashMap::<usize, (u32, u32)>::new();
+                // Threads: a pass's from its own start, over its (shared) item range.
+                let mut threads = 0_u32;
                 passes.retain(|&(program, roots, mode, target)| {
                     let Some(walk) = Micro::of(program) else { return true };
                     // The walk's slots as rows of `texts`, contiguous from `text_start`; a row
@@ -719,11 +732,16 @@ impl Runner<'_> {
                                     }
                                     row
                                 });
-                                rows.insert(key, row);
+                                rows.insert(key.clone(), row);
                                 row
                             }
                         };
-                        let Some(row) = row else { return true };
+                        let Some(row) = row else {
+                            if crate::code_rule_dsl::prof::on() {
+                                crate::code_rule_dsl::prof::count_named(format!("unslotted.{key}"), roots.iter().map(Vec::len).sum());
+                            }
+                            return true;
+                        };
                         own.push(row);
                     }
                     // A pass reads slot `s` at `text_start + s`: its rows, copied where shared.
@@ -733,11 +751,16 @@ impl Runner<'_> {
                         texts.extend_from_within(from..from + label_words);
                     }
                     slots += own.len() as u32;
-                    let start = items.len() as u32;
-                    for (roots, base) in roots.iter().zip(&bases) {
-                        items.extend(roots.iter().map(|node| base + node));
-                    }
-                    records.push([words.len() as u32, walk.words.len() as u32, target, mode, start, items.len() as u32 - start, text_start, 0]);
+                    // One item range per shared root list.
+                    let (start, count) = *ranges.entry(std::sync::Arc::as_ptr(roots) as usize).or_insert_with(|| {
+                        let start = items.len() as u32;
+                        for (roots, base) in roots.iter().zip(&bases) {
+                            items.extend(roots.iter().map(|node| base + node));
+                        }
+                        (start, items.len() as u32 - start)
+                    });
+                    records.push([words.len() as u32, walk.words.len() as u32, target, mode, start, count, text_start, threads]);
+                    threads += count;
                     longest = longest.max(walk.words.len());
                     words.extend_from_slice(&walk.words);
                     false
@@ -751,7 +774,7 @@ impl Runner<'_> {
                         texts: MappedBuffer::from_slice(self.device, &texts)?,
                         steps: super::super::micro_steps(largest, longest),
                         pass_count: records.len(),
-                        item_count: items.len(),
+                        item_count: threads as usize,
                         passes: MappedBuffer::from_slice(self.device, &records)?,
                         words: MappedBuffer::from_slice(self.device, &words)?,
                         items: MappedBuffer::from_slice(self.device, &items)?,
@@ -763,8 +786,9 @@ impl Runner<'_> {
                 continue;
             }
             if crate::code_rule_dsl::prof::on() {
+                crate::code_rule_dsl::prof::count(if sweep.is_some() { "size.sweep_batches" } else { "size.level_batches" }, 1);
                 for &(program, roots, _, _) in &passes {
-                    let reason = Micro::refusal(program);
+                    let reason = if sweep.is_some() && Micro::of(program).is_some() { "sweep" } else { Micro::refusal(program) };
                     crate::code_rule_dsl::prof::count_named(format!("refused.{reason}"), roots.iter().map(Vec::len).sum());
                 }
             }
@@ -860,7 +884,7 @@ impl Runner<'_> {
         Ok(())
     }
 
-    fn batch_inputs(&self, passes: &[(&Program, &Vec<Vec<u32>>, u32, u32)]) -> (Vec<Program>, Vec<Vec<Vec<u32>>>) {
+    fn batch_inputs(&self, passes: &[(&Program, &std::sync::Arc<Vec<Vec<u32>>>, u32, u32)]) -> (Vec<Program>, Vec<Vec<Vec<u32>>>) {
         let programs = passes.iter().map(|(program, ..)| (*program).clone()).collect::<Vec<_>>();
         let anchors = (0..self.files.len())
             .map(|file| passes.iter().map(|(_, roots, ..)| roots[file].clone()).collect())
@@ -1180,7 +1204,7 @@ impl Runner<'_> {
 }
 
 /// A level's programs: (program, roots per file, sink mode, scratch label or count slot).
-fn programs_of<'p>(passes: &'p [Pass<'_>]) -> Vec<(&'p Program, &'p Vec<Vec<u32>>, u32, u32)> {
+fn programs_of<'p>(passes: &'p [Pass<'_>]) -> Vec<(&'p Program, &'p std::sync::Arc<Vec<Vec<u32>>>, u32, u32)> {
     passes
         .iter()
         .filter_map(|pass| match pass {

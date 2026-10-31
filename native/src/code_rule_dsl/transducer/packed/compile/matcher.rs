@@ -44,7 +44,7 @@ struct Labels {
 }
 
 /// The nodes a pass starts from: those whose kind the rule needs, or a label's (a walk's start).
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Domain {
     All,
     Kinds(Vec<u16>),
@@ -708,6 +708,7 @@ impl LoweredWave {
     ) -> Result<(Vec<TapeDoc>, metal_program_backend::label_passes::Outcome), Error> {
         let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[], Some(active))?;
         let mut base = 0_usize;
+        crate::code_rule_dsl::prof::peak("3e.before_views");
         let _views = crate::code_rule_dsl::prof::Stage::start("labels.views");
         let views = tapes
             .iter()
@@ -774,7 +775,10 @@ fn metal<'a>(
     // A pass's roots: its domain's nodes. A label domain's program tests the label first, so on
     // Metal, where the label is not known before the command buffer runs, it starts at the nodes
     // of the kinds the label can have (`Labels::bound`).
-    let roots = |clause: &LoweredMatcher, starts: &Domain, program: Option<&Program>| {
+    // Shared by (domain, entry, the tapes the clause is active on): passes of one domain hold one
+    // list (06 S7: 605 passes, 70 M roots, of 264 such keys).
+    let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>), Arc<Vec<Vec<u32>>>>::new();
+    let mut roots = |clause: &LoweredMatcher, starts: &Domain, program: Option<&Program>| -> Arc<Vec<Vec<u32>>> {
         let entry = program.map(Entry::of);
         let bound = match starts {
             Domain::Label(_) => {
@@ -783,7 +787,15 @@ fn metal<'a>(
             _ => None,
         };
         let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
-        tapes
+        let key = (
+            bound.clone().unwrap_or_else(|| starts.clone()),
+            entry.as_ref().map(|entry| entry.0.clone()),
+            (0..tapes.len()).map(|tape| active.is_none_or(|active| active[at][tape])).collect::<Vec<_>>(),
+        );
+        if let Some(list) = shared.get(&key) {
+            return Arc::clone(list);
+        }
+        let list = tapes
             .iter()
             .zip(&no_labels)
             .enumerate()
@@ -795,7 +807,11 @@ fn metal<'a>(
                     .filter(|&node| entry.as_ref().is_none_or(|entry| entry.admits(tape, node)))
                     .collect()
             })
-            .collect::<Vec<Vec<u32>>>()
+            .collect::<Vec<Vec<u32>>>();
+        crate::code_rule_dsl::prof::count("plan.roots", list.iter().map(Vec::len).sum());
+        let list = Arc::new(list);
+        shared.insert(key, Arc::clone(&list));
+        list
     };
     let index = |label: u16| u32::from(label - LABEL_BASE);
     let mut slots = 0_u32;
@@ -816,9 +832,9 @@ fn metal<'a>(
                     target,
                     pattern: patterns.len() - 1,
                     roots: roots(clause, starts, None)
-                        .into_iter()
+                        .iter()
                         .zip(&bases)
-                        .flat_map(|(roots, base)| roots.into_iter().map(move |node| base + node))
+                        .flat_map(|(roots, base)| roots.iter().map(move |node| base + node))
                         .collect(),
                     constraints,
                 }
@@ -852,6 +868,7 @@ fn metal<'a>(
         })
     };
     let (mut steps, mut chains) = crate::code_rule_dsl::prof::time("labels.plan", || levels(clauses, &mut pass))?;
+    crate::code_rule_dsl::prof::peak("3a.plan");
     let all = clauses;
     // A clause's roots: one label past every pass's (none where the roots run apart, `labelled_metal`).
     let roots = !clause_roots.is_empty();
@@ -867,7 +884,7 @@ fn metal<'a>(
                 .map(|(at, (clause, roots))| Pass::Program {
                     target: (labels + at) as u32,
                     program: &clause.program,
-                    roots: roots.clone(),
+                    roots: Arc::new(roots.clone()),
                     captured: false,
                 })
                 .collect(),
@@ -939,6 +956,7 @@ fn apart<'a>(
             initial: Some(std::mem::take(&mut outcome.labels)),
         };
         let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
+        crate::code_rule_dsl::prof::peak("3b.gpu");
         outcome.labels = ran.labels;
         outcome.command_buffers += ran.command_buffers;
         outcome.dispatches += ran.dispatches;
@@ -954,6 +972,7 @@ fn apart<'a>(
         }
         flush(&mut segment, &mut outcome)?;
         let mut sets = crate::code_rule_dsl::prof::time("labels.to_sets", || to_sets(&outcome.labels, labels, words, tapes));
+        crate::code_rule_dsl::prof::peak("3c.to_sets");
         // A file's sweep reads and marks its own labels only, so the files sweep in parallel.
         use rayon::prelude::*;
         let _sweep = crate::code_rule_dsl::prof::Stage::start("labels.sweep");
@@ -976,6 +995,7 @@ fn apart<'a>(
             Ok::<_, Error>(())
         })?;
         drop(_sweep);
+        crate::code_rule_dsl::prof::peak("3d.sweep");
         outcome.labels = crate::code_rule_dsl::prof::time("labels.to_words", || to_words(&sets, labels, words, tapes));
     }
     flush(&mut segment, &mut outcome)?;

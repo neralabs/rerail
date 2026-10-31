@@ -17,3 +17,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0016 | Work that outgrows a workspace is split along an axis it is independent on; S7's gate lists known differences by name | accepted |
 | 0017 | A label walk's text tests are bits computed once per (value, kind); a Metal wave runs its roots on the CPU | accepted |
 | 0018 | Execution ranges packed to a 64 MB workspace budget per file size; count programs run as micro walks | accepted |
+| 0019 | Micro walks carry four cursors; label passes of one domain share their roots and walk items | accepted |

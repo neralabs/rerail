@@ -22,7 +22,7 @@ use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
 use crate::code_rule_dsl::transducer::packed::value::ValueProgram;
 
 /// Cursor slots, captures and frames a walk carries, and the steps it takes.
-pub(in crate::code_rule_dsl) const CURSORS: usize = 2;
+pub(in crate::code_rule_dsl) const CURSORS: usize = 4;
 pub(in crate::code_rule_dsl) const CAPTURES: usize = 2;
 pub(in crate::code_rule_dsl) const FRAMES: usize = 128;
 pub(in crate::code_rule_dsl) const STEPS: u32 = 1 << 16;
@@ -103,6 +103,8 @@ impl Micro {
         for &word in &program.words {
             let (op, mode, arg) = split(word);
             let name = match op {
+                // `of` takes a plain text test as a slot, whatever its value program.
+                TEXT if mode == 0 && usize::from(arg) < program.value_programs.len() => continue,
                 TEXT => match program.value_programs.get(usize::from(arg)) {
                     Some(ValueProgram::Equal { .. }) => "text equal",
                     Some(ValueProgram::Prefix { .. }) => "text prefix",
@@ -116,7 +118,11 @@ impl Micro {
                 REPEAT_BEGIN | REPEAT_BUMP | REPEAT_END => "repeat",
                 FORK if mode != 0 => "greedy fork",
                 KIND | FIELD | SUPERTYPE if mode != 0 => "test mode",
-                _ => continue,
+                SAVE_CURSOR | RESTORE_CURSOR if usize::from(arg) >= CURSORS => "cursors",
+                CHILD | DESCEND | NEXT | FOLLOWING if mode != 0 && mode != NAMED => "axis mode",
+                STOP | CAPTURE | EMIT | PARENT | FLAGS | KIND | FIELD | SUPERTYPE | CHILD | DESCEND | NEXT | FOLLOWING
+                | SAVE_CURSOR | RESTORE_CURSOR | FORK | GOTO => continue,
+                _ => "op",
             };
             return name;
         }

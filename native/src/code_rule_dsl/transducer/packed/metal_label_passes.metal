@@ -80,10 +80,11 @@ struct Node { uint parent,nextAny,nextNamed,childStart,childCount,descendantEnd,
 struct File { uint nodeStart,nodeCount,sourceStart,sourceLength,lineStart,lineCount,superStart,superCount; };
 struct Supertype { uint node,kind; };
 // A pass: its words, its scratch label, whether it marks captures, and its starts in `items`.
-struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,textStart,pad; };
+struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,textStart,threadStart; };
 // A path's state, and for a move's frame (resume 1 children, 2 descendants, 3 following
 // siblings; 0 a forked path) where its candidates continue.
-struct MicroFrame { uint pc,node,resume,named,next,end,cursor0,cursor1,capture0,capture1,captured; };
+// Four cursors, as micro.rs's CURSORS.
+struct MicroFrame { uint pc,node,resume,named,next,end,cursors[4],capture0,capture1,captured; };
 constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=128u;
 
 static bool micro_class(device const Supertype* supertypes,device const File* files,uint fileCount,uint node,uint kind){
@@ -104,12 +105,14 @@ static uint micro_next(device const Node* nodes,device const uint* children,thre
 kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],constant Shape& shape [[buffer(11)]],uint tid [[thread_position_in_grid]]){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   if(tid>=shape.itemCount)return;
-  uint low=0u,high=shape.targetCount;while(high-low>1u){uint middle=(low+high)/2u;if(passes[middle].itemStart<=tid)low=middle;else high=middle;}
+  // A pass's threads are contiguous from its threadStart; its items are a range that passes of
+  // one domain share.
+  uint low=0u,high=shape.targetCount;while(high-low>1u){uint middle=(low+high)/2u;if(passes[middle].threadStart<=tid)low=middle;else high=middle;}
   MicroPass pass=passes[low];
-  uint start=items[tid];
+  uint start=items[pass.itemStart+(tid-pass.threadStart)];
   device atomic_uint* bits=scratch+pass.target*shape.words;
   thread MicroFrame stack[MICRO_FRAMES];uint depth=0u,steps=0u;
-  MicroFrame path={0u,start,0u,0u,0u,0u,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,0u};
+  MicroFrame path={0u,start,0u,0u,0u,0u,{MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE},MICRO_NONE,MICRO_NONE,0u};
   #define MICRO_FAIL {atomic_fetch_or_explicit(&flags[0],2u,memory_order_relaxed);return;}
   while(true){
     bool alive=true;
@@ -136,8 +139,8 @@ kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint
           if(depth==MICRO_FRAMES)MICRO_FAIL
           stack[depth++]=frame;path.node=candidate;
         }break;
-        case 21u:if(arg==0u)path.cursor0=path.node;else path.cursor1=path.node;break;
-        case 22u:{uint saved=arg==0u?path.cursor0:path.cursor1;if(saved==MICRO_NONE)MICRO_FAIL path.node=saved;}break;
+        case 21u:path.cursors[arg&3u]=path.node;break;
+        case 22u:{uint saved=path.cursors[arg&3u];if(saved==MICRO_NONE)MICRO_FAIL path.node=saved;}break;
         case 32u:if(path.captured==0u)path.capture0=path.node;else if(path.captured==1u)path.capture1=path.node;else MICRO_FAIL path.captured++;break;
         case 48u:{if(depth==MICRO_FRAMES)MICRO_FAIL MicroFrame frame=path;frame.pc=arg;frame.resume=0u;stack[depth++]=frame;}break;
         case 49u:path.pc=arg;continue;
