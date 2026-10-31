@@ -56,6 +56,9 @@ facts written before it runs?
 
   An Unknown domain publishes no keys. The gate checks each `source-incomplete` domain against a
   W failure.
+  Confirmed by the user (2026-10-30): W's read cutoff is the limit S5's "Unknown only on a
+  budget or limit" allows. The layer is wired in at S6 (`slice::audit`, `slice::apply`), not in
+  S5.
 ## Prior work consulted
 - **Design-index 11 (R L696-788):** count parity is a weak witness; parity is on positions. *Agrees:*
   the gate compares (rule, code, path, line) sets with W's violations, not counts.
