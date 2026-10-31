@@ -778,10 +778,9 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Stat
     if arms.is_empty() {
         arms.push("SELECT 0 AS qid,0 AS fid,0 AS pre WHERE 0".into());
     }
-    let queries = arms
-        .chunks(128)
-        .map(|arms| arms.join(" UNION ALL ") + " ORDER BY qid,fid,pre")
-        .collect();
+    // No ORDER BY: SQLite sorted every arm in a temp B-tree to merge them (a constant `qid` first
+    // hides the index's (fid, pre) order), ~90 sorts on S7. `select` sorts each plan's rows.
+    let queries = arms.chunks(128).map(|arms| arms.join(" UNION ALL ")).collect();
     let indexed = indexed_nodes
         .into_iter()
         .map(|node| layout.names[&node].clone())

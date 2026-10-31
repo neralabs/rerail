@@ -129,6 +129,11 @@ pub(in crate::code_rule_dsl) fn select(
     time("select.capture", || lab::capture::save(store, &statement))?;
     let mut rows = vec![Vec::new(); plans.len()];
     time("select.execute", || execute::candidates(store, &statement, |plan, tape, pre| rows[plan].push((tape, pre as u32))))?;
+    // In order per plan (the statement's arms stream unsorted, `lower::batch`).
+    time("select.sort", || {
+        use rayon::prelude::*;
+        rows.par_iter_mut().for_each(|rows| rows.sort_unstable());
+    });
     crate::code_rule_dsl::prof::count("select.rows", rows.iter().map(Vec::len).sum());
     Ok(rows)
 }
