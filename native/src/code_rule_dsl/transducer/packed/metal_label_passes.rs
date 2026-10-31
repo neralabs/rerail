@@ -73,7 +73,13 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     /// The labels' words before the passes (as `Outcome::labels`), where steps before them ran
     /// elsewhere; empty otherwise.
     pub(in crate::code_rule_dsl) initial: Option<Vec<u32>>,
+    /// Text rows evaluated by earlier runs over the same files (`TextRows`), shared by them.
+    pub(in crate::code_rule_dsl) rows: Option<&'a TextRows>,
 }
+
+/// Each distinct text test's (`Micro::slot_key`) row of bits over a run's files, `None` where its
+/// evaluation failed: kept across the runs of one labelling (06 S7: 58 evaluations in 9 runs).
+pub(in crate::code_rule_dsl) type TextRows = std::cell::RefCell<HashMap<String, Option<std::rc::Rc<Vec<u32>>>>>;
 
 /// Whether a recursive group runs as sweeps: its passes are programs (or empty), whose results only
 /// add to their labels, or complements as well, where its programs mark their roots (a node's
@@ -688,6 +694,10 @@ impl Runner<'_> {
             *base += tape.transducer_len() as u32;
             Some(at)
         }).collect::<Vec<_>>();
+        // Each distinct (value, kind)'s row of bits over every file's nodes, evaluated once for
+        // the run's levels (06 S7: per level, 58 evaluations); `None` where one failed.
+        let own = TextRows::default();
+        let mut evaluated = plan.rows.unwrap_or(&own).borrow_mut();
         for (key, mut passes, sweep) in batches {
             // A level's micro walks run as such (`label_micro`); its other programs are tasks.
             if self.micro && sweep.is_none() {
@@ -712,24 +722,30 @@ impl Runner<'_> {
                         let row = match rows.get(&key) {
                             Some(row) => *row,
                             None => {
-                                use rayon::prelude::*;
-                                let _texts = crate::code_rule_dsl::prof::Stage::start("size.texts");
-                                let per_file = files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>();
-                                let row = per_file.map(|per_file| {
-                                    let row = slots;
-                                    slots += 1;
-                                    texts.resize(texts.len() + label_words, 0);
-                                    let at = row as usize * label_words;
-                                    for (bits, base) in per_file.iter().zip(&bases) {
-                                        for (index, &word) in bits.iter().enumerate() {
-                                            let mut word = word;
-                                            while word != 0 {
-                                                let node = *base + (index * 64) as u32 + word.trailing_zeros();
-                                                texts[at + node as usize / 32] |= 1 << (node % 32);
-                                                word &= word - 1;
+                                let bits = evaluated
+                                    .entry(key.clone())
+                                    .or_insert_with(|| {
+                                        use rayon::prelude::*;
+                                        let _texts = crate::code_rule_dsl::prof::Stage::start("size.texts");
+                                        let per_file = files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>()?;
+                                        let mut bits = vec![0_u32; label_words];
+                                        for (file, base) in per_file.iter().zip(&bases) {
+                                            for (index, &word) in file.iter().enumerate() {
+                                                let mut word = word;
+                                                while word != 0 {
+                                                    let node = *base + (index * 64) as u32 + word.trailing_zeros();
+                                                    bits[node as usize / 32] |= 1 << (node % 32);
+                                                    word &= word - 1;
+                                                }
                                             }
                                         }
-                                    }
+                                        Some(std::rc::Rc::new(bits))
+                                    })
+                                    .clone();
+                                let row = bits.map(|bits| {
+                                    let row = slots;
+                                    slots += 1;
+                                    texts.extend_from_slice(&bits);
                                     row
                                 });
                                 rows.insert(key.clone(), row);

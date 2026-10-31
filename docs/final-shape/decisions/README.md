@@ -18,3 +18,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0017 | A label walk's text tests are bits computed once per (value, kind); a Metal wave runs its roots on the CPU | accepted |
 | 0018 | Execution ranges packed to a 64 MB workspace budget per file size; count programs run as micro walks | accepted |
 | 0019 | Micro walks carry four cursors; label passes of one domain share their roots and walk items | accepted |
+| 0020 | CPU execution ranges packed by u32 record counts (demand-zero workspaces); program groups from one batch's counts; text rows shared across a labelling's runs | accepted |

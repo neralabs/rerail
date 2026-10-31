@@ -896,7 +896,7 @@ fn metal<'a>(
         // The wave's labels: a recursive group that sweeps runs on the CPU's sweep, each file a
         // walk in node order, between the GPU's wide levels (O26).
         Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active)?,
-        None => run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: None }, tapes)?,
+        None => run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: None, rows: None }, tapes)?,
     };
     let found = (0..clauses.len())
         .map(|at| {
@@ -943,6 +943,8 @@ fn apart<'a>(
     let words = nodes.div_ceil(32).max(1);
     let mut outcome = Outcome { labels: vec![0; labels * words], words, ..Outcome::default() };
     let mut segment = (Vec::new(), Vec::new());
+    // The runs label the same tapes, so a text row evaluated by one serves the rest.
+    let rows = metal_program_backend::label_passes::TextRows::default();
     let flush = |segment: &mut (Vec<_>, Vec<_>), outcome: &mut Outcome| -> Result<(), Error> {
         if segment.0.is_empty() {
             return Ok(());
@@ -954,6 +956,7 @@ fn apart<'a>(
             steps: std::mem::take(&mut segment.0),
             chains: std::mem::take(&mut segment.1),
             initial: Some(std::mem::take(&mut outcome.labels)),
+            rows: Some(&rows),
         };
         let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
         crate::code_rule_dsl::prof::peak("3b.gpu");
