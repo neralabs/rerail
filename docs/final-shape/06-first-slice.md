@@ -425,7 +425,8 @@ Check: an edit to one file re-runs exactly that file's derivations and its claus
   - **Rules:** the 87 of 286 Python AST clauses that S1 lowers. W runs one file per snapshot, as
     in S5's gate.
   - **Equality per (rule, code):** a key is (rule, code, file, line). It holds for every
-    (rule, code) except SIM300, which is listed in `KNOWN` (O29: 3 keys only ours).
+    (rule, code) on both backends: 710 keys, W 710. SIM300 differed by 3 keys until O29 was
+    fixed; `KNOWN` lists such differences and is empty.
   - **Unknown coverage:** the run leaves 91 (rule, file)s `Unknown`, and W's clause fails at
     every one.
   - **Mutation check:**
@@ -449,7 +450,8 @@ Check: an edit to one file re-runs exactly that file's derivations and its claus
   - on Metal, a chunk's labels outgrew a workspace. They now run in halves;
   - both fixes are in decision 0016.
 - **Found and left open:**
-  - **O29:** a recursive label settles one level deep;
+  - **O29** (closed the same day): a recursive label settled one level deep, because a sweep's
+    marks only added;
   - **O30:** memory and the CPU's single-threaded labels, for S8;
   - **O28:** Metal's labels took minutes on the whole sample. After decision 0017 they take
     12.1 s wall against the CPU's 27.0 s, and agree with W. The Metal arm stays opt-in

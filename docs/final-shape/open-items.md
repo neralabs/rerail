@@ -29,7 +29,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | closed (2026-10-30): labels only where a clause has candidates; sweeps on the CPU between GPU levels; 18.8 → 6.4 s on 8 fixtures |
 | O27 | Phase 4 / 10 | The findings layer's Unknown domains: syntax errors, capture anchors, `noqa` parents, report ceilings (06 S5, decision 0013) | closed (2026-10-30): all four decided in SQL; Unknown only where W's clause fails |
 | O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open: micro walks with text slots, roots on the CPU (0015, 0017); S7 cold 12.1 s wall on Metal against 27.0 s; the partition search and first-run compiles remain |
-| O29 | Phase 4 / 9 | A recursive label through `not has not` settles one level deep: SIM300's `probably` misses `X == 1 + 2 + 3`, `X == [[1]]` (06 S7) | open: the plan, not a backend (CPU and Metal agree); listed in S7's `KNOWN`; `a_recursive_label_settles_at_every_depth` ignored |
+| O29 | Phase 4 / 9 | A recursive label through `not has not` settles one level deep: SIM300's `probably` misses `X == 1 + 2 + 3`, `X == [[1]]` (06 S7) | closed (2026-10-31): a sweep with complements sets or clears each roots verdict; S7 equal for every (rule, code) |
 | O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | open: for S8; Metal peaks at 1.4 GB |
 
 ## O1. Stale-fact detection after a crash
@@ -821,6 +821,22 @@ level agrees with W (`X == 4 + 1`, `X == [1, 2]`). Two levels do not: for `X == 
   descendant is never retracted.
 - **Pinned by** `slice::tests::a_recursive_label_settles_at_every_depth` (ignored) and listed in
   S7's `KNOWN`.
+
+**Closed (2026-10-31).** `program.roots` (S1's path, rounds) agreed with W on the repro, and so
+did the wave with its sweep replaced by rounds. So the sweep was at fault.
+- **The cause:** a sweep's program marks only added. A program at a node could read a child's
+  complement before that complement's source was settled there. The complement was true while
+  unset, and the mark stuck after it flipped.
+- **Metal had the same answer** because its sweeping groups run the same CPU `sweep` between GPU
+  levels.
+- **The fix follows the sweep's own rule:** with complements, a group's programs mark only their
+  roots. So a roots verdict at a node is set or cleared there, as a complement's is, including
+  when the node leaves the program's label domain. The sweeps then iterate to the rounds' fixpoint.
+- **Checked by:**
+  - the regression test, no longer ignored;
+  - S7: 710 keys against W's 710 on both backends, 0 (rule, code)s differ;
+  - S1/S2, S4–S6 and the vtab tests.
+- `KNOWN` is empty.
 
 ## O30. S7's sample exceeds the memory budget, and the CPU's labels are single-threaded
 

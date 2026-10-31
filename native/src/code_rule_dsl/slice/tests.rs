@@ -391,11 +391,8 @@ fn broken(id: &str) -> Option<(String, CompiledCodeRuleDsl)> {
 
 /// The (rule, code)s whose keys S7's sample shows differ from W's, each with its open item and an
 /// ignored test of its own: the gate requires every other (rule, code) to be equal.
-const KNOWN: [(&str, &str, &str); 1] = [(
-    "ruff-sim300-yoda-conditions",
-    "SIM300",
-    "O29: the recursive label `probably` settles one level deep: `X == 1 + 2 + 3`, `X == [[1]]`",
-)];
+/// (O29, SIM300, was the one entry until the sweeps set and cleared their verdicts.)
+const KNOWN: [(&str, &str, &str); 0] = [];
 
 /// 06 S7's gate. On the sample (`sample`), the slice's cold audit (`audit`, every Python clause
 /// S1/S2 lowers, on the CPU, and on Metal with `RERAIL_S7_BACKENDS`) gives the same finding keys as W's engine for
@@ -546,10 +543,9 @@ fn the_slice_finds_ws_findings_on_real_files() {
 }
 
 /// O29's case on its own: a recursive label through `not has not` (SIM300's `probably`) at two
-/// levels of the same construct. W finds no yoda condition in any of these; the lowered clause
-/// finds one in each, on the CPU and on Metal alike, so the plan, not a backend, is at fault.
+/// levels of the same construct. W finds no yoda condition in any of these. The sweep's marks
+/// that only added kept a verdict read from an unsettled complement, on the CPU and on Metal alike.
 #[test]
-#[ignore = "O29: the recursive label settles one level deep; S7's gate lists SIM300 in KNOWN"]
 fn a_recursive_label_settles_at_every_depth() {
     let policies = policies();
     let dir = temp("o29");

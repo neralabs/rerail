@@ -12,7 +12,7 @@ gate needed a rule for a divergence it found.
   exceed a packed workspace's `u32` totals, although each program alone fits.
 - **Metal's labels failed on the whole chunk.** All 250 files are one chunk, so a label level over
   all of them outgrew a workspace.
-- **One clause differs from W:** SIM300 reports 3 keys that W does not (O29).
+- **One clause differs from W:** SIM300 reports 3 keys that W does not (O29, since closed).
 
 ## Decision
 - **A file that does not fit runs its programs in groups** (`PackedDemand::program_groups` in

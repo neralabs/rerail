@@ -1162,7 +1162,9 @@ fn sweeps(levels: &[Vec<(&LoweredMatcher, u16)>]) -> bool {
 /// A sweeping step on one tape (06 S4): the tape's nodes in preorder (reverse preorder with
 /// complements, or every other sweep), each node's passes in their level's order (`local_levels`),
 /// each program run at the node and its results marked at once, so later work of the sweep reads
-/// them. A recursion along the tree settles in a sweep or two, not a node depth per round.
+/// them. With complements every verdict at a node is set or cleared there (O29), so the sweeps
+/// reach the rounds' fixpoint. A recursion along the tree settles in a sweep or two, not a node
+/// depth per round.
 fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<Vec<Vec<u64>>>) -> Result<(), Error> {
     let complements = levels.iter().flatten().any(|&(clause, id)| matches!(clause.labels.def(id), Label::Complement(_)));
     let len = tape.transducer_len() as u32;
@@ -1223,6 +1225,11 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
                     if let Domain::Label(label) = starts
                         && !has(sets, *label, node)
                     {
+                        // Outside its domain now: with complements the verdict there is no.
+                        if complements && has(sets, id, node) {
+                            Arc::make_mut(sets)[target][node as usize / 64] &= !(1 << (node % 64));
+                            changed = true;
+                        }
                         return Ok(());
                     }
                     let targets = matches!(clause.labels.def(id), Label::Targets(..));
@@ -1240,6 +1247,19 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
                         } else {
                             marks.extend(outputs.iter().map(|output| output.start));
                         }
+                    }
+                    // With complements a program marks its roots only, so its verdict at `node` is
+                    // exactly whether it emitted there: set or cleared, as a complement's is. Marks
+                    // that only add would keep a verdict read from a complement before its source
+                    // was settled (O29: SIM300's `probably` two levels deep).
+                    if complements {
+                        let set = marks.contains(&node);
+                        let bits = &mut Arc::make_mut(sets)[target];
+                        if (bits[node as usize / 64] >> (node % 64) & 1 != 0) != set {
+                            bits[node as usize / 64] ^= 1 << (node % 64);
+                            changed = true;
+                        }
+                        return Ok(());
                     }
                     std::mem::take(&mut marks)
                 }

@@ -45,14 +45,17 @@ fn temp(what: &str) -> PathBuf {
 /// The fixtures, copied into a directory as `f<n>.py`: `RERAIL_S1_FILES` of them, else `default`.
 fn fixtures(dir: &Path, default: usize) -> Vec<String> {
     let mut sources = Vec::new();
-    files(&pack().join("upstream"), "py", &mut sources);
+    // `RERAIL_S1_DIR`: the `.py` files under it, all of them, rather than the pack's fixtures.
+    let dir_env = std::env::var_os("RERAIL_S1_DIR");
+    files(dir_env.as_ref().map_or(pack().join("upstream"), PathBuf::from).as_path(), "py", &mut sources);
     sources.sort();
+    let step = if dir_env.is_some() { 1 } else { 8 };
     let most = std::env::var("RERAIL_S1_FILES").ok().and_then(|n| n.parse().ok()).unwrap_or(default);
     let from = std::env::var("RERAIL_S1_FROM").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
     std::fs::create_dir_all(dir).unwrap();
     sources
         .iter()
-        .step_by(8)
+        .step_by(step)
         .skip(from)
         .take(most)
         .enumerate()
