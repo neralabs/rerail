@@ -129,7 +129,8 @@ fn bytes(d: &Document) -> usize {
 /// Documents in chunks of at most `budget` bytes, in order; a document over the budget is a chunk
 /// of its own. A program that is not file-local is one chunk.
 fn chunks(documents: Vec<Document>, budget: usize, file_local: bool) -> Vec<Vec<Document>> {
-    if !file_local {
+    // No documents is one chunk all the same: a warm run's kept rows are a wave's (06 S6).
+    if !file_local || documents.is_empty() {
         return vec![documents];
     }
     let mut out: Vec<Vec<Document>> = Vec::new();
@@ -227,7 +228,8 @@ fn fold_lattice(lease: &Lease<'_>, rel: &str, arity: usize, keys: usize, top: i6
 
 /// Runs one chunk's waves to the fixpoint: every step is pending at first, and after each wave
 /// the readers of every relation that changed. Returns the number of waves.
-fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u32) -> StoreResult<u32> {
+/// `empty`: the chunk has no documents, so a step reading its batch reads nothing and is skipped.
+fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u32, empty: bool) -> StoreResult<u32> {
     let derived: BTreeMap<&str, usize> = program.relations.iter().map(|(r, arity)| (r.as_str(), *arity)).collect();
     lease.execute_batch("DELETE FROM temp.wave_delta; DELETE FROM temp.wave_pending; INSERT INTO temp.wave_pending SELECT step FROM temp.wave_step")?;
     let mut wave = 0;
@@ -256,6 +258,9 @@ fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u3
         let mut written = BTreeSet::new();
         for (_, output, text) in &frontier {
             let mut statement = lease.prepare_execution(text)?;
+            if empty && token.is_none() && statement.parameter_index(":batch")?.is_some() {
+                continue;
+            }
             if let Some(i) = statement.parameter_index(":batch")? {
                 let token = token.ok_or_else(|| StoreError::Invalid(format!("{}: a step reads demand(batch) without a batch", program.name)))?;
                 statement.raw_bind_parameter(i, token)?;
@@ -331,9 +336,25 @@ pub(in crate::code_rule_dsl) fn run(
     limits: &Limits,
     demand: &mut dyn FnMut(&[Document]) -> StoreResult<Option<PackedDemand>>,
 ) -> StoreResult<Outcome> {
+    let inputs = documents.iter().map(|d| DerivationInput { name: Some(d.core.clone()), digest: d.digest }).collect();
+    run_over(lease, graph, program, scope, documents, inputs, limits, demand)
+}
+
+/// `run` over `documents`, its families recorded as read from `inputs`: a warm run evaluates the
+/// documents that changed, its relations holding the others' rows as kept (06 S6), and its
+/// families read every document.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::code_rule_dsl) fn run_over(
+    lease: &Lease<'_>,
+    graph: &(impl Graph + ?Sized),
+    program: &Program,
+    scope: &str,
+    documents: Vec<Document>,
+    mut inputs: Vec<DerivationInput>,
+    limits: &Limits,
+    demand: &mut dyn FnMut(&[Document]) -> StoreResult<Option<PackedDemand>>,
+) -> StoreResult<Outcome> {
     declare(lease, program)?;
-    let mut inputs: Vec<DerivationInput> =
-        documents.iter().map(|d| DerivationInput { name: Some(d.core.clone()), digest: d.digest }).collect();
     inputs.sort_by(|a, b| a.name.cmp(&b.name));
     let planned = chunks(documents, limits.chunk_bytes, program.file_local);
     let mut outcome = Outcome { chunks: planned.len(), ..Outcome::default() };
@@ -363,7 +384,7 @@ pub(in crate::code_rule_dsl) fn run(
                 lease.bind(name, source).map_err(sql)?;
             }
             let token = demand(&docs)?.map(|d| lease.registry.register(d));
-            let waves = waves(lease, program, token, limits.max_waves).and_then(|waves| match token {
+            let waves = waves(lease, program, token, limits.max_waves, docs.is_empty()).and_then(|waves| match token {
                 // A batch the steps read that did not complete fails its chunk: its relations
                 // would be silently short.
                 Some(token) if program.steps.iter().any(|step| step.sql.contains(":batch")) => {
@@ -404,7 +425,7 @@ pub(in crate::code_rule_dsl) fn layer(
 ) -> StoreResult<Outcome> {
     declare(lease, program)?;
     inputs.sort_by(|a, b| a.name.cmp(&b.name));
-    let waves = waves(lease, program, None, limits.max_waves)?;
+    let waves = waves(lease, program, None, limits.max_waves, false)?;
     record(lease, graph, program, scope, inputs, Outcome { waves, chunks: 1, ..Outcome::default() })
 }
 

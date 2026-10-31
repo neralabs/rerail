@@ -313,7 +313,8 @@ interpreter.
   - **Root programs on Metal.** `Wave::demand` on a Metal backend evaluates labels and roots with
     `LoweredWave::labelled_metal`; `the_wave_finds_ws_matches_on_metal` (8 fixtures, and chunks of
     one in the background mode) has 0 differ. The roots take 178 ms; the label passes before them
-    are slow (O26).
+    were slow (O26). Optimized, and with 1,024 interpreter lanes in place of 64 (O28), the wave
+    on 8 fixtures takes 0.92–0.98 s on Metal against 1.38–1.54 s on the CPU.
   - **Planner.** `logic::plan::emit` gives a lowered program as a `schedule::Program`, and T's
     workload, workload_demand and calls give `run_atoms`' outputs through `schedule::run`, planned
     from the estimates and again from a run's boundary counts (O14). The frontier loop now runs
@@ -367,6 +368,45 @@ interpreter.
 - a napi method comes after the gate (S7) passes.
 
 Check: an edit to one file re-runs exactly that file's derivations and its clause matches. Its findings change only for that file. A whitespace-only edit cuts off at the tape (same structure) or at the matches.
+
+**Done (2026-10-30, decision 0014):**
+- **`slice::audit(store, scope, root, rules)` and `slice::apply(store, scope, root, rules)`.**
+  - `Rules::lower` takes the pack's policies, keeps the Python `ast` clauses that lower, and holds
+    the wave, the layer and the SQL owner.
+  - Both calls push the root, run the wave and run the findings layer, and return a `Run`: the
+    findings, the push's work, the documents evaluated, and the families that changed.
+  - `apply` takes the edited snapshot's root, since worktree edits reach the slice through a
+    directory snapshot (S3).
+- **The warm path.**
+  - The wave's rows and each document's core digest are kept in the store, per scope
+    (`slice_match`, `slice_span`, `slice_document`).
+  - A warm run evaluates only the documents whose core digest changed. The kept rows of the
+    others go back into the wave's relations (`Wave::kept_program`), and the families are
+    recorded from every document (`schedule::run_over`).
+  - A run with nothing to evaluate is one empty chunk, whose batch steps read nothing.
+- **The check** (`slice::tests::an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off`; 3 Python
+  files and one other, 87 clauses):
+  - cold: all 3 evaluated, 4 keys;
+  - the same snapshot: nothing rebound, evaluated or changed;
+  - an edit to one file: 4 derivations re-run (its tape, core, prefilter and kinds); only it is
+    evaluated; 3 wave families and 2 finding families change; the other files' findings do not;
+  - a whitespace-only edit: the file is evaluated, because its core digest changes, but only
+    `span` changes. The clause families cut off at the matches, and the findings too;
+  - a removed file: nothing is evaluated, and its findings go;
+  - every warm run's keys and coverage equal a cold audit's of the same snapshot in a fresh store.
+- **The bench**, `slice::tests::slice_bench` (ignored; `--profile profiling`): a cold audit of 48
+  fixtures, a one-file edit and a whitespace edit, with CPU time. The crate is a cdylib only, so
+  the bench is an ignored test, as the crate's other benches are, not a binary.
+  - Measured: optimized, load about 42, CPU time (user + sys).
+
+    | | CPU | Metal |
+    |---|---|---|
+    | Cold audit (121 keys, W's count in S5's gate) | 2.27 s | 1.79 s (2.46 s wall) |
+    | One-file edit: 1 evaluated, 4 re-run | 0.53 s | 0.38 s |
+    | Whitespace edit: 1 evaluated | 0.55 s | 0.38 s |
+
+  - What bounds the warm runs is the layer's facts, rewritten for every document (decision 0014),
+    and the documents' facts rebuilt from their tapes. S8 measures them on S7's sample.
 
 ### S7. Differential gate against W's engine
 

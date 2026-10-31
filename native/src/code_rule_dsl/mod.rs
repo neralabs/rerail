@@ -48,6 +48,10 @@ mod residency;
 use residency::admission::relational;
 mod scope;
 mod semver;
+// The first slice's entry points (06 S6): tests and benches call them until its differential gate
+// (S7) passes and a napi method does.
+#[allow(dead_code)]
+mod slice;
 mod soundness;
 mod suppress;
 mod tape;

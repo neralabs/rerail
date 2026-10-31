@@ -416,8 +416,12 @@ impl Layer {
         Ok((findings, outcome))
     }
 
+    pub(in crate::code_rule_dsl) fn shapes(&self) -> &[Shape] {
+        &self.shapes
+    }
+
     /// The shapes' identity, which the program's text does not hold.
-    fn digest(&self) -> [u8; 32] {
+    pub(in crate::code_rule_dsl) fn digest(&self) -> [u8; 32] {
         let mut hash = Sha256::new();
         hash.update(b"rerail.findings/v2\0");
         for shape in &self.shapes {

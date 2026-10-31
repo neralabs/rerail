@@ -45,6 +45,19 @@ const SOURCE: &str = "
 match($c, $d, $n) :- terminal($f, $c, $n, _, _), document($f, $d).
 span($d, $n, $s, $e) :- terminal($f, _, $n, $s, $e), document($f, $d).
 ";
+/// A warm run's rules besides `SOURCE`'s (06 S6): the rows of the documents it does not evaluate,
+/// kept from the run before (`KEPT_MATCH`, `KEPT_SPAN`), so its relations, and the families
+/// recorded from them, are of every document.
+const KEPT: &str = "
+.decl kept_match(c: int, d: int, n: int)
+.decl kept_span(d: int, n: int, s: int, e: int)
+.input kept_match, kept_span
+match($c, $d, $n) :- kept_match($c, $d, $n).
+span($d, $n, $s, $e) :- kept_span($d, $n, $s, $e).
+";
+/// The kept rows a warm run reads, filled by its caller (`slice`).
+pub(in crate::code_rule_dsl) const KEPT_MATCH: &str = "temp.wave_kept_match";
+pub(in crate::code_rule_dsl) const KEPT_SPAN: &str = "temp.wave_kept_span";
 
 /// One lowered clause of the wave: its name (`policy/clause`), the prefilter's plan for its roots
 /// and its lowered matcher.
@@ -79,6 +92,10 @@ fn invalid(error: impl std::fmt::Debug) -> StoreError {
 
 impl Wave {
     pub(in crate::code_rule_dsl) fn new(clauses: &[Clause], backend: ExecutionBackend) -> StoreResult<Self> {
+        #[cfg(target_os = "macos")]
+        if matches!(backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground) {
+            LoweredWave::warm_metal();
+        }
         let matchers = clauses.iter().map(|clause| &clause.matcher).collect::<Vec<_>>();
         Ok(Self {
             backend,
@@ -98,7 +115,17 @@ impl Wave {
     /// File-local, so one wave per chunk. A batch holds at least one match per clause, the
     /// terminal input's estimate; a chunk has documents in the hundreds at most.
     pub(in crate::code_rule_dsl) fn program(&self, store: &ContentStore) -> StoreResult<Program> {
-        let batch = HashMap::from([
+        self.emit(store, false)
+    }
+
+    /// The wave program of a warm run: `program`'s, with each relation also holding the kept rows
+    /// of the documents it does not evaluate (`KEPT_MATCH`, `KEPT_SPAN`).
+    pub(in crate::code_rule_dsl) fn kept_program(&self, store: &ContentStore) -> StoreResult<Program> {
+        self.emit(store, true)
+    }
+
+    fn emit(&self, store: &ContentStore, kept: bool) -> StoreResult<Program> {
+        let mut batch = HashMap::from([
             (
                 "terminal".to_owned(),
                 (
@@ -108,8 +135,14 @@ impl Wave {
             ),
             ("document".to_owned(), ("(SELECT position AS c0, d AS c1 FROM temp.wave_document)".to_owned(), 100.0)),
         ]);
+        let mut source = SOURCE.to_owned();
+        if kept {
+            source.push_str(KEPT);
+            batch.insert("kept_match".to_owned(), (format!("(SELECT c0, c1, c2 FROM {KEPT_MATCH})"), 1000.0));
+            batch.insert("kept_span".to_owned(), (format!("(SELECT c0, c1, c2, c3 FROM {KEPT_SPAN})"), 1000.0));
+        }
         let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
-        let mut program = emit::emit_batch(SOURCE, PROGRAM, &batch, intern).map_err(invalid)?.program;
+        let mut program = emit::emit_batch(&source, PROGRAM, &batch, intern).map_err(invalid)?.program;
         program.file_local = true;
         program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
         Ok(program)
@@ -124,6 +157,10 @@ impl Wave {
         scope: &str,
         documents: &[Document],
     ) -> StoreResult<Option<PackedDemand>> {
+        // An empty chunk (a warm run with nothing to evaluate) has no batch.
+        if documents.is_empty() {
+            return Ok(None);
+        }
         let tapes = documents
             .iter()
             .map(|document| {
