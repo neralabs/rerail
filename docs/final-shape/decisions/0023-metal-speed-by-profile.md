@@ -51,7 +51,13 @@ backends.
 7. **Ingest parses a chunk's sources in parallel** (`parse_ahead`), before storing their tapes
    in order: `slice.push` ~470–580 → ~370–400 ms.
 
-Two things were tried and dropped:
+8. **A text test under its NFA's work bound runs as a DFA search.** The byte NFA charges at
+   most `work_per_byte` per byte read; on a text shorter than `MAX_STEPS_PER_PATH /
+   work_per_byte` it cannot reach the work limit, so a `regex_automata` meta search of the same
+   pattern gives the same bit. On S7 the two agreed on all 12,061,817 such texts (checked once
+   against the NFA). Text rows: ~0.9 → ~0.2 s CPU, on both backends.
+
+These were tried and dropped:
 
 | Tried | Why dropped |
 |---|---|
@@ -83,6 +89,9 @@ The CPU backend also gained from steps 2 and 5.
 | CPU backend | 17.6–18.2 s | 18.8–19.1 s |
 | Metal | 3.3–3.9 s | 7.8–8.7 s |
 
+**After step 8,** one `cpu,metal` process at load 14–32: CPU backend 16.0–16.3 s wall /
+17.0–17.5 s CPU; Metal 3.1–3.2 s wall / 6.9–7.1 s CPU (~5× wall, ~2.5× CPU).
+
 **Labels alone:** Metal ~0.85 s wall / ~3.1 s CPU, against the CPU backend's ~14 s / 13.4 s.
 That is about 16× in wall time and 4.4× in CPU.
 
@@ -98,7 +107,6 @@ peak footprint is 484 MB (`phys_footprint_peak`).
 - The candidate SQL still sorts 37 UNION CTEs for merge-dedup, and materializes complements
   (`all_nodes EXCEPT …`, ~300 k rows). This is the prefilter lowering's own work, iterated in
   its lab.
-- Kindless text tests on any start node scan every node's text (~0.8 s CPU).
 - The loop tier could keep walks that overflow apart and rerun only them, not the whole run.
 
 **Spike sources:** `prof` adds `cpu_ms.*` (process CPU for `slice.`, `demand.` and `labels.`
