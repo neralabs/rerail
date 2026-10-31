@@ -44,6 +44,12 @@ backends.
      deterministic in them.
 5. **Candidate SQL streams its arms unsorted.** `select` sorts each plan's rows in Rust, in
    0.5 ms, since they arrive nearly sorted.
+6. **On Metal, labels run beside the candidate SQL.** Every (clause, file) is active. The GPU
+   pass is dense, so this costs the same: ~0.9 s wall either way, +0.1 s CPU, 8,446 → 21,750
+   active pairs. Labels run on a scoped thread while the SQL runs on the store's connection. The
+   CPU backend keeps its order, because there its labels would grow with the mask.
+7. **Ingest parses a chunk's sources in parallel** (`parse_ahead`), before storing their tapes
+   in order: `slice.push` ~470–580 → ~370–400 ms.
 
 Two things were tried and dropped:
 
@@ -51,10 +57,11 @@ Two things were tried and dropped:
 |---|---|
 | Evaluating a text test that reads the walk's start only at the pass's roots | S7's roots cover ~274 k of its nodes, so it saved nothing. |
 | Recursive groups as GPU rounds instead of host sweeps | It exceeds the launch budget (`BackendLaunchLimit`), because chains are deep. |
+| Absorbing a roots range's rows on a thread while the next range runs | In an interleaved A/B the wall time did not change and CPU rose 0.7–1.3 s: the rows thread competes with the JIT's pool. |
 
 ## Consequences
 
-**S7, one process, `cpu,metal`, load 28–40:**
+**S7, one process, `cpu,metal`, after steps 1–5, load 28–40:**
 
 | | Before | After |
 |---|---|---|
@@ -65,10 +72,19 @@ Two things were tried and dropped:
 
 The CPU backend also gained from steps 2 and 5.
 
+**After steps 6 and 7:** Metal alone took 2.8–2.96 s wall / ~7.5 s CPU at load ~30. One
+`cpu,metal` process at load 40–63 gave:
+
+| | Wall | CPU |
+|---|---|---|
+| CPU backend | 17.6–18.2 s | 18.8–19.1 s |
+| Metal | 3.3–3.9 s | 7.8–8.7 s |
+
 **Labels alone:** Metal ~0.85 s wall / ~3.1 s CPU, against the CPU backend's ~14 s / 13.4 s.
 That is about 16× in wall time and 4.4× in CPU.
 
-**End to end** the ratio is 4.6× in wall time and 2.6× in CPU. It is bounded by the shared
+**End to end** the ratio is ~5–6× in wall time and ~2.3× in CPU (it was 4.6× and 2.6× after
+steps 1–5, at lower load). It is bounded by the shared
 stages: candidates ~1.0 s, execute ~1.05 s (2.2 s CPU), push ~0.55 s, layer ~0.22 s. Together
 they are ~2.8 s wall and ~4.1 s CPU. These stages are CPU work in both backends.
 
