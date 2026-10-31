@@ -480,6 +480,21 @@ impl LoweredWave {
         self.labels
     }
 
+    /// Every clause's label programs with their domains, and whether each marks the nodes it
+    /// captures (a targets label) rather than its starts.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn label_programs(&self) -> Vec<(&Program, bool)> {
+        self.clauses
+            .iter()
+            .flat_map(|clause| clause.labels.defs.iter())
+            .filter_map(|label| match label {
+                Label::Roots(program, _) => Some((program, false)),
+                Label::Targets(program, _) => Some((program, true)),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Each clause's root program, in clause order.
     pub(in crate::code_rule_dsl) fn programs(&self) -> Vec<Program> {
         self.clauses.iter().map(|clause| clause.program.clone()).collect()
@@ -679,6 +694,7 @@ impl LoweredWave {
     ) -> Result<(Vec<TapeDoc>, metal_program_backend::label_passes::Outcome), Error> {
         let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[], Some(active))?;
         let mut base = 0_usize;
+        let _views = crate::code_rule_dsl::prof::Stage::start("labels.views");
         let views = tapes
             .iter()
             .map(|tape| {
@@ -821,7 +837,7 @@ fn metal<'a>(
             Label::Empty => Pass::Empty { target },
         })
     };
-    let (mut steps, mut chains) = levels(clauses, &mut pass)?;
+    let (mut steps, mut chains) = crate::code_rule_dsl::prof::time("labels.plan", || levels(clauses, &mut pass))?;
     let all = clauses;
     // A clause's roots: one label past every pass's (none where the roots run apart, `labelled_metal`).
     let roots = !clause_roots.is_empty();
@@ -908,7 +924,7 @@ fn apart<'a>(
             chains: std::mem::take(&mut segment.1),
             initial: Some(std::mem::take(&mut outcome.labels)),
         };
-        let ran = run(&plan, tapes)?;
+        let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
         outcome.labels = ran.labels;
         outcome.command_buffers += ran.command_buffers;
         outcome.dispatches += ran.dispatches;
@@ -923,9 +939,10 @@ fn apart<'a>(
             continue;
         }
         flush(&mut segment, &mut outcome)?;
-        let mut sets = to_sets(&outcome.labels, labels, words, tapes);
+        let mut sets = crate::code_rule_dsl::prof::time("labels.to_sets", || to_sets(&outcome.labels, labels, words, tapes));
         // A file's sweep reads and marks its own labels only, so the files sweep in parallel.
         use rayon::prelude::*;
+        let _sweep = crate::code_rule_dsl::prof::Stage::start("labels.sweep");
         tapes.par_iter().zip(sets.par_iter_mut()).enumerate().try_for_each(|(at, (tape, sets))| {
             let levels = levels
                 .iter()
@@ -944,7 +961,8 @@ fn apart<'a>(
             }
             Ok::<_, Error>(())
         })?;
-        outcome.labels = to_words(&sets, labels, words, tapes);
+        drop(_sweep);
+        outcome.labels = crate::code_rule_dsl::prof::time("labels.to_words", || to_words(&sets, labels, words, tapes));
     }
     flush(&mut segment, &mut outcome)?;
     Ok(outcome)
@@ -1168,6 +1186,20 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
         }
     }
     entries.sort_by_key(|&(node, at, ..)| (node, at));
+    // Each program's micro walk, where it is one (O28): no interpreter task per (node, pass).
+    let walks = levels
+        .iter()
+        .flatten()
+        .map(|&(clause, id)| {
+            let walk = match clause.labels.def(id) {
+                Label::Roots(program, _) | Label::Targets(program, _) => Micro::of(program),
+                _ => None,
+            };
+            ((std::ptr::from_ref(clause) as usize, id), walk)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut frames = Frames::default();
+    let mut marks = Vec::new();
     let mut reverse = complements;
     for _sweep in 0..=len + 1 {
         let mut changed = false;
@@ -1190,22 +1222,33 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
                     {
                         return Ok(());
                     }
-                    let view = tape.with_labels(Arc::clone(sets));
-                    let outputs = program.execute_roots(&view, [node])?;
-                    drop(view);
-                    match clause.labels.def(id) {
-                        Label::Roots(..) => outputs.iter().map(|output| output.start).collect::<Vec<_>>(),
-                        _ => outputs.iter().flat_map(|output| output.captures.iter().map(|capture| capture.node)).collect(),
+                    let targets = matches!(clause.labels.def(id), Label::Targets(..));
+                    marks.clear();
+                    let walked = walks[&(std::ptr::from_ref(clause) as usize, id)]
+                        .as_ref()
+                        .is_some_and(|walk| walk.run(tape, sets, node, targets, &mut frames, &mut |node| marks.push(node)).is_ok());
+                    if !walked {
+                        marks.clear();
+                        let view = tape.with_labels(Arc::clone(sets));
+                        let outputs = program.execute_roots(&view, [node])?;
+                        drop(view);
+                        if targets {
+                            marks.extend(outputs.iter().flat_map(|output| output.captures.iter().map(|capture| capture.node)));
+                        } else {
+                            marks.extend(outputs.iter().map(|output| output.start));
+                        }
                     }
+                    std::mem::take(&mut marks)
                 }
                 _ => return Ok(()),
             };
-            for node in marked {
+            for &node in &marked {
                 if !has(sets, id, node) {
                     Arc::make_mut(sets)[target][node as usize / 64] |= 1 << (node % 64);
                     changed = true;
                 }
             }
+            marks = marked;
             Ok(())
         };
         if reverse {

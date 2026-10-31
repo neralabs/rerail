@@ -116,6 +116,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) rounds: usize,
     /// Whether a task outgrew `NARROW`'s states, so the batch ran again with `WIDE`'s.
     pub(in crate::code_rule_dsl) widened: bool,
+    /// Whether a micro walk outgrew its frames, so every program ran on the interpreter.
+    pub(in crate::code_rule_dsl) interpreted: bool,
 }
 
 #[repr(C)]
@@ -131,6 +133,7 @@ struct Shape {
     finish: u32,
     recursive: u32,
     last_level: u32,
+    file_count: u32,
 }
 
 #[repr(C)]
@@ -145,7 +148,7 @@ struct Op {
 }
 
 const SOURCE: &str = include_str!("metal_label_passes.metal");
-const KERNELS: [&str; 3] = ["label_sink", "label_settle", "label_round"];
+const KERNELS: [&str; 4] = ["label_sink", "label_settle", "label_round", "label_micro"];
 /// The launches a clause's encoding aims to stay within, below the evaluation's budget
 /// (`metal_launch_budget`); a recursive group's rounds are encoded from what is left.
 const LAUNCHES: usize = 560;
@@ -198,25 +201,6 @@ fn pattern_pipeline(patterns: &[&PackedPattern]) -> Result<Option<(ComputePipeli
     Ok(Some((pipeline, names)))
 }
 
-fn widest(left: WorkspaceTotals, right: WorkspaceTotals) -> WorkspaceTotals {
-    WorkspaceTotals {
-        pending: left.pending.max(right.pending),
-        captures: left.captures.max(right.captures),
-        cursors: left.cursors.max(right.cursors),
-        repeats: left.repeats.max(right.repeats),
-        query_states: left.query_states.max(right.query_states),
-        query_members: left.query_members.max(right.query_members),
-        queued_states: left.queued_states.max(right.queued_states),
-        greedy_entries: left.greedy_entries.max(right.greedy_entries),
-        value_states: left.value_states.max(right.value_states),
-        candidates: left.candidates.max(right.candidates),
-        results: left.results.max(right.results),
-        output_bytes: left.output_bytes.max(right.output_bytes),
-        output_captures: left.output_captures.max(right.output_captures),
-        properties: left.properties.max(right.properties),
-    }
-}
-
 fn bytes_of<T: Copy>(values: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values)) }
 }
@@ -247,6 +231,16 @@ struct Prepared {
     lanes: Vec<MetalEvaluation>,
     task_count: usize,
     result_capacity: usize,
+}
+
+/// A level's micro walks (`label_micro`): per pass {word start, word count, scratch label,
+/// targets, item start, item count}, the passes' words, and their starts (global nodes).
+struct Walks {
+    passes: MappedBuffer,
+    words: MappedBuffer,
+    items: MappedBuffer,
+    pass_count: usize,
+    item_count: usize,
 }
 
 /// A workspace lease with what it was sized for.
@@ -288,6 +282,9 @@ struct Runner<'a> {
     segment_bytes: usize,
     /// A level's lanes and each task's states; a sweeping group's are always `WIDE`.
     lanes: (usize, Option<u32>),
+    /// Whether a level's micro walks run as such, and each level's, by its address.
+    micro: bool,
+    walks: HashMap<usize, Walks>,
     encoded: bool,
     outcome: Outcome,
 }
@@ -380,16 +377,22 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
     let mut rounds = plan_rounds(0, &wanted);
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
-    let mut lanes = NARROW;
+    let (mut lanes, mut micro) = (NARROW, true);
     loop {
-        let mut outcome = match encode(device, plan, files, &rounds, lanes) {
+        let mut outcome = match encode(device, plan, files, &rounds, lanes, micro) {
             // A task's states outgrew the narrow lanes' (or another task failed, which fails again).
             Err(Error::BackendFailure) if lanes != WIDE => {
                 lanes = WIDE;
                 continue;
             }
+            // A micro walk outgrew its frames, captures or steps.
+            Err(Error::BackendCapacity) if micro => {
+                micro = false;
+                continue;
+            }
             outcome => outcome?,
         };
+        outcome.interpreted = !micro;
         outcome.widened = lanes == WIDE;
         used += outcome.dispatches;
         buffers += outcome.command_buffers;
@@ -409,8 +412,16 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
 }
 
 /// The clause's passes in one command buffer, each recursive group as `rounds` rounds.
-/// `lanes`: a level's lanes and each task's states (`NARROW`, `WIDE`).
-fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize], lanes: (usize, Option<u32>)) -> Result<Outcome, Error> {
+/// `lanes`: a level's lanes and each task's states (`NARROW`, `WIDE`); `micro`: whether a pass
+/// whose program is a micro walk runs as one (`label_micro`).
+fn encode(
+    device: &Device,
+    plan: &Plan<'_>,
+    files: &[TapeDoc],
+    rounds: &[usize],
+    lanes: (usize, Option<u32>),
+    micro: bool,
+) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
     let queue = device.new_command_queue();
@@ -431,7 +442,7 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize],
         command,
         queue,
         files,
-        tapes: tapes(device, files, plan, words)?,
+        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words))?,
         plan_labels: plan.labels,
         words,
         nodes,
@@ -444,6 +455,8 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize],
         prepared: HashMap::new(),
         segment_bytes: 0,
         lanes,
+        micro,
+        walks: HashMap::new(),
         encoded: false,
         outcome: Outcome {
             words,
@@ -451,7 +464,8 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize],
             ..Outcome::default()
         },
     };
-    runner.size(plan)?;
+    crate::code_rule_dsl::prof::time("gpu.size", || runner.size(plan))?;
+    let _encode = crate::code_rule_dsl::prof::Stage::start("gpu.encode");
     for (group, ((recursive, levels), &rounds)) in plan.steps.iter().zip(rounds).enumerate() {
         if !recursive {
             for level in levels {
@@ -476,7 +490,12 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize],
         }
         runner.boundary(rounds);
     }
-    runner.flush()?;
+    drop(_encode);
+    crate::code_rule_dsl::prof::time("gpu.flush", || runner.flush())?;
+    // A micro walk that outgrew its frames: the passes again on the interpreter.
+    if runner.flag(0) & 2 != 0 {
+        return Err(Error::BackendCapacity);
+    }
     if runner.flag(0) != 0 {
         return Err(Error::BackendFailure);
     }
@@ -646,12 +665,43 @@ impl Runner<'_> {
                 levels.iter().map(|level| (level.as_ptr() as usize, programs_of(level), None)).collect()
             }
         });
-        for (key, passes, sweep) in batches {
+        let bases = self.files.iter().scan(0_u32, |base, tape| {
+            let at = *base;
+            *base += tape.transducer_len() as u32;
+            Some(at)
+        }).collect::<Vec<_>>();
+        for (key, mut passes, sweep) in batches {
+            // A level's micro walks run as such (`label_micro`); its other programs are tasks.
+            if self.micro && sweep.is_none() {
+                let (mut records, mut words, mut items) = (Vec::new(), Vec::new(), Vec::new());
+                passes.retain(|&(program, roots, mode, target)| {
+                    let Some(walk) = (mode < 2).then(|| Micro::of(program)).flatten() else { return true };
+                    let start = items.len() as u32;
+                    for (roots, base) in roots.iter().zip(&bases) {
+                        items.extend(roots.iter().map(|node| base + node));
+                    }
+                    records.push([words.len() as u32, walk.words.len() as u32, target, mode, start, items.len() as u32 - start]);
+                    words.extend_from_slice(&walk.words);
+                    false
+                });
+                crate::code_rule_dsl::prof::count("size.walks", items.len());
+                if !items.is_empty() {
+                    let walks = Walks {
+                        pass_count: records.len(),
+                        item_count: items.len(),
+                        passes: MappedBuffer::from_slice(self.device, &records)?,
+                        words: MappedBuffer::from_slice(self.device, &words)?,
+                        items: MappedBuffer::from_slice(self.device, &items)?,
+                    };
+                    self.walks.insert(key, walks);
+                }
+            }
             if passes.is_empty() {
                 continue;
             }
             let (programs, anchors) = self.batch_inputs(&passes);
-            let mut batch = PackedBatch::new(&programs, self.files, &anchors)?;
+            let mut batch = crate::code_rule_dsl::prof::time("size.batch", || PackedBatch::new(&programs, self.files, &anchors))?;
+            crate::code_rule_dsl::prof::count("size.tasks", batch.tasks.len());
             if batch.tasks.is_empty() {
                 self.prepared.insert(key, None);
                 continue;
@@ -696,11 +746,12 @@ impl Runner<'_> {
             batch.header.supertype_count = self.tapes.supertype_count;
             let (lanes, states) = if sweep.is_some() { WIDE } else { self.lanes };
             batch.state_cap = states;
-            let totals = batch.assign_workspace_with_result_limits_and_lanes(&programs, None, lanes)?;
+            let totals = crate::code_rule_dsl::prof::time("size.assign", || batch.assign_workspace_with_result_limits_and_lanes(&programs, None, lanes))?;
+            crate::code_rule_dsl::prof::count("size.evaluations", batch.evaluations.len());
             let seen = (totals, batch.header.scheduler_byte_count, batch.header.workspace_byte_count, batch.tasks.len());
             widest_seen = Some(match widest_seen {
                 None => seen,
-                Some(old) => (widest(old.0, seen.0), old.1.max(seen.1), old.2.max(seen.2), old.3.max(seen.3)),
+                Some(old) => (old.0.widest(seen.0), old.1.max(seen.1), old.2.max(seen.2), old.3.max(seen.3)),
             });
             let mut routes = vec![[0_u32; 2]; batch.tasks.len()];
             for task in &batch.tasks {
@@ -715,7 +766,7 @@ impl Runner<'_> {
                 tasks: MappedBuffer::from_slice(self.device, &tasks)?,
                 header: MappedBuffer::from_slice(self.device, &[batch.header])?,
                 routes: MappedBuffer::from_slice(self.device, &routes)?,
-                program: self.engine.program_buffers(self.device, &batch)?,
+                program: crate::code_rule_dsl::prof::time("size.program_buffers", || self.engine.program_buffers(self.device, &batch))?,
                 arenas: batch.global_arenas,
                 task_count: batch.tasks.len(),
                 result_capacity: batch.global_arenas.arenas[ArenaKind::Result as usize].capacity as usize,
@@ -725,7 +776,8 @@ impl Runner<'_> {
             self.prepared.insert(key, Some(prepared));
         }
         if let Some((totals, scheduler_bytes, output_bytes, tasks)) = widest_seen {
-            let mut lease = MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks)?;
+            let mut lease = crate::code_rule_dsl::prof::time("size.lease", || MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks))?;
+            crate::code_rule_dsl::prof::count("size.lease_mb", lease.bytes() >> 20);
             // Each encoded level advances the generation itself.
             lease.generation_span = 0;
             self.workspace = Some(Workspace {
@@ -751,6 +803,7 @@ impl Runner<'_> {
         Shape {
             node_count: self.nodes as u32,
             words: self.words as u32,
+            file_count: self.files.len() as u32,
             ..Shape::default()
         }
     }
@@ -816,6 +869,7 @@ impl Runner<'_> {
         }
         if !programs.is_empty() {
             self.programs(passes.as_ptr() as usize)?;
+            self.walk(passes.as_ptr() as usize);
         }
         let labels = self.tapes.supertypes.buffer.clone();
         let (scratch, counts, flags) =
@@ -885,6 +939,7 @@ impl Runner<'_> {
         image.extend_from_slice(bytes_of(&stamp(&prepared.evaluations)));
         image.extend_from_slice(bytes_of(&stamp(&prepared.lanes)));
         let image_length = image.len() as u64;
+        crate::code_rule_dsl::prof::count("stage.image_kb", image.len() >> 10);
         let image = self.upload(&image)?;
         let lease = &self.workspace.as_ref().expect("a workspace").lease;
         let blit = self.command.new_blit_command_encoder();
@@ -971,6 +1026,30 @@ impl Runner<'_> {
         self.encoded = true;
         self.outcome.dispatches += 1;
         Ok(())
+    }
+
+    /// The level's micro walks (`label_micro`), one thread per (pass, start), marking scratch as
+    /// `label_sink` marks the tasks' results.
+    fn walk(&mut self, level: usize) {
+        let Some(walks) = self.walks.get(&level) else { return };
+        let (passes, words, items) = (walks.passes.buffer.clone(), walks.words.buffer.clone(), walks.items.buffer.clone());
+        let shape = Shape { item_count: walks.item_count as u32, target_count: walks.pass_count as u32, ..self.shape() };
+        let tapes = &self.tapes;
+        let (nodes, children, supertypes, files) =
+            (tapes.nodes.buffer.clone(), tapes.children.buffer.clone(), tapes.supertypes.buffer.clone(), tapes.files.buffer.clone());
+        let (scratch, flags) = (self.scratch.buffer.clone(), self.flags.buffer.clone());
+        let buffers = [
+            (&nodes, 0),
+            (&children, 0),
+            (&supertypes, 0),
+            (&files, 0),
+            (&passes, 0),
+            (&words, 0),
+            (&items, 0),
+            (&scratch, 0),
+            (&flags, 0),
+        ];
+        self.kernel(3, &buffers, shape, shape.item_count as usize);
     }
 
     /// The level's prepared batch, then `label_sink` routing each result by its task's program.

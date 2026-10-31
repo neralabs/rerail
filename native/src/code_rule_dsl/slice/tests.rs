@@ -195,6 +195,7 @@ fn slice_bench() {
             cpu() - cpu0,
             wall0.elapsed()
         );
+        crate::code_rule_dsl::prof::report(what);
     };
     measure("cold", &mut rules, true);
     let first = dir.join(&paths[0]);

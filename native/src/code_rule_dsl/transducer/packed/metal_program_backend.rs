@@ -78,25 +78,25 @@ impl MetalWorkspace {
             output_storage_bytes,
             task_capacity,
             generation: 1,
-            pending: MappedBuffer::zeroed::<PendingRecord>(device, totals.pending as usize)?,
-            captures: MappedBuffer::zeroed::<CaptureRecord>(device, totals.captures as usize)?,
-            cursors: MappedBuffer::zeroed::<CaptureRecord>(device, totals.cursors as usize)?,
-            repeats: MappedBuffer::zeroed::<RepeatRecord>(device, totals.repeats as usize)?,
-            scheduler: MappedBuffer::zeroed::<u8>(device, scheduler_bytes as usize)?,
-            results: MappedBuffer::zeroed::<ResultRecord>(
+            pending: MappedBuffer::untouched::<PendingRecord>(device, totals.pending as usize)?,
+            captures: MappedBuffer::untouched::<CaptureRecord>(device, totals.captures as usize)?,
+            cursors: MappedBuffer::untouched::<CaptureRecord>(device, totals.cursors as usize)?,
+            repeats: MappedBuffer::untouched::<RepeatRecord>(device, totals.repeats as usize)?,
+            scheduler: MappedBuffer::untouched::<u8>(device, scheduler_bytes as usize)?,
+            results: MappedBuffer::untouched::<ResultRecord>(
                 device,
                 totals
                     .candidates
                     .checked_add(totals.results)
                     .ok_or(Error::BackendCapacity)? as usize,
             )?,
-            statuses: MappedBuffer::zeroed::<TaskStatus>(device, task_capacity)?,
-            value_states: MappedBuffer::zeroed::<u32>(device, totals.value_states as usize)?,
-            final_captures: MappedBuffer::zeroed::<FinalCaptureRecord>(
+            statuses: MappedBuffer::untouched::<TaskStatus>(device, task_capacity)?,
+            value_states: MappedBuffer::untouched::<u32>(device, totals.value_states as usize)?,
+            final_captures: MappedBuffer::untouched::<FinalCaptureRecord>(
                 device,
                 totals.output_captures as usize,
             )?,
-            output_storage: MappedBuffer::zeroed::<u8>(device, output_storage_bytes as usize)?,
+            output_storage: MappedBuffer::untouched::<u8>(device, output_storage_bytes as usize)?,
         };
         for (buffer, label) in [
             (&workspace.pending, "Tempo pending paths"),
@@ -146,6 +146,15 @@ struct MetalWorkspaceLease {
 }
 
 impl MetalWorkspaceLease {
+    /// The workspace's bytes.
+    pub(super) fn bytes(&self) -> usize {
+        let w = self.workspace.as_ref().expect("a workspace");
+        [&w.pending, &w.captures, &w.cursors, &w.repeats, &w.scheduler, &w.results, &w.statuses, &w.value_states, &w.final_captures, &w.output_storage]
+            .iter()
+            .map(|buffer| buffer.buffer.length() as usize)
+            .sum()
+    }
+
     fn acquire(
         device: &Device,
         totals: WorkspaceTotals,
@@ -166,7 +175,16 @@ impl MetalWorkspaceLease {
         let (workspace, reused) = if let Some(index) = reusable {
             (pool.swap_remove(index), true)
         } else {
-            pool.clear();
+            // The new workspace holds what the pool's did as well, so a run whose levels differ
+            // from the last run's fits one workspace rather than replacing it each time (O28).
+            let (mut totals, mut scheduler_bytes, mut output_storage_bytes, mut task_capacity) =
+                (totals, scheduler_bytes, output_storage_bytes, task_capacity);
+            for old in pool.drain(..) {
+                totals = totals.widest(old.totals);
+                scheduler_bytes = scheduler_bytes.max(old.scheduler_bytes);
+                output_storage_bytes = output_storage_bytes.max(old.output_storage_bytes);
+                task_capacity = task_capacity.max(old.task_capacity);
+            }
             (
                 MetalWorkspace::new(
                     device,

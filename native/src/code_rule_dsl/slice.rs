@@ -11,6 +11,7 @@
 //! Tests and benches only: nothing in production calls the slice until its differential gate
 //! (S7) passes; a napi method follows that.
 
+use crate::code_rule_dsl::prof;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::facts::families::{Families, Ingested};
 use crate::code_rule_dsl::facts::observe::tree_name;
@@ -127,7 +128,7 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
     }
     // The paths that may have changed: every path of the root when cold, else the observer's.
     let old = if cold { None } else { store.binding(&tree_name(scope, ""))? };
-    let ingested = Families::default().push(store, scope, root, PUSH_WAVES, |_| Ok(Vec::new()))?;
+    let ingested = prof::time("slice.push", || Families::default().push(store, scope, root, PUSH_WAVES, |_| Ok(Vec::new())))?;
     let changes = store.tree_changes_since(old, root)?;
     let kept = kept_documents(&lease, scope)?;
     let paths = kept
@@ -143,19 +144,21 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
     let current = documents.iter().map(|d| d.path.as_str()).collect::<BTreeSet<_>>();
     let mut fresh = evaluate.iter().map(|d| i64::from(d.key)).collect::<Vec<_>>();
     fresh.extend(kept.iter().filter(|(path, _)| !current.contains(path.as_str())).map(|(_, (d, _))| *d));
-    keep(&lease, scope, &fresh)?;
+    prof::time("slice.keep", || keep(&lease, scope, &fresh))?;
 
     let program = rules.wave.kept_program(store)?;
     let inputs = documents.iter().map(|d| DerivationInput { name: Some(d.core.clone()), digest: d.digest }).collect();
     let limits = Limits { max_waves: 1, ..Limits::default() };
     let wave = &mut rules.wave;
     let evaluated = evaluate.iter().map(|d| d.path.clone()).collect();
-    let outcome = schedule::run_over(&lease, store, &program, scope, evaluate, inputs, &limits, &mut |chunk| wave.demand(store, scope, chunk))?;
-    wave.statistics(&lease, scope)?;
-    remember(&lease, scope, &rules.digest, &documents)?;
+    let outcome = prof::time("slice.wave", || schedule::run_over(&lease, store, &program, scope, evaluate, inputs, &limits, &mut |chunk| wave.demand(store, scope, chunk)))?;
+    prof::time("slice.remember", || -> StoreResult<()> {
+        wave.statistics(&lease, scope)?;
+        remember(&lease, scope, &rules.digest, &documents)
+    })?;
 
     let emitted = rules.layer.program(store)?;
-    let (findings, layer) = rules.layer.findings(&lease, store, scope, &documents, &emitted)?;
+    let (findings, layer) = prof::time("slice.layer", || rules.layer.findings(&lease, store, scope, &documents, &emitted))?;
     Ok(Run {
         findings,
         paths: documents.iter().map(|d| (d.key, d.path.clone())).collect(),

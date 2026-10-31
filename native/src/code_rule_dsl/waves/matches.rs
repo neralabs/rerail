@@ -161,24 +161,26 @@ impl Wave {
         if documents.is_empty() {
             return Ok(None);
         }
-        let tapes = documents
-            .iter()
-            .map(|document| {
-                Families::stored(graph, scope, &document.path)?
-                    .ok_or_else(|| StoreError::Invalid(format!("{} has no stored tape", document.path)))
-            })
-            .collect::<StoreResult<Vec<Arc<Tape>>>>()?;
-        let candidates = self.candidates(graph, &tapes)?;
+        let tapes = crate::code_rule_dsl::prof::time("demand.tapes", || {
+            documents
+                .iter()
+                .map(|document| {
+                    Families::stored(graph, scope, &document.path)?
+                        .ok_or_else(|| StoreError::Invalid(format!("{} has no stored tape", document.path)))
+                })
+                .collect::<StoreResult<Vec<Arc<Tape>>>>()
+        })?;
+        let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
         let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
         // A clause's labels are needed only where its root program starts.
         let active = candidates.iter().map(|clause| clause.iter().map(|nodes| !nodes.is_empty()).collect()).collect::<Vec<Vec<bool>>>();
-        let views = match self.backend {
+        let views = crate::code_rule_dsl::prof::time("demand.labels", || -> StoreResult<_> { Ok(match self.backend {
             #[cfg(target_os = "macos")]
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground => {
                 self.lowered.labelled_metal(&docs, &active).map_err(invalid)?.0
             }
             _ => self.lowered.labelled(&docs, &active).map_err(invalid)?,
-        };
+        }) })?;
         let programs = self.lowered.programs();
         let anchors = (0..views.len())
             .map(|file| candidates.iter().map(|clause| clause[file].clone()).collect::<Vec<_>>())

@@ -504,6 +504,32 @@ impl MappedBuffer {
         )
     }
 
+    /// A shared buffer of `count` records that the host never writes (a workspace's arenas,
+    /// which the GPU writes before it reads them): Metal zero-fills a new buffer, and its pages
+    /// are committed only as the GPU touches them, where `zeroed` commits every page (O28).
+    #[track_caller]
+    pub(super) fn untouched<T>(device: &Device, count: usize) -> Result<Self, Error> {
+        let byte_length = count
+            .checked_mul(std::mem::size_of::<T>())
+            .ok_or(Error::BackendCapacity)?;
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if page <= 0 {
+            return Err(Error::BackendFailure);
+        }
+        let page = page as usize;
+        let length = byte_length
+            .max(1)
+            .checked_add(page - 1)
+            .map(|length| length / page * page)
+            .ok_or(Error::BackendCapacity)?;
+        let reservation = Arc::new(BufferReservation::acquire(
+            length,
+            &METAL_BUFFER_BYTES,
+            METAL_BUFFER_LIMIT,
+        )?);
+        Self::owned_allocation(device, length, reservation, MTLResourceOptions::StorageModeShared)
+    }
+
     #[track_caller]
     pub(super) fn zeroed<T>(device: &Device, count: usize) -> Result<Self, Error> {
         let byte_length = count

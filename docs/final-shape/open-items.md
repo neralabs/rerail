@@ -28,7 +28,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | closed (2026-10-30): sweeps in node order, 77 launches |
 | O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | closed (2026-10-30): labels only where a clause has candidates; sweeps on the CPU between GPU levels; 18.8 → 6.4 s on 8 fixtures |
 | O27 | Phase 4 / 10 | The findings layer's Unknown domains: syntax errors, capture anchors, `noqa` parents, report ceilings (06 S5, decision 0013) | closed (2026-10-30): all four decided in SQL; Unknown only where W's clause fails |
-| O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open: lanes 16x wider, sweeps in parallel, pipelines warmed; host planning and the sweeps' CPU walk remain |
+| O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open: lanes 16x wider, sweeps in parallel, pipelines warmed; micro walks and untouched workspaces (0015); text-test tasks, sizing and the flush remain |
 
 ## O1. Stale-fact detection after a crash
 
@@ -764,4 +764,25 @@ S6's bench audits 48 fixtures cold in 1.79 s of CPU time on Metal, against 2.27 
 - **The sweeps' CPU walk.** 227 ms, one file's group setting the time.
 - **Conversions between label words and sets** around each CPU sweep, about 0.2 s.
 - **The CPU path's labels are single-threaded.** A parallel CPU path would move the comparison.
+
+**Fixed (2026-10-31), decision 0015.** Stage timers (`prof`, with `RERAIL_PROF`) on S6's bench
+(48 fixtures) gave these causes:
+- 2.51 M interpreter tasks cold, about 160 per node, of which 35% produced a result;
+- a 930 MB workspace cleared on the host;
+- a one-workspace pool, replaced whenever the levels' sizes varied.
+
+Fixes:
+- **Micro walks.** Label programs that are only walks (380 of 560) run one thread per
+  (pass, start) with a fixed stack (`label_micro`), and on the CPU sweeps as well.
+- **Untouched workspace buffers**, so pages are committed only where the GPU touches them.
+- **A pool that keeps the widest workspace.**
+
+Cold audit, CPU time: Metal 1.23 s → 0.92 s, against 1.79 s on the CPU backend. Labels, cold:
+1.09 s → 0.43 s. Peak RSS: 2.1 GB → 284 MB. The one-file edit takes 0.22 s against the CPU's
+0.40 s. Every gate shows 0 differing.
+
+**Still left:**
+- **Text-test programs** (12% of roots) are interpreter tasks.
+- **`size()` and the flush** take about 270 ms cold.
+- **The CPU sweeps between segments** take about 85 ms warm.
 

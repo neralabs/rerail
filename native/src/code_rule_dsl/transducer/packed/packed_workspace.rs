@@ -42,6 +42,26 @@ pub(super) struct WorkspaceTotals {
 }
 
 impl WorkspaceTotals {
+    /// The larger of each total.
+    pub(super) fn widest(self, other: Self) -> Self {
+        Self {
+            pending: self.pending.max(other.pending),
+            captures: self.captures.max(other.captures),
+            cursors: self.cursors.max(other.cursors),
+            repeats: self.repeats.max(other.repeats),
+            query_states: self.query_states.max(other.query_states),
+            query_members: self.query_members.max(other.query_members),
+            queued_states: self.queued_states.max(other.queued_states),
+            greedy_entries: self.greedy_entries.max(other.greedy_entries),
+            value_states: self.value_states.max(other.value_states),
+            candidates: self.candidates.max(other.candidates),
+            results: self.results.max(other.results),
+            output_bytes: self.output_bytes.max(other.output_bytes),
+            output_captures: self.output_captures.max(other.output_captures),
+            properties: self.properties.max(other.properties),
+        }
+    }
+
     pub(super) fn from_global(global: &MetalGlobalArenas) -> Self {
         let capacity = |kind: ArenaKind| global.arenas[kind as usize].capacity;
         Self {

@@ -377,3 +377,63 @@ fn recursive_groups_settle_in_few_sweeps() {
         }
     }
 }
+
+/// O28's micro walk gives each label program's interpreter outputs, as labels read them, from
+/// every node of the fixtures, labelled by the wave's own passes: the starts that emit, or the
+/// nodes the outputs captured. Every lowered clause's eligible programs are checked.
+#[test]
+fn micro_walks_are_the_interpreters_label_outputs() {
+    // Every program at every node: 4 fixtures unless `RERAIL_S1_FILES` says.
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(4);
+    }
+    let mut lowered = Vec::new();
+    for (_, compiled) in &clauses() {
+        for (_, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+            }
+        }
+    }
+    let wave = LoweredWave::new(&lowered.iter().collect::<Vec<_>>()).unwrap();
+    let active = vec![vec![true; tapes.len()]; lowered.len()];
+    let views = wave.labelled(&tapes, &active).unwrap();
+    let programs = wave.label_programs();
+    let micro = programs.iter().map(|(program, targets)| Micro::of(program).map(|m| (m, *targets))).collect::<Vec<_>>();
+    let (mut compared, mut overflowed, mut marked) = (0_usize, 0_usize, 0_usize);
+    let mut frames = Frames::default();
+    for view in &views {
+        for ((program, _), walk) in programs.iter().zip(&micro) {
+            let Some((walk, targets)) = walk else { continue };
+            for node in 0..view.transducer_len() as u32 {
+                let expected = program
+                    .execute_roots(view, [node])
+                    .unwrap()
+                    .iter()
+                    .flat_map(|output| if *targets { output.captures.iter().map(|c| c.node).collect() } else { vec![output.start] })
+                    .collect::<BTreeSet<_>>();
+                let mut found = BTreeSet::new();
+                match walk.run(view, view.transducer_labels(), node, *targets, &mut frames, &mut |n| {
+                    found.insert(n);
+                }) {
+                    Ok(()) => {
+                        assert_eq!(found, expected, "program {:?} at node {node}", program.words);
+                        compared += 1;
+                        marked += found.len();
+                    }
+                    Err(why) => {
+                        overflowed += 1;
+                        eprintln!("overflow {why:?}: program {:?} at node {node} of {}", program.words.iter().map(|w| split(*w)).map(|(o, m, a)| format!("{o:#x}/{m}/{a}")).collect::<Vec<_>>(), view.transducer_len());
+                    }
+                }
+            }
+        }
+    }
+    let eligible = micro.iter().filter(|m| m.is_some()).count();
+    eprintln!("micro: {eligible} of {} label programs; {compared} starts compared, {marked} marks, {overflowed} overflowed", programs.len());
+    assert!(eligible * 2 > programs.len(), "most label programs are micro walks");
+    assert!(compared > 100_000 && overflowed * 100 < compared);
+}
