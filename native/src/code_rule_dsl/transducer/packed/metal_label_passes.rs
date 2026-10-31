@@ -136,6 +136,46 @@ pub(in crate::code_rule_dsl) fn text_row(
     Some(std::sync::Arc::new(bits))
 }
 
+/// Each of `slots`' rows (`text_row`), in one parallel pass over every (slot, file): a
+/// labelling's slots take one pass, not one each (06 S7: 54 passes, ~6 ms each, before its
+/// first run), and a large file's slots spread over the threads.
+pub(in crate::code_rule_dsl) fn text_rows(
+    slots: &[(&Micro, &Program, usize)],
+    files: &[TapeDoc],
+    bases: &[u32],
+    words: usize,
+) -> Vec<Option<std::sync::Arc<Vec<u32>>>> {
+    use rayon::prelude::*;
+    let _texts = crate::code_rule_dsl::prof::Stage::start("size.texts");
+    crate::code_rule_dsl::prof::count("size.text_slots", slots.len());
+    // Each (slot, file)'s bits, `None` where an evaluation failed: one task each, so a large
+    // file's slots spread over the threads.
+    let per_pair = (0..slots.len() * files.len())
+        .into_par_iter()
+        .map(|pair| {
+            let (walk, program, slot) = slots[pair / files.len()];
+            walk.slot(program, slot, &files[pair % files.len()])
+        })
+        .collect::<Vec<_>>();
+    (0..slots.len())
+        .into_par_iter()
+        .map(|at| {
+            let mut bits = vec![0_u32; words];
+            for (file, base) in per_pair[at * files.len()..(at + 1) * files.len()].iter().zip(bases) {
+                for (index, &word) in file.as_ref()?.iter().enumerate() {
+                    let mut word = word;
+                    while word != 0 {
+                        let node = *base + (index * 64) as u32 + word.trailing_zeros();
+                        bits[node as usize / 32] |= 1 << (node % 32);
+                        word &= word - 1;
+                    }
+                }
+            }
+            Some(std::sync::Arc::new(bits))
+        })
+        .collect()
+}
+
 /// Slot `slot` of `walk` on the file whose nodes start at global `base`, from `rows` where a run
 /// evaluated it (`TextRows`: bits over every file's nodes), else evaluated on `tape` alone.
 pub(in crate::code_rule_dsl) fn text_slot(

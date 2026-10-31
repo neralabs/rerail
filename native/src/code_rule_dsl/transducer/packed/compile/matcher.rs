@@ -989,6 +989,33 @@ fn apart<'a>(
             Some(at)
         })
         .collect::<Vec<_>>();
+    // Every walk's text rows, in one pass over the files before the first run (the runs and
+    // sweeps then find them in `rows`).
+    {
+        let walks = host
+            .iter()
+            .flat_map(|(_, levels)| levels.iter().flatten().copied())
+            .filter_map(|(clause, id)| match clause.labels.def(id) {
+                Label::Roots(program, _) | Label::Targets(program, _) => Micro::of(program).map(|walk| (walk, program)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut seen = std::collections::HashSet::new();
+        let mut slots = Vec::new();
+        let mut keys = Vec::new();
+        for (walk, program) in &walks {
+            for slot in 0..walk.texts.len() {
+                let key = walk.slot_key(program, slot);
+                if seen.insert(key.clone()) {
+                    slots.push((walk, *program, slot));
+                    keys.push(key);
+                }
+            }
+        }
+        let row_bases = bases.iter().map(|&base| base as u32).collect::<Vec<_>>();
+        let evaluated = metal_program_backend::label_passes::text_rows(&slots, tapes, &row_bases, words);
+        rows.lock().map_err(|_| Error::BackendFailure)?.extend(keys.into_iter().zip(evaluated));
+    }
     let flush = |segment: &mut (Vec<_>, Vec<_>), outcome: &mut Outcome| -> Result<(), Error> {
         if segment.0.is_empty() {
             return Ok(());
