@@ -14,13 +14,28 @@ pub(in crate::code_rule_dsl) fn time<T>(stage: &'static str, f: impl FnOnce() ->
         return f();
     }
     let start = Instant::now();
+    // A top-level stage's process CPU (user + sys) as well: its own where nothing overlaps it.
+    let top = stage.starts_with("slice.") || stage.starts_with("demand.") || stage.starts_with("labels.");
+    let cpu = top.then(process_cpu);
     let out = f();
     let elapsed = start.elapsed();
     let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(cpu) = cpu {
+        let entry = stages.entry(format!("cpu_ms.{stage}")).or_default();
+        entry.1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
+    }
     let entry = stages.entry(stage.to_owned()).or_default();
     entry.0 += elapsed;
     entry.1 += 1;
     out
+}
+
+/// The process's CPU time so far (user + sys).
+fn process_cpu() -> Duration {
+    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+    let time = |t: libc::timeval| Duration::from_secs(t.tv_sec as u64) + Duration::from_micros(t.tv_usec as u64);
+    time(usage.ru_utime) + time(usage.ru_stime)
 }
 
 /// Prints the stages' times under `title` and clears them.
@@ -37,18 +52,21 @@ pub(in crate::code_rule_dsl) fn report(title: &str) {
 }
 
 /// A stage timed until it drops.
-pub(in crate::code_rule_dsl) struct Stage(Option<(&'static str, Instant)>);
+pub(in crate::code_rule_dsl) struct Stage(Option<(&'static str, Instant, Option<Duration>)>);
 
 impl Stage {
     pub(in crate::code_rule_dsl) fn start(stage: &'static str) -> Self {
-        Self(ON.then(|| (stage, Instant::now())))
+        Self(ON.then(|| (stage, Instant::now(), (stage.starts_with("labels.") || stage == "size.texts").then(process_cpu))))
     }
 }
 
 impl Drop for Stage {
     fn drop(&mut self) {
-        if let Some((stage, start)) = self.0.take() {
+        if let Some((stage, start, cpu)) = self.0.take() {
             let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(cpu) = cpu {
+                stages.entry(format!("cpu_ms.{stage}")).or_default().1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
+            }
             let entry = stages.entry(stage.to_owned()).or_default();
             entry.0 += start.elapsed();
             entry.1 += 1;

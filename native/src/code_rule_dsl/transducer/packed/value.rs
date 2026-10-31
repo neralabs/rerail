@@ -722,8 +722,11 @@ impl ByteDfa {
 struct NfaRun<'a> {
     bytes: &'a [u8],
     look: &'a LookMatcher,
-    seen: &'a mut [bool],
+    /// The generation each state was last added in: added this step where it is `generation`.
+    seen: &'a mut [u32],
+    generation: u32,
     consuming: &'a mut Vec<u32>,
+    pending: &'a mut Vec<u32>,
     work: &'a mut usize,
 }
 
@@ -979,14 +982,18 @@ impl ByteNfa {
         (result, work.used)
     }
 
+    /// Whether `bytes` match, charging `work` a step per state added and range tested. No state
+    /// is added once none is alive, so the scan stops there: an anchored test of a long text (a
+    /// module's, a class's) ends at its first mismatch, not at the text's end.
     fn is_match_with_work(
         &self,
         bytes: &[u8],
         work: &mut usize,
         look: &LookMatcher,
     ) -> Result<bool, Error> {
-        let mut current = Vec::new();
-        let mut seen = vec![false; self.states.len()];
+        let (mut current, mut next, mut pending) = (Vec::new(), Vec::new(), Vec::new());
+        let mut seen = vec![0_u32; self.states.len()];
+        let mut generation = 1;
         if self.add_state(
             self.start,
             0,
@@ -994,15 +1001,20 @@ impl ByteNfa {
                 bytes,
                 look,
                 seen: &mut seen,
+                generation,
                 consuming: &mut current,
+                pending: &mut pending,
                 work: &mut *work,
             },
         )? {
             return Ok(true);
         }
         for (at, &byte) in bytes.iter().enumerate() {
-            let mut next = Vec::new();
-            seen.fill(false);
+            if current.is_empty() {
+                break;
+            }
+            next.clear();
+            generation += 1;
             for &state in &current {
                 let NfaState::Bytes(ranges) = &self.states[state as usize] else {
                     continue;
@@ -1020,7 +1032,9 @@ impl ByteNfa {
                                 bytes,
                                 look,
                                 seen: &mut seen,
+                                generation,
                                 consuming: &mut next,
+                                pending: &mut pending,
                                 work: &mut *work,
                             },
                         )?
@@ -1029,34 +1043,35 @@ impl ByteNfa {
                     }
                 }
             }
-            current = next;
+            std::mem::swap(&mut current, &mut next);
         }
         Ok(false)
     }
 
     fn add_state(&self, state: u32, at: usize, run: &mut NfaRun<'_>) -> Result<bool, Error> {
-        let mut pending = vec![state];
-        while let Some(state) = pending.pop() {
+        run.pending.clear();
+        run.pending.push(state);
+        while let Some(state) = run.pending.pop() {
             *run.work += 1;
             if *run.work > super::MAX_STEPS_PER_PATH {
                 return Err(Error::WorkLimit);
             }
             let index = state as usize;
-            if run.seen[index] {
+            if run.seen[index] == run.generation {
                 continue;
             }
-            run.seen[index] = true;
+            run.seen[index] = run.generation;
             match &self.states[index] {
                 NfaState::Bytes(_) => run.consuming.push(state),
                 NfaState::Look { kind, next } => {
                     if run.look.matches(*kind, run.bytes, at) {
-                        pending.push(*next);
+                        run.pending.push(*next);
                     }
                 }
                 NfaState::Split(alternatives) => {
-                    pending.extend(alternatives.iter().rev().copied());
+                    run.pending.extend(alternatives.iter().rev().copied());
                 }
-                NfaState::Capture { next, .. } => pending.push(*next),
+                NfaState::Capture { next, .. } => run.pending.push(*next),
                 NfaState::Fail => {}
                 NfaState::Match => return Ok(true),
             }
