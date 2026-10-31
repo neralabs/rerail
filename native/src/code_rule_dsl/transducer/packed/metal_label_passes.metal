@@ -1,8 +1,8 @@
 // A lowered matcher's passes between its programs (06-first-slice S2, O23), one dependency level
 // at a time. The labels live in the prefix of the batch's supertype buffer (`has_supertype` reads
 // them as derived classes): element 0 is {label count, words per label}, then each label's bitset
-// over the batch's global nodes. `scratch` has the same shape; `label_settle` moves a level's
-// scratch into its labels.
+// over the batch's global nodes. `scratch` has a row per pass of the widest level (`Op::row`, a
+// pass's index in its level); `label_settle` moves a level's scratch into its labels.
 #include <metal_stdlib>
 using namespace metal;
 struct Result { uint taskOrdinal,localOrdinal,start,label,captureStart,captureCount,propertyStart,propertyCount,dynamicStart,dynamicCount; };
@@ -12,12 +12,12 @@ struct Status { uint error,resultCount,captureCount,programCounter,finalCaptureC
 struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps; };
 // flags: [0] a task failed (bit 0 an interpreter task, bit 1 a micro walk), [2] the group settled (skip), [3] a group did not settle within its
 // encoded rounds, [4 + round % 2] the round changed a label.
-// How a program's results land: mode 0 roots, 1 captured nodes (into scratch label `slot`), 2 and
+// How a program's results land: mode 0 roots, 1 captured nodes (into scratch row `slot`), 2 and
 // 3 counts by root and by captured node (into count slot `slot`).
 struct Route { uint mode,slot; };
 // How a target settles: kind 0 from scratch, 1 the complement of `of`, 2 count slot `slot`'s
 // tallies within minimum..=maximum.
-struct Op { uint kind,target,of,slot,minimum,maximum; };
+struct Op { uint kind,target,of,slot,minimum,maximum,row; };
 
 static void mark(device atomic_uint* bits,uint node){atomic_fetch_or_explicit(&bits[node/32u],1u<<(node%32u),memory_order_relaxed);}
 
@@ -49,8 +49,8 @@ kernel void label_settle(device uint* labels [[buffer(0)]],device uint* scratch 
   }
   if(tid>=shape.targetCount*shape.words)return;
   Op op=ops[tid/shape.words];uint index=tid%shape.words;
-  uint at=op.target*shape.words+index;
-  uint word=scratch[at];scratch[at]=0u;
+  uint at=op.target*shape.words+index,row=op.row*shape.words+index;
+  uint word=scratch[row];scratch[row]=0u;
   if(op.kind==1u){
     word=~labels[op.of*shape.words+index];
     uint last=shape.nodeCount%32u;

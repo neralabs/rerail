@@ -233,7 +233,7 @@ mod native_ir;
 mod output;
 mod packed_arena;
 mod packed_batch;
-pub(super) use packed_batch::PackedExecution;
+pub(in crate::code_rule_dsl) use packed_batch::PackedExecution;
 #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_value_prefix_tests;
 mod packed_workspace;

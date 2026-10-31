@@ -87,6 +87,7 @@ pub(in crate::code_rule_dsl) struct RunBuffers(Mutex<Option<Kept>>);
 
 struct Kept {
     /// (nodes, labels, counts) the buffers are sized for.
+    /// (nodes, labels, counts) the buffers are sized for (scratch serves a run whose rows fit).
     key: (usize, usize, usize),
     nodes: MappedBuffer,
     children: MappedBuffer,
@@ -237,6 +238,20 @@ struct Op {
     slot: u32,
     minimum: u32,
     maximum: u32,
+    /// The target's scratch row: its pass's index in the level (`scratch_rows`).
+    row: u32,
+}
+
+/// Scratch rows: a level's passes mark row `i` for its pass `i`, and `label_settle` clears them,
+/// so scratch is the widest level's, not a row per label (O30: every bound buffer is charged
+/// twice; S7's 833-label scratch was 33 MB). A group that runs as sweeps publishes its labels
+/// directly (`label_sweep`) and marks no scratch.
+/// (Where a plan has such a group, scratch keeps a row per label, as its routes name labels.)
+fn scratch_rows(plan: &Plan<'_>) -> usize {
+    if plan.steps.iter().any(|(recursive, levels)| *recursive && sweeps(levels)) {
+        return plan.labels.max(1);
+    }
+    plan.steps.iter().flat_map(|(_, levels)| levels).map(Vec::len).max().unwrap_or(0).max(1)
 }
 
 const SOURCE: &str = include_str!("metal_label_passes.metal");
@@ -608,9 +623,9 @@ fn encode(
         plan_labels: plan.labels,
         words,
         nodes,
-        scratch: match kept.as_mut() {
+        scratch: match kept.as_mut().filter(|kept| kept.scratch.buffer.length() as usize >= 4 * scratch_rows(plan) * words) {
             Some(kept) => MappedBuffer::wrap(kept.scratch.buffer.clone()),
-            None => MappedBuffer::zeroed::<u32>(device, plan.labels * words)?,
+            None => MappedBuffer::zeroed::<u32>(device, scratch_rows(plan) * words)?,
         },
         counts: match kept.as_mut() {
             Some(kept) => MappedBuffer::wrap(kept.counts.buffer.clone()),
@@ -639,7 +654,7 @@ fn encode(
         count("mem.nodes", runner.nodes);
         count("mem.labels", plan.labels);
         count("mem.counts", plan.counts);
-        count("mem.scratch_mb", plan.labels * words * 4 >> 20);
+        count("mem.scratch_mb", scratch_rows(plan) * words * 4 >> 20);
         count("mem.counts_mb", plan.counts * runner.nodes * 4 >> 20);
     }
     crate::code_rule_dsl::prof::time("gpu.size", || runner.size(plan))?;
@@ -875,9 +890,9 @@ impl Runner<'_> {
         // its own.
         let batches = plan.steps.iter().flat_map(|(recursive, levels)| {
             if *recursive && sweeps(levels) {
-                vec![(levels.as_ptr() as usize, levels.iter().flat_map(|level| programs_of(level)).collect::<Vec<_>>(), Some(levels))]
+                vec![(levels.as_ptr() as usize, levels.iter().flat_map(|level| programs_of(level, false)).collect::<Vec<_>>(), Some(levels))]
             } else {
-                levels.iter().map(|level| (level.as_ptr() as usize, programs_of(level), None)).collect()
+                levels.iter().map(|level| (level.as_ptr() as usize, programs_of(level, true), None)).collect()
             }
         });
         let bases = self.files.iter().scan(0_u32, |base, tape| {
@@ -1110,15 +1125,17 @@ impl Runner<'_> {
     /// labels, then every target settled.
     /// `round`: in a recursive group, the round and whether this is its last level.
     fn level(&mut self, passes: &[Pass<'_>], round: Option<(usize, bool)>) -> Result<(), Error> {
-        let programs = programs_of(passes);
+        let programs = programs_of(passes, true);
         // How each target settles: from scratch, or computed by `label_settle` per word.
         let mut settles = Vec::new();
         let mut matches = Vec::new();
         let mut constraints = Vec::new();
-        for pass in passes {
+        for (row, pass) in passes.iter().enumerate() {
+            let row = row as u32;
             settles.push(match pass {
                 Pass::Program { target, .. } | Pass::Empty { target } => Op {
                     target: *target,
+                    row,
                     ..Op::default()
                 },
                 Pass::Count {
@@ -1134,11 +1151,13 @@ impl Runner<'_> {
                     minimum: *min,
                     maximum: *max,
                     of: 0,
+                    row,
                 },
                 Pass::Complement { target, of } => Op {
                     kind: 1,
                     target: *target,
                     of: *of,
+                    row,
                     ..Op::default()
                 },
                 Pass::Pattern {
@@ -1156,10 +1175,11 @@ impl Runner<'_> {
                     }
                     let count = (constraints.len() / 2) as u32 - start;
                     for root in roots {
-                        matches.extend([*pattern as u32, *target, *root, start, count]);
+                        matches.extend([*pattern as u32, row, *root, start, count]);
                     }
                     Op {
                         target: *target,
+                        row,
                         ..Op::default()
                     }
                 }
@@ -1423,16 +1443,19 @@ impl Runner<'_> {
 }
 
 /// A level's programs: (program, roots per file, sink mode, scratch label or count slot).
-fn programs_of<'p>(passes: &'p [Pass<'_>]) -> Vec<(&'p Program, &'p std::sync::Arc<Vec<Vec<u32>>>, u32, u32)> {
+/// A level's programs: (program, roots, mode, slot), the slot a program's scratch row
+/// (`scratch_rows`) where `rows`, else its label (a sweep's, `label_sweep`), or a count's slot.
+fn programs_of<'p>(passes: &'p [Pass<'_>], rows: bool) -> Vec<(&'p Program, &'p std::sync::Arc<Vec<Vec<u32>>>, u32, u32)> {
     passes
         .iter()
-        .filter_map(|pass| match pass {
+        .enumerate()
+        .filter_map(|(row, pass)| match pass {
             Pass::Program {
                 target,
                 program,
                 roots,
                 captured,
-            } => Some((*program, roots, if *captured { 1 } else { 0 }, *target)),
+            } => Some((*program, roots, if *captured { 1 } else { 0 }, if rows { row as u32 } else { *target })),
             Pass::Count {
                 slot,
                 program,

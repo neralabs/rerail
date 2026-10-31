@@ -403,6 +403,7 @@ impl PackedDemand {
 
     fn execute(self, token: i64) -> MaterializedDemand {
         let _execute = crate::code_rule_dsl::prof::Stage::start("demand.execute");
+        crate::code_rule_dsl::prof::peak("4.-2.execute");
         let demanded_producers = self
             .task_grid
             .iter()
@@ -423,6 +424,7 @@ impl PackedDemand {
         );
         let (partition_ranges, partitions, sizes) = crate::code_rule_dsl::prof::time("demand.partitions", || self.execution_partitions());
         crate::code_rule_dsl::prof::count("demand.ranges", partition_ranges.len());
+        crate::code_rule_dsl::prof::peak("4.-1.partitioned");
         let mut counters = PackedExecutionCounters {
             registrations: 1,
             virtual_table_scans: 0,
@@ -456,6 +458,15 @@ impl PackedDemand {
             .collect::<Vec<_>>();
         let run = |range: Range<usize>, programs: Range<usize>| {
             let anchors = self.anchors[range.clone()].iter().map(|file| file[programs.clone()].to_vec()).collect::<Vec<_>>();
+            crate::code_rule_dsl::prof::peak("4.0.before_roots");
+            if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
+                let _ = tikv_jemalloc_ctl::epoch::advance();
+                eprintln!(
+                    "ROOTS {range:?} x {programs:?}: live {} MB, footprint {} MB",
+                    tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
+                    crate::code_rule_dsl::prof::footprint_mb()
+                );
+            }
             let _roots = crate::code_rule_dsl::prof::Stage::start("demand.roots");
             execute_with_backend_packed_result_limits(
                 self.backend,
@@ -487,273 +498,256 @@ impl PackedDemand {
             }
         };
         // One at a time: in parallel the CPU's took 21 s of CPU time for 1.3 s and 2.4 GB of RSS
-        // on S7 (0017 and 0020).
-        let executions = jobs
-            .iter()
-            .map(execute)
-            .collect::<Result<Vec<_>, _>>()
-            .map(|executions| executions.into_iter().flatten().collect::<Vec<_>>());
-        let executions = match executions {
-            Ok(executions) => {
-                counters.command_buffers = usize::from(metal) * executions.len();
-                counters.packed_dispatches = usize::from(metal) * executions.len();
-                executions
-            }
-            Err(error) => {
-                let message = format!("{error:?}");
-                let mut rows = vec![PackedRow::batch_status(token, false, Some(message.clone()))];
-                for (file, tasks) in self.task_grid.iter().enumerate() {
-                    for (producer, demanded) in tasks.iter().copied().enumerate() {
-                        if demanded {
-                            rows.push(PackedRow::producer_status(
-                                token,
-                                file,
-                                producer,
-                                false,
-                                None,
-                                Some(message.clone()),
-                            ));
-                        }
-                    }
-                }
-                return MaterializedDemand {
-                    rows: Arc::new(rows),
-                    producer_kinds: Arc::new(self.producer_kinds.clone()),
-                    counters,
-                };
-            }
-        };
+        // on S7 (0017 and 0020). Each execution's rows are taken as it finishes and the execution
+        // dropped: an execution holds its range's packed batch (tapes and label words), and
+        // holding all 32 of S7's ranges until the rows was ~200 MB of its footprint peak (O30).
         let mut rows: Vec<PackedRow> = Vec::new();
         let mut structure_keys = HashMap::new();
-        let _rows = crate::code_rule_dsl::prof::Stage::start("demand.rows");
-        for (file_start, program_start, execution) in executions {
-            for local_file in 0..execution.file_count() {
-                let file = file_start + local_file;
-                let structure_document = AstGrep::doc(self.files[file].clone());
-                for local_program in 0..execution.program_count() {
-                    let program = program_start + local_program;
-                    if !self.task_grid[file][program] {
-                        continue;
-                    }
-                    if !self.sound_under_errors[program]
-                        && !self.files[file].syntax_error_ranges().is_empty()
-                    {
-                        rows.push(PackedRow::producer_status(
-                            token,
-                            file,
-                            program,
-                            false,
-                            None,
-                            Some("source-partial".to_owned()),
-                        ));
-                        continue;
-                    }
-                    if let Some(code) = self.failure_injections.get(&program) {
-                        rows.push(PackedRow::producer_status(
-                            token,
-                            file,
-                            program,
-                            false,
-                            None,
-                            Some(code.clone()),
-                        ));
-                        continue;
-                    }
-                    if self.producer_kinds[program] == ProducerKind::FileFact {
-                        let descriptor = self.file_facts[program]
-                            .as_ref()
-                            .expect("a verified file producer has its descriptor");
-                        let haystack = if descriptor.path {
-                            self.file_paths[file].as_str()
-                        } else {
-                            std::str::from_utf8(self.files[file].transducer_source())
-                                .unwrap_or_default()
-                        };
-                        if let Some(found) = descriptor.regex.find(haystack) {
-                            let root = self.anchors[file][program].first().copied().unwrap_or(0);
-                            let span = if descriptor.path {
-                                let source = self.files[file].transducer_source();
-                                let end = source
-                                    .iter()
-                                    .rposition(|byte| !byte.is_ascii_whitespace())
-                                    .map_or(0, |end| end + 1);
-                                0..end
-                            } else {
-                                found.range()
-                            };
-                            rows.push(PackedRow::terminal_match(TerminalMatchData {
-                                batch: token,
-                                file,
-                                producer: program,
-                                match_index: 0,
-                                task_index: 0,
-                                start_ordinal: root,
-                                node: root,
-                                span,
-                                output_label: Some("file-regex".to_owned()),
-                            }));
+        let mut executed = 0_usize;
+        let mut failure = None;
+        {
+            let mut absorb = |(file_start, program_start, execution): (usize, usize, crate::code_rule_dsl::transducer::packed::PackedExecution)| {
+                let _rows = crate::code_rule_dsl::prof::Stage::start("demand.rows");
+                for local_file in 0..execution.file_count() {
+                    let file = file_start + local_file;
+                    let structure_document = AstGrep::doc(self.files[file].clone());
+                    for local_program in 0..execution.program_count() {
+                        let program = program_start + local_program;
+                        if !self.task_grid[file][program] {
+                            continue;
                         }
-                        rows.push(PackedRow::producer_status(
-                            token,
-                            file,
-                            program,
-                            true,
-                            Some(true),
-                            None,
-                        ));
-                        continue;
-                    }
-                    if self.producer_kinds[program] == ProducerKind::Pattern {
-                        let tape = &self.files[file];
-                        let mut match_index = 0_usize;
-                        let mut failed = None;
-                        for (task_index, root) in
-                            self.anchors[file][program].iter().copied().enumerate()
+                        if !self.sound_under_errors[program]
+                            && !self.files[file].syntax_error_ranges().is_empty()
                         {
-                            if match_index >= self.result_limits[program] as usize {
-                                break;
-                            }
-                            match self.programs[program].execute_ast_pattern(tape, root) {
-                                Ok(Some(captures)) => {
-                                    rows.push(PackedRow::terminal_match(TerminalMatchData {
-                                        batch: token,
-                                        file,
-                                        producer: program,
-                                        match_index,
-                                        task_index: task_index as u32,
-                                        start_ordinal: root,
-                                        node: root,
-                                        span: tape.transducer_span(root),
-                                        output_label: Some("ast-grep-pattern".to_owned()),
-                                    }));
-                                    let mut equality_occurrences = HashMap::<&str, usize>::new();
-                                    for (capture_index, capture) in captures.iter().enumerate() {
-                                        let label = &capture.label;
-                                        let node = capture.node;
-                                        let span = tape.transducer_span(node);
-                                        let sequence_start = captures
-                                            .iter()
-                                            .position(|candidate| candidate.label == *label)
-                                            .expect("the current capture has a sequence");
-                                        let sequence_count = captures
-                                            .iter()
-                                            .filter(|candidate| candidate.label == *label)
-                                            .count();
-                                        let capture_named = tape.transducer_flags(node)
-                                            & super::super::transducer::packed::NAMED
-                                            != 0;
-                                        let equality_occurrence = if capture_named {
-                                            let occurrence = equality_occurrences
-                                                .entry(label.as_str())
-                                                .or_default();
-                                            let value = *occurrence;
-                                            *occurrence += 1;
-                                            value as i64
-                                        } else {
-                                            -1
-                                        };
-                                        let row = PackedRow::capture(CaptureData {
-                                            batch: token,
-                                            file,
-                                            producer: program,
-                                            match_index,
-                                            capture_index,
-                                            occurrence: capture.occurrence,
-                                            sequence_start,
-                                            sequence_count,
-                                            node,
-                                            capture_label: Some(label.clone()),
-                                            text_value: None,
-                                            source_text: tape
-                                                .transducer_source()
-                                                .get(span.clone())
-                                                .map(|text| {
-                                                    String::from_utf8_lossy(text).into_owned()
-                                                }),
-                                            structural_key: {
-                                                let semantic = structure_keys
-                                                .entry((file, node))
-                                                .or_insert_with(|| {
-                                                    let root = structure_document.root();
-                                                    let node = structure_document
-                                                        .adopt(root.get_doc().node(node));
-                                                    let mut remaining = root
-                                                        .get_doc()
-                                                        .transducer_len()
-                                                        .saturating_add(1);
-                                                    let mut spend = || {
-                                                        let available = remaining > 0;
-                                                        remaining = remaining.saturating_sub(1);
-                                                        available
-                                                    };
-                                                    let mut context =
-                                                        ValueContext::new(&mut spend);
-                                                    let family =
-                                                        Family::of(*root.get_doc().get_lang());
-                                                    if family == Family::Ecma {
-                                                        return None;
-                                                    }
-                                                    let tokens = with_adapter!(
-                                                        family,
-                                                        A => <<A as Adapter>::Value as ValueRules>::structure(
-                                                            &node,
-                                                            Equality::Plain,
-                                                            &mut context,
-                                                        )
-                                                    );
-                                                    (!context.exhausted())
-                                                        .then_some(tokens)
-                                                        .flatten()
-                                                        .map(|tokens| format!("{tokens:?}"))
-                                                });
-                                                serde_json::json!({
-                                                    "syntax": tape.transducer_structural_key(node),
-                                                    "semanticPlain": semantic,
-                                                })
-                                                .to_string()
-                                            },
-                                            named_leaf: tape.transducer_is_named_leaf(node),
-                                            capture_kind: if capture.multi { 2 } else { 1 },
-                                            capture_named,
-                                            equality_occurrence,
-                                            start_byte: span.start,
-                                            end_byte: span.end,
-                                        });
-                                        rows.push(row);
-                                    }
-                                    match_index += 1;
-                                }
-                                Ok(None) => {}
-                                Err(error) => {
-                                    failed = Some(format!("{error:?}"));
-                                    break;
-                                }
-                            }
-                        }
-                        if let Some(message) = failed {
                             rows.push(PackedRow::producer_status(
                                 token,
                                 file,
                                 program,
                                 false,
                                 None,
-                                Some(message),
+                                Some("source-partial".to_owned()),
                             ));
-                        } else {
+                            continue;
+                        }
+                        if let Some(code) = self.failure_injections.get(&program) {
+                            rows.push(PackedRow::producer_status(
+                                token,
+                                file,
+                                program,
+                                false,
+                                None,
+                                Some(code.clone()),
+                            ));
+                            continue;
+                        }
+                        if self.producer_kinds[program] == ProducerKind::FileFact {
+                            let descriptor = self.file_facts[program]
+                                .as_ref()
+                                .expect("a verified file producer has its descriptor");
+                            let haystack = if descriptor.path {
+                                self.file_paths[file].as_str()
+                            } else {
+                                std::str::from_utf8(self.files[file].transducer_source())
+                                    .unwrap_or_default()
+                            };
+                            if let Some(found) = descriptor.regex.find(haystack) {
+                                let root = self.anchors[file][program].first().copied().unwrap_or(0);
+                                let span = if descriptor.path {
+                                    let source = self.files[file].transducer_source();
+                                    let end = source
+                                        .iter()
+                                        .rposition(|byte| !byte.is_ascii_whitespace())
+                                        .map_or(0, |end| end + 1);
+                                    0..end
+                                } else {
+                                    found.range()
+                                };
+                                rows.push(PackedRow::terminal_match(TerminalMatchData {
+                                    batch: token,
+                                    file,
+                                    producer: program,
+                                    match_index: 0,
+                                    task_index: 0,
+                                    start_ordinal: root,
+                                    node: root,
+                                    span,
+                                    output_label: Some("file-regex".to_owned()),
+                                }));
+                            }
                             rows.push(PackedRow::producer_status(
                                 token,
                                 file,
                                 program,
                                 true,
-                                Some(match_index != 0),
+                                Some(true),
                                 None,
                             ));
+                            continue;
                         }
-                        continue;
-                    }
-                    let (results, error) = match execution.program_results(local_file, local_program) {
-                        Ok(result) => result,
-                        Err(error) => {
+                        if self.producer_kinds[program] == ProducerKind::Pattern {
+                            let tape = &self.files[file];
+                            let mut match_index = 0_usize;
+                            let mut failed = None;
+                            for (task_index, root) in
+                                self.anchors[file][program].iter().copied().enumerate()
+                            {
+                                if match_index >= self.result_limits[program] as usize {
+                                    break;
+                                }
+                                match self.programs[program].execute_ast_pattern(tape, root) {
+                                    Ok(Some(captures)) => {
+                                        rows.push(PackedRow::terminal_match(TerminalMatchData {
+                                            batch: token,
+                                            file,
+                                            producer: program,
+                                            match_index,
+                                            task_index: task_index as u32,
+                                            start_ordinal: root,
+                                            node: root,
+                                            span: tape.transducer_span(root),
+                                            output_label: Some("ast-grep-pattern".to_owned()),
+                                        }));
+                                        let mut equality_occurrences = HashMap::<&str, usize>::new();
+                                        for (capture_index, capture) in captures.iter().enumerate() {
+                                            let label = &capture.label;
+                                            let node = capture.node;
+                                            let span = tape.transducer_span(node);
+                                            let sequence_start = captures
+                                                .iter()
+                                                .position(|candidate| candidate.label == *label)
+                                                .expect("the current capture has a sequence");
+                                            let sequence_count = captures
+                                                .iter()
+                                                .filter(|candidate| candidate.label == *label)
+                                                .count();
+                                            let capture_named = tape.transducer_flags(node)
+                                                & super::super::transducer::packed::NAMED
+                                                != 0;
+                                            let equality_occurrence = if capture_named {
+                                                let occurrence = equality_occurrences
+                                                    .entry(label.as_str())
+                                                    .or_default();
+                                                let value = *occurrence;
+                                                *occurrence += 1;
+                                                value as i64
+                                            } else {
+                                                -1
+                                            };
+                                            let row = PackedRow::capture(CaptureData {
+                                                batch: token,
+                                                file,
+                                                producer: program,
+                                                match_index,
+                                                capture_index,
+                                                occurrence: capture.occurrence,
+                                                sequence_start,
+                                                sequence_count,
+                                                node,
+                                                capture_label: Some(label.clone()),
+                                                text_value: None,
+                                                source_text: tape
+                                                    .transducer_source()
+                                                    .get(span.clone())
+                                                    .map(|text| {
+                                                        String::from_utf8_lossy(text).into_owned()
+                                                    }),
+                                                structural_key: {
+                                                    let semantic = structure_keys
+                                                    .entry((file, node))
+                                                    .or_insert_with(|| {
+                                                        let root = structure_document.root();
+                                                        let node = structure_document
+                                                            .adopt(root.get_doc().node(node));
+                                                        let mut remaining = root
+                                                            .get_doc()
+                                                            .transducer_len()
+                                                            .saturating_add(1);
+                                                        let mut spend = || {
+                                                            let available = remaining > 0;
+                                                            remaining = remaining.saturating_sub(1);
+                                                            available
+                                                        };
+                                                        let mut context =
+                                                            ValueContext::new(&mut spend);
+                                                        let family =
+                                                            Family::of(*root.get_doc().get_lang());
+                                                        if family == Family::Ecma {
+                                                            return None;
+                                                        }
+                                                        let tokens = with_adapter!(
+                                                            family,
+                                                            A => <<A as Adapter>::Value as ValueRules>::structure(
+                                                                &node,
+                                                                Equality::Plain,
+                                                                &mut context,
+                                                            )
+                                                        );
+                                                        (!context.exhausted())
+                                                            .then_some(tokens)
+                                                            .flatten()
+                                                            .map(|tokens| format!("{tokens:?}"))
+                                                    });
+                                                    serde_json::json!({
+                                                        "syntax": tape.transducer_structural_key(node),
+                                                        "semanticPlain": semantic,
+                                                    })
+                                                    .to_string()
+                                                },
+                                                named_leaf: tape.transducer_is_named_leaf(node),
+                                                capture_kind: if capture.multi { 2 } else { 1 },
+                                                capture_named,
+                                                equality_occurrence,
+                                                start_byte: span.start,
+                                                end_byte: span.end,
+                                            });
+                                            rows.push(row);
+                                        }
+                                        match_index += 1;
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => {
+                                        failed = Some(format!("{error:?}"));
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Some(message) = failed {
+                                rows.push(PackedRow::producer_status(
+                                    token,
+                                    file,
+                                    program,
+                                    false,
+                                    None,
+                                    Some(message),
+                                ));
+                            } else {
+                                rows.push(PackedRow::producer_status(
+                                    token,
+                                    file,
+                                    program,
+                                    true,
+                                    Some(match_index != 0),
+                                    None,
+                                ));
+                            }
+                            continue;
+                        }
+                        let (results, error) = match execution.program_results(local_file, local_program) {
+                            Ok(result) => result,
+                            Err(error) => {
+                                let message = format!("{error:?}");
+                                rows.push(PackedRow::producer_status(
+                                    token,
+                                    file,
+                                    program,
+                                    false,
+                                    None,
+                                    Some(message),
+                                ));
+                                continue;
+                            }
+                        };
+                        if let Some(error) = error {
                             let message = format!("{error:?}");
                             rows.push(PackedRow::producer_status(
                                 token,
@@ -765,132 +759,160 @@ impl PackedDemand {
                             ));
                             continue;
                         }
-                    };
-                    if let Some(error) = error {
-                        let message = format!("{error:?}");
                         rows.push(PackedRow::producer_status(
                             token,
                             file,
                             program,
-                            false,
+                            true,
+                            Some(!results.is_empty()),
                             None,
-                            Some(message),
                         ));
-                        continue;
-                    }
-                    rows.push(PackedRow::producer_status(
-                        token,
-                        file,
-                        program,
-                        true,
-                        Some(!results.is_empty()),
-                        None,
-                    ));
-                    for (match_index, result) in results.into_iter().enumerate() {
-                        rows.push(PackedRow::terminal_match(TerminalMatchData {
-                            batch: token,
-                            file,
-                            producer: program,
-                            match_index,
-                            task_index: result.task_ordinal(),
-                            start_ordinal: result.local_ordinal(),
-                            node: result.start_node(),
-                            span: self.files[file].transducer_span(result.start_node()),
-                            output_label: self.programs[program]
-                                .label_name(result.label())
-                                .map(str::to_owned),
-                        }));
-                        let captures = result.captures().collect::<Vec<_>>();
-                        for (capture_index, capture) in captures.iter().copied().enumerate() {
-                            let label = capture.label();
-                            let occurrence = captures[..capture_index]
-                                .iter()
-                                .filter(|candidate| candidate.label() == label)
-                                .count();
-                            let sequence_start = captures
-                                .iter()
-                                .position(|candidate| candidate.label() == label)
-                                .expect("the current capture has a sequence");
-                            let sequence_count = captures
-                                .iter()
-                                .filter(|candidate| candidate.label() == label)
-                                .count();
-                            let span = capture.span();
-                            let source_text = self.files[file]
-                                .transducer_source()
-                                .get(span.clone())
-                                .map(|text| String::from_utf8_lossy(text).into_owned());
-                            rows.push(PackedRow::capture(CaptureData {
+                        for (match_index, result) in results.into_iter().enumerate() {
+                            rows.push(PackedRow::terminal_match(TerminalMatchData {
                                 batch: token,
                                 file,
                                 producer: program,
                                 match_index,
-                                capture_index,
-                                occurrence,
-                                sequence_start,
-                                sequence_count,
-                                node: capture.node(),
-                                capture_label: self.programs[program]
-                                    .label_name(label)
+                                task_index: result.task_ordinal(),
+                                start_ordinal: result.local_ordinal(),
+                                node: result.start_node(),
+                                span: self.files[file].transducer_span(result.start_node()),
+                                output_label: self.programs[program]
+                                    .label_name(result.label())
                                     .map(str::to_owned),
-                                text_value: capture
-                                    .transformed_text()
-                                    .map(|text| String::from_utf8_lossy(text).into_owned()),
-                                source_text,
-                                structural_key: {
-                                    let node = capture.node();
-                                    let semantic =
-                                    structure_keys.entry((file, node)).or_insert_with(|| {
-                                        let root = structure_document.root();
-                                        let node =
-                                            structure_document.adopt(root.get_doc().node(node));
-                                        let mut remaining =
-                                            root.get_doc().transducer_len().saturating_add(1);
-                                        let mut spend = || {
-                                            let available = remaining > 0;
-                                            remaining = remaining.saturating_sub(1);
-                                            available
-                                        };
-                                        let mut context = ValueContext::new(&mut spend);
-                                        let family = Family::of(*root.get_doc().get_lang());
-                                        if family == Family::Ecma {
-                                            return None;
-                                        }
-                                        let tokens = with_adapter!(
-                                            family,
-                                            A => <<A as Adapter>::Value as ValueRules>::structure(
-                                                &node,
-                                                Equality::Plain,
-                                                &mut context,
-                                            )
-                                        );
-                                        (!context.exhausted())
-                                            .then_some(tokens)
-                                            .flatten()
-                                            .map(|tokens| format!("{tokens:?}"))
-                                    });
-                                    serde_json::json!({
-                                        "syntax": self.files[file].transducer_structural_key(node),
-                                        "semanticPlain": semantic,
-                                    })
-                                    .to_string()
-                                },
-                                named_leaf: self.files[file]
-                                    .transducer_is_named_leaf(capture.node()),
-                                capture_kind: 1,
-                                capture_named: self.files[file].transducer_flags(capture.node())
-                                    & super::super::transducer::packed::NAMED
-                                    != 0,
-                                equality_occurrence: 0,
-                                start_byte: span.start,
-                                end_byte: span.end,
                             }));
+                            let captures = result.captures().collect::<Vec<_>>();
+                            for (capture_index, capture) in captures.iter().copied().enumerate() {
+                                let label = capture.label();
+                                let occurrence = captures[..capture_index]
+                                    .iter()
+                                    .filter(|candidate| candidate.label() == label)
+                                    .count();
+                                let sequence_start = captures
+                                    .iter()
+                                    .position(|candidate| candidate.label() == label)
+                                    .expect("the current capture has a sequence");
+                                let sequence_count = captures
+                                    .iter()
+                                    .filter(|candidate| candidate.label() == label)
+                                    .count();
+                                let span = capture.span();
+                                let source_text = self.files[file]
+                                    .transducer_source()
+                                    .get(span.clone())
+                                    .map(|text| String::from_utf8_lossy(text).into_owned());
+                                rows.push(PackedRow::capture(CaptureData {
+                                    batch: token,
+                                    file,
+                                    producer: program,
+                                    match_index,
+                                    capture_index,
+                                    occurrence,
+                                    sequence_start,
+                                    sequence_count,
+                                    node: capture.node(),
+                                    capture_label: self.programs[program]
+                                        .label_name(label)
+                                        .map(str::to_owned),
+                                    text_value: capture
+                                        .transformed_text()
+                                        .map(|text| String::from_utf8_lossy(text).into_owned()),
+                                    source_text,
+                                    structural_key: {
+                                        let node = capture.node();
+                                        let semantic =
+                                        structure_keys.entry((file, node)).or_insert_with(|| {
+                                            let root = structure_document.root();
+                                            let node =
+                                                structure_document.adopt(root.get_doc().node(node));
+                                            let mut remaining =
+                                                root.get_doc().transducer_len().saturating_add(1);
+                                            let mut spend = || {
+                                                let available = remaining > 0;
+                                                remaining = remaining.saturating_sub(1);
+                                                available
+                                            };
+                                            let mut context = ValueContext::new(&mut spend);
+                                            let family = Family::of(*root.get_doc().get_lang());
+                                            if family == Family::Ecma {
+                                                return None;
+                                            }
+                                            let tokens = with_adapter!(
+                                                family,
+                                                A => <<A as Adapter>::Value as ValueRules>::structure(
+                                                    &node,
+                                                    Equality::Plain,
+                                                    &mut context,
+                                                )
+                                            );
+                                            (!context.exhausted())
+                                                .then_some(tokens)
+                                                .flatten()
+                                                .map(|tokens| structure_digest(&format!("{tokens:?}")))
+                                        });
+                                        serde_json::json!({
+                                            "syntax": structure_digest(&self.files[file].transducer_structural_key(node)),
+                                            "semanticPlain": semantic,
+                                        })
+                                        .to_string()
+                                    },
+                                    named_leaf: self.files[file]
+                                        .transducer_is_named_leaf(capture.node()),
+                                    capture_kind: 1,
+                                    capture_named: self.files[file].transducer_flags(capture.node())
+                                        & super::super::transducer::packed::NAMED
+                                        != 0,
+                                    equality_occurrence: 0,
+                                    start_byte: span.start,
+                                    end_byte: span.end,
+                                }));
+                            }
                         }
+                    }
+                }
+            };
+            for job in &jobs {
+                match execute(job) {
+                    Ok(executions) => {
+                        for execution in executions {
+                            executed += 1;
+                            absorb(execution);
+                        }
+                    }
+                    Err(error) => {
+                        failure = Some(error);
+                        break;
                     }
                 }
             }
         }
-        drop(_rows);
+        crate::code_rule_dsl::prof::peak("4a.executed");
+        crate::code_rule_dsl::prof::count("demand.row_count", rows.len());
+        if let Some(error) = failure {
+            let message = format!("{error:?}");
+            let mut rows = vec![PackedRow::batch_status(token, false, Some(message.clone()))];
+            for (file, tasks) in self.task_grid.iter().enumerate() {
+                for (producer, demanded) in tasks.iter().copied().enumerate() {
+                    if demanded {
+                        rows.push(PackedRow::producer_status(
+                            token,
+                            file,
+                            producer,
+                            false,
+                            None,
+                            Some(message.clone()),
+                        ));
+                    }
+                }
+            }
+            return MaterializedDemand {
+                rows: Arc::new(rows),
+                producer_kinds: Arc::new(self.producer_kinds.clone()),
+                counters,
+            };
+        }
+        counters.command_buffers = usize::from(metal) * executed;
+        counters.packed_dispatches = usize::from(metal) * executed;
         let _documents = crate::code_rule_dsl::prof::Stage::start("demand.documents");
         // Each source file's generated document, where its maps name exactly one: computed once
         // per file rather than per row (06 S7: rows × maps took ~1.5 s).
@@ -990,6 +1012,15 @@ pub(in crate::code_rule_dsl) struct TestProducerStatusRow {
     pub(in crate::code_rule_dsl) verdict: Option<i64>,
     pub(in crate::code_rule_dsl) work_used: Option<i64>,
     pub(in crate::code_rule_dsl) error: Option<String>,
+}
+
+/// A structure key's part as a digest: the keys are compared only for equality (`relational_ir`'s
+/// `$.syntax` and `'s'`), and a node's full key is its subtree's text, so S7's 31,704 rows held
+/// 235 MB of them (O30). 128 bits of SHA-256, in hex.
+fn structure_digest(key: &str) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(key.as_bytes());
+    digest[..16].iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
