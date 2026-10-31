@@ -84,6 +84,14 @@ pub(in crate::code_rule_dsl) fn count_named(stage: String, amount: usize) {
 pub(in crate::code_rule_dsl) fn release() {
     let _stage = Stage::start("heap.release");
     crate::purge_allocator_pages();
+    // The system allocator's freed pages too (SQLite's and the Metal runtime's allocations).
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+    }
 }
 
 pub(in crate::code_rule_dsl) fn peak(stage: &str) {

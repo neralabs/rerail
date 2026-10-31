@@ -250,6 +250,29 @@ struct Op {
 /// twice; S7's 833-label scratch was 33 MB). A group that runs as sweeps publishes its labels
 /// directly (`label_sweep`) and marks no scratch.
 /// (Where a plan has such a group, scratch keeps a row per label, as its routes name labels.)
+/// Each of a level's passes' count row: its index among the level's counts. A level's settle
+/// consumes and clears its counts, so `counts` is the level with the most counts' (O30: a row
+/// per count of the plan was 24 MB on S7).
+fn count_rows(passes: &[Pass<'_>]) -> Vec<u32> {
+    passes
+        .iter()
+        .scan(0_u32, |next, pass| {
+            let row = *next;
+            *next += u32::from(matches!(pass, Pass::Count { .. }));
+            Some(row)
+        })
+        .collect()
+}
+
+/// `count_rows`' widest level (a row per count of the plan where a group runs as sweeps).
+fn tally_rows(plan: &Plan<'_>) -> usize {
+    if plan.steps.iter().any(|(recursive, levels)| *recursive && sweeps(levels)) {
+        return plan.counts.max(1);
+    }
+    let counts = |level: &Vec<Pass<'_>>| level.iter().filter(|pass| matches!(pass, Pass::Count { .. })).count();
+    plan.steps.iter().flat_map(|(_, levels)| levels).map(counts).max().unwrap_or(0).max(1)
+}
+
 fn scratch_rows(plan: &Plan<'_>) -> usize {
     if plan.steps.iter().any(|(recursive, levels)| *recursive && sweeps(levels)) {
         return plan.labels.max(1);
@@ -267,7 +290,7 @@ fn tier(depth: Option<usize>) -> usize {
     // shallow walks (97% of S7's starts) keep theirs there; the rest take the pool's device stacks.
     // (`label_micro_32` stays for a tier between them.)
     match depth {
-        Some(depth) if depth <= 8 => 0,
+        Some(depth) if depth <= 8 && std::env::var_os("RERAIL_DEVICE_STACKS").is_none() => 0,
         _ => 2,
     }
 }
@@ -574,7 +597,7 @@ fn mark(at: &str) {
             super::super::metal_backend::reserved_mb(),
             tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20
         );
-        if let Some(path) = std::env::var_os("RERAIL_HOLD_FLUSH").filter(|_| at == "flushed") {
+        if let Some(path) = std::env::var_os("RERAIL_HOLD").filter(|_| std::env::var("RERAIL_HOLD_AT").is_ok_and(|mark| mark == at)) {
             eprintln!("FLUSH holding, pid {}", std::process::id());
             while !std::path::Path::new(&path).exists() {
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -606,6 +629,7 @@ fn encode(
             unsafe { std::ptr::write_bytes(buffer.buffer.contents().cast::<u8>(), 0, buffer.buffer.length() as usize) };
         }
     }
+    mark("before pipelines");
     let queue = device.new_command_queue();
     queue.set_label("Rerail label passes");
     let command = queue.new_command_buffer().to_owned();
@@ -632,9 +656,9 @@ fn encode(
             Some(kept) => MappedBuffer::wrap(kept.scratch.buffer.clone()),
             None => MappedBuffer::zeroed::<u32>(device, scratch_rows(plan) * words)?,
         },
-        counts: match kept.as_mut() {
+        counts: match kept.as_mut().filter(|kept| kept.counts.buffer.length() as usize >= 4 * tally_rows(plan) * nodes) {
             Some(kept) => MappedBuffer::wrap(kept.counts.buffer.clone()),
-            None => MappedBuffer::zeroed::<u32>(device, (plan.counts * nodes).max(1))?,
+            None => MappedBuffer::zeroed::<u32>(device, (tally_rows(plan) * nodes).max(1))?,
         },
         flags: MappedBuffer::zeroed::<u32>(device, 6)?,
         workspace: None,
@@ -660,9 +684,10 @@ fn encode(
         count("mem.labels", plan.labels);
         count("mem.counts", plan.counts);
         count("mem.scratch_mb", scratch_rows(plan) * words * 4 >> 20);
-        count("mem.counts_mb", plan.counts * runner.nodes * 4 >> 20);
+        count("mem.counts_mb", tally_rows(plan) * runner.nodes * 4 >> 20);
     }
     crate::code_rule_dsl::prof::time("gpu.size", || runner.size(plan))?;
+    crate::code_rule_dsl::prof::release();
     mark("sized");
     let _encode = crate::code_rule_dsl::prof::Stage::start("gpu.encode");
     for (group, ((recursive, levels), &rounds)) in plan.steps.iter().zip(rounds).enumerate() {
@@ -1144,7 +1169,9 @@ impl Runner<'_> {
         let mut settles = Vec::new();
         let mut matches = Vec::new();
         let mut constraints = Vec::new();
+        let tallies = count_rows(passes);
         for (row, pass) in passes.iter().enumerate() {
+            let tally = tallies[row];
             let row = row as u32;
             settles.push(match pass {
                 Pass::Program { target, .. } | Pass::Empty { target } => Op {
@@ -1154,14 +1181,13 @@ impl Runner<'_> {
                 },
                 Pass::Count {
                     target,
-                    slot,
                     min,
                     max,
                     ..
                 } => Op {
                     kind: 2,
                     target: *target,
-                    slot: *slot,
+                    slot: tally,
                     minimum: *min,
                     maximum: *max,
                     of: 0,
@@ -1460,6 +1486,7 @@ impl Runner<'_> {
 /// A level's programs: (program, roots, mode, slot), the slot a program's scratch row
 /// (`scratch_rows`) where `rows`, else its label (a sweep's, `label_sweep`), or a count's slot.
 fn programs_of<'p>(passes: &'p [Pass<'_>], rows: bool) -> Vec<(&'p Program, &'p std::sync::Arc<Vec<Vec<u32>>>, u32, u32)> {
+    let tallies = count_rows(passes);
     passes
         .iter()
         .enumerate()
@@ -1476,7 +1503,7 @@ fn programs_of<'p>(passes: &'p [Pass<'_>], rows: bool) -> Vec<(&'p Program, &'p 
                 roots,
                 captured,
                 ..
-            } => Some((*program, roots, if *captured { 3 } else { 2 }, *slot)),
+            } => Some((*program, roots, if *captured { 3 } else { 2 }, if rows { tallies[row] } else { *slot })),
             _ => None,
         })
         .collect()

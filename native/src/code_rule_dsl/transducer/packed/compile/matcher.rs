@@ -970,6 +970,7 @@ fn apart<'a>(
             rows: Some(&rows),
             buffers: Some(&kept),
         };
+        crate::code_rule_dsl::prof::release();
         let before = crate::code_rule_dsl::prof::footprint_mb();
         mark("plan");
         let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;

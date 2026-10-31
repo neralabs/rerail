@@ -424,6 +424,8 @@ impl PackedDemand {
         );
         let (partition_ranges, partitions, sizes) = crate::code_rule_dsl::prof::time("demand.partitions", || self.execution_partitions());
         crate::code_rule_dsl::prof::count("demand.ranges", partition_ranges.len());
+        // Sizing built a batch per file (in parallel): its pages returned before the roots run.
+        crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("4.-1.partitioned");
         let mut counters = PackedExecutionCounters {
             registrations: 1,
@@ -466,6 +468,12 @@ impl PackedDemand {
                     tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
                     crate::code_rule_dsl::prof::footprint_mb()
                 );
+                if let Some(path) = std::env::var_os("RERAIL_HOLD").filter(|_| std::env::var("RERAIL_HOLD_AT").is_ok_and(|at| at == "roots")) {
+                    eprintln!("FLUSH holding, pid {}", std::process::id());
+                    while !std::path::Path::new(&path).exists() {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }
             }
             let _roots = crate::code_rule_dsl::prof::Stage::start("demand.roots");
             execute_with_backend_packed_result_limits(
@@ -878,6 +886,8 @@ impl PackedDemand {
                             executed += 1;
                             absorb(execution);
                         }
+                        // The execution's batch and workspace pages, freed with it.
+                        crate::code_rule_dsl::prof::release();
                     }
                     Err(error) => {
                         failure = Some(error);
