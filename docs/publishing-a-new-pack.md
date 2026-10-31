@@ -20,9 +20,11 @@ This runbook is the last step of a new pack's way to npm:
 
 ## Before you start
 
+- The pack is not private: its `package.json` has no `"private": true` (remove it, add `publishConfig` with `access`
+  `public`, and add the pack's changeset in one pull request).
 - The pack is merged on `main`, added at `0.1.0` with a `patch` changeset (see "Versioning and release" in
   [pack-format.md](pack-format.md)), and listed in `src/engine/catalog/pack-list.generated.ts` (`npm run
-  generate:packs`; check 7 fails a pack that is not), so set-up fetches it.
+  generate:packs`; check 7 fails a published pack that is not), so set-up fetches it.
 - For a ported pack, its pack data is published: every tool-pack's `test-data.lock` (and `samples.lock`, if it has
   one) names an archive S3 holds, and no `publish/` is left on `main` (both are CI checks:
   [docs/upstream.md](upstream.md#ci)). Its shipped rules pass the

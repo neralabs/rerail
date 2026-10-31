@@ -1,0 +1,455 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-git-no-lazy-fetch",
+  "revision": 1,
+  "mode": "log",
+  "description": "Start Git in Rerail's source only through the engine's Git module, with lazy fetch off; otherwise a partial clone fetches missing objects from its remote.",
+  "scope": {
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "**/*.test.ts",
+      "**/*.spec.ts",
+      "**/__tests__/**",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "lazy-fetch-on",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "regex": "(?:^|/)src/engine/git\\.ts$"
+            }
+          },
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "any": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "identifier",
+                      "regex": "^(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "member_expression",
+                      "regex": "\\.(?:spawn|spawnSync|execFile|execFileSync|execSync)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "member_expression",
+                      "regex": "^(?:cp|child_?[pP]rocess)\\.exec$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "value": {
+                            "regex": "^promisify\\(\\s*(?:spawn|execFile|exec)\\s*\\)$"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "not": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "template_string"
+                            }
+                          ]
+                        },
+                        {
+                          "not": {
+                            "regex": "^[\"'`](?:[^\"'`]*[/\\\\])?git(?:\\.exe)?(?:[\"'`]|\\s)"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "stopBy": "end",
+                    "kind": "pair",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "key",
+                          "regex": "^[\"']?GIT_NO_LAZY_FETCH[\"']?$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "value",
+                          "regex": "^[\"'`]1[\"'`]$"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "stopBy": "end",
+                    "kind": "pair",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "key",
+                          "regex": "^[\"']?env[\"']?$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "value",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "object"
+                              },
+                              {
+                                "regex": "^process\\.env$"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "stopBy": "end",
+                    "kind": "pair",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "key",
+                          "regex": "^[\"']?env[\"']?$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "value",
+                          "has": {
+                            "kind": "spread_element",
+                            "not": {
+                              "regex": "^\\.\\.\\.\\s*process\\.env$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "stopBy": "end",
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^env$"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "GIT_LAZY_FETCH_ON",
+        "anchor": "witness.span",
+        "message": "Set this Git process's env to { ...process.env, GIT_NO_LAZY_FETCH: \"1\" }, keeping any keys it already adds, so a partial clone never fetches a missing object; leave it if its env already sets that."
+      }
+    },
+    {
+      "id": "git-outside-module",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)src/engine/git\\.ts$"
+            }
+          },
+          "rule": {
+            "kind": "call_expression",
+            "any": [
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "nthChild": {
+                          "position": 1,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "template_string"
+                          }
+                        ],
+                        "regex": "^[\"'`]git(?:\\.exe)?[\"'`]$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "(?:^|\\.)(?:spawn|exec|run)(?:[A-Z][A-Za-z0-9]*|a)?$"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "identifier",
+                          "regex": "^(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "member_expression",
+                          "regex": "\\.(?:spawn|spawnSync|execFile|execFileSync|execSync)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "member_expression",
+                          "regex": "^(?:cp|child_?[pP]rocess)\\.exec$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "identifier",
+                          "resolves": {
+                            "binding": {
+                              "value": {
+                                "regex": "^promisify\\(\\s*(?:spawn|execFile|exec)\\s*\\)$"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "nthChild": {
+                          "position": 1,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "string"
+                                  },
+                                  {
+                                    "kind": "template_string"
+                                  }
+                                ]
+                              },
+                              {
+                                "regex": "^[\"'`](?:[^\"'`]*[/\\\\])?git(?:\\.exe)?(?:[\"'`]|\\s)"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "member_expression"
+                              },
+                              {
+                                "kind": "non_null_expression"
+                              },
+                              {
+                                "kind": "as_expression"
+                              },
+                              {
+                                "kind": "parenthesized_expression"
+                              }
+                            ],
+                            "regex": "(?:^|[._(])(?:git(?:[A-Z_]|\\b)|GIT(?:_|\\b))|[a-z0-9]Git(?:[A-Z_]|\\b)"
+                          },
+                          {
+                            "kind": "call_expression",
+                            "regex": "^String\\.raw`(?:[^`]*[/\\\\])?git(?:\\.exe)?`$"
+                          },
+                          {
+                            "kind": "call_expression",
+                            "regex": "(?:^|\\.)gitExecutable\\(\\s*\\)$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "identifier",
+                          "regex": "^(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "member_expression",
+                          "regex": "\\.(?:spawn|spawnSync|execFile|execFileSync|execSync)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "member_expression",
+                          "regex": "^(?:cp|child_?[pP]rocess)\\.exec$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "identifier",
+                          "resolves": {
+                            "binding": {
+                              "value": {
+                                "regex": "^promisify\\(\\s*(?:spawn|execFile|exec)\\s*\\)$"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "nthChild": {
+                          "position": 1,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
+                        "kind": "string",
+                        "regex": "(?:^[\"']|[/\\\\])(?:sh|bash|zsh|cmd(?:\\.exe)?)[\"']$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "nthChild": {
+                          "position": 2,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
+                        "kind": "array",
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "template_string"
+                            }
+                          ],
+                          "regex": "^[\"'`]\\s*(?:[^\"'`\\s]*[/\\\\])?git(?:\\.exe)?\\s"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "GIT_OUTSIDE_GIT_MODULE",
+        "anchor": "witness.span",
+        "message": "Run Git through runGit, gitText or readGitBlobs in src/engine/git.ts, adding a helper there if none fits: they find Git without PATH and turn off hooks, fsmonitor and lazy fetch."
+      }
+    }
+  ]
+}

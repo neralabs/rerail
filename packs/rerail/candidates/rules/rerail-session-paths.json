@@ -1,0 +1,222 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-session-paths",
+  "revision": 1,
+  "mode": "log",
+  "description": "Resolve a session's storage root and model path in one place and pass them in, instead of re-reading the environment or rebuilding the defaults; copies disagree.",
+  "scope": {
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "**/*.test.ts",
+      "src/engine/package-root.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "env-read",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression",
+                        "regex": "^(?:[\\w$]+\\??\\.)*[\\w$]*(?:env|Env|ENV|environment|Environment)[\\w$]*\\??\\.RERAIL_(?:STORAGE_ROOT|MODEL_PATH)$"
+                      },
+                      {
+                        "kind": "subscript_expression",
+                        "regex": "^(?:[\\w$]+\\??\\.)*[\\w$]*(?:env|Env|ENV|environment|Environment)[\\w$]*(?:\\?\\.)?\\[\\s*[\\\"'`]RERAIL_(?:STORAGE_ROOT|MODEL_PATH)[\\\"'`]\\s*\\]$"
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "binary_expression",
+                          "has": {
+                            "field": "operator",
+                            "regex": "^(?:\\?\\?|\\|\\|)$"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "binary_expression",
+                          "inside": {
+                            "kind": "ternary_expression",
+                            "field": "condition"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "variable_declarator",
+                          "field": "value"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "arguments",
+                          "inside": {
+                            "kind": "call_expression",
+                            "has": {
+                              "field": "function",
+                              "regex": "(?:^|\\.)(?:resolve|join)$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "variable_declarator",
+                "all": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "kind": "object_pattern",
+                      "regex": "\\bRERAIL_(?:STORAGE_ROOT|MODEL_PATH)\\b",
+                      "not": {
+                        "has": {
+                          "kind": "rest_pattern"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "value",
+                      "regex": "^(?:[\\w$]+\\??\\.)*[\\w$]*(?:env|Env|ENV|environment|Environment)[\\w$]*$"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SESSION_PATH_ENV_READ",
+        "anchor": "witness.span",
+        "message": "Take the resolved storage root or model path from the caller instead of reading the variable here. Keep the read only where a session's paths are first resolved."
+      }
+    },
+    {
+      "id": "default-root",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "template_string"
+                  }
+                ],
+                "regex": "^[\\\"'`][^\\s\\\"'`]*\\.rerail(?:[/\\\\]|\\$\\{[^}]*\\})+(?:\\./)?sessions(?:[/\\\\][^\\s\\\"'`]*)?[\\\"'`]$"
+              },
+              {
+                "kind": "arguments",
+                "all": [
+                  {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[\\\"'`]\\.rerail[/\\\\]?[\\\"'`]$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[\\\"'`](?:\\./)?sessions[/\\\\]?[\\\"'`]$"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SESSION_ROOT_DEFAULT",
+        "anchor": "witness.span",
+        "message": "Take the storage root from the caller instead of rebuilding the .rerail/sessions default here. Keep it only where a session's paths are first resolved."
+      }
+    },
+    {
+      "id": "model-from-file",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "string",
+            "regex": "^[\\\"'`](?:\\.{1,2}/)*model/?[\\\"'`]$",
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "any": [
+                  {
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "regex": "(?:^|\\.)(?:resolve|join)$"
+                    }
+                  },
+                  {
+                    "kind": "new_expression",
+                    "has": {
+                      "field": "constructor",
+                      "regex": "^URL$"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "MODEL_PATH_FROM_FILE",
+        "anchor": "witness.span",
+        "message": "Take the model path from the caller, or call bundledModelPath(), instead of building the path to the bundled model here; a built path breaks when the file or package root moves."
+      }
+    },
+    {
+      "id": "default-guess",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "binary_expression",
+                "regex": "(?s)^(?:(?:[\\w$]+\\.)?basename\\(\\s*(?:[\\w$]+\\.)?dirname\\(.*\\)\\s*\\)\\s*[!=]==?\\s*[\\\"'`]\\.rerail[\\\"'`]|[\\\"'`]\\.rerail[\\\"'`]\\s*[!=]==?\\s*(?:[\\w$]+\\.)?basename\\(\\s*(?:[\\w$]+\\.)?dirname\\(.*)$"
+              },
+              {
+                "kind": "call_expression",
+                "regex": "(?s)\\.endsWith\\([^)]*\\.rerail[\\\"'`]\\s*\\)$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SESSION_ROOT_GUESS",
+        "anchor": "witness.span",
+        "message": "Have the code that resolved the storage root say whether it is the default instead of guessing from a folder name. If this checks a folder other than the session root, keep it."
+      }
+    }
+  ]
+}

@@ -11,14 +11,14 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { addDistTag, readNextTag } from "./dist-tags.mjs";
-import { HOLD_TAG, listPacks, promotePacks, REGISTRY, releaseTags } from "./packs.mjs";
+import { HOLD_TAG, promotePacks, publishedPacks, REGISTRY, releaseTags } from "./packs.mjs";
 
-const packs = listPacks();
+const packs = publishedPacks();
 const listed = JSON.parse(process.env.PROMOTE ?? "[]");
 if (!Array.isArray(listed) || listed.length === 0) throw new Error("PROMOTE names no pack to promote");
 const promotions = listed.map(({ id, version, hold, release }) => {
   const pack = packs.find((candidate) => candidate.id === id);
-  if (pack === undefined || typeof version !== "string") throw new Error(`${JSON.stringify({ id, version })} is not a pack under packs/ with a version`);
+  if (pack === undefined || typeof version !== "string") throw new Error(`${JSON.stringify({ id, version })} is not a published pack under packs/ with a version`);
   return { name: pack.name, version, hold: hold === true, release: release === true };
 });
 

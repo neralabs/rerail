@@ -3,6 +3,7 @@ export interface ReleasePack {
   id: string;
   name: string;
   version: string;
+  private: boolean;
 }
 
 export interface GateReport {
@@ -18,6 +19,7 @@ export function releaseTag(name: string, version: string): string;
 export function releaseTags(): string[];
 export function createReleaseTag(tag: string, sha: string): string;
 export function listPacks(packsDirectory?: string): ReleasePack[];
+export function publishedPacks(packsDirectory?: string): ReleasePack[];
 export function assertCommitOnGitHub(sha: string): void;
 export function alreadyOnRegistry(output: string): boolean;
 export function releasePacks(

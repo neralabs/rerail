@@ -22,6 +22,11 @@ import {
   compareDeterministicStrings,
   LANGUAGE_REGISTRY,
   RULE_PACK_LIST,
+  bundledModelPath,
+  ConversationRuleRegistry,
+  type ConversationRule,
+  engineRegexIssues,
+  parseConversationRule,
 } from "../src/engine/index.js";
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
@@ -65,9 +70,9 @@ export interface PackValidation {
 
 export interface ValidatePackOptions {
   /**
-   * Whether the pack must be in core's generated pack list (`src/engine/catalog/pack-list.generated.ts`), and that
-   * list current. Default: when `directory` is one of the repository's `packs/` directories, the packs Rerail
-   * publishes; a fixture pack elsewhere is published nowhere, so no list names it.
+   * Whether core's generated pack list (`src/engine/catalog/pack-list.generated.ts`) must be current and agree with
+   * the pack: name it when published, leave it out when its package.json says `"private": true`. Default: when
+   * `directory` is one of the repository's `packs/` directories; a fixture pack elsewhere is published nowhere.
    */
   listed?: boolean;
 }
@@ -103,6 +108,7 @@ const documentSchema = z.object({
 
 type Compiled =
   | { kind: "compiled"; compiled: NativeCompiledCodeRuleDsl; codes: ReadonlySet<string> }
+  | { kind: "conversation"; rule: ConversationRule }
   | { kind: "not-supported-yet"; reason: string }
   | { kind: "failed"; message: string };
 
@@ -127,6 +133,36 @@ function exampleFailures(id: string, result: Extract<Compiled, { kind: "compiled
     const hits = evaluation.codes.filter(code => result.codes.has(code));
     if (side === "caught" && hits.length === 0) failures.push(`${id}: the caught example (${example.path}) produces no ${[...result.codes].join("/")} violation`);
     if (side === "passes" && hits.length > 0) failures.push(`${id}: the passes example (${example.path}) produces ${hits.join(", ")}`);
+  }
+  return failures;
+}
+
+/**
+ * Check 3 on a conversation rule's example pair: the caught example fires the rule, the passes example does not. An
+ * example's text is what the rule samples: for a tool-call rule, the command the coding agent runs (`tool:*` is tried
+ * as Bash); otherwise the text itself.
+ */
+function conversationExampleFailures(
+  rule: ConversationRule,
+  examples: Record<"caught" | "passes", { path?: string | undefined; text: string }>,
+  registry: () => ConversationRuleRegistry,
+): string[] {
+  let engine: ConversationRuleRegistry;
+  try {
+    engine = registry();
+    engine.replace([rule]);
+  } catch (error) {
+    return [`${rule.id}: the conversation engine cannot load the rule: ${message(error)}`];
+  }
+  const failures: string[] = [];
+  const source = rule.sample.source === "tool:*" ? "tool:Bash" : rule.sample.source;
+  for (const side of ["caught", "passes"] as const) {
+    const { text } = examples[side];
+    const input = JSON.stringify({ command: text });
+    const sample = rule.sample.boundary === "tool-call" ? { source, boundary: rule.sample.boundary, text: input, input } : { source, boundary: rule.sample.boundary, text };
+    const fired = engine.match(sample, { respectRepeat: false }).some(match => match.ruleId === rule.id);
+    if (side === "caught" && !fired) failures.push(`${rule.id}: the caught example does not fire the rule: ${text}`);
+    if (side === "passes" && fired) failures.push(`${rule.id}: the passes example fires the rule: ${text}`);
   }
   return failures;
 }
@@ -166,7 +202,7 @@ function candidateDocuments(directory: string, candidates: readonly string[]): s
 /**
  * The id rule (docs/pack-format.md, check 1): one id style in every pack. A rule's id is lowercase letters, digits and
  * dashes and names its document, shipped (`rules/<id>.json`) or candidate (`candidates/…/rules/<id>.json`); a candidate
- * is a `rerail.policy/v1` document like a shipped rule; and a port in any `conformance.json` of the pack has its
+ * is a `rerail.policy/v1` document or a conversation rule, like a shipped rule; and a port in any `conformance.json` of the pack has its
  * document's id. So the id users turn a rule on and off by is the one its file, its listing and its scores carry, and a
  * candidate keeps it when it ships.
  */
@@ -174,8 +210,10 @@ function idFailures(directory: string): string[] {
   const failures: string[] = [];
   const candidates = filesUnder(directory, join(directory, "candidates"));
   for (const file of candidateDocuments(directory, candidates)) {
-    const { format, id } = headerOf(readFileSync(join(directory, file), "utf8"));
-    if (format !== CODE_RULE_FORMAT) failures.push(`${file}: format is ${format ?? "missing"}; a rule document is ${CODE_RULE_FORMAT}`);
+    const text = readFileSync(join(directory, file), "utf8");
+    const { format, id } = headerOf(text);
+    if (format !== CODE_RULE_FORMAT && !isConversationDocument(text))
+      failures.push(`${file}: format is ${format ?? "missing"}; a rule document is ${CODE_RULE_FORMAT} or a conversation rule`);
     if (!inRulesDirectory(file))
       failures.push(`${file}: a candidate is in a rules/ directory; move it to ${posix.join(posix.dirname(file), "rules", `${id ?? posix.basename(file, ".json")}.json`)}`);
     if (id === undefined) failures.push(`${file}: has no id`);
@@ -234,6 +272,33 @@ function compileCodeRule(text: string): Compiled {
     const notSupported = languageNotSupportedOf(message(error));
     return notSupported === undefined ? { kind: "failed", message: `does not compile: ${message(error)}` } : { kind: "not-supported-yet", reason: notSupported.reason };
   }
+}
+
+/** Whether a document's text is shaped as a conversation rule: a JSON object with a `match` and no `format`. */
+function isConversationDocument(text: string): boolean {
+  try {
+    const document: unknown = JSON.parse(text);
+    return typeof document === "object" && document !== null && !Array.isArray(document) && !("format" in document) && "match" in document;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A rule document checked as the catalog would take it: a conversation rule parsed and its patterns accepted by the
+ * engine, any other document compiled as a code rule.
+ */
+function compileRuleDocument(text: string): Compiled {
+  if (!isConversationDocument(text)) return compileCodeRule(text);
+  let rule: ConversationRule;
+  try {
+    rule = parseConversationRule(JSON.parse(text));
+  } catch (error) {
+    return { kind: "failed", message: `is not a valid conversation rule: ${message(error)}` };
+  }
+  const [issue] = engineRegexIssues(rule);
+  if (issue !== undefined) return { kind: "failed", message: `has a pattern the engine refuses at ${issue.path.join(".")}: ${issue.message}` };
+  return { kind: "conversation", rule };
 }
 
 /** The `violation.suppress` key and list that name an upstream rule (code-rule DSL reference, `suppress`). */
@@ -590,6 +655,8 @@ const ABBREVIATION = /\b(?:e\.g|i\.e|etc|vs)\./giu;
  * left to review (docs/pack-format.md, "Message"): no check reads them.
  */
 export function textFailures(file: string, text: string): string[] {
+  // A conversation rule carries no description: its schema has none.
+  if (isConversationDocument(text)) return [];
   let document: unknown;
   try {
     document = JSON.parse(text);
@@ -613,16 +680,29 @@ export function textFailures(file: string, text: string): string[] {
   return failures;
 }
 
+/** Whether the pack's package.json says `"private": true`: never published. A package.json that does not parse is check 5's. */
+function declaresPrivate(directory: string): boolean {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
+    return typeof raw === "object" && raw !== null && "private" in raw && raw.private === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Check 7 (manifest): `pack.json` has a `match`, so set-up can recommend the pack; and, when `listed`, core's
- * generated pack list is current and names the pack.
+ * generated pack list is current and names the pack, or leaves it out when it is private.
  */
 function manifestFailures(directory: string, packJson: unknown, listed: boolean): string[] {
   const failures: string[] = [];
   const id = basename(directory);
   if (listed) {
     if (readFileSync(PACK_LIST_MODULE_PATH, "utf8") !== renderPackListModule()) failures.push(`${PACK_LIST_MODULE} is stale; run npm run generate:packs`);
-    if (!RULE_PACK_LIST.some(entry => entry.id === id)) failures.push(`${PACK_LIST_MODULE} does not list ${id}; run npm run generate:packs`);
+    const named = RULE_PACK_LIST.some(entry => entry.id === id);
+    if (declaresPrivate(directory)) {
+      if (named) failures.push(`${PACK_LIST_MODULE} lists ${id}, which is private: set-up would fetch it from npm, where it is never published; run npm run generate:packs`);
+    } else if (!named) failures.push(`${PACK_LIST_MODULE} does not list ${id}; run npm run generate:packs`);
   }
   if (packJson === undefined) return [...failures, "pack.json does not parse; see check 1"];
   const raw = z.looseObject({ match: z.unknown() }).safeParse(packJson);
@@ -646,7 +726,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   };
 
   // Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document is named for its id, exists,
-  // carries the listed id and compiles against core's capabilities; candidates and ports follow the same id rule.
+  // carries the listed id and compiles against core's capabilities (a conversation rule: parses, and the engine accepts
+  // its patterns); candidates and ports follow the same id rule.
   let pack: RulePackFile | undefined;
   /** pack.json as JSON, before the schema: check 7 reads its `match` even when another field fails check 1. */
   let packJson: unknown;
@@ -687,7 +768,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       const text = readFileSync(path, "utf8");
       const documentId = documentIdOf(text);
       if (documentId !== undefined && documentId !== rule.id) fail("rules", `${rule.id}: ${rule.document} has id ${documentId}`, rule.id);
-      const result = compileCodeRule(text);
+      const result = compileRuleDocument(text);
       compiled.set(rule.id, result);
       if (result.kind === "failed") fail("rules", `${rule.id}: ${rule.document} ${result.message}`, rule.id);
     }
@@ -709,8 +790,10 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   const portByDocument = new Map((loaded?.pack.rules ?? []).map(port => [port.policy.replace(/^\.\//u, ""), port]));
 
   // Check 2: proof. Every rule has examples or a port entry.
-  // Check 3: examples. A caught example produces a violation of the rule, a passes example none: pack.json's, and the
-  // pairs candidates carry in conformance.json until they ship.
+  // Check 3: examples. A caught example produces a violation of the rule (fires it, for a conversation rule), a passes
+  // example none: pack.json's, and the pairs candidates carry in conformance.json until they ship.
+  let registry: ConversationRuleRegistry | undefined;
+  const conversationRegistry = (): ConversationRuleRegistry => (registry ??= new ConversationRuleRegistry({ modelPath: process.env.RERAIL_MODEL_PATH ?? bundledModelPath() }));
   if (pack === undefined) {
     fail("proof", "pack.json does not parse; see check 1");
     fail("examples", "pack.json does not parse; see check 1");
@@ -718,7 +801,9 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     for (const rule of pack.rules) {
       if (rule.examples === undefined && !portByDocument.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
       const result = compiled.get(rule.id);
-      if (rule.examples === undefined || result?.kind !== "compiled") continue;
+      if (rule.examples === undefined) continue;
+      if (result?.kind === "conversation") for (const failure of conversationExampleFailures(result.rule, rule.examples, conversationRegistry)) fail("examples", failure, rule.id);
+      if (result?.kind !== "compiled") continue;
       for (const failure of exampleFailures(rule.id, result, rule.examples)) fail("examples", failure, rule.id);
     }
   }
@@ -798,9 +883,9 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
   }
 
-  // Check 5: package. Named for the pack, published from this repository's packs/<id>/ and public, no
-  // dependencies, no validation material published, licence agreeing with what licenses/ records, and a README whose
-  // rule details describe only the rules pack.json lists.
+  // Check 5: package. Named for the pack, from this repository's packs/<id>/, public or else private (never
+  // published), no dependencies, no validation material published, licence agreeing with what licenses/ records, and a
+  // README whose rule details describe only the rules pack.json lists.
   const sources = readSources(directory);
   const packagePath = join(directory, "package.json");
   if (!existsSync(packagePath)) fail("package", "package.json is missing");
@@ -822,8 +907,10 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       const repository = { type: "git", url: repositoryUrl(), directory: `packs/${id}` };
       if (!isDeepStrictEqual(manifest.repository, repository))
         fail("package", `package.json: repository is ${JSON.stringify(manifest.repository) ?? "missing"}, not ${JSON.stringify(repository)}`);
-      if (manifest.publishConfig?.access !== "public")
-        fail("package", `package.json: publishConfig.access is ${manifest.publishConfig?.access ?? "missing"}; packs are public`);
+      if (manifest.private === false)
+        fail("package", "package.json: private is false; omit private for a published pack, so there is one way to say it");
+      if (manifest.private !== true && manifest.publishConfig?.access !== "public")
+        fail("package", `package.json: publishConfig.access is ${manifest.publishConfig?.access ?? "missing"}; a published pack is public`);
       for (const material of VALIDATION_MATERIAL) {
         const entry = manifest.files.find(file => publishes(file, material));
         if (entry !== undefined) fail("package", `package.json: files entry ${entry} publishes ${material}, which is validation material`);
@@ -871,7 +958,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   const deeper = filesUnder(directory, join(directory, "upstream")).filter(path => inToolSubdirectory(path) && path.split("/")[2] !== PUBLISH_DIRECTORY);
   for (const failure of sourceFailures(directory, sources, authored, deeper)) fail("licences", failure);
 
-  // Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it.
+  // Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it unless it is
+  // private (never published, so set-up must not fetch it from npm).
   for (const failure of manifestFailures(directory, packJson, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY)) fail("manifest", failure);
 
   // Check 8: text. Every rule document's description, shipped and candidate, meets the parts of the description

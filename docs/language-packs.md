@@ -363,7 +363,9 @@ npm install --package-lock-only --ignore-scripts   # packs/* are npm workspaces:
 npx vitest run test/engine/catalog/packs.test.ts -t "pack laravel"
 ```
 
-Then add a changeset for the new pack (`patch`, "Add the Laravel pack: …"). Every later change to a pack adds one too;
+Then add a changeset for the new pack (`patch`, "Add the Laravel pack: …"), unless it starts private (`"private": true`
+in its `package.json`, no `publishConfig`): a private pack is never published and takes no changeset until it goes
+public ([package.json](pack-format.md#packagejson)). Every later change to a published pack adds one too;
 [versioning](pack-format.md#versioning-and-release) says which bump (`patch` until the pack reaches 1.0.0):
 
 ```sh

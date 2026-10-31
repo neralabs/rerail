@@ -1,0 +1,98 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-home-file-names",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Build each list of the Rerail home's files from the file-name constants their writers export, not by spelling the names again; a hand-kept list misses the next file a writer adds.",
+  "scope": {
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "**/*.test.ts",
+      "src/**/*.generated.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "home-file-list",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "regex",
+                "regex": "(?s)(?:(?:^|[^\\w./<-])(?:coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token)\\b|(?:^|[^\\w./<-])rules\\\\?\\.json\\b|\\b(?:consent|daemon)\\\\?\\.json\\b|\\bdaemon\\\\?\\.log\\b|\\b(?:rerail|harness)\\\\?\\.sqlite\\b|\\b(?:start|update)\\\\?\\.lock\\b).*(?:(?:^|[^\\w./<-])(?:coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token)\\b|(?:^|[^\\w./<-])rules\\\\?\\.json\\b|\\b(?:consent|daemon)\\\\?\\.json\\b|\\bdaemon\\\\?\\.log\\b|\\b(?:rerail|harness)\\\\?\\.sqlite\\b|\\b(?:start|update)\\\\?\\.lock\\b)"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "regex"
+                  },
+                  {
+                    "regex": "(?s)(?:^|[^\\w./-])(?:coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token|consent|daemon|rules|harness)\\b.*(?:^|[^\\w./-])(?:coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token|consent|daemon|rules|harness)\\b"
+                  },
+                  {
+                    "regex": "\\\\\\.(?:json|log|sqlite|lock)"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "template_string"
+                  }
+                ],
+                "regex": "(?s)^[^\\s]*(?:(?:^|[^\\w./<-])(?:coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token)\\b|(?:^|[^\\w./<-])rules\\\\?\\.json\\b|\\b(?:consent|daemon)\\\\?\\.json\\b|\\bdaemon\\\\?\\.log\\b|\\b(?:rerail|harness)\\\\?\\.sqlite\\b|\\b(?:start|update)\\\\?\\.lock\\b)[^\\s]*(?:(?:^|[^\\w./<-])(?:coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token)\\b|(?:^|[^\\w./<-])rules\\\\?\\.json\\b|\\b(?:consent|daemon)\\\\?\\.json\\b|\\bdaemon\\\\?\\.log\\b|\\b(?:rerail|harness)\\\\?\\.sqlite\\b|\\b(?:start|update)\\\\?\\.lock\\b)"
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "template_string"
+                      }
+                    ]
+                  },
+                  {
+                    "regex": "^[^\\s]*$"
+                  },
+                  {
+                    "regex": "(?s)(?:^|[^\\w./-])(?:coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token|consent|daemon|rules|harness)\\b.*(?:^|[^\\w./-])(?:coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token|consent|daemon|rules|harness)\\b"
+                  },
+                  {
+                    "regex": "\\\\\\\\?\\.(?:json|log|sqlite|lock)"
+                  }
+                ]
+              },
+              {
+                "kind": "array",
+                "regex": "(?s)^\\[[^{}]*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token)[^{}]*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token)"
+              },
+              {
+                "kind": "object",
+                "regex": "(?s)^\\{[^{}]*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token)[\\\"'`]\\s*:[^{}]*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token)[\\\"'`]\\s*:"
+              },
+              {
+                "kind": "switch_body",
+                "regex": "(?s)case\\s*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token)[\\\"'`]\\s*:.*case\\s*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|device-secrets|active-profile|access-token)[\\\"'`]\\s*:"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "HOME_FILE_LIST",
+        "anchor": "witness.span",
+        "message": "Build this list from the writers' file-name constants (DAEMON_STATE_FILE, RERAIL_DATABASE_FILE, …), exporting one from a writer that has none, and keep the suffix patterns it needs."
+      }
+    }
+  ]
+}

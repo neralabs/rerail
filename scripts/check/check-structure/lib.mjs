@@ -115,13 +115,29 @@ export function readJson(repo, path) {
 export const POLICY_FORMAT = "rerail.policy/v1";
 export const RULE_PACK_FORMAT = "rerail.rule-pack/v1";
 
-/** A rule document: a JSON object whose `format` is rerail.policy/v1. */
+/**
+ * A conversation rule document: a JSON object with no `format` holding a conversation rule's required fields (`id`,
+ * `mode`, `match`, `sample`, `action`; src/engine/catalog/rule-schema.ts). A pack may ship one in `rules/`.
+ */
+function isConversationRuleShape(value) {
+  return (
+    isObject(value) &&
+    !("format" in value) &&
+    typeof value.id === "string" &&
+    typeof value.mode === "string" &&
+    isObject(value.match) &&
+    isObject(value.sample) &&
+    isObject(value.action)
+  );
+}
+
+/** A rule document: a JSON object whose `format` is rerail.policy/v1, or a conversation rule. */
 export function isRuleDoc(repo, path) {
   if (!path.endsWith(".json")) return false;
   const text = repo.text(path);
-  if (text === null || !text.includes(POLICY_FORMAT)) return false;
+  if (text === null || (!text.includes(POLICY_FORMAT) && !text.includes('"sample"'))) return false;
   const value = readJson(repo, path);
-  return isObject(value) && value.format === POLICY_FORMAT;
+  return (isObject(value) && value.format === POLICY_FORMAT) || isConversationRuleShape(value);
 }
 
 export function isObject(value) {

@@ -1,0 +1,57 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-pack-data-runtime-names",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Take a pack-data recipe's tool runtime from the upstream runtime its gates manifest names, never a versioned name written or built in the recipe, so a version bump reaches it.",
+  "scope": {
+    "include": [
+      "scripts/pack-data/recipes/**/*.ts"
+    ],
+    "exclude": [
+      "**/*.test.ts",
+      "**/fixtures/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "composed-runtime-name",
+      "forbid": {
+        "regex": {
+          "pattern": "\\b(?:npmRuntime|uvRuntime|composerRuntime|pinnedPhp|runtimeFile)\\(\\s*`[^`]*(?:-\\$\\{|\\}-)|\\bRUNTIMES_DIRECTORY\\s*,\\s*`[^`]*(?:-\\$\\{|\\}-)|(?i:-\\$\\{[^}]*version[^}]*\\}|[\\\"'][a-z][a-z0-9_.-]*-[\\\"']\\s*\\+\\s*[\\w.]*version|\\+\\s*[\\\"']-[\\\"']\\s*\\+\\s*[\\w.]*version)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "COMPOSED_RUNTIME_NAME",
+        "anchor": "witness.span",
+        "message": "Pass the `upstream.runtime` of `readGatesManifest(root, pack, tool)` instead of a name built from a version, so a bump or a renamed runtime is followed."
+      }
+    },
+    {
+      "id": "versioned-runtime-literal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "string",
+                "regex": "[\\\"'/][a-z][a-z0-9_.-]*-\\d+\\.\\d+(?:\\.\\d+)*(?:-[0-9a-z.]+)?[/\\\"']"
+              },
+              {
+                "kind": "template_string",
+                "regex": "[`/][a-z][a-z0-9_.-]*-\\d+\\.\\d+(?:\\.\\d+)*(?:-[0-9a-z.]+)?[/`]"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "VERSIONED_RUNTIME_LITERAL",
+        "anchor": "witness.span",
+        "message": "Read this runtime from the `upstream.runtime` of `readGatesManifest(root, pack, tool)` instead of writing its release; leave it if it names no folder under scripts/pack-data/runtimes."
+      }
+    }
+  ]
+}

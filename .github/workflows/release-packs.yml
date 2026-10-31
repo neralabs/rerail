@@ -1,7 +1,8 @@
 name: Release packs
 
-# Releases the rule packs under packs/, each its own npm package @neralabs/rerail-pack-<id> (docs/pack-format.md,
-# "Versioning and release"). Core's release is release.yml, on `v*` tags; this workflow never touches core.
+# Releases the published rule packs under packs/, each its own npm package @neralabs/rerail-pack-<id> (docs/pack-format.md,
+# "Versioning and release"); a pack with `"private": true` is never published. Core's release is release.yml, on `v*`
+# tags; this workflow never touches core.
 #
 # The "Release" pull request (each pack's version and CHANGELOG.md, written by changesets, beside core's bump) is
 # opened by release-pr.yml; merging it is the release. On a push to main this workflow publishes:
@@ -14,7 +15,8 @@ name: Release packs
 #   pack never published at all needs its first publish by hand; the run reports it and fails after publishing the
 #   others.
 # A pull request touching packs runs the validation and packing as a dry run and publishes nothing, and fails if it
-# changes what a pack publishes without a changeset naming that pack (the Release pull request is not checked). Its
+# changes what a published pack publishes without a changeset naming that pack, or if a changeset names a private pack
+# (the Release pull request is not checked). Its
 # paths see only the git diff, not the packs' test data: a change to that data is a change to a tool-pack's
 # test-data.lock, under packs/**, and a pull request that checks data in adds it there too (CONTRIBUTING.md).
 # `workflow_dispatch` points `latest` at released pack versions, to put one back: naming a pack and an older version

@@ -1,0 +1,575 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-language-branching",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Branch on a language, family or embedding only in its Engine Adapter, embedder, the registry or the family's own modules; elsewhere ask the adapter or read the registry.",
+  "scope": {
+    "include": [
+      "native/src/**/*.rs",
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "native/src/code_rule_dsl/language.rs",
+      "native/src/code_rule_dsl/language/**",
+      "native/src/build_languages.rs",
+      "**/*tests.rs",
+      "**/tests/**",
+      "**/test_support.rs",
+      "**/*.test.ts",
+      "**/*.generated.ts",
+      "**/*.generated.rs",
+      "native/src/build_identity.rs",
+      "native/src/code_rule_dsl/tape/corpus_parity.rs",
+      "native/src/code_rule_dsl/value/eslint_rules.rs",
+      "native/src/code_rule_dsl/value/rules.rs",
+      "native/src/code_rule_dsl/compile/parse/ruff.rs",
+      "native/src/code_rule_dsl/compile/binds/ruff.rs",
+      "native/src/code_rule_dsl/compile/binds/eslint.rs",
+      "native/src/code_rule_dsl/compile/format_args/php.rs",
+      "native/src/code_rule_dsl/compile/format_args/ruff.rs",
+      "native/src/code_rule_dsl/suppress/ruff.rs",
+      "native/src/code_rule_dsl/lines/eslint.rs",
+      "native/src/code_rule_dsl/embed/test_script.rs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "rust-language-branch",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "binary_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(?:==|!=)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "operand"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "match_pattern",
+                    "has": {
+                      "all": [
+                        {
+                          "matches": "variant"
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "kind": "binary_expression",
+                              "stopBy": {
+                                "kind": "match_pattern"
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  },
+                  {
+                    "kind": "macro_invocation",
+                    "regex": "^matches!\\s*[\\(\\[\\{][\\s\\S]*\\b(?:Family|GrammarDialect|CodeRuleLanguage|SupportLang|Lang)::[A-Z]"
+                  },
+                  {
+                    "kind": "let_condition",
+                    "has": {
+                      "field": "pattern",
+                      "any": [
+                        {
+                          "matches": "variant"
+                        },
+                        {
+                          "has": {
+                            "matches": "variant",
+                            "stopBy": "end"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "kind": "let_declaration",
+                    "has": {
+                      "field": "alternative",
+                      "kind": "block"
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "field": "pattern",
+                          "any": [
+                            {
+                              "matches": "variant"
+                            },
+                            {
+                              "has": {
+                                "matches": "variant",
+                                "stopBy": "end"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "binary_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(?:==|!=)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "label"
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "nameish"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "match_pattern",
+                    "has": {
+                      "all": [
+                        {
+                          "matches": "label"
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "kind": "binary_expression",
+                              "stopBy": {
+                                "kind": "match_pattern"
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    },
+                    "inside": {
+                      "kind": "match_expression",
+                      "stopBy": "end",
+                      "has": {
+                        "field": "value",
+                        "regex": "(?:^|[^A-Za-z0-9_])(?:language|lang|dialect|family|label)(?:_of_path|_by_label)?\\b"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "macro_invocation",
+                    "regex": "^matches!\\s*[\\(\\[\\{]\\s*(?:[^,]*[^A-Za-z0-9_,])?(?:language|lang|dialect|family|label)\\b[^,]*,[\\s\\S]*\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\""
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "matches": "test-item",
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "variant": {
+              "kind": "scoped_identifier",
+              "regex": "(?:^|::)(?:Family|GrammarDialect|CodeRuleLanguage|SupportLang|Lang)::[A-Z][A-Za-z0-9_]*$"
+            },
+            "operand": {
+              "any": [
+                {
+                  "matches": "variant"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^Some\\s*\\(",
+                  "has": {
+                    "kind": "arguments",
+                    "has": {
+                      "matches": "variant"
+                    }
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^(?:[A-Za-z_]+::)*dialect_by_label\\s*\\(\\s*\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"\\s*\\)$"
+                }
+              ]
+            },
+            "label": {
+              "any": [
+                {
+                  "kind": "string_literal",
+                  "regex": "^\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^Some\\s*\\(\\s*\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"\\s*\\)$"
+                }
+              ]
+            },
+            "nameish": {
+              "not": {
+                "kind": "string_literal"
+              },
+              "regex": "(?:^|[^A-Za-z0-9_])(?:language|lang|dialect|family|label)(?:_of_path|_by_label)?\\b"
+            },
+            "cfg-test": {
+              "kind": "attribute_item",
+              "regex": "^#\\[cfg\\((?:test|all\\(test\\b[^\\]]*)\\)\\]$"
+            },
+            "test-item": {
+              "any": [
+                {
+                  "kind": "mod_item"
+                },
+                {
+                  "kind": "function_item"
+                },
+                {
+                  "kind": "impl_item"
+                }
+              ],
+              "follows": {
+                "matches": "cfg-test",
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "attribute_item"
+                      },
+                      {
+                        "kind": "line_comment"
+                      },
+                      {
+                        "kind": "block_comment"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)(?:(?:python|ecma|php|blade|vue|rust|sql)(?:\\.rs$|/)|(?:python|php|rust)_[a-z_]+(?:\\.rs$|/)|phpdoc(?:\\.rs$|/)|arguments_sql\\.rs$|suppress/(?:biome|clippy|eslint|noqa|nosec|oxlint|phpcs|phpstan|psalm|sqlfluff)\\.rs$|literal/(?:annotation|brace|percent|offsets|semantic|printf|scanf|eslint_directive)\\.rs$|embed/[a-z_]+\\.rs$|code_rule_dsl/(?:import_target/|npm_ignore/|module_graph(?:\\.rs$|/)|package_manifest\\.rs$|module_path\\.rs$|identifier(?:\\.rs$|/)))"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "LANGUAGE_BRANCH",
+        "anchor": "witness.span",
+        "message": "Move this choice into the family's Engine Adapter (called through with_adapter!) or the registry's data. If the code serves one family only, move it to that family's module rather than drop the check."
+      }
+    },
+    {
+      "id": "rust-embedding-branch",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "binary_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(?:==|!=)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "operand"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "match_pattern",
+                    "has": {
+                      "all": [
+                        {
+                          "matches": "variant"
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "kind": "binary_expression",
+                              "stopBy": {
+                                "kind": "match_pattern"
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  },
+                  {
+                    "kind": "macro_invocation",
+                    "regex": "^matches!\\s*[\\(\\[\\{][\\s\\S]*\\bVia::[A-Z]"
+                  },
+                  {
+                    "kind": "let_condition",
+                    "has": {
+                      "field": "pattern",
+                      "any": [
+                        {
+                          "matches": "variant"
+                        },
+                        {
+                          "has": {
+                            "matches": "variant",
+                            "stopBy": "end"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "kind": "let_declaration",
+                    "has": {
+                      "field": "alternative",
+                      "kind": "block"
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "field": "pattern",
+                          "any": [
+                            {
+                              "matches": "variant"
+                            },
+                            {
+                              "has": {
+                                "matches": "variant",
+                                "stopBy": "end"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "matches": "test-item",
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "variant": {
+              "kind": "scoped_identifier",
+              "regex": "(?:^|::)Via::[A-Z][A-Za-z0-9_]*$"
+            },
+            "operand": {
+              "any": [
+                {
+                  "matches": "variant"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^Some\\s*\\(",
+                  "has": {
+                    "kind": "arguments",
+                    "has": {
+                      "matches": "variant"
+                    }
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^(?:[A-Za-z_]+::)*dialect_by_label\\s*\\(\\s*\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"\\s*\\)$"
+                }
+              ]
+            },
+            "label": {
+              "any": [
+                {
+                  "kind": "string_literal",
+                  "regex": "^\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^Some\\s*\\(\\s*\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"\\s*\\)$"
+                }
+              ]
+            },
+            "nameish": {
+              "not": {
+                "kind": "string_literal"
+              },
+              "regex": "(?:^|[^A-Za-z0-9_])(?:language|lang|dialect|family|label)(?:_of_path|_by_label)?\\b"
+            },
+            "cfg-test": {
+              "kind": "attribute_item",
+              "regex": "^#\\[cfg\\((?:test|all\\(test\\b[^\\]]*)\\)\\]$"
+            },
+            "test-item": {
+              "any": [
+                {
+                  "kind": "mod_item"
+                },
+                {
+                  "kind": "function_item"
+                },
+                {
+                  "kind": "impl_item"
+                }
+              ],
+              "follows": {
+                "matches": "cfg-test",
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "attribute_item"
+                      },
+                      {
+                        "kind": "line_comment"
+                      },
+                      {
+                        "kind": "block_comment"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)code_rule_dsl/embed(?:\\.rs$|/)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EMBEDDING_BRANCH",
+        "anchor": "witness.span",
+        "message": "Let this embedding's embedder in embed/ decide (an Embedder method, dispatched with with_embedder!) instead of branching on a Via here."
+      }
+    },
+    {
+      "id": "host-language-branch",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "binary_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "operator",
+                      "regex": "^(?:===|!==|==|!=)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "matches": "label"
+                    }
+                  },
+                  {
+                    "has": {
+                      "matches": "nameish"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "binary_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "operator",
+                      "regex": "^(?:===|!==|==|!=)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "matches": "family-const"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "switch_case",
+                "has": {
+                  "field": "value",
+                  "matches": "label"
+                },
+                "inside": {
+                  "kind": "switch_statement",
+                  "stopBy": "end",
+                  "has": {
+                    "field": "value",
+                    "regex": "(?:^|[^A-Za-z0-9_$])(?:language|lang|dialect|family)\\b|[a-z](?:Language|Dialect|Family)(?:(?:For|Of)[A-Z][A-Za-z0-9_]*)?\\b"
+                  }
+                }
+              },
+              {
+                "kind": "call_expression",
+                "regex": "^\\[[^\\]]*[\"'](?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)[\"'][^\\]]*\\]\\s*\\.includes\\(\\s*[^)]*(?:language|lang|dialect|family|Language|Dialect|Family)[^)]*\\)$"
+              }
+            ]
+          },
+          "utils": {
+            "label": {
+              "kind": "string",
+              "regex": "^[\"'](?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)[\"']$"
+            },
+            "nameish": {
+              "not": {
+                "kind": "string"
+              },
+              "regex": "(?:^|[^A-Za-z0-9_$])(?:language|lang|dialect|family)(?:\\([^)]*\\))?$|[a-z](?:Language|Dialect|Family)(?:(?:For|Of)[A-Z][A-Za-z0-9_]*)?(?:\\([^)]*\\))?$"
+            },
+            "family-const": {
+              "kind": "identifier",
+              "regex": "^[A-Z][A-Z0-9]*_FAMILY$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "HOST_LANGUAGE_BRANCH",
+        "anchor": "witness.span",
+        "message": "Read this from the language registry (code-rule-languages.ts) or leave the choice to the engine. If this name is not a Rerail code-rule language (a lint plugin, an ecosystem), leave it."
+      }
+    }
+  ]
+}

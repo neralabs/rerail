@@ -78,15 +78,23 @@ export async function releasePacks(manifest, tags, steps, held = []) {
   return released;
 }
 
-/** Every pack under `packsDirectory`: `{ id, name, version }`, sorted by id. */
+/**
+ * Every pack under `packsDirectory`: `{ id, name, version, private }`, sorted by id. A pack whose package.json says
+ * `"private": true` is never published; release steps take `publishedPacks()` instead.
+ */
 export function listPacks(packsDirectory = PACKS) {
   return readdirSync(packsDirectory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => {
-      const { name, version } = JSON.parse(readFileSync(join(packsDirectory, entry.name, "package.json"), "utf8"));
-      return { id: entry.name, name, version };
+      const manifest = JSON.parse(readFileSync(join(packsDirectory, entry.name, "package.json"), "utf8"));
+      return { id: entry.name, name: manifest.name, version: manifest.version, private: manifest.private === true };
     })
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/** Every pack under `packsDirectory` that is published: not `"private": true`. */
+export function publishedPacks(packsDirectory = PACKS) {
+  return listPacks(packsDirectory).filter((pack) => !pack.private);
 }
 
 /** Every pending changeset in `directory`: `{ file, text }`, sorted by file name. */
@@ -126,6 +134,20 @@ export function changesetBumpFailures(changesets, packs) {
 }
 
 /**
+ * Each pending changeset naming a private pack. Changesets never version a private pack, so a changeset naming only
+ * private packs stays pending for ever, and one naming a private pack beside a published one makes `changeset version`
+ * fail ("mixed changeset").
+ */
+export function privateChangesetFailures(changesets, packs) {
+  const privateNames = new Set(packs.filter((pack) => pack.private).map((pack) => pack.name));
+  return changesets.flatMap(({ file, text }) =>
+    changesetEntries(text)
+      .filter(({ name }) => privateNames.has(name))
+      .map(({ name }) => `${file}: ${name} is private and never released, so no changeset names it`),
+  );
+}
+
+/**
  * Whether a pack's package.json changed what installing the pack gives, from its text `before` (undefined: the file is
  * new) to `after`. `publishConfig` only steers `npm publish`, so a change to it alone needs no release.
  */
@@ -141,12 +163,14 @@ export function manifestChanged(before, after) {
  * publishes its `package.json` and what its `files` list (a file, or everything under a directory); its expected findings,
  * candidates and `CHANGELOG.md` are not published, and changing them needs no changeset. `changed` lists the pull
  * request's changed paths (old and new paths of a rename both), `changesets` the changesets it adds or edits, and
- * `packs` each pack's `{ id, name, files }`.
+ * `packs` each pack's `{ id, name, files, private }`. A private pack (judged on its package.json after the change) is
+ * never published and needs no changeset.
  */
 export function missingChangesets(changed, changesets, packs) {
   const named = new Set(changesets.flatMap(({ text }) => changesetEntries(text).map((entry) => entry.name)));
   const failures = [];
-  for (const { id, name, files } of packs) {
+  for (const { id, name, files, private: isPrivate } of packs) {
+    if (isPrivate === true) continue;
     const prefix = `packs/${id}/`;
     const published = changed
       .filter((path) => path.startsWith(prefix))
@@ -303,9 +327,14 @@ export function gateFailures(report, ids, checkCount) {
   return failures;
 }
 
-/** The pack ids a command line names, every one a pack directory; `--all` names every pack. */
+/**
+ * The pack ids a command line names, every one a published pack directory; `--all` names every published pack. A
+ * private pack is never packed for npm.
+ */
 export function packIds(args, packs = listPacks()) {
-  if (args.includes("--all")) return packs.map((pack) => pack.id);
+  if (args.includes("--all")) return packs.filter((pack) => !pack.private).map((pack) => pack.id);
+  const privateIds = args.filter((id) => packs.some((pack) => pack.id === id && pack.private));
+  if (privateIds.length > 0) throw new Error(`private, never packed for npm: ${privateIds.join(", ")}`);
   const known = new Set(packs.map((pack) => pack.id));
   const unknown = args.filter((id) => !known.has(id));
   if (unknown.length > 0) throw new Error(`not a pack under packs/: ${unknown.join(", ")}`);

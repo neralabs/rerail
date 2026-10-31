@@ -1,0 +1,217 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-no-code-execution",
+  "revision": 1,
+  "mode": "log",
+  "description": "Read a rule pack's match and a repository's config as data without running their code, and install packs with npm's lifecycle scripts turned off.",
+  "scope": {
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "**/*.test.ts",
+      "src/**/__tests__/**",
+      "src/**/fixtures/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "process-module",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "import_statement",
+                "regex": "[\\\"'](?:node:)?(?:child_process|vm|worker_threads|wasi|repl|inspector)[\\\"']"
+              },
+              {
+                "kind": "export_statement",
+                "regex": "\\bfrom\\s+[\\\"'](?:node:)?(?:child_process|vm|worker_threads|wasi|repl|inspector)[\\\"']"
+              },
+              {
+                "kind": "call_expression",
+                "regex": "^(?:import|require)\\s*\\(\\s*[\\\"'](?:node:)?(?:child_process|vm|worker_threads|wasi|repl|inspector)[\\\"']"
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^src/(engine/catalog/|setup/rule-pack-store\\.ts$|cli/packs-cli\\.ts$|cli/repository-setup\\.ts$|runtime/repository-start\\.ts$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "RUNS_CODE",
+        "anchor": "witness.span",
+        "message": "Read a pack's match or a repository's config as data in the matcher or the config parser, and decide from globs, dependency names and parsed values; never run their code."
+      }
+    },
+    {
+      "id": "computed-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "regex": "^(?:import|require)\\s*\\(",
+                "not": {
+                  "has": {
+                    "kind": "arguments",
+                    "regex": "^\\(\\s*[\\\"'][^\\\"'`]*[\\\"']\\s*\\)$"
+                  }
+                }
+              },
+              {
+                "kind": "call_expression",
+                "regex": "^createRequire\\s*\\([^)]*\\)\\s*\\(",
+                "not": {
+                  "has": {
+                    "kind": "arguments",
+                    "regex": "^\\(\\s*[\\\"'][^\\\"'`]*[\\\"']\\s*\\)$"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^src/(engine/catalog/|setup/rule-pack-store\\.ts$|cli/packs-cli\\.ts$|cli/repository-setup\\.ts$|runtime/repository-start\\.ts$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "RUNS_CODE",
+        "anchor": "witness.span",
+        "message": "Read a pack's match or a repository's config as data in the matcher or the config parser, and decide from globs, dependency names and parsed values; never run their code."
+      }
+    },
+    {
+      "id": "eval",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "new_expression",
+                "regex": "^new\\s+(?:Function|Worker|Module)\\b"
+              },
+              {
+                "kind": "call_expression",
+                "regex": "^(?:\\(\\s*0\\s*,\\s*)?(?:globalThis\\.)?(?:eval|Function)\\)?\\s*\\("
+              },
+              {
+                "kind": "call_expression",
+                "regex": "^[\\w$.]+\\s*\\(\\s*[\\\"']node[\\\"']"
+              },
+              {
+                "kind": "member_expression",
+                "regex": "^process\\.execPath$"
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^src/(engine/catalog/|setup/rule-pack-store\\.ts$|cli/packs-cli\\.ts$|cli/repository-setup\\.ts$|runtime/repository-start\\.ts$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "RUNS_CODE",
+        "anchor": "witness.span",
+        "message": "Read a pack's match or a repository's config as data in the matcher or the config parser, and decide from globs, dependency names and parsed values; never run their code."
+      }
+    },
+    {
+      "id": "npm-scripts",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "array",
+            "regex": "^\\[\\s*(?:[\\\"']npm(?:\\.cmd)?[\\\"']\\s*,\\s*)?[\\\"'](?:install|i|add|ci|uninstall|remove|rm|update)[\\\"']",
+            "not": {
+              "has": {
+                "any": [
+                  {
+                    "kind": "string",
+                    "regex": "^[\\\"']--ignore-scripts(?:=true)?[\\\"']$"
+                  },
+                  {
+                    "kind": "spread_element",
+                    "regex": "^\\.\\.\\.\\s*quiet$"
+                  }
+                ]
+              }
+            },
+            "any": [
+              {
+                "inside": {
+                  "kind": "call_expression",
+                  "regex": "(?i)^(?:[\\w$.]*npm[\\w$]*\\s*\\(|[\\w$.]+\\s*\\(\\s*[\\w$.,\\s]*[\\[\\s]*[\\\"']npm[\\\"'])",
+                  "stopBy": "end"
+                }
+              },
+              {
+                "regex": "^\\[\\s*[\\\"']npm"
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "^src/setup/updater\\.ts$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "NPM_SCRIPTS",
+        "anchor": "witness.span",
+        "message": "Install packs with npm's ignore-scripts flag, written in this array or through the pack store's shared quiet options, so no package's lifecycle scripts run on the user's machine."
+      }
+    },
+    {
+      "id": "npm-options",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "array",
+            "regex": "^\\[\\s*(?:[\\\"']npm(?:\\.cmd)?[\\\"']\\s*,\\s*)?[\\\"'](?:install|i|add|ci|uninstall|remove|rm|update)[\\\"']",
+            "inside": {
+              "kind": "call_expression",
+              "regex": "(?i)^(?:[\\w$.]*npm[\\w$]*\\s*\\(|[\\w$.]+\\s*\\(\\s*[\\w$.,\\s]*[\\[\\s]*[\\\"']npm[\\\"'])",
+              "stopBy": "end"
+            },
+            "has": {
+              "kind": "spread_element",
+              "not": {
+                "regex": "^\\.\\.\\.\\s*(?:quiet$|\\(\\s*[\\w$.!]+\\s*\\?\\s*\\[)"
+              }
+            },
+            "not": {
+              "regex": "[\\\"']--[\\\"']\\s*,\\s*\\.\\.\\."
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "^src/setup/updater\\.ts$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "NPM_OPTIONS",
+        "anchor": "witness.span",
+        "message": "End npm's options with a double dash right before the package specs, as the pack store does, so a spec someone passes in that starts with a dash is not read as an npm option."
+      }
+    }
+  ]
+}

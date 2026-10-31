@@ -325,7 +325,8 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
 - `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
 - `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
   runs it).
-- A change to a pack under `packs/` adds a changeset ([.changeset/README.md](.changeset/README.md)), and stages the
+- A change to a published pack under `packs/` adds a changeset ([.changeset/README.md](.changeset/README.md)); a
+  private pack takes none. It also stages the
   pack data it adds, changes or removes ([Adding or changing a pack](#adding-or-changing-a-pack)).
 - A change to what the core package ships adds an entry under `## Unreleased` in `CHANGELOG.md`
   ([release notes](docs/release.md#release)).
@@ -441,7 +442,7 @@ The workflow's jobs, its guarantees and the comment's states are described in
 
 ### Adding or changing a pack
 
-Each change below is one pull request, with a changeset for the pack ([.changeset/README.md](.changeset/README.md)).
+Each change below is one pull request, with a changeset for the pack unless it is private ([.changeset/README.md](.changeset/README.md)).
 
 **A rule.** A pack ships the rules in `packs/<id>/rules/` that `pack.json` lists; `candidates/` holds ports under
 evaluation, which are scored and reported but never shipped. Start a new port as a candidate

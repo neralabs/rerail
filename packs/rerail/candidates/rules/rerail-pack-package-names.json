@@ -1,0 +1,52 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-pack-package-names",
+  "revision": 1,
+  "mode": "log",
+  "description": "Build and parse rule pack npm package names and install folders through the rule pack catalog's naming helpers instead of spelling out the pack name prefix in code.",
+  "scope": {
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "src/engine/catalog/rule-packs.ts",
+      "src/**/*.generated.ts",
+      "**/*.test.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "pack-name-literal",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "template_string"
+              },
+              {
+                "kind": "regex"
+              },
+              {
+                "kind": "template_literal_type"
+              }
+            ],
+            "regex": "rerail-pack(?:-[a-z0-9-]*)?(?:[\"'`$/(\\[\\\\]|$)",
+            "not": {
+              "regex": "[A-Za-z]{2,} [a-z]{2,}"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "PACK_NAME_LITERAL",
+        "anchor": "witness.span",
+        "message": "Build Rerail's own pack name with rulePackPackageName, under node_modules for its folder; recognise any pack name and its id with the helpers beside it in engine/catalog/rule-packs.ts."
+      }
+    }
+  ]
+}
