@@ -408,7 +408,7 @@ Check: an edit to one file re-runs exactly that file's derivations and its claus
   - What bounds the warm runs is the layer's facts, rewritten for every document (decision 0014),
     and the documents' facts rebuilt from their tapes. S8 measures them on S7's sample.
 
-### S7. Differential gate against W's engine
+### S7. Differential gate against W's engine — done (2026-10-31)
 
 - **Sample:** 100–300 real Python files, not fixtures only. Spike 2.18: measure at deployment size, and fixtures hide scaling (DH L3630-3635). The `packs/python` fixtures plus one real repository slice.
 - **Rules:** every Python clause S1/S2 lowers.
@@ -417,6 +417,40 @@ Check: an edit to one file re-runs exactly that file's derivations and its claus
   - coverage of the 286 clauses;
   - the answer count next to every time (spike 2.18, DH L84-87).
 - Mutation check: shift a span by one byte and break one rule, and the gate must fail (spike 2.17).
+
+- **Built:** `slice::tests::the_slice_finds_ws_findings_on_real_files`. Decision 0016.
+  - **Sample:** every third fixture (150), plus 100 evenly spaced files of CPython's standard
+    library without its tests, read in place: 250 files, 1.5 MB. `RERAIL_S7_REPO`,
+    `RERAIL_S7_FILES` and `RERAIL_S7_FIXTURES` change it.
+  - **Rules:** the 87 of 286 Python AST clauses that S1 lowers. W runs one file per snapshot, as
+    in S5's gate.
+  - **Equality per (rule, code):** a key is (rule, code, file, line). It holds for every
+    (rule, code) except SIM300, which is listed in `KNOWN` (O29: 3 keys only ours).
+  - **Unknown coverage:** the run leaves 91 (rule, file)s `Unknown`, and W's clause fails at
+    every one.
+  - **Mutation check:**
+    - a kept span moved one byte, onto the line before its finding's, then `apply` re-runs the
+      layer over the kept rows: 2 (rule, code)s differ;
+    - B101 broken (its first `kind` changed), on its 36 files: 2 differ.
+- **Measured** (CPU time, load 60–75):
+
+  | | Keys | CPU time | Wall |
+  |---|---|---|---|
+  | The slice, CPU, cold audit | 713 (W 710) | 31.7 s (labels 24.0 s) | 31.6 s |
+  | W's engine, one file per snapshot, in parallel | 710 | 14.6 s | 2.1 s |
+  | The slice, Metal, 75 of the files | 361 (W 361) | 8.6 s | 22.3 s |
+
+  - Peak RSS: 972 MB on the CPU, 3.9 GB on Metal (O30). The gate takes 55 s.
+- **Found and fixed:**
+  - a file of 100 KB failed every wave: its tasks over all programs overflow a workspace's `u32`
+    totals. Such a file now runs its programs in groups that fit;
+  - on Metal, a chunk's labels outgrew a workspace. They now run in halves;
+  - both fixes are in decision 0016.
+- **Found and left open:**
+  - **O29:** a recursive label settles one level deep;
+  - **O30:** memory and the CPU's single-threaded labels, for S8;
+  - **O28:** Metal's labels take minutes on the whole sample, so the Metal arm is opt-in
+    (`RERAIL_S7_BACKENDS=cpu,metal`).
 
 ### S8. First measurements against the targets
 

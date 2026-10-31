@@ -305,6 +305,41 @@ impl PackedDemand {
         (ranges, partitions)
     }
 
+    /// The groups of programs that run on the files `range` together: all of them where they fit
+    /// one workspace (or fail otherwise), else the longest runs that do, in order. A range that
+    /// does not fit is one file (`execution_partitions`), whose tasks' states over every program
+    /// can exceed a workspace's `u32` totals (06 S7: a 100 KB module of the standard library).
+    fn program_groups(&self, range: &Range<usize>) -> Vec<Range<usize>> {
+        let fits = |programs: &Range<usize>| {
+            let anchors = self.anchors[range.clone()].iter().map(|file| file[programs.clone()].to_vec()).collect::<Vec<_>>();
+            !matches!(
+                packed_workspace_fits(&self.programs[programs.clone()], &self.files[range.clone()], &anchors, &self.result_limits[programs.clone()]),
+                Err(PackedError::BackendCapacity | PackedError::BackendFailure)
+            )
+        };
+        let all = 0..self.programs.len();
+        if fits(&all) {
+            return vec![all];
+        }
+        let mut groups = Vec::new();
+        let mut start = 0;
+        while start < self.programs.len() {
+            // The longest run from `start` that fits; one program at least, which fails alone.
+            let (mut low, mut high) = (start + 1, self.programs.len());
+            while low < high {
+                let middle = low + (high - low).div_ceil(2);
+                if fits(&(start..middle)) {
+                    low = middle;
+                } else {
+                    high = middle - 1;
+                }
+            }
+            groups.push(start..low);
+            start = low;
+        }
+        groups
+    }
+
     fn execute(self, token: i64) -> MaterializedDemand {
         let demanded_producers = self
             .task_grid
@@ -325,7 +360,6 @@ impl PackedDemand {
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground
         );
         let (partition_ranges, partitions) = self.execution_partitions();
-        let dispatch_count = partition_ranges.len();
         let mut counters = PackedExecutionCounters {
             registrations: 1,
             virtual_table_scans: 0,
@@ -342,23 +376,27 @@ impl PackedDemand {
             matcher_calls: 0,
             host_callbacks: 0,
         };
+        // A range is one execution of every program; a file too large for one (its tasks' states
+        // over a workspace's), one per group of programs that fits.
         let executions = partition_ranges
             .iter()
-            .map(|range| {
+            .flat_map(|range| self.program_groups(range).into_iter().map(move |programs| (range.clone(), programs)))
+            .map(|(range, programs)| {
+                let anchors = self.anchors[range.clone()].iter().map(|file| file[programs.clone()].to_vec()).collect::<Vec<_>>();
                 execute_with_backend_packed_result_limits(
                     self.backend,
-                    &self.programs,
+                    &self.programs[programs.clone()],
                     &self.files[range.clone()],
-                    &self.anchors[range.clone()],
-                    Some(&self.result_limits),
+                    &anchors,
+                    Some(&self.result_limits[programs.clone()]),
                 )
-                .map(|execution| (range.start, execution))
+                .map(|execution| (range.start, programs.start, execution))
             })
             .collect::<Result<Vec<_>, _>>();
         let executions = match executions {
             Ok(executions) => {
-                counters.command_buffers = usize::from(metal) * dispatch_count;
-                counters.packed_dispatches = usize::from(metal) * dispatch_count;
+                counters.command_buffers = usize::from(metal) * executions.len();
+                counters.packed_dispatches = usize::from(metal) * executions.len();
                 executions
             }
             Err(error) => {
@@ -387,11 +425,12 @@ impl PackedDemand {
         };
         let mut rows: Vec<PackedRow> = Vec::new();
         let mut structure_keys = HashMap::new();
-        for (file_start, execution) in executions {
+        for (file_start, program_start, execution) in executions {
             for local_file in 0..execution.file_count() {
                 let file = file_start + local_file;
                 let structure_document = AstGrep::doc(self.files[file].clone());
-                for program in 0..execution.program_count() {
+                for local_program in 0..execution.program_count() {
+                    let program = program_start + local_program;
                     if !self.task_grid[file][program] {
                         continue;
                     }
@@ -611,7 +650,7 @@ impl PackedDemand {
                         }
                         continue;
                     }
-                    let (results, error) = match execution.program_results(local_file, program) {
+                    let (results, error) = match execution.program_results(local_file, local_program) {
                         Ok(result) => result,
                         Err(error) => {
                             let message = format!("{error:?}");

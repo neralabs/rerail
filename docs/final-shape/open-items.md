@@ -28,7 +28,9 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | closed (2026-10-30): sweeps in node order, 77 launches |
 | O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | closed (2026-10-30): labels only where a clause has candidates; sweeps on the CPU between GPU levels; 18.8 → 6.4 s on 8 fixtures |
 | O27 | Phase 4 / 10 | The findings layer's Unknown domains: syntax errors, capture anchors, `noqa` parents, report ceilings (06 S5, decision 0013) | closed (2026-10-30): all four decided in SQL; Unknown only where W's clause fails |
-| O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open: lanes 16x wider, sweeps in parallel, pipelines warmed; micro walks and untouched workspaces (0015); text-test tasks, sizing and the flush remain |
+| O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open: lanes 16x wider, sweeps in parallel, pipelines warmed; micro walks and untouched workspaces (0015); text-test tasks, sizing and the flush remain; at S7's size (75 files) the flush is 15 s |
+| O29 | Phase 4 / 9 | A recursive label through `not has not` settles one level deep: SIM300's `probably` misses `X == 1 + 2 + 3`, `X == [[1]]` (06 S7) | open: the plan, not a backend (CPU and Metal agree); listed in S7's `KNOWN`; `a_recursive_label_settles_at_every_depth` ignored |
+| O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | open: for S8 |
 
 ## O1. Stale-fact detection after a crash
 
@@ -786,3 +788,29 @@ Cold audit, CPU time: Metal 1.23 s → 0.92 s, against 1.79 s on the CPU backend
 - **`size()` and the flush** take about 270 ms cold.
 - **The CPU sweeps between segments** take about 85 ms warm.
 
+
+## O29. A recursive label through `not has not` settles one level deep
+
+**Found (2026-10-31), by S7's gate.** SIM300's (`ruff-sim300-yoda-conditions`) utility `probably`
+is recursive through a negation: a `binary_operator` is `probably` when it does not have a child
+that is neither an operator nor `probably`. The same holds for lists, tuples and dictionaries. One
+level agrees with W (`X == 4 + 1`, `X == [1, 2]`). Two levels do not: for `X == 1 + 2 + 3` and
+`X == [[1]]` the lowered clause finds a yoda condition and W does not.
+- **The cause is the plan, not a backend.** The CPU sweep, with micro walks or without, and Metal's
+  label passes give the same three keys on the stdlib's `_pydatetime.py`.
+- **S1's fixtures never nest these constructs** in a comparison, so S1 and S2 pass.
+- **Where to look:** how `levels` orders a recursive group's programs and complements (decision
+  0011, `sweeps`). Marks only add, so a complement computed before its program's marks at a
+  descendant is never retracted.
+- **Pinned by** `slice::tests::a_recursive_label_settles_at_every_depth` (ignored) and listed in
+  S7's `KNOWN`.
+
+## O30. S7's sample exceeds the memory budget, and the CPU's labels are single-threaded
+
+**Found (2026-10-31), by S7's gate** (250 files, 1.5 MB, load 60–75):
+- **Peak RSS is 972 MB** on the CPU backend, against the 500 MB budget. Metal peaks at 3.9 GB.
+- **A cold audit takes 31.7 s of CPU time**, of which labels take 24.0 s. CPU labels run on one
+  thread (O28). Candidates take 1.8 s and the push 0.7 s. W takes 14.6 s of CPU time (2.1 s wall,
+  in parallel) for the same 710 keys.
+
+S8 measures these with interleaved arms. Where the memory goes is the first question.

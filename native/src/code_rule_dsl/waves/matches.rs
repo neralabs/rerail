@@ -177,7 +177,7 @@ impl Wave {
         let views = crate::code_rule_dsl::prof::time("demand.labels", || -> StoreResult<_> { Ok(match self.backend {
             #[cfg(target_os = "macos")]
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground => {
-                self.lowered.labelled_metal(&docs, &active).map_err(invalid)?.0
+                labelled_metal(&self.lowered, &docs, &active).map_err(invalid)?
             }
             _ => self.lowered.labelled(&docs, &active).map_err(invalid)?,
         }) })?;
@@ -260,6 +260,27 @@ pub(in crate::code_rule_dsl) fn documents(graph: &(impl Graph + ?Sized), scope: 
         out.push(Document { key, path: path.clone(), core, digest, facts: Arc::new(facts) });
     }
     Ok(out)
+}
+
+/// The tapes labelled on Metal, all at once or, where their label levels outgrow a workspace
+/// (06 S7: 250 files in one chunk), each half on its own: a file's labels read only that file.
+#[cfg(target_os = "macos")]
+fn labelled_metal(
+    lowered: &LoweredWave,
+    docs: &[crate::code_rule_dsl::tape::TapeDoc],
+    active: &[Vec<bool>],
+) -> Result<Vec<crate::code_rule_dsl::tape::TapeDoc>, crate::code_rule_dsl::transducer::packed::Error> {
+    use crate::code_rule_dsl::transducer::packed::Error as PackedError;
+    match lowered.labelled_metal(docs, active) {
+        Err(PackedError::BackendCapacity) if docs.len() > 1 => {
+            let half = docs.len() / 2;
+            let split = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
+            let mut views = labelled_metal(lowered, &docs[..half], &split(0..half))?;
+            views.extend(labelled_metal(lowered, &docs[half..], &split(half..docs.len()))?);
+            Ok(views)
+        }
+        labelled => labelled.map(|(views, _)| views),
+    }
 }
 
 #[cfg(test)]
