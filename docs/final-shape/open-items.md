@@ -697,8 +697,9 @@ SQL over facts (decision 0013):
   On 48 fixtures: 30 such domains, each one W fails.
 - **Capture anchors.** The wave's one capture-anchored clause (W605's format spec) anchors at a
   regex group with `each`. `group(c, d, n, s)` holds each binding's start, one violation each. A
-  metavariable capture anchor is refused by `Layer::new` until a clause with one lowers, since its
-  binding is not in the match facts.
+  metavariable anchor reads its binding from W's matcher at the root the wave matched, since the
+  lowered root programs keep only labels. The probes cover a single capture, a multi-line
+  multi-capture and an unbound one.
 - **`noqa` parent statements.** `stmt(d, s, e)` holds the file's import and expression statements;
   the innermost holding the anchored byte is the one no deeper one holds.
 - **Report ceilings.** `total(r, x)` counts each rule's violations over the scope, and

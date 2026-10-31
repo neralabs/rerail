@@ -339,19 +339,24 @@ interpreter.
   - W's `run_clause` gates;
   - syntax error regions, lines, enclosing statements and report ceilings;
   - the `noqa`, `nosec` and `rerail-ignore` comments, read off the tape.
-- **One statement.** `finding(rule, code, d, line)` is one statement over non-recursive strata
-  for the anchor, the syntax-error drop and suppression.
+- **One statement.** The layer is one statement, `INSERT ... WITH ... SELECT` (`emit::single`).
+  The planner's non-recursive strata (anchor, syntax-error drop, suppression, report ceiling)
+  become its materialized common table expressions.
 - **Families.** Each code rule's findings are a family, so a second run over the same matches
   changes none. `Findings::publish` writes each (rule, document).
-- **Coverage.** It is `Unknown` only where W's clause fails on the file (`source-incomplete`).
+- **Coverage.** It is `Unknown` only on a limit: W's reading limit, where W's clause fails too
+  (`source-incomplete`), or the visit budget a metavariable anchor's binding spends in W's
+  matcher.
 - **The gates:**
   - `the_findings_are_ws_violations`, with W one file at a time:
     - 8 fixtures: 28 keys equal to W's, all 488 Complete;
     - 48 fixtures: 121 keys equal to W's, 2898 Complete, and 30 Unknown, each a W failure;
   - `the_findings_follow_ws_anchors_suppressions_and_ceilings`, on sources written for W605's
-    group anchor, `noqa`, `nosec`, `rerail-ignore`, a parent statement and report ceilings: 19 keys
-    equal to W's;
-  - the layer's SQL takes 57 ms on 48 fixtures.
+    group anchor, metavariable anchors (single, multi-line multi-capture, unbound), `noqa`, `nosec`,
+    `rerail-ignore`, a parent statement and report ceilings: 35 keys equal to W's;
+  - the layer's statement takes 60 ms on 48 fixtures.
+- **Not wired into production yet.** As this plan sets out, S6 wires it in through
+  `slice::audit` and `slice::apply`.
 
 ### S6. Entry points and the warm path
 

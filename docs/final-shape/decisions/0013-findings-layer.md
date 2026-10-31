@@ -13,19 +13,28 @@ facts written before it runs?
   (`emit_batch`, as the wave's step is) and run once after the wave (`schedule::layer`: no
   documents' sources, no batch). It reads `match` and the wave's new `span(d, n, s, e)` (the
   terminal match's bytes) and feeds nothing back.
-- **`finding(rule, code, d, line)` is one statement.** It reads `violation(r, c, d, n, b)`, a
-  violation keyed by its anchored byte `b`, joined to the line holding `b`, the clause's code and
-  the rule's report ceiling (`total`, a `count`). Below it are non-recursive strata: `anchored`
-  (start, end, file start, or a regex group's binding), the syntax-error drop (`broken`) and
-  suppression (`quiet`). This departs from "one statement" in 06's text: suppression is a negated
-  relation, so it has its own stratum. The planner makes single-atom projections into views
-  (`Emitted::setup`), which the layer creates before it runs.
+- **The layer is one statement** (`emit::single`): `INSERT OR IGNORE INTO new_finding WITH ...
+  SELECT`. The planner emits the rule's relations as non-recursive strata. `single` folds every
+  relation below `finding` into a materialized common table expression, the union of its steps
+  in stratum order, with the planner's views folded in too. It refuses a program with recursion or
+  lattices, which need the fixpoint. The relations are:
+  - `anchored`: start, end, file start, or a capture's binding;
+  - `broken`: the syntax-error drop;
+  - `quiet`: suppression;
+  - `violation`: one per anchored byte;
+  - `total`: a `count` for the report ceiling.
+
+  The run is one wave of the scheduler's loop, which records the families.
 - **What SQL cannot compute is written as facts first** (`Layer::write`), per clause and per
   document, as integer tables:
   - **The shape:** rule, code, anchor, `rerail-ignore` name, and whether `each` names a regex
     group.
-  - **`group(c, d, n, s)`:** where the anchor's or `each`'s regex group binds in the node's text,
-    as W's `node_groups` and `each_node_group_set` read it.
+  - **`group(c, d, n, s)`:** where the anchor's capture binds at a matched root. A same-node regex
+    group is read in the node's text, as W's `node_groups` and `each_node_group_set` read it. A
+    metavariable is read from W's matcher run at the root the wave matched (`match_root`, within
+    the rule's visit budget): its single capture's start, or a multi-capture's first node's. The
+    lowered root programs test labels only, so their batch's captures hold the root alone
+    (`match`); a budget W's matcher exhausts leaves the domain `Unknown`.
   - **The gate:** `applies(c, d, h)`, W's `run_clause` in its order: the scope, `grammar_matcher`
     (the `when` and `file` gates), the syntax gate, `FileGates`, and the text gate
     (`admits_source`); `h` comes from `honours_suppressions_at`.
@@ -40,13 +49,13 @@ facts written before it runs?
 - **Families:** `finding` is partitioned by code rule. Each rule's set is a family
   (`{scope}#wave:findings:finding:<rule>`), read from the documents' cores and the shapes' digest,
   so an unchanged set cuts off. `Findings::publish` writes each (rule, document) a clause reads.
-- **Coverage is Unknown only where W's clause fails:** on a file its parser did not read, or under
-  syntax errors a clause is not sound around (`source-incomplete`, a limit of what was read). An
-  Unknown domain publishes no keys.
-- **A capture anchor must name a regex group.** A metavariable's binding is not in the match facts,
-  so `Layer::new` refuses such a clause. None of the clauses the wave lowers has one; when one
-  lowers, the match step records its binding from `rerail_capture`, as it records `span`.
+- **Coverage is Unknown only on a limit:**
+  - W's reading limit, where W's clause fails too (`source-incomplete`): a file whose error regions
+    cover at least `UNREAD_PERCENT` of it, or syntax errors under a clause not sound around them;
+  - the visit budget, where a capture's binding needs W's matcher.
 
+  An Unknown domain publishes no keys. The gate checks each `source-incomplete` domain against a
+  W failure.
 ## Prior work consulted
 - **Design-index 11 (R L696-788):** count parity is a weak witness; parity is on positions. *Agrees:*
   the gate compares (rule, code, path, line) sets with W's violations, not counts.
@@ -72,10 +81,14 @@ facts written before it runs?
     where W's clause fails (`source-incomplete`), and the gate checks that.
   - Running the layer again over the same matches changes no family.
 - `the_findings_follow_ws_anchors_suppressions_and_ceilings`, over sources written for the cases the
-  fixtures do not reach: 19 keys, equal to W's in one snapshot. The sources cover:
+  fixtures do not reach, with W reading all the files in one snapshot. The sources cover:
   - W605's regex group, one violation per binding;
   - `noqa` codes, blanket comments and file exemptions, and a parent-statement copy of E731;
-  - `nosec`, `rerail-ignore`, and two E722 copies on either side of their report ceiling.
+  - `nosec`, `rerail-ignore`, and two E722 copies on either side of their report ceiling;
+  - metavariable anchors: a single capture, a multi-line multi-capture, and one an `any` may
+    leave unbound (the witness span).
+
+  With these the gate gives 35 keys, equal to W's.
 - W is the oracle one file at a time for the fixtures. A file W cannot read fails its whole
   evaluation, which then reports no other file's violations, whereas the layer decides each
   (rule, file) apart.

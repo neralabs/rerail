@@ -171,6 +171,70 @@ pub(in crate::code_rule_dsl) fn emit_batch(
     emit(&lowered, &Connection::open_in_memory()?, "main", name, None, batch)
 }
 
+/// A non-recursive `emitted` program as one statement deriving `output` (architecture §8: one layer
+/// of full SQL, which no fixpoint runs): each relation below it a materialized common table
+/// expression, the union of its steps in stratum order, the views among them (`setup`), and the
+/// statement `output`'s step. The program it returns has `output` alone, and keeps the setup that
+/// is not a view (`rdl_int`). Refused where a step reads a relation of its own stratum or a later
+/// one (recursion), or the program has lattices.
+pub(in crate::code_rule_dsl) fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
+    let Emitted { program, setup } = emitted;
+    if !program.lattices.is_empty() {
+        return Err(Error::Plan(format!("{}: a lattice needs the fixpoint", program.name)));
+    }
+    let arity = |rel: &str| program.relations.iter().find(|(name, _)| name == rel).map(|(_, arity)| *arity);
+    let columns = |n: usize| (0..n).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
+    let mut ctes = Vec::new();
+    let mut kept = Vec::new();
+    for statement in setup {
+        match statement.strip_prefix("CREATE TEMP VIEW ").and_then(|rest| rest.split_once(" AS ")) {
+            Some((name, select)) => ctes.push(format!("\"{name}\" AS MATERIALIZED ({select})")),
+            None => kept.push(statement),
+        }
+    }
+    let mut steps = program.steps.iter().collect::<Vec<_>>();
+    steps.sort_by_key(|step| step.stratum);
+    let stratum = |rel: &str| program.steps.iter().find(|step| step.output == rel).map(|step| step.stratum);
+    let mut done = BTreeSet::new();
+    let mut last = None;
+    for step in &steps {
+        for read in &step.reads {
+            if stratum(read).is_some_and(|s| s >= step.stratum) {
+                return Err(Error::Plan(format!("{}: {} reads {read} in its own stratum or a later one", program.name, step.output)));
+            }
+        }
+        if !done.insert(step.output.as_str()) {
+            continue;
+        }
+        let selects = steps
+            .iter()
+            .filter(|other| other.output == step.output)
+            .map(|other| {
+                other
+                    .sql
+                    .strip_prefix(&format!("INSERT OR IGNORE INTO new_{} ", other.output))
+                    .map(str::to_owned)
+                    .ok_or_else(|| Error::Plan(format!("{}: step of {} is not an insert", program.name, other.output)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let n = arity(&step.output).ok_or_else(|| Error::Plan(format!("{} is not a relation", step.output)))?;
+        if step.output == output {
+            last = Some((selects, n));
+        } else {
+            ctes.push(format!("\"{}\"({}) AS MATERIALIZED ({})", step.output, columns(n), selects.join(" UNION ")));
+        }
+    }
+    let (selects, n) = last.ok_or_else(|| Error::Plan(format!("{}: no step derives {output}", program.name)))?;
+    let body = selects.iter().map(|select| format!("SELECT * FROM ({select})")).collect::<Vec<_>>().join(" UNION ");
+    let sql = format!("INSERT OR IGNORE INTO new_{output} WITH {} {body}", ctes.join(", "));
+    let program = schedule::Program {
+        relations: vec![(output.to_owned(), n)],
+        steps: vec![schedule::Step { output: output.to_owned(), stratum: 0, reads: Vec::new(), sql }],
+        ..program
+    };
+    Ok(Emitted { program, setup: kept })
+}
+
 /// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.
 #[cfg(test)]
 #[allow(clippy::type_complexity)]

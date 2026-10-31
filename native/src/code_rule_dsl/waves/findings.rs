@@ -10,11 +10,12 @@
 //! The program reads, besides `match` and `span` (the wave's), facts of the clauses and documents
 //! written as tables before it runs (`Layer::write`):
 //! - `shape(c, r, k, a, i, g)`: clause `c`'s rule and code (`Layer::rules`, `Layer::codes` from 1),
-//!   its anchor (0 the witness's start, 1 its end, 2 the file's start, 3 a regex group), the
+//!   its anchor (0 the witness's start, 1 its end, 2 the file's start, 3 a capture), the
 //!   `rerail-ignore` name that silences it (from 1; 0 none, or one that only marks), and `g` 1
 //!   where `each` names a regex group: a violation per binding, none where it does not bind;
-//! - `group(c, d, n, s)`: where the group clause `c` anchors at (or its `each`) binds in node `n`'s
-//!   text, as W's `node_groups` and `each_node_group_set` read the clause's same-node regexes;
+//! - `group(c, d, n, s)`: where the capture clause `c` anchors at (or its `each`) binds at root `n`:
+//!   a same-node regex group in the node's text, as W's `node_groups` and `each_node_group_set`
+//!   read them, or a metavariable's binding in W's match at the root (`metavariable`);
 //! - `applies(c, d, h)`: clause `c` reads document `d` (its code rule's scope, its query's `when`,
 //!   `file`, syntax and text gates, as W's `run_clause`), honouring linter comments when `h` is 1;
 //! - `around(c)`, `error(d, s, e)`: the clause reads around syntax errors, and `d`'s error regions
@@ -44,7 +45,7 @@ use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::findings::contract::{Coverage, FindingKey, Findings};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::plan::emit;
-use crate::code_rule_dsl::matcher::{FileGates, GrammarMatcher};
+use crate::code_rule_dsl::matcher::{FileGates, GrammarMatcher, begin_clause, binding_range, end_clause, node_at};
 use crate::code_rule_dsl::model::{
     Anchor, ClauseKind, CompiledCodeRule, FileInput, Query, ViolationSpec, package_marker_directory,
     python_module_in,
@@ -209,11 +210,15 @@ enum Groups {
     First,
     /// `each` names the group: a violation per binding, none where it does not bind.
     Each,
+    /// The anchor is a metavariable: its binding in W's match at the root (the first node of a
+    /// multi-capture), the witness's span where it does not bind.
+    Bound,
 }
 
 /// The clause's same-node regexes (`node_regexes`) and how its violations read them, with the
-/// group they read. A capture anchor or `each` must name a group of them: a metavariable's binding
-/// is not in the match facts.
+/// group they read. A capture anchor naming no group of them is a metavariable (`bound_capture`).
+/// A name both bind is read as the group, where W's metavariable wins; no clause the wave lowers
+/// has one.
 fn groups(violation: &ViolationSpec) -> StoreResult<(&[Regex], Groups, Option<&str>)> {
     let regexes = violation
         .node_regexes
@@ -227,9 +232,7 @@ fn groups(violation: &ViolationSpec) -> StoreResult<(&[Regex], Groups, Option<&s
         _ => None,
     };
     match (anchor, each) {
-        (Some(name), _) if !names(name) => {
-            Err(StoreError::Invalid(format!("{}: anchor capture.{name} is a metavariable, which the match facts do not bind", violation.code)))
-        }
+        (Some(_), _) if bound_capture(violation).is_some() => Ok((regexes, Groups::Bound, None)),
         (Some(name), Some(each)) if name != each => {
             Err(StoreError::Invalid(format!("{}: anchor capture.{name} under each {each}", violation.code)))
         }
@@ -239,11 +242,24 @@ fn groups(violation: &ViolationSpec) -> StoreResult<(&[Regex], Groups, Option<&s
     }
 }
 
+/// The metavariable a clause's violation anchors at: a capture anchor its query binds as a
+/// metavariable rather than as a same-node regex group.
+fn bound_capture(violation: &ViolationSpec) -> Option<String> {
+    let Anchor::Capture(name) = &violation.anchor else { return None };
+    let regexes = violation
+        .node_regexes
+        .iter()
+        .find(|(dialect, _)| *dialect == GrammarDialect::Python)
+        .map_or(&[][..], |(_, regexes)| regexes.as_slice());
+    let group = regexes.iter().any(|regex| regex.capture_names().flatten().any(|group| group == name));
+    (!group).then(|| name.clone())
+}
+
 /// The starts of `name`'s bindings in `text`, at byte `start` of the file: the first regex's that
 /// binds it (`First`), or every binding of every regex holding it, each range once (`Each`).
 fn bindings(regexes: &[Regex], groups: Groups, name: &str, text: &str, start: usize) -> Vec<usize> {
     match groups {
-        Groups::None => Vec::new(),
+        Groups::None | Groups::Bound => Vec::new(),
         Groups::First => regexes
             .iter()
             .find_map(|regex| regex.captures(text)?.name(name).map(|group| start + group.start()))
@@ -261,6 +277,39 @@ fn bindings(regexes: &[Regex], groups: Groups, name: &str, text: &str, start: us
             seen.into_iter().map(|(start, _)| start).collect()
         }
     }
+}
+
+/// Where metavariable `name` binds in W's match of `grammar` at `node` of `root`'s tape: a single
+/// capture's start, a multi-capture's first node's, `None` where it does not bind; `Err` with the
+/// limit W's matcher hit within `work` visits (the rule's budget: Coverage `Unknown`).
+fn metavariable(
+    grammar: &GrammarMatcher,
+    root: &AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+    node: u32,
+    name: &str,
+    work: usize,
+) -> Result<Option<usize>, String> {
+    // As W's `evaluate_file_clause`: the rule at the root, within the clause `begin_clause` sets up.
+    begin_clause(grammar, work);
+    let mut found = grammar.match_rule(node_at(root, node));
+    let transformed = match (&grammar.transform, &mut found) {
+        (Some(transform), Some(found)) => transform.apply(found.get_env_mut()).is_ok(),
+        _ => true,
+    };
+    let (_, exceeded) = end_clause();
+    if let Some(limit) = exceeded {
+        return Err(format!("{limit:?}"));
+    }
+    if !transformed {
+        return Err("Work".to_owned());
+    }
+    Ok(found.and_then(|found| {
+        let env = found.get_env();
+        env.get_match(name)
+            .map(|node| node.range().start)
+            .or_else(|| env.get_multiple_matches(name).first().map(|node| node.range().start))
+            .or_else(|| binding_range(env, name).map(|range| range.start))
+    }))
 }
 
 pub(in crate::code_rule_dsl) struct Layer {
@@ -319,7 +368,7 @@ impl Layer {
             batch.insert(name.to_owned(), (format!("(SELECT {aliased} FROM {})", table(name)), 100.0));
         }
         let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
-        let mut emitted = emit::emit_batch(FINDINGS, PROGRAM, &batch, intern).map_err(invalid)?;
+        let mut emitted = emit::single(emit::emit_batch(FINDINGS, PROGRAM, &batch, intern).map_err(invalid)?, RELATION).map_err(invalid)?;
         emitted.program.partitions = vec![(RELATION.to_owned(), self.rules.clone())];
         Ok(emitted)
     }
@@ -483,12 +532,29 @@ impl Layer {
                 parent |= suppress.and_then(|s| s.noqa.as_ref()).is_some_and(|noqa| noqa.parent);
                 nosec |= suppress.is_some_and(|s| s.nosec.is_some());
                 around |= gated;
-                let (regexes, groups, Some(name)) = groups(violation)? else { continue };
-                for &n in matched.get(&(c as i64, d)).into_iter().flatten() {
-                    let span = tape.doc.transducer_span(n as u32);
-                    for start in bindings(regexes, groups, name, &source[span.clone()], span.start) {
-                        insert("group", &[c as i64, d, n, start as i64])?;
+                let (regexes, groups, name) = groups(violation)?;
+                let nodes = matched.get(&(c as i64, d)).into_iter().flatten();
+                match (groups, name) {
+                    (Groups::Bound, _) => {
+                        let Some(name) = bound_capture(violation) else { continue };
+                        for &n in nodes {
+                            let work = rule.capabilities.limits.visits_for(tape.doc.transducer_len());
+                            match metavariable(grammar, &root, n as u32, &name, work) {
+                                Ok(Some(start)) => insert("group", &[c as i64, d, n, start as i64])?,
+                                Ok(None) => {}
+                                Err(limit) => *entry = Coverage::Unknown(limit),
+                            }
+                        }
                     }
+                    (_, Some(name)) => {
+                        for &n in nodes {
+                            let span = tape.doc.transducer_span(n as u32);
+                            for start in bindings(regexes, groups, name, &source[span.clone()], span.start) {
+                                insert("group", &[c as i64, d, n, start as i64])?;
+                            }
+                        }
+                    }
+                    (_, None) => {}
                 }
             }
             if !coverage.keys().any(|&(_, doc)| doc == document.key) {

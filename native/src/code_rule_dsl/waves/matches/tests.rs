@@ -337,6 +337,7 @@ fn the_findings_follow_ws_anchors_suppressions_and_ceilings() {
         "import pickle  # nosec\nimport subprocess  # nosec B404\nimport telnetlib\nassert True  # nosec B101\nassert True  # nosec B999\n",
         "try:\n    pass\nexcept:  # rerail-ignore ruff-e722-bare-except\n    pass\ntry:\n    pass\nexcept:  # rerail-ignore probe-e722-low -- reason\n    pass\n",
         "s = \"\"\"\nmultiline\n\"\"\"  # noqa: W605\nt = '\\d'\n",
+        "k = lambda: (\n    1\n)\nprint(\n    1,\n    2)\nprint()\nm = map(lambda: 0, [])\n",
     ];
     let (store, paths) = ingested_sources(&sources);
     let mut policies = policies();
@@ -369,6 +370,23 @@ fn the_findings_follow_ws_anchors_suppressions_and_ceilings() {
     policies.push(probe(&e722, "probe-e722-low", &ceiling(2)));
     policies.push(probe(&e722, "probe-e722-high", &ceiling(50)));
     policies.push(probe(&e731, "probe-e731-parent", &parent));
+    // Metavariable anchors: a single capture, a multi-capture's first node, and one that may not bind.
+    for (id, rule, anchor) in [
+        ("probe-capture-value", serde_json::json!({ "pattern": "$F = lambda: $B" }), "capture.B"),
+        ("probe-capture-args", serde_json::json!({ "pattern": "print($$$ARGS)" }), "capture.ARGS"),
+        ("probe-capture-maybe", serde_json::json!({ "any": [{ "pattern": "$F = lambda: $B" }, { "kind": "lambda" }] }), "capture.B"),
+    ] {
+        let document = serde_json::json!({
+            "format": "rerail.policy/v1", "id": id, "revision": 1, "mode": "block",
+            "clauses": [{ "id": "c", "forbid": { "ast": { "language": "python", "rule": rule } },
+                          "violation": { "anchor": anchor, "code": "X", "message": "m" } }],
+        });
+        policies.push(probe(&document.to_string(), id, &|_| {}));
+    }
+    let (clauses, ..) = shaped_from(&policies);
+    for id in ["probe-capture-value", "probe-capture-args", "probe-capture-maybe"] {
+        assert!(clauses.iter().any(|clause| clause.name.starts_with(id)), "{id} lowers");
+    }
     findings_gate(&store, &paths, &policies, true);
 }
 
@@ -387,6 +405,7 @@ fn findings_gate(store: &ContentStore, paths: &[String], policies: &[(String, cr
     run(&lease, store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(store, WS, chunk)).unwrap();
     let layer = Layer::new(shapes).unwrap();
     let findings_program = layer.program(store).unwrap();
+    assert_eq!(findings_program.program.steps.len(), 1, "the layer is one statement");
     let started = std::time::Instant::now();
     let (findings, outcome) = layer.findings(&lease, store, WS, &documents, &findings_program).unwrap();
     let elapsed = started.elapsed();
