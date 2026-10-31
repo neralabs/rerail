@@ -312,9 +312,9 @@ fn policies() -> Vec<(String, crate::code_rule_dsl::CompiledCodeRuleDsl)> {
         .collect()
 }
 
-/// 06 S5's gate: the findings layer over the wave's matches gives, for every (rule, file) it
-/// decides, the keys of W's violations of the same clauses on the same files, as sets; the
-/// (rule, file)s it leaves `Unknown` are those where W's clause fails. W is evaluated one file at a
+/// 06 S5's gate: the findings layer over the wave's matches gives the keys of W's violations of the
+/// same clauses on the same files, as sets, over every (rule, file); the (rule, file)s it leaves
+/// `Unknown` are those where W's clause fails, and W reports none there either. W is evaluated one file at a
 /// time (a file W cannot read fails its evaluation, which then reports no other file's violations).
 #[test]
 fn the_findings_are_ws_violations() {
@@ -436,7 +436,7 @@ fn findings_gate(store: &ContentStore, paths: &[String], policies: &[(String, cr
             let result: serde_json::Value = serde_json::from_str(&compiled.evaluate(snapshot.clone(), "report".to_owned()).unwrap()).unwrap();
             for v in result["violations"].as_array().unwrap() {
                 let (rule, file) = (v["ruleId"].as_str().unwrap().to_owned(), v["path"].as_str().unwrap().to_owned());
-                if names.contains(&format!("{policy}/{}", v["clauseId"].as_str().unwrap())) && complete.contains(&(rule.clone(), file.clone())) {
+                if names.contains(&format!("{policy}/{}", v["clauseId"].as_str().unwrap())) {
                     ws.insert((rule, v["code"].as_str().unwrap().to_owned(), file, v["span"]["startLine"].as_u64().unwrap() as usize));
                 }
             }

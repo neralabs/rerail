@@ -77,8 +77,9 @@ facts written before it runs?
 ## Consequences
 - `the_findings_are_ws_violations` (W evaluated one file at a time):
   - 8 fixtures: 28 keys, equal to W's, and 488 (rule, file)s Complete;
-  - 48 fixtures: 121 keys, equal to W's, 2898 Complete and 30 Unknown. Each Unknown pair is one
-    where W's clause fails (`source-incomplete`), and the gate checks that.
+  - 48 fixtures: 121 keys, equal to W's over every (rule, file), the Unknown ones included; 2898
+    Complete and 30 Unknown. Each Unknown pair is one where W's clause fails (`source-incomplete`)
+    and reports no violation, and the gate checks both.
   - Running the layer again over the same matches changes no family.
 - `the_findings_follow_ws_anchors_suppressions_and_ceilings`, over sources written for the cases the
   fixtures do not reach, with W reading all the files in one snapshot. The sources cover:

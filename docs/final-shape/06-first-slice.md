@@ -350,7 +350,8 @@ interpreter.
 - **The gates:**
   - `the_findings_are_ws_violations`, with W one file at a time:
     - 8 fixtures: 28 keys equal to W's, all 488 Complete;
-    - 48 fixtures: 121 keys equal to W's, 2898 Complete, and 30 Unknown, each a W failure;
+    - 48 fixtures: 121 keys equal to W's over every (rule, file); 2898 Complete, and 30 Unknown,
+      each a W failure with no W violation;
   - `the_findings_follow_ws_anchors_suppressions_and_ceilings`, on sources written for W605's
     group anchor, metavariable anchors (single, multi-line multi-capture, unbound), `noqa`, `nosec`,
     `rerail-ignore`, a parent statement and report ceilings: 35 keys equal to W's;
