@@ -57,6 +57,9 @@ Two things were tried and dropped:
 |---|---|
 | Evaluating a text test that reads the walk's start only at the pass's roots | S7's roots cover ~274 k of its nodes, so it saved nothing. |
 | Recursive groups as GPU rounds instead of host sweeps | It exceeds the launch budget (`BackendLaunchLimit`), because chains are deep. |
+| Roots on the GPU (`MetalJit` instead of 0017's `CpuJit`), re-measured after these steps | Metal splits S7 into 260 ranges. Compiling them took 59 s and executing 4.76 s, against 0.8 s for the CPU JIT's whole roots stage. 0017 stands. |
+| A 32 MB page cache (main and temp) for the candidate statement | Candidates went ~1.1–1.2 → 0.97–1.09 s, but the peak rose to 536–538 MB, over budget. |
+| Building a range's rows per file in parallel | Rows went ~300 → ~220 ms, but CPU rose ~0.4 s and wall did not change measurably. |
 | Absorbing a roots range's rows on a thread while the next range runs | In an interleaved A/B the wall time did not change and CPU rose 0.7–1.3 s: the rows thread competes with the JIT's pool. |
 
 ## Consequences
