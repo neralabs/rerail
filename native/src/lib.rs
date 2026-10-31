@@ -191,6 +191,19 @@ pub fn native_memory_profile() -> String {
     .to_string()
 }
 
+/// SQLite's allocator set when the library loads, before anything can initialize SQLite
+/// (`content_store::sqlite_on_jemalloc`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[used]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+static SQLITE_ALLOCATOR: extern "C" fn() = {
+    extern "C" fn install() {
+        content_store::sqlite_on_jemalloc();
+    }
+    install
+};
+
 /// Return allocator pages after eviction closes idle SQLite connections.
 pub(crate) fn release_allocator_memory() {
     // Background threads, where available, decay pages between applies too.

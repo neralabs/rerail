@@ -9,6 +9,8 @@ pub(crate) mod atoms;
 mod bounded_insert;
 mod compression;
 mod connection;
+#[cfg(not(windows))]
+pub(crate) use connection::sqlite_on_jemalloc;
 mod derivation;
 mod facts_memo;
 mod objects;

@@ -649,7 +649,12 @@ fn mark(at: &str) {
             super::super::metal_backend::reserved_mb(),
             tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20
         );
-        if let Some(path) = std::env::var_os("RERAIL_HOLD").filter(|_| std::env::var("RERAIL_HOLD_AT").is_ok_and(|mark| mark == at)) {
+        static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let wanted = std::env::var("RERAIL_HOLD_AT").ok();
+        let nth = wanted.as_deref().and_then(|wanted| wanted.split_once('#')).map_or(Some(1), |(_, n)| n.parse().ok());
+        let here = wanted.as_deref().is_some_and(|wanted| wanted.split('#').next() == Some(at))
+            && Some(SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1) == nth;
+        if let Some(path) = std::env::var_os("RERAIL_HOLD").filter(|_| here) {
             eprintln!("FLUSH holding, pid {}", std::process::id());
             while !std::path::Path::new(&path).exists() {
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -771,6 +776,8 @@ fn encode(
         runner.boundary(rounds);
     }
     drop(_encode);
+    // Encoding's host vectors are freed: their pages go back before the GPU's memory is taken.
+    crate::code_rule_dsl::prof::release();
     mark("encoded");
     crate::code_rule_dsl::prof::time("gpu.flush", || runner.flush())?;
     mark("flushed");
@@ -939,6 +946,7 @@ impl Runner<'_> {
         }
         commit_checked(&self.command)?;
         wait_checked(&self.command)?;
+        crate::code_rule_dsl::prof::count("gpu.commits", 1);
         self.outcome.command_buffers += 1;
         self.retained.clear();
         self.programs.clear();
@@ -978,6 +986,7 @@ impl Runner<'_> {
         if threads == 0 {
             return;
         }
+        crate::code_rule_dsl::prof::count("gpu.encoders", 1);
         let encoder = self.command.new_compute_command_encoder();
         encoder.set_label(label);
         encoder.set_compute_pipeline_state(state);

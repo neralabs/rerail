@@ -325,7 +325,55 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     Ok(())
 }
 
+/// SQLite's memory from jemalloc, the process's allocator, once and before SQLite initializes (it
+/// refuses afterwards, and then keeps the system allocator). Freed SQLite pages are then returned
+/// with the heap's (`purge_allocator_pages`) instead of staying fragmented in the system's zones:
+/// a slice's prefilter and ingest held ~140 MB there for ~30 MB live (O30).
+#[cfg(not(windows))]
+pub(crate) fn sqlite_on_jemalloc() {
+    use std::ffi::{c_int, c_void};
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    unsafe extern "C" fn allocate(bytes: c_int) -> *mut c_void {
+        unsafe { tikv_jemalloc_sys::malloc(bytes.max(1) as usize) }
+    }
+    unsafe extern "C" fn release(pointer: *mut c_void) {
+        unsafe { tikv_jemalloc_sys::free(pointer) }
+    }
+    unsafe extern "C" fn resize(pointer: *mut c_void, bytes: c_int) -> *mut c_void {
+        unsafe { tikv_jemalloc_sys::realloc(pointer, bytes.max(1) as usize) }
+    }
+    unsafe extern "C" fn size(pointer: *mut c_void) -> c_int {
+        unsafe { tikv_jemalloc_sys::malloc_usable_size(pointer) as c_int }
+    }
+    unsafe extern "C" fn round(bytes: c_int) -> c_int {
+        unsafe { tikv_jemalloc_sys::nallocx(bytes.max(1) as usize, 0) as c_int }
+    }
+    unsafe extern "C" fn init(_: *mut c_void) -> c_int {
+        rusqlite::ffi::SQLITE_OK
+    }
+    unsafe extern "C" fn shutdown(_: *mut c_void) {}
+    ONCE.call_once(|| {
+        let methods = rusqlite::ffi::sqlite3_mem_methods {
+            xMalloc: Some(allocate),
+            xFree: Some(release),
+            xRealloc: Some(resize),
+            xSize: Some(size),
+            xRoundup: Some(round),
+            xInit: Some(init),
+            xShutdown: Some(shutdown),
+            pAppData: std::ptr::null_mut(),
+        };
+        // SQLite copies the methods.
+        let code = unsafe { rusqlite::ffi::sqlite3_config(rusqlite::ffi::SQLITE_CONFIG_MALLOC, &raw const methods) };
+        if std::env::var_os("RERAIL_PROF").is_some() {
+            eprintln!("SQLite allocator: {}", if code == rusqlite::ffi::SQLITE_OK { "jemalloc" } else { "the system's (already initialized)" });
+        }
+    });
+}
+
 fn open_runtime_connection(path: &Path) -> StoreResult<Connection> {
+    #[cfg(not(windows))]
+    sqlite_on_jemalloc();
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_FULL_MUTEX;

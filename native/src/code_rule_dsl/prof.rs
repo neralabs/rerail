@@ -118,6 +118,27 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
                 entry.1 = entry.1.max((info.ri_lifetime_max_phys_footprint >> 20) as usize);
             }
         }
+        // The system allocator's (SQLite's, the Metal runtime's): in use, and held.
+        #[cfg(target_os = "macos")]
+        {
+            #[repr(C)]
+            #[derive(Default)]
+            struct Statistics {
+                blocks_in_use: libc::c_uint,
+                size_in_use: libc::size_t,
+                max_size_in_use: libc::size_t,
+                size_allocated: libc::size_t,
+            }
+            unsafe extern "C" {
+                fn malloc_zone_statistics(zone: *mut std::ffi::c_void, statistics: *mut Statistics);
+            }
+            let mut statistics = Statistics::default();
+            unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut statistics) };
+            let entry = stages.entry(format!("sys_live_mb.{stage}")).or_default();
+            entry.1 = entry.1.max(statistics.size_in_use >> 20);
+            let entry = stages.entry(format!("sys_held_mb.{stage}")).or_default();
+            entry.1 = entry.1.max(statistics.size_allocated >> 20);
+        }
         // What the heap holds live (jemalloc's allocated bytes), against what it keeps mapped.
         #[cfg(not(windows))]
         {

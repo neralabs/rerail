@@ -20,3 +20,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0019 | Micro walks carry four cursors; label passes of one domain share their roots and walk items | accepted |
 | 0020 | CPU execution ranges packed by u32 record counts (demand-zero workspaces); program groups from one batch's counts; text rows shared across a labelling's runs | accepted |
 | 0021 | Micro walk stacks by static depth: 8 frames in thread memory, deeper walks over a 4096-thread pool with device stacks | accepted |
+| 0022 | The engine's footprint within 500 MB: freed pages returned at stage ends, SQLite on jemalloc, GPU buffers sized by the run | accepted |
