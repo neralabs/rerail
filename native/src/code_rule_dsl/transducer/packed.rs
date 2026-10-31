@@ -92,7 +92,7 @@ pub(in crate::code_rule_dsl) use compile_matcher::{LoweredMatcher, LoweredWave};
 // A label program's walk without the interpreter's machinery (O28).
 #[path = "packed/compile/micro.rs"]
 mod compile_micro;
-pub(in crate::code_rule_dsl) use compile_micro::{Frames, Micro};
+pub(in crate::code_rule_dsl) use compile_micro::{Frames, Micro, steps as micro_steps};
 #[cfg(test)]
 #[path = "packed/compile/matcher_tests.rs"]
 mod compile_matcher_tests;
@@ -3697,7 +3697,8 @@ pub(in crate::code_rule_dsl) fn execute_with_backend_packed_result_limits(
         }
         #[cfg(target_os = "macos")]
         ExecutionBackend::MetalJit => {
-            let engine = metal_program_backend::compile_jit_cached(programs)?;
+            let engine = crate::code_rule_dsl::prof::time("roots.jit", || metal_program_backend::compile_jit_cached(programs))?;
+            let _run = crate::code_rule_dsl::prof::Stage::start("roots.metal");
             metal_program_backend::execute_packed_with_result_limits(
                 &engine,
                 programs,

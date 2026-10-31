@@ -7,7 +7,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROF").is_some());
-static STAGES: Mutex<BTreeMap<&'static str, (Duration, usize)>> = Mutex::new(BTreeMap::new());
+static STAGES: Mutex<BTreeMap<String, (Duration, usize)>> = Mutex::new(BTreeMap::new());
 
 pub(in crate::code_rule_dsl) fn time<T>(stage: &'static str, f: impl FnOnce() -> T) -> T {
     if !*ON {
@@ -17,7 +17,7 @@ pub(in crate::code_rule_dsl) fn time<T>(stage: &'static str, f: impl FnOnce() ->
     let out = f();
     let elapsed = start.elapsed();
     let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let entry = stages.entry(stage).or_default();
+    let entry = stages.entry(stage.to_owned()).or_default();
     entry.0 += elapsed;
     entry.1 += 1;
     out
@@ -49,7 +49,7 @@ impl Drop for Stage {
     fn drop(&mut self) {
         if let Some((stage, start)) = self.0.take() {
             let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let entry = stages.entry(stage).or_default();
+            let entry = stages.entry(stage.to_owned()).or_default();
             entry.0 += start.elapsed();
             entry.1 += 1;
         }
@@ -58,6 +58,19 @@ impl Drop for Stage {
 
 /// Adds `amount` (bytes, records) to `stage`'s count, shown as its calls.
 pub(in crate::code_rule_dsl) fn count(stage: &'static str, amount: usize) {
+    if *ON {
+        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        stages.entry(stage.to_owned()).or_default().1 += amount;
+    }
+}
+
+/// Whether stages are timed (`RERAIL_PROF`).
+pub(in crate::code_rule_dsl) fn on() -> bool {
+    *ON
+}
+
+/// `count` with a name made at run time.
+pub(in crate::code_rule_dsl) fn count_named(stage: String, amount: usize) {
     if *ON {
         let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         stages.entry(stage).or_default().1 += amount;

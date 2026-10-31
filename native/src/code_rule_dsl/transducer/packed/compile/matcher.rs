@@ -1191,8 +1191,11 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
         .iter()
         .flatten()
         .map(|&(clause, id)| {
+            // With its text bits on this tape (`Micro::texts`).
             let walk = match clause.labels.def(id) {
-                Label::Roots(program, _) | Label::Targets(program, _) => Micro::of(program),
+                Label::Roots(program, _) | Label::Targets(program, _) => {
+                    Micro::of(program).and_then(|walk| walk.texts(program, tape).map(|texts| (walk, texts)))
+                }
                 _ => None,
             };
             ((std::ptr::from_ref(clause) as usize, id), walk)
@@ -1226,7 +1229,7 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
                     marks.clear();
                     let walked = walks[&(std::ptr::from_ref(clause) as usize, id)]
                         .as_ref()
-                        .is_some_and(|walk| walk.run(tape, sets, node, targets, &mut frames, &mut |node| marks.push(node)).is_ok());
+                        .is_some_and(|(walk, texts)| walk.run(tape, sets, texts, node, targets, &mut frames, &mut |node| marks.push(node)).is_ok());
                     if !walked {
                         marks.clear();
                         let view = tape.with_labels(Arc::clone(sets));

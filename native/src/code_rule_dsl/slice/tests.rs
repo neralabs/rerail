@@ -420,9 +420,8 @@ fn the_slice_finds_ws_findings_on_real_files() {
     let (ws, failed) = ws_keys(&policies, &names, &sources);
     let w_time = (cpu() - cpu0, wall0.elapsed());
 
-    // `RERAIL_S7_BACKENDS`: the backends, of `cpu` and (on macOS) `metal`; default `cpu`. Metal's
-    // labels take minutes on the whole sample (O28), past a gate's budget; on a third of it they
-    // agree.
+    // `RERAIL_S7_BACKENDS`: the backends, of `cpu` and (on macOS) `metal`; default `cpu`, which
+    // keeps the gate within a minute (Metal adds 15 s and agrees; decision 0017).
     let wanted = std::env::var("RERAIL_S7_BACKENDS").unwrap_or_else(|_| "cpu".to_owned());
     let mut backends = Vec::new();
     if wanted.contains("cpu") {

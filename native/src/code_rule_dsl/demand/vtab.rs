@@ -111,23 +111,19 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     failure_injections: HashMap<usize, String>,
 }
 
-fn stable_partition_ranges(
-    file_count: usize,
-    mut fits: impl FnMut(&Range<usize>) -> bool,
-) -> Vec<Range<usize>> {
-    let mut pending = Vec::with_capacity(file_count.max(1));
-    pending.push(0..file_count);
-    let mut ranges = Vec::new();
-    while let Some(range) = pending.pop() {
-        if fits(&range) || range.len() <= 1 {
-            ranges.push(range);
-            continue;
+/// `0..file_count` as the ranges that fit, in order: a range that does not fit is halved.
+fn stable_partition_ranges(file_count: usize, fits: impl Fn(&Range<usize>) -> bool) -> Vec<Range<usize>> {
+    fn split(range: Range<usize>, fits: &impl Fn(&Range<usize>) -> bool) -> Vec<Range<usize>> {
+        if range.len() <= 1 || fits(&range) {
+            return vec![range];
         }
         let middle = range.start + range.len() / 2;
-        pending.push(middle..range.end);
-        pending.push(range.start..middle);
+        // One half at a time: each check holds its range's batch (06 S7: both at once took 0.6 GB).
+        let mut left = split(range.start..middle, fits);
+        left.extend(split(middle..range.end, fits));
+        left
     }
-    ranges
+    split(0..file_count, &fits)
 }
 
 impl PackedDemand {
@@ -341,6 +337,7 @@ impl PackedDemand {
     }
 
     fn execute(self, token: i64) -> MaterializedDemand {
+        let _execute = crate::code_rule_dsl::prof::Stage::start("demand.execute");
         let demanded_producers = self
             .task_grid
             .iter()
@@ -359,7 +356,7 @@ impl PackedDemand {
             self.backend,
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground
         );
-        let (partition_ranges, partitions) = self.execution_partitions();
+        let (partition_ranges, partitions) = crate::code_rule_dsl::prof::time("demand.partitions", || self.execution_partitions());
         let mut counters = PackedExecutionCounters {
             registrations: 1,
             virtual_table_scans: 0,
@@ -380,9 +377,15 @@ impl PackedDemand {
         // over a workspace's), one per group of programs that fits.
         let executions = partition_ranges
             .iter()
-            .flat_map(|range| self.program_groups(range).into_iter().map(move |programs| (range.clone(), programs)))
+            .flat_map(|range| {
+                // A range of several files fits (`execution_partitions` halves until it does); a
+                // single file may not.
+                let groups = if range.len() == 1 { self.program_groups(range) } else { vec![0..self.programs.len()] };
+                groups.into_iter().map(move |programs| (range.clone(), programs))
+            })
             .map(|(range, programs)| {
                 let anchors = self.anchors[range.clone()].iter().map(|file| file[programs.clone()].to_vec()).collect::<Vec<_>>();
+                let _roots = crate::code_rule_dsl::prof::Stage::start("demand.roots");
                 execute_with_backend_packed_result_limits(
                     self.backend,
                     &self.programs[programs.clone()],

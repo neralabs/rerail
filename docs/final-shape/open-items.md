@@ -28,9 +28,9 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | closed (2026-10-30): sweeps in node order, 77 launches |
 | O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | closed (2026-10-30): labels only where a clause has candidates; sweeps on the CPU between GPU levels; 18.8 → 6.4 s on 8 fixtures |
 | O27 | Phase 4 / 10 | The findings layer's Unknown domains: syntax errors, capture anchors, `noqa` parents, report ceilings (06 S5, decision 0013) | closed (2026-10-30): all four decided in SQL; Unknown only where W's clause fails |
-| O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open: lanes 16x wider, sweeps in parallel, pipelines warmed; micro walks and untouched workspaces (0015); text-test tasks, sizing and the flush remain; at S7's size (75 files) the flush is 15 s |
+| O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open: micro walks with text slots, roots on the CPU (0015, 0017); S7 cold 12.1 s wall on Metal against 27.0 s; the partition search and first-run compiles remain |
 | O29 | Phase 4 / 9 | A recursive label through `not has not` settles one level deep: SIM300's `probably` misses `X == 1 + 2 + 3`, `X == [[1]]` (06 S7) | open: the plan, not a backend (CPU and Metal agree); listed in S7's `KNOWN`; `a_recursive_label_settles_at_every_depth` ignored |
-| O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | open: for S8 |
+| O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | open: for S8; Metal peaks at 1.4 GB |
 
 ## O1. Stale-fact detection after a crash
 
@@ -783,10 +783,27 @@ Cold audit, CPU time: Metal 1.23 s → 0.92 s, against 1.79 s on the CPU backend
 1.09 s → 0.43 s. Peak RSS: 2.1 GB → 284 MB. The one-file edit takes 0.22 s against the CPU's
 0.40 s. Every gate shows 0 differing.
 
-**Still left:**
+**Still left (superseded by the next part):**
 - **Text-test programs** (12% of roots) are interpreter tasks.
 - **`size()` and the flush** take about 270 ms cold.
 - **The CPU sweeps between segments** take about 85 ms warm.
+
+**Fixed (2026-10-31), decision 0017, at S7's size.** On 75 of S7's files, labels took 18.2 s. The
+cause was three whole-run reruns: a walk past 2^16 steps, and two WIDE fallbacks. The remaining
+interpreter tasks (19.3 M of 21.3 M) were regex text tests.
+
+Fixes:
+- walk steps scale with the file;
+- text tests are bits computed once per (value, kind), on the host, in parallel;
+- a Metal wave's roots run on the CPU's JIT.
+
+Labels on those 75 files: 18.2 s → 2.2 s. S7's 250 files cold: 12.1 s wall and 19.6 s CPU time on
+Metal, against 27.0 s on the CPU backend.
+
+**Left:**
+- `execution_partitions` builds batches to test fit (2.4 s);
+- the CPU backend's labels are single-threaded (21 s of its 27 s), which makes the comparison
+  flatter than the shapes are.
 
 
 ## O29. A recursive label through `not has not` settles one level deep

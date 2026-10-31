@@ -438,9 +438,11 @@ Check: an edit to one file re-runs exactly that file's derivations and its claus
   |---|---|---|---|
   | The slice, CPU, cold audit | 713 (W 710) | 31.7 s (labels 24.0 s) | 31.6 s |
   | W's engine, one file per snapshot, in parallel | 710 | 14.6 s | 2.1 s |
-  | The slice, Metal, 75 of the files | 361 (W 361) | 8.6 s | 22.3 s |
+  | The slice, Metal, 75 of the files (before 0017) | 361 (W 361) | 8.6 s | 22.3 s |
+  | The slice, Metal, all 250 (after 0017) | 713 (W 710) | 19.6 s | 12.1 s |
 
-  - Peak RSS: 972 MB on the CPU, 3.9 GB on Metal (O30). The gate takes 55 s.
+  - Peak RSS: 972 MB on the CPU (O30). On Metal it was 3.9 GB before 0017 and is 1.4 GB after.
+  - The gate takes 55 s; with `RERAIL_S7_BACKENDS=cpu,metal`, 58 s.
 - **Found and fixed:**
   - a file of 100 KB failed every wave: its tasks over all programs overflow a workspace's `u32`
     totals. Such a file now runs its programs in groups that fit;
@@ -449,8 +451,9 @@ Check: an edit to one file re-runs exactly that file's derivations and its claus
 - **Found and left open:**
   - **O29:** a recursive label settles one level deep;
   - **O30:** memory and the CPU's single-threaded labels, for S8;
-  - **O28:** Metal's labels take minutes on the whole sample, so the Metal arm is opt-in
-    (`RERAIL_S7_BACKENDS=cpu,metal`).
+  - **O28:** Metal's labels took minutes on the whole sample. After decision 0017 they take
+    12.1 s wall against the CPU's 27.0 s, and agree with W. The Metal arm stays opt-in
+    (`RERAIL_S7_BACKENDS=cpu,metal`) to keep the gate's time down.
 
 ### S8. First measurements against the targets
 

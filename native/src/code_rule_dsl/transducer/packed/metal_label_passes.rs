@@ -134,6 +134,8 @@ struct Shape {
     recursive: u32,
     last_level: u32,
     file_count: u32,
+    /// A micro walk's steps (`compile_micro::steps` for the largest file and program).
+    steps: u32,
 }
 
 #[repr(C)]
@@ -234,13 +236,17 @@ struct Prepared {
 }
 
 /// A level's micro walks (`label_micro`): per pass {word start, word count, scratch label,
-/// targets, item start, item count}, the passes' words, and their starts (global nodes).
+/// targets, item start, item count, first text slot, 0}, the passes' words, and their starts
+/// (global nodes).
 struct Walks {
     passes: MappedBuffer,
+    /// Each text slot's bits (`Micro::texts`), one label's words a slot.
+    texts: MappedBuffer,
     words: MappedBuffer,
     items: MappedBuffer,
     pass_count: usize,
     item_count: usize,
+    steps: u32,
 }
 
 /// A workspace lease with what it was sized for.
@@ -382,11 +388,13 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
         let mut outcome = match encode(device, plan, files, &rounds, lanes, micro) {
             // A task's states outgrew the narrow lanes' (or another task failed, which fails again).
             Err(Error::BackendFailure) if lanes != WIDE => {
+                crate::code_rule_dsl::prof::count("run.widened", 1);
                 lanes = WIDE;
                 continue;
             }
             // A micro walk outgrew its frames, captures or steps.
             Err(Error::BackendCapacity) if micro => {
+                crate::code_rule_dsl::prof::count("run.interpreted", 1);
                 micro = false;
                 continue;
             }
@@ -674,19 +682,74 @@ impl Runner<'_> {
             // A level's micro walks run as such (`label_micro`); its other programs are tasks.
             if self.micro && sweep.is_none() {
                 let (mut records, mut words, mut items) = (Vec::new(), Vec::new(), Vec::new());
+                let (largest, mut longest) = (self.files.iter().map(TapeDoc::transducer_len).max().unwrap_or(0), 0);
+                // Each text slot's bits, `self.words` words a slot over every file's nodes.
+                let (mut texts, mut slots) = (Vec::<u32>::new(), 0_u32);
+                let label_words = self.words;
+                let files = self.files;
+                // Each distinct (value, kind)'s slot row, computed once for the run's levels.
+                let mut rows = HashMap::<String, Option<u32>>::new();
                 passes.retain(|&(program, roots, mode, target)| {
                     let Some(walk) = (mode < 2).then(|| Micro::of(program)).flatten() else { return true };
+                    // The walk's slots as rows of `texts`, contiguous from `text_start`; a row
+                    // already computed for another pass is copied.
+                    let mut own = Vec::new();
+                    for slot in 0..walk.texts.len() {
+                        let key = walk.slot_key(program, slot);
+                        let row = match rows.get(&key) {
+                            Some(row) => *row,
+                            None => {
+                                use rayon::prelude::*;
+                                let _texts = crate::code_rule_dsl::prof::Stage::start("size.texts");
+                                let per_file = files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>();
+                                let row = per_file.map(|per_file| {
+                                    let row = slots;
+                                    slots += 1;
+                                    texts.resize(texts.len() + label_words, 0);
+                                    let at = row as usize * label_words;
+                                    for (bits, base) in per_file.iter().zip(&bases) {
+                                        for (index, &word) in bits.iter().enumerate() {
+                                            let mut word = word;
+                                            while word != 0 {
+                                                let node = *base + (index * 64) as u32 + word.trailing_zeros();
+                                                texts[at + node as usize / 32] |= 1 << (node % 32);
+                                                word &= word - 1;
+                                            }
+                                        }
+                                    }
+                                    row
+                                });
+                                rows.insert(key, row);
+                                row
+                            }
+                        };
+                        let Some(row) = row else { return true };
+                        own.push(row);
+                    }
+                    // A pass reads slot `s` at `text_start + s`: its rows, copied where shared.
+                    let text_start = slots;
+                    for &row in &own {
+                        let from = row as usize * label_words;
+                        texts.extend_from_within(from..from + label_words);
+                    }
+                    slots += own.len() as u32;
                     let start = items.len() as u32;
                     for (roots, base) in roots.iter().zip(&bases) {
                         items.extend(roots.iter().map(|node| base + node));
                     }
-                    records.push([words.len() as u32, walk.words.len() as u32, target, mode, start, items.len() as u32 - start]);
+                    records.push([words.len() as u32, walk.words.len() as u32, target, mode, start, items.len() as u32 - start, text_start, 0]);
+                    longest = longest.max(walk.words.len());
                     words.extend_from_slice(&walk.words);
                     false
                 });
                 crate::code_rule_dsl::prof::count("size.walks", items.len());
                 if !items.is_empty() {
+                    if texts.is_empty() {
+                        texts.push(0);
+                    }
                     let walks = Walks {
+                        texts: MappedBuffer::from_slice(self.device, &texts)?,
+                        steps: super::super::micro_steps(largest, longest),
                         pass_count: records.len(),
                         item_count: items.len(),
                         passes: MappedBuffer::from_slice(self.device, &records)?,
@@ -698,6 +761,12 @@ impl Runner<'_> {
             }
             if passes.is_empty() {
                 continue;
+            }
+            if crate::code_rule_dsl::prof::on() {
+                for &(program, roots, _, _) in &passes {
+                    let reason = Micro::refusal(program);
+                    crate::code_rule_dsl::prof::count_named(format!("refused.{reason}"), roots.iter().map(Vec::len).sum());
+                }
             }
             let (programs, anchors) = self.batch_inputs(&passes);
             let mut batch = crate::code_rule_dsl::prof::time("size.batch", || PackedBatch::new(&programs, self.files, &anchors))?;
@@ -1033,7 +1102,8 @@ impl Runner<'_> {
     fn walk(&mut self, level: usize) {
         let Some(walks) = self.walks.get(&level) else { return };
         let (passes, words, items) = (walks.passes.buffer.clone(), walks.words.buffer.clone(), walks.items.buffer.clone());
-        let shape = Shape { item_count: walks.item_count as u32, target_count: walks.pass_count as u32, ..self.shape() };
+        let texts = walks.texts.buffer.clone();
+        let shape = Shape { item_count: walks.item_count as u32, target_count: walks.pass_count as u32, steps: walks.steps, ..self.shape() };
         let tapes = &self.tapes;
         let (nodes, children, supertypes, files) =
             (tapes.nodes.buffer.clone(), tapes.children.buffer.clone(), tapes.supertypes.buffer.clone(), tapes.files.buffer.clone());
@@ -1048,6 +1118,7 @@ impl Runner<'_> {
             (&items, 0),
             (&scratch, 0),
             (&flags, 0),
+            (&texts, 0),
         ];
         self.kernel(3, &buffers, shape, shape.item_count as usize);
     }

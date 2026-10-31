@@ -11,18 +11,29 @@
 //!
 //! The walk's outputs are the interpreter's, as a label reads them: a roots label is the starts that
 //! emit (the walk stops at the first), a targets label every node captured on a path that emits. A
-//! program with an operation outside the walk's (text, size, assertions, repeats, greedy forks,
-//! directives) is not a micro walk. A walk that needs more frames, captures or steps than it has
-//! fails, and its pass runs on the interpreter instead.
+//! program with an operation outside the walk's (size, assertions, repeats, greedy forks,
+//! directives) is not a micro walk. A text test is a fixed predicate of its node, so it is read
+//! from bits computed once per (value, node) on the host (`Micro::texts`), not run as a regex. A walk that needs more frames, captures or steps than it has
+//! fails, and its pass runs on the interpreter instead. Its steps scale with the file (`steps`).
 
 use super::*;
+use std::collections::BTreeSet;
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
+use crate::code_rule_dsl::transducer::packed::value::ValueProgram;
 
 /// Cursor slots, captures and frames a walk carries, and the steps it takes.
 pub(in crate::code_rule_dsl) const CURSORS: usize = 2;
 pub(in crate::code_rule_dsl) const CAPTURES: usize = 2;
 pub(in crate::code_rule_dsl) const FRAMES: usize = 128;
 pub(in crate::code_rule_dsl) const STEPS: u32 = 1 << 16;
+
+/// The steps a walk of `words` words may take on a file of `nodes` nodes: `STEPS`, or twice a pass
+/// over every node per word where that is more. A move's candidates are a file's nodes at most, so
+/// a walk with one move from the root takes about that; one with nested moves may take more and
+/// then fails (06 S7: a descent from a 25 K-node module took more than `STEPS`).
+pub(in crate::code_rule_dsl) fn steps(nodes: usize, words: usize) -> u32 {
+    u32::try_from(nodes.saturating_mul(words).saturating_mul(2)).unwrap_or(u32::MAX).max(STEPS)
+}
 
 const NONE: u32 = u32::MAX;
 
@@ -32,7 +43,11 @@ pub(in crate::code_rule_dsl) struct Overflow(pub(in crate::code_rule_dsl) &'stat
 
 #[derive(Clone, Debug)]
 pub(in crate::code_rule_dsl) struct Micro {
+    /// The program's words, each `TEXT`'s operand its slot in `texts`.
     pub(in crate::code_rule_dsl) words: Vec<u32>,
+    /// Each text test's value (an index into the program's values) and the kind its node has, where
+    /// the test follows a kind test that no jump skips (its domain).
+    pub(in crate::code_rule_dsl) texts: Vec<(u16, Option<u16>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -58,6 +73,34 @@ enum Resume {
 pub(in crate::code_rule_dsl) struct Frames(Vec<(State, Resume)>);
 
 impl Micro {
+    /// Why `program` is not a micro walk: its first operation outside the walk's, by name.
+    pub(in crate::code_rule_dsl) fn refusal(program: &Program) -> &'static str {
+        if program.tree_sitter_query || !program.directives.is_empty() || !program.output_program.instructions.is_empty() {
+            return "query, directives or output";
+        }
+        for &word in &program.words {
+            let (op, mode, arg) = split(word);
+            let name = match op {
+                TEXT => match program.value_programs.get(usize::from(arg)) {
+                    Some(ValueProgram::Equal { .. }) => "text equal",
+                    Some(ValueProgram::Prefix { .. }) => "text prefix",
+                    Some(ValueProgram::Regex(_)) => "text regex",
+                    _ => "text lua",
+                },
+                SIZE => "size",
+                ASSERT => "assert",
+                FIRST | LAST => "first or last",
+                ABSENT_FIELD => "absent field",
+                REPEAT_BEGIN | REPEAT_BUMP | REPEAT_END => "repeat",
+                FORK if mode != 0 => "greedy fork",
+                KIND | FIELD | SUPERTYPE if mode != 0 => "test mode",
+                _ => continue,
+            };
+            return name;
+        }
+        "other"
+    }
+
     /// `program` as a micro walk, where every operation is one.
     pub(in crate::code_rule_dsl) fn of(program: &Program) -> Option<Self> {
         if program.tree_sitter_query
@@ -76,21 +119,87 @@ impl Micro {
                 KIND | FIELD | SUPERTYPE => mode == 0,
                 CHILD | DESCEND | NEXT | FOLLOWING => mode == 0 || mode == NAMED,
                 SAVE_CURSOR | RESTORE_CURSOR => usize::from(arg) < CURSORS,
+                TEXT => mode == 0 && usize::from(arg) < program.value_programs.len(),
                 FORK => mode == 0 && usize::from(arg) < len,
                 GOTO => usize::from(arg) < len,
                 _ => false,
             }
         });
-        walks.then(|| Self { words: program.words.clone() })
+        if !walks {
+            return None;
+        }
+        // A text test reads a fixed predicate of its node: a slot of bits (`texts`), not a regex.
+        let targets = program
+            .words
+            .iter()
+            .filter_map(|&word| match split(word) {
+                (FORK | GOTO, _, arg) => Some(arg),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let (mut words, mut texts) = (program.words.clone(), Vec::<(u16, Option<u16>)>::new());
+        for pc in 0..words.len() {
+            let (op, mode, value) = split(words[pc]);
+            if op != TEXT {
+                continue;
+            }
+            let kind = (pc > 0 && !targets.contains(&(pc as u16)))
+                .then(|| split(words[pc - 1]))
+                .and_then(|(op, mode, arg)| (op == KIND && mode == 0).then_some(arg));
+            let slot = texts.iter().position(|&text| text == (value, kind)).unwrap_or_else(|| {
+                texts.push((value, kind));
+                texts.len() - 1
+            });
+            words[pc] = u32::from(op) | u32::from(mode) << 8 | (slot as u32) << 16;
+        }
+        Some(Self { words, texts })
+    }
+
+    /// Each text slot's bits on `tape` (bit `n` of slot `s`: node `n` passes text test `s`), by the
+    /// program's own value programs; `None` where one fails (its work limit), so the program runs
+    /// on the interpreter.
+    pub(in crate::code_rule_dsl) fn texts(&self, program: &Program, tape: &TapeDoc) -> Option<Vec<Vec<u64>>> {
+        (0..self.texts.len()).map(|slot| self.slot(program, slot, tape)).collect()
+    }
+
+    /// Slot `slot`'s bits on `tape` (`texts`).
+    pub(in crate::code_rule_dsl) fn slot(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
+        let (value, kind) = self.texts[slot];
+        let len = tape.transducer_len();
+        let mut bits = vec![0_u64; len.div_ceil(64)];
+        for node in 0..len as u32 {
+            if kind.is_some_and(|kind| tape.transducer_kind(node) != kind) {
+                continue;
+            }
+            let mut work = 0;
+            if program.value_programs[usize::from(value)].is_match(tape.transducer_text(node), &program.strings, &mut work).ok()? {
+                bits[node as usize / 64] |= 1 << (node % 64);
+            }
+        }
+        Some(bits)
+    }
+
+    /// What slot `slot`'s bits depend on, as a key: its value program (with the strings it reads)
+    /// and its kind. Passes whose slots share a key share their bits.
+    pub(in crate::code_rule_dsl) fn slot_key(&self, program: &Program, slot: usize) -> String {
+        let (value, kind) = self.texts[slot];
+        let value = &program.value_programs[usize::from(value)];
+        let strings = match value {
+            ValueProgram::Equal { string } | ValueProgram::Prefix { string } => vec![program.strings[usize::from(*string)].clone()],
+            ValueProgram::Regex(_) => Vec::new(),
+            _ => program.strings.clone(),
+        };
+        format!("{value:?}|{strings:?}|{kind:?}")
     }
 
     /// The walk from `start` on `tape`, whose labels (classes from `DERIVED_CLASS_BASE`) are
-    /// `labels`: `mark` takes each output's start (`targets` false), or each node an output
+    /// `labels` and whose text slots are `texts` (`Micro::texts`): `mark` takes each output's start (`targets` false), or each node an output
     /// captured.
     pub(in crate::code_rule_dsl) fn run(
         &self,
         tape: &TapeDoc,
         labels: &[Vec<u64>],
+        texts: &[Vec<u64>],
         start: u32,
         targets: bool,
         frames: &mut Frames,
@@ -110,11 +219,12 @@ impl Micro {
         };
         let mut state = State { pc: 0, node: start, cursors: [NONE; CURSORS], captures: [NONE; CAPTURES], captured: 0 };
         let mut steps = 0_u32;
+        let limit = self::steps(tape.transducer_len() as usize, self.words.len());
         loop {
             // The path from `state` until it ends.
             loop {
                 steps += 1;
-                if steps > STEPS {
+                if steps > limit {
                     return Err(Overflow("steps"));
                 }
                 let (op, mode, arg) = split(self.words[usize::from(state.pc)]);
@@ -128,6 +238,7 @@ impl Micro {
                         flags & mode == mode && flags & arg as u8 == 0
                     }
                     SUPERTYPE => has(state.node, arg),
+                    TEXT => texts[usize::from(arg)][state.node as usize / 64] >> (state.node % 64) & 1 != 0,
                     PARENT => tape.transducer_parent(state.node).map(|parent| state.node = parent).is_some(),
                     NEXT => tape.transducer_next_sibling(state.node, named).map(|next| state.node = next).is_some(),
                     CHILD | DESCEND | FOLLOWING => {

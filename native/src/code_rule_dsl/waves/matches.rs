@@ -187,8 +187,14 @@ impl Wave {
             .collect::<Vec<_>>();
         let grid = vec![vec![true; programs.len()]; views.len()];
         let limits = vec![u32::MAX; programs.len()];
-        let demand =
-            PackedDemand::new(self.backend, programs, views, anchors, grid, limits).map_err(invalid)?;
+        // The roots run on the CPU whatever labelled the tapes: they start only at the prefilter's
+        // candidates, few and scattered, and carry captures and outputs, where the labels are a pass
+        // over every node (decision 0017; 06 S7: 1.2 s on the CPU's JIT, 4.3 s on Metal's).
+        let roots = match self.backend {
+            ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit => ExecutionBackend::CpuJit,
+            backend => backend,
+        };
+        let demand = PackedDemand::new(roots, programs, views, anchors, grid, limits).map_err(invalid)?;
         self.chunks.push(Chunk { candidates });
         Ok(Some(demand))
     }

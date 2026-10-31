@@ -9,7 +9,7 @@ struct Result { uint taskOrdinal,localOrdinal,start,label,captureStart,captureCo
 struct FinalCapture { uint label,node,start,end,textStart,textLength,propertyStart,propertyCount,retained; };
 struct Arena { uint start,capacity,cursor; };
 struct Status { uint error,resultCount,captureCount,programCounter,finalCaptureCount,propertyCount,outputByteCount,reserved; };
-struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount; };
+struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps; };
 // flags: [0] a task failed (bit 0 an interpreter task, bit 1 a micro walk), [2] the group settled (skip), [3] a group did not settle within its
 // encoded rounds, [4 + round % 2] the round changed a label.
 // How a program's results land: mode 0 roots, 1 captured nodes (into scratch label `slot`), 2 and
@@ -23,10 +23,9 @@ static void mark(device atomic_uint* bits,uint node){atomic_fetch_or_explicit(&b
 
 kernel void label_sink(device const Arena* arenas [[buffer(0)]],device const Result* results [[buffer(1)]],device const FinalCapture* captures [[buffer(2)]],device const Status* statuses [[buffer(3)]],device const Route* routes [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* counts [[buffer(6)]],device atomic_uint* flags [[buffer(7)]],constant Shape& shape [[buffer(8)]],uint tid [[thread_position_in_grid]]){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
-  if(tid<shape.taskCount&&statuses[tid].error!=0u){atomic_fetch_or_explicit(&flags[0],1u,memory_order_relaxed);atomic_fetch_add_explicit(&flags[6],1u,memory_order_relaxed);if(statuses[tid].error!=2u)atomic_fetch_add_explicit(&flags[7],1u,memory_order_relaxed);}
+  if(tid<shape.taskCount&&statuses[tid].error!=0u)atomic_fetch_or_explicit(&flags[0],1u,memory_order_relaxed);
   Arena arena=arenas[shape.resultArena];
   if(tid>=arena.cursor)return;
-  atomic_fetch_add_explicit(&flags[8],1u,memory_order_relaxed);
   Result result=results[arena.start+tid];
   Route route=routes[result.taskOrdinal];
   device atomic_uint* bits=scratch+route.slot*shape.words;
@@ -81,11 +80,11 @@ struct Node { uint parent,nextAny,nextNamed,childStart,childCount,descendantEnd,
 struct File { uint nodeStart,nodeCount,sourceStart,sourceLength,lineStart,lineCount,superStart,superCount; };
 struct Supertype { uint node,kind; };
 // A pass: its words, its scratch label, whether it marks captures, and its starts in `items`.
-struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount; };
+struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,textStart,pad; };
 // A path's state, and for a move's frame (resume 1 children, 2 descendants, 3 following
 // siblings; 0 a forked path) where its candidates continue.
 struct MicroFrame { uint pc,node,resume,named,next,end,cursor0,cursor1,capture0,capture1,captured; };
-constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=128u,MICRO_STEPS=65536u;
+constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=128u;
 
 static bool micro_class(device const Supertype* supertypes,device const File* files,uint fileCount,uint node,uint kind){
   if(kind>=61440u){uint words=supertypes[0].kind;device const uint* bits=(device const uint*)(supertypes+1);return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;}
@@ -102,7 +101,7 @@ static uint micro_next(device const Node* nodes,device const uint* children,thre
   return MICRO_NONE;
 }
 
-kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],constant Shape& shape [[buffer(9)]],uint tid [[thread_position_in_grid]]){
+kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],constant Shape& shape [[buffer(10)]],uint tid [[thread_position_in_grid]]){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   if(tid>=shape.itemCount)return;
   uint low=0u,high=shape.targetCount;while(high-low>1u){uint middle=(low+high)/2u;if(passes[middle].itemStart<=tid)low=middle;else high=middle;}
@@ -115,7 +114,7 @@ kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint
   while(true){
     bool alive=true;
     while(alive){
-      if(++steps>MICRO_STEPS)MICRO_FAIL
+      if(++steps>shape.steps)MICRO_FAIL
       uint word=words[pass.wordStart+path.pc],op=word&255u,mode=(word>>8u)&255u,arg=word>>16u;
       bool named=mode==1u;Node node=nodes[path.node];
       switch(op){
@@ -124,6 +123,7 @@ kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint
         case 2u:alive=node.field==arg;break;
         case 3u:alive=(node.flags&mode)==mode&&(node.flags&arg)==0u;break;
         case 10u:alive=micro_class(supertypes,files,shape.fileCount,path.node,arg);break;
+        case 4u:alive=((texts[(pass.textStart+arg)*shape.words+path.node/32u]>>(path.node%32u))&1u)!=0u;break;
         case 17u:{uint next=named?node.nextNamed:node.nextAny;if(next==MICRO_NONE)alive=false;else path.node=next;}break;
         case 18u:if(node.parent==MICRO_NONE)alive=false;else path.node=node.parent;break;
         case 16u:case 19u:case 20u:{

@@ -15,3 +15,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0014 | The slice's entry points keep the wave's rows per scope; a warm run evaluates changed documents only | accepted |
 | 0015 | Short label programs run as micro walks, one thread per (pass, start); workspaces are untouched by the host | accepted |
 | 0016 | Work that outgrows a workspace is split along an axis it is independent on; S7's gate lists known differences by name | accepted |
+| 0017 | A label walk's text tests are bits computed once per (value, kind); a Metal wave runs its roots on the CPU | accepted |

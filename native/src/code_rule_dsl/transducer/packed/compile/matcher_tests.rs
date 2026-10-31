@@ -63,11 +63,14 @@ fn clauses() -> Vec<(String, crate::code_rule_dsl::CompiledCodeRuleDsl)> {
 /// The fixtures a gate reads: every eighth by default, all with `RERAIL_S1_ALL=1`; of those, n
 /// from the m-th with `RERAIL_S1_FILES=n` and `RERAIL_S1_FROM=m`, for a targeted check or a
 /// sample in pieces.
+/// The pack's fixtures (every eighth, or all with `RERAIL_S1_ALL`), or the `.py` files under
+/// `RERAIL_S1_DIR` (06 S7's real files).
 fn fixtures() -> Vec<TapeDoc> {
     let mut sources = Vec::new();
-    files(&pack().join("upstream"), "py", &mut sources);
+    let dir = std::env::var_os("RERAIL_S1_DIR");
+    files(dir.as_ref().map_or(pack().join("upstream"), PathBuf::from).as_path(), "py", &mut sources);
     sources.sort();
-    let step = if std::env::var_os("RERAIL_S1_ALL").is_some() { 1 } else { 8 };
+    let step = if std::env::var_os("RERAIL_S1_ALL").is_some() || dir.is_some() { 1 } else { 8 };
     let most = std::env::var("RERAIL_S1_FILES").ok().and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
     let from = std::env::var("RERAIL_S1_FROM").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
     sources
@@ -408,6 +411,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
     for view in &views {
         for ((program, _), walk) in programs.iter().zip(&micro) {
             let Some((walk, targets)) = walk else { continue };
+            let Some(texts) = walk.texts(program, view) else { continue };
             for node in 0..view.transducer_len() as u32 {
                 let expected = program
                     .execute_roots(view, [node])
@@ -416,7 +420,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
                     .flat_map(|output| if *targets { output.captures.iter().map(|c| c.node).collect() } else { vec![output.start] })
                     .collect::<BTreeSet<_>>();
                 let mut found = BTreeSet::new();
-                match walk.run(view, view.transducer_labels(), node, *targets, &mut frames, &mut |n| {
+                match walk.run(view, view.transducer_labels(), &texts, node, *targets, &mut frames, &mut |n| {
                     found.insert(n);
                 }) {
                     Ok(()) => {
@@ -433,6 +437,8 @@ fn micro_walks_are_the_interpreters_label_outputs() {
         }
     }
     let eligible = micro.iter().filter(|m| m.is_some()).count();
+    let texts = micro.iter().flatten().filter(|(m, _)| !m.texts.is_empty()).count();
+    eprintln!("micro: {texts} of the walks test text");
     eprintln!("micro: {eligible} of {} label programs; {compared} starts compared, {marked} marks, {overflowed} overflowed", programs.len());
     assert!(eligible * 2 > programs.len(), "most label programs are micro walks");
     assert!(compared > 100_000 && overflowed * 100 < compared);
