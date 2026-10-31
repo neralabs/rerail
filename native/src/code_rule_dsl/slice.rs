@@ -158,6 +158,8 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
         remember(&lease, scope, &rules.digest, &documents)
     })?;
 
+    crate::code_rule_dsl::prof::release();
+
     prof::peak("4.wave");
     let emitted = rules.layer.program(store)?;
     let (findings, layer) = prof::time("slice.layer", || rules.layer.findings(&lease, store, scope, &documents, &emitted))?;

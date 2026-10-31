@@ -83,9 +83,9 @@ struct Supertype { uint node,kind; };
 struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,textStart,threadStart; };
 // A path's state, and for a move's frame (resume 1 children, 2 descendants, 3 following
 // siblings; 0 a forked path) where its candidates continue.
-// Four cursors, as micro.rs's CURSORS.
-struct MicroFrame { uint pc,node,resume,named,next,end,cursors[4],capture0,capture1,captured; };
-constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=128u,MICRO_POOL=4096u;
+// Eight cursors, as micro.rs's CURSORS.
+struct MicroFrame { uint pc,node,resume,named,next,end,cursors[8],capture0,capture1,captured; };
+constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=128u,MICRO_POOL=1024u;
 
 static bool micro_class(device const Supertype* supertypes,device const File* files,uint fileCount,uint node,uint kind){
   if(kind>=61440u){uint words=supertypes[0].kind;device const uint* bits=(device const uint*)(supertypes+1);return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;}
@@ -116,7 +116,7 @@ static void micro_walk(device const Node* nodes,device const uint* children,devi
   uint start=items[pass.itemStart+(tid-pass.threadStart)];
   device atomic_uint* bits=scratch+pass.target*shape.words;
   uint depth=0u,steps=0u;
-  MicroFrame path={0u,start,0u,0u,0u,0u,{MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE},MICRO_NONE,MICRO_NONE,0u};
+  MicroFrame path={0u,start,0u,0u,0u,0u,{MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE},MICRO_NONE,MICRO_NONE,0u};
   #define MICRO_FAIL {atomic_fetch_or_explicit(&flags[0],2u,memory_order_relaxed);return;}
   while(true){
     bool alive=true;
@@ -143,8 +143,8 @@ static void micro_walk(device const Node* nodes,device const uint* children,devi
           if(depth==FRAMES)MICRO_FAIL
           stack[depth++]=frame;path.node=candidate;
         }break;
-        case 21u:path.cursors[arg&3u]=path.node;break;
-        case 22u:{uint saved=path.cursors[arg&3u];if(saved==MICRO_NONE)MICRO_FAIL path.node=saved;}break;
+        case 21u:path.cursors[arg&7u]=path.node;break;
+        case 22u:{uint saved=path.cursors[arg&7u];if(saved==MICRO_NONE)MICRO_FAIL path.node=saved;}break;
         case 32u:if(path.captured==0u)path.capture0=path.node;else if(path.captured==1u)path.capture1=path.node;else MICRO_FAIL path.captured++;break;
         case 48u:{if(depth==FRAMES)MICRO_FAIL MicroFrame frame=path;frame.pc=arg;frame.resume=0u;stack[depth++]=frame;}break;
         case 49u:path.pc=arg;continue;

@@ -21,6 +21,16 @@ pub(crate) mod launch;
 // Reserve before mmap/copy/Metal allocation, including page alignment and empty buffers.
 pub(super) const METAL_BUFFER_LIMIT: usize = 2_000_000_000;
 static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+/// The bytes of Metal buffers alive now (their reservations), in MB.
+pub(in crate::code_rule_dsl) fn reserved_mb() -> usize {
+    METAL_BUFFER_BYTES.load(Ordering::Acquire) >> 20
+}
+
+/// What the Metal driver says it has allocated for the device, in MB.
+pub(in crate::code_rule_dsl) fn driver_mb() -> usize {
+    super::metal_program_backend::METAL_DEVICE.as_ref().map_or(0, |device| (device.current_allocated_size() >> 20) as usize)
+}
 static METAL_PRIVATE_BYTES: AtomicUsize = AtomicUsize::new(0);
 static METAL_ALLOCATION_LOCK: Mutex<()> = Mutex::new(());
 static PRIVATE_RESERVATION_KEY: u8 = 0;

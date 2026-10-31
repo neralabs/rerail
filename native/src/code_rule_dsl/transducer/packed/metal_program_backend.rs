@@ -44,7 +44,7 @@ static JIT_CACHE: LazyLock<Mutex<BTreeMap<String, Engine>>> =
 const METAL_WORKSPACE_POOL_LIMIT: usize = 4;
 static METAL_WORKSPACE_POOL: LazyLock<Mutex<Vec<MetalWorkspace>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
-static METAL_DEVICE: LazyLock<Option<Device>> = LazyLock::new(Device::system_default);
+pub(in crate::code_rule_dsl) static METAL_DEVICE: LazyLock<Option<Device>> = LazyLock::new(Device::system_default);
 
 struct MetalWorkspace {
     totals: WorkspaceTotals,

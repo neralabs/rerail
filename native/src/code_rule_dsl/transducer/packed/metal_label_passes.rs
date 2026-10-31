@@ -258,9 +258,9 @@ fn tier(depth: Option<usize>) -> usize {
 const TIER_KERNELS: [usize; 3] = [4, 5, 3];
 
 /// The loop tier's threads (`MICRO_POOL`), each striding over the items with a 128-frame stack
-/// of 15 words a frame (`MicroFrame`) in `Runner::stacks`.
-const MICRO_POOL: usize = 4096;
-const MICRO_STACK_WORDS: usize = 128 * 15;
+/// of 17 words a frame (`MicroFrame`) in `Runner::stacks`.
+const MICRO_POOL: usize = 1024;
+const MICRO_STACK_WORDS: usize = 128 * 17;
 /// The launches a clause's encoding aims to stay within, below the evaluation's budget
 /// (`metal_launch_budget`); a recursive group's rounds are encoded from what is left.
 const LAUNCHES: usize = 560;
@@ -308,6 +308,7 @@ fn pattern_pipeline(patterns: &[&PackedPattern]) -> Result<Option<(ComputePipeli
     if let Some(pipeline) = cached.get(&source) {
         return Ok(Some((pipeline.clone(), names)));
     }
+    crate::code_rule_dsl::prof::count("gpu.pattern_pipelines", 1);
     let pipeline = pipeline_named(&source, patterns::KERNEL)?;
     cached.insert(source, pipeline.clone());
     Ok(Some((pipeline, names)))
@@ -544,6 +545,24 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
 /// The clause's passes in one command buffer, each recursive group as `rounds` rounds.
 /// `lanes`: a level's lanes and each task's states (`NARROW`, `WIDE`); `micro`: whether a pass
 /// whose program is a micro walk runs as one (`label_micro`).
+/// `RERAIL_FOOTPRINT`: the footprint now and its high-water mark at a point in a run.
+fn mark(at: &str) {
+    if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
+        eprintln!(
+            "  FOOTPRINT {at}: {} MB (high-water {} MB); Metal buffers {} MB",
+            crate::code_rule_dsl::prof::footprint_mb(),
+            crate::code_rule_dsl::prof::max_footprint_mb(),
+            super::super::metal_backend::reserved_mb()
+        );
+        if let Some(path) = std::env::var_os("RERAIL_HOLD_FLUSH").filter(|_| at == "flushed") {
+            eprintln!("FLUSH holding, pid {}", std::process::id());
+            while !std::path::Path::new(&path).exists() {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+}
+
 fn encode(
     device: &Device,
     plan: &Plan<'_>,
@@ -614,6 +633,7 @@ fn encode(
             ..Outcome::default()
         },
     };
+    mark("buffers");
     if crate::code_rule_dsl::prof::on() {
         use crate::code_rule_dsl::prof::count;
         count("mem.nodes", runner.nodes);
@@ -649,7 +669,9 @@ fn encode(
         runner.boundary(rounds);
     }
     drop(_encode);
+    mark("encoded");
     crate::code_rule_dsl::prof::time("gpu.flush", || runner.flush())?;
+    mark("flushed");
     // A micro walk that outgrew its frames: the passes again on the interpreter.
     if runner.flag(0) & 2 != 0 {
         return Err(Error::BackendCapacity);
@@ -707,50 +729,44 @@ fn encode(
 
 /// The tape buffers, from a batch of the files with no tasks; the label prefix starts empty.
 fn tapes(device: &Device, files: &[TapeDoc], plan: &Plan<'_>, words: usize, kept: Option<&mut Kept>) -> Result<Tapes, Error> {
-    // The batch's own parts: kept from an earlier run, or built.
-    let built;
+    // The batch's own parts: kept from an earlier run (moved out, and back with `base`), or built.
     let (nodes, children, source, line_starts, base_files, base_supertypes) = match kept {
         Some(kept) => (
             kept.nodes.buffer.clone(),
             kept.children.buffer.clone(),
             kept.source.buffer.clone(),
             kept.line_starts.buffer.clone(),
-            &kept.files,
-            &kept.supertypes,
+            std::mem::take(&mut kept.files),
+            std::mem::take(&mut kept.supertypes),
         ),
         None => {
             let program = Program::new(vec![super::super::word(EMIT, 0, 0)], vec![b"tape".to_vec()], Vec::new(), vec![0], Vec::new())?;
             let anchors = vec![vec![Vec::new()]; files.len()];
             let batch = PackedBatch::new(std::slice::from_ref(&program), files, &anchors)?;
-            built = (
-                MappedBuffer::from_slice(device, &batch.nodes)?,
-                MappedBuffer::from_slice(device, &batch.children)?,
-                MappedBuffer::from_slice(device, &batch.source)?,
-                MappedBuffer::from_slice(device, &batch.line_starts)?,
+            (
+                MappedBuffer::from_slice(device, &batch.nodes)?.buffer,
+                MappedBuffer::from_slice(device, &batch.children)?.buffer,
+                MappedBuffer::from_slice(device, &batch.source)?.buffer,
+                MappedBuffer::from_slice(device, &batch.line_starts)?.buffer,
                 batch.files.clone(),
                 batch.supertypes.iter().map(|pair| MetalSupertype { node: pair.node, kind: pair.kind }).collect::<Vec<_>>(),
-            );
-            (built.0.buffer.clone(), built.1.buffer.clone(), built.2.buffer.clone(), built.3.buffer.clone(), &built.4, &built.5)
+            )
         }
     };
-    // The labels, then the sweeps' round, failure and per group (by step) changes (`label_sweep`).
+    // The labels, then the sweeps' round, failure and per group (by step) changes (`label_sweep`),
+    // then the batch's (node, class) pairs: written in place, with no host copy of the labels.
     let prefix = 1 + (plan.labels * words + 2 + 2 * plan.steps.len()).div_ceil(2);
-    let mut supertypes = Vec::with_capacity(prefix + base_supertypes.len());
-    supertypes.push(MetalSupertype {
-        node: plan.labels as u32,
-        kind: words as u32,
-    });
-    supertypes.resize(prefix, MetalSupertype { node: 0, kind: 0 });
-    // The prefix's words after its head: the labels.
-    for (at, &word) in plan.initial.iter().flatten().enumerate().take(plan.labels * words) {
-        let slot = &mut supertypes[1 + at / 2];
-        if at % 2 == 0 {
-            slot.node = word;
-        } else {
-            slot.kind = word;
+    let count = prefix + base_supertypes.len();
+    let supertypes = MappedBuffer::zeroed::<MetalSupertype>(device, count)?;
+    unsafe {
+        let head = supertypes.buffer.contents().cast::<MetalSupertype>();
+        head.write(MetalSupertype { node: plan.labels as u32, kind: words as u32 });
+        if let Some(initial) = plan.initial.as_ref() {
+            let length = initial.len().min(plan.labels * words);
+            std::ptr::copy_nonoverlapping(initial.as_ptr(), head.add(1).cast::<u32>(), length);
         }
+        std::ptr::copy_nonoverlapping(base_supertypes.as_ptr(), head.add(prefix), base_supertypes.len());
     }
-    supertypes.extend_from_slice(base_supertypes);
     let mut batch_files = base_files.clone();
     for file in &mut batch_files {
         file.supertype_start += prefix as u32;
@@ -761,9 +777,9 @@ fn tapes(device: &Device, files: &[TapeDoc], plan: &Plan<'_>, words: usize, kept
         children: MappedBuffer::wrap(children),
         source: MappedBuffer::wrap(source),
         line_starts: MappedBuffer::wrap(line_starts),
-        supertype_count: supertypes.len() as u32,
-        supertypes: MappedBuffer::from_slice(device, &supertypes)?,
-        base: Some((base_files.clone(), base_supertypes.clone())),
+        supertype_count: count as u32,
+        supertypes,
+        base: Some((base_files, base_supertypes)),
     })
 }
 
@@ -1298,6 +1314,7 @@ impl Runner<'_> {
         let state = self.sweep.clone().ok_or(Error::BackendFailure)?;
         let encoder = self.command.new_compute_command_encoder();
         encoder.set_label("label_sweep");
+        crate::code_rule_dsl::prof::count(concat!("kernel.", "label_sweep"), 1);
         encoder.set_compute_pipeline_state(&state);
         for (index, buffer) in buffers.iter().enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), 0);
@@ -1362,6 +1379,7 @@ impl Runner<'_> {
         let lease = &self.workspace.as_ref().expect("a workspace").lease;
         let encoder = self.command.new_compute_command_encoder();
         encoder.set_label("Rerail label pass programs");
+        crate::code_rule_dsl::prof::count(concat!("kernel.", "Rerail label pass programs"), 1);
         encoder.set_compute_pipeline_state(self.engine.pipeline());
         for (index, buffer) in buffers.iter().enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), 0);

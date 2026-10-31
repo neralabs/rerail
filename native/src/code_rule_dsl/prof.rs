@@ -78,6 +78,14 @@ pub(in crate::code_rule_dsl) fn count_named(stage: String, amount: usize) {
 }
 
 /// Records the process's peak resident memory so far, in MB, as `stage`'s count (the largest seen).
+/// Return the heap's freed pages to the system at a stage's end. jemalloc keeps freed pages a
+/// second (`lib.rs`) and an audit's stages free hundreds of MB within one: S7 on Metal held
+/// 0.96 GB of footprint against 283 MB live heap and 101 MB of buffers (O30).
+pub(in crate::code_rule_dsl) fn release() {
+    let _stage = Stage::start("heap.release");
+    crate::purge_allocator_pages();
+}
+
 pub(in crate::code_rule_dsl) fn peak(stage: &str) {
     if *ON {
         let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
@@ -90,14 +98,24 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
         // The memory held now, not the process's high-water mark: its physical footprint.
         #[cfg(target_os = "macos")]
         {
-            let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v2>() };
+            let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
             let got = unsafe {
-                libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V2, (&raw mut info).cast())
+                libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, (&raw mut info).cast())
             };
             if got == 0 {
                 let entry = stages.entry(format!("now_mb.{stage}")).or_default();
                 entry.1 = entry.1.max((info.ri_phys_footprint >> 20) as usize);
+                // The process's footprint high-water mark so far: the stage that raised it.
+                let entry = stages.entry(format!("max_mb.{stage}")).or_default();
+                entry.1 = entry.1.max((info.ri_lifetime_max_phys_footprint >> 20) as usize);
             }
+        }
+        // What the heap holds live (jemalloc's allocated bytes), against what it keeps mapped.
+        #[cfg(not(windows))]
+        {
+            let _ = tikv_jemalloc_ctl::epoch::advance();
+            let entry = stages.entry(format!("live_mb.{stage}")).or_default();
+            entry.1 = entry.1.max(tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20);
         }
     }
 }
@@ -110,6 +128,19 @@ pub(in crate::code_rule_dsl) fn footprint_mb() -> usize {
         let got = unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V2, (&raw mut info).cast()) };
         if got == 0 {
             return (info.ri_phys_footprint >> 20) as usize;
+        }
+    }
+    0
+}
+
+/// The process's footprint high-water mark, in MB (0 off macOS).
+pub(in crate::code_rule_dsl) fn max_footprint_mb() -> usize {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
+        let got = unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+        if got == 0 {
+            return (info.ri_lifetime_max_phys_footprint >> 20) as usize;
         }
     }
     0

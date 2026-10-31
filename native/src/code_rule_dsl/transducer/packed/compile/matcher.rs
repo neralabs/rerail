@@ -707,6 +707,7 @@ impl LoweredWave {
         active: &[Vec<bool>],
     ) -> Result<(Vec<TapeDoc>, metal_program_backend::label_passes::Outcome), Error> {
         let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[], Some(active))?;
+        crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3e.before_views");
         let _views = crate::code_rule_dsl::prof::Stage::start("labels.views");
         // By words, as the sweeps' sets (06 S7: bit by bit, 0.3 s).
@@ -850,6 +851,7 @@ fn metal<'a>(
         })
     };
     let (mut steps, mut chains) = crate::code_rule_dsl::prof::time("labels.plan", || levels(clauses, &mut pass))?;
+    crate::code_rule_dsl::prof::release();
     crate::code_rule_dsl::prof::peak("3a.plan");
     let all = clauses;
     // A clause's roots: one label past every pass's (none where the roots run apart, `labelled_metal`).
@@ -904,6 +906,14 @@ fn metal<'a>(
 /// where its clauses are active). A sweep follows a file's nodes in order, one thread a file on
 /// the GPU, where the interpreter's thread is far slower than a CPU core; the levels between are
 /// a task per node and program, as wide as the GPU.
+/// `RERAIL_FOOTPRINT`: the footprint now and its high-water mark at a point in a labelling.
+#[cfg(target_os = "macos")]
+fn mark(at: &str) {
+    if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
+        eprintln!("  FOOTPRINT {at}: {} MB (high-water {} MB)", crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[allow(clippy::too_many_arguments)]
 fn apart<'a>(
@@ -954,7 +964,21 @@ fn apart<'a>(
         let before = crate::code_rule_dsl::prof::footprint_mb();
         let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
         if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
-            eprintln!("FOOTPRINT run: {before} -> {} MB", crate::code_rule_dsl::prof::footprint_mb());
+            let _ = tikv_jemalloc_ctl::epoch::advance();
+            eprintln!(
+                "FOOTPRINT run: {before} -> {} MB (high-water {} MB); heap live {} MB, resident {} MB; Metal {} MB",
+                crate::code_rule_dsl::prof::footprint_mb(),
+                crate::code_rule_dsl::prof::max_footprint_mb(),
+                tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
+                tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20,
+                crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
+            );
+            if let Some(path) = std::env::var_os("RERAIL_HOLD_RUN") {
+                eprintln!("RUN holding, pid {}", std::process::id());
+                while !std::path::Path::new(&path).exists() {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
         }
         crate::code_rule_dsl::prof::peak("3b.gpu");
         outcome.labels = ran.labels;
@@ -972,7 +996,9 @@ fn apart<'a>(
         }
         flush(&mut segment, &mut outcome)?;
         let mut sets = crate::code_rule_dsl::prof::time("labels.to_sets", || to_sets(&outcome.labels, labels, words, tapes));
+        crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3c.to_sets");
+        mark("to_sets");
         // The group's text rows over every file, where no run evaluated them: once each, not
         // once a file.
         {
@@ -990,6 +1016,7 @@ fn apart<'a>(
                 }
             }
         }
+        mark("text rows");
         // A file's sweep reads and marks its own labels only, so the files sweep in parallel.
         use rayon::prelude::*;
         let _sweep = crate::code_rule_dsl::prof::Stage::start("labels.sweep");
@@ -1019,8 +1046,16 @@ fn apart<'a>(
             Ok::<_, Error>(())
         })?;
         drop(_sweep);
+        crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3d.sweep");
+        mark(&format!(
+            "swept ({} levels, {} passes, {} complements)",
+            levels.len(),
+            levels.iter().map(Vec::len).sum::<usize>(),
+            levels.iter().flatten().filter(|&&(clause, id)| matches!(clause.labels.def(id), Label::Complement(_))).count()
+        ));
         outcome.labels = crate::code_rule_dsl::prof::time("labels.to_words", || to_words(&sets, labels, words, tapes));
+        mark("to_words");
     }
     flush(&mut segment, &mut outcome)?;
     Ok(outcome)
@@ -1244,12 +1279,21 @@ fn sweep_with(
 ) -> Result<(), Error> {
     let complements = levels.iter().flatten().any(|&(clause, id)| matches!(clause.labels.def(id), Label::Complement(_)));
     let len = tape.transducer_len() as u32;
-    // (node, level, pass) for every node a pass may start at; a label domain is tested at the node.
+    // (node, pass) for every node a pass may start at, a pass an index into `passes` (in level
+    // order, so (node, pass) order is (node, level) order); a label domain is tested at the node.
+    // 8 bytes an entry: a complement's or a full domain's passes enter every node, and the files
+    // sweep in parallel (O30: 32-byte entries were S7's footprint peak, +350 MB in one sweep).
     let stage = crate::code_rule_dsl::prof::Stage::start("sweep.entries");
-    let mut entries = Vec::new();
+    let passes = levels
+        .iter()
+        .enumerate()
+        .flat_map(|(at, level)| level.iter().map(move |&(clause, id)| (at, clause, id)))
+        .collect::<Vec<_>>();
+    let mut entries: Vec<(u32, u32)> = Vec::new();
     let no_labels = vec![Vec::new(); 0];
-    for (at, level) in levels.iter().enumerate() {
-        for &(clause, id) in level {
+    for (pass, &(_, clause, id)) in passes.iter().enumerate() {
+        let pass = u32::try_from(pass).map_err(|_| Error::BackendCapacity)?;
+        {
             let starts: Box<dyn Iterator<Item = u32>> = match clause.labels.def(id) {
                 Label::Roots(_, Domain::Kinds(kinds)) | Label::Targets(_, Domain::Kinds(kinds)) => {
                     Box::new(domain(&Domain::Kinds(kinds.clone()), tape, &no_labels).collect::<Vec<_>>().into_iter())
@@ -1261,10 +1305,10 @@ fn sweep_with(
                 Label::Roots(program, _) | Label::Targets(program, _) => Some(Entry::of(program)),
                 _ => None,
             };
-            entries.extend(starts.filter(|&node| entry.as_ref().is_none_or(|entry| entry.admits(tape, node))).map(|node| (node, at, clause, id)));
+            entries.extend(starts.filter(|&node| entry.as_ref().is_none_or(|entry| entry.admits(tape, node))).map(|node| (node, pass)));
         }
     }
-    entries.sort_by_key(|&(node, at, ..)| (node, at));
+    entries.sort_unstable();
     crate::code_rule_dsl::prof::count("sweep.entry_count", entries.len());
     drop(stage);
     let stage = crate::code_rule_dsl::prof::Stage::start("sweep.walks");
@@ -1291,7 +1335,8 @@ fn sweep_with(
     for _sweep in 0..=len + 1 {
         crate::code_rule_dsl::prof::count("sweep.sweeps", 1);
         let mut changed = false;
-        let mut run = |&(node, _, clause, id): &(u32, usize, &LoweredMatcher, u16)| -> Result<(), Error> {
+        let mut run = |&(node, pass): &(u32, u32)| -> Result<(), Error> {
+            let (_, clause, id) = passes[pass as usize];
             let target = usize::from(id - LABEL_BASE);
             let marked = match clause.labels.def(id) {
                 Label::Complement(of) => {
@@ -1324,6 +1369,7 @@ fn sweep_with(
                             walk.run(tape, sets, texts, node, emit, &mut frames, &mut |node| marks.push(node)).is_ok()
                         });
                     if !walked {
+                        crate::code_rule_dsl::prof::count("sweep.fallback", 1);
                         marks.clear();
                         let view = tape.with_labels(Arc::clone(sets));
                         let outputs = program.execute_roots(&view, [node])?;

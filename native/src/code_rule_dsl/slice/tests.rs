@@ -439,6 +439,32 @@ fn the_slice_finds_ws_findings_on_real_files() {
         let run = audit(&store, WS, root, &mut rules).unwrap();
         let (spent, wall) = (cpu() - cpu0, wall0.elapsed());
         eprintln!("S7 {name} footprint: {before} MB before the audit, {} MB after{}", footprint(), if w_run.is_none() { " (before W's run)" } else { "" });
+        // `RERAIL_S7_HOLD=<path>`: wait here, the audit's state alive, until `path` exists (to
+        // inspect the process's heap).
+        if let Some(path) = std::env::var_os("RERAIL_S7_HOLD") {
+            #[cfg(target_os = "macos")]
+            eprintln!(
+                "S7 Metal buffers alive: {} MB; the driver's allocation {} MB",
+                crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
+                crate::code_rule_dsl::transducer::packed::metal_backend::driver_mb()
+            );
+            let jemalloc = || {
+                let _ = tikv_jemalloc_ctl::epoch::advance();
+                format!(
+                    "allocated {} MB, active {} MB, resident {} MB",
+                    tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
+                    tikv_jemalloc_ctl::stats::active::read().unwrap_or(0) >> 20,
+                    tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20
+                )
+            };
+            eprintln!("S7 jemalloc: {}", jemalloc());
+            crate::purge_allocator_pages();
+            eprintln!("S7 after purge: jemalloc {}; footprint {} MB", jemalloc(), footprint());
+            eprintln!("S7 holding, pid {}", std::process::id());
+            while !std::path::Path::new(&path).exists() {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
         crate::code_rule_dsl::prof::report(name);
         let (ws, failed, w_time) = w_run.get_or_insert_with(|| {
             let (cpu0, wall0) = (cpu(), std::time::Instant::now());

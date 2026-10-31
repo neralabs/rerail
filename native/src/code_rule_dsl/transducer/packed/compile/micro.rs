@@ -22,7 +22,7 @@ use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
 use crate::code_rule_dsl::transducer::packed::value::ValueProgram;
 
 /// Cursor slots, captures and frames a walk carries, and the steps it takes.
-pub(in crate::code_rule_dsl) const CURSORS: usize = 4;
+pub(in crate::code_rule_dsl) const CURSORS: usize = 8;
 pub(in crate::code_rule_dsl) const CAPTURES: usize = 2;
 pub(in crate::code_rule_dsl) const FRAMES: usize = 128;
 pub(in crate::code_rule_dsl) const STEPS: u32 = 1 << 16;
