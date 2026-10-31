@@ -53,6 +53,7 @@ pub(super) fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut
         {
             match actions[0] {
                 Action::Prepare(i) => {
+                    let _timer = crate::code_rule_dsl::prof::Stage::start("sql.prepare");
                     let stage = &statement.stages[i];
                     let mut create = db.prepare(&stage.sql)?;
                     let count = create.parameter_count();
@@ -79,7 +80,12 @@ pub(super) fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut
                     }
                 }
                 Action::Query(q) => {
+                    let _timer = crate::code_rule_dsl::prof::Stage::start("sql.query");
                     let sql = &statement.queries[q];
+                    if let Some(path) = std::env::var_os("RERAIL_DUMP_SQL") {
+                        let stages = statement.stages.iter().map(|stage| format!("-- {} temp={} index={:?}\n{}\n", stage.name, stage.temporary, stage.index, stage.sql)).collect::<String>();
+                        let _ = std::fs::write(path, format!("{stages}\n-- QUERY\n{sql}\n"));
+                    }
                     let mut query = db.prepare(sql)?;
                     if !query.readonly() {
                         return Err(rusqlite::Error::InvalidQuery);
@@ -97,6 +103,7 @@ pub(super) fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut
                     drop(query);
                 }
                 Action::Release(_) => {
+                    let _timer = crate::code_rule_dsl::prof::Stage::start("sql.release");
                     let indices: Vec<_> = actions
                         .iter()
                         .map(|action| {

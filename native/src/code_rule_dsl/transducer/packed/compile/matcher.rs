@@ -707,29 +707,11 @@ impl LoweredWave {
         active: &[Vec<bool>],
     ) -> Result<(Vec<TapeDoc>, metal_program_backend::label_passes::Outcome), Error> {
         let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[], Some(active))?;
-        let mut base = 0_usize;
         crate::code_rule_dsl::prof::peak("3e.before_views");
         let _views = crate::code_rule_dsl::prof::Stage::start("labels.views");
-        let views = tapes
-            .iter()
-            .map(|tape| {
-                let len = tape.transducer_len();
-                let sets = (0..self.labels)
-                    .map(|label| {
-                        let mut bits = vec![0_u64; len.div_ceil(64)];
-                        for node in 0..len {
-                            let global = base + node;
-                            if outcome.labels[label * outcome.words + global / 32] >> (global % 32) & 1 != 0 {
-                                bits[node / 64] |= 1 << (node % 64);
-                            }
-                        }
-                        bits
-                    })
-                    .collect();
-                base += len;
-                tape.with_labels(Arc::new(sets))
-            })
-            .collect();
+        // By words, as the sweeps' sets (06 S7: bit by bit, 0.3 s).
+        let sets = to_sets(&outcome.labels, self.labels, outcome.words, tapes);
+        let views = tapes.iter().zip(sets).map(|(tape, sets)| tape.with_labels(sets)).collect();
         Ok((views, outcome))
     }
 
@@ -1013,10 +995,19 @@ fn to_sets(bits: &[u32], labels: usize, words: usize, tapes: &[TapeDoc]) -> Vec<
         let wide = word(i) | word(i + 1) << 32 | word(i + 2) << 64;
         (wide >> (bit % 32)) as u64
     };
-    let mut base = 0;
-    tapes
+    use rayon::prelude::*;
+    let bases = tapes
         .iter()
-        .map(|tape| {
+        .scan(0, |base, tape| {
+            let at = *base;
+            *base += tape.transducer_len();
+            Some(at)
+        })
+        .collect::<Vec<_>>();
+    tapes
+        .par_iter()
+        .zip(bases)
+        .map(|(tape, base)| {
             let len = tape.transducer_len();
             let sets = (0..labels)
                 .map(|label| {
@@ -1029,7 +1020,6 @@ fn to_sets(bits: &[u32], labels: usize, words: usize, tapes: &[TapeDoc]) -> Vec<
                         .collect()
                 })
                 .collect();
-            base += len;
             Arc::new(sets)
         })
         .collect()
@@ -1206,6 +1196,7 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
     let complements = levels.iter().flatten().any(|&(clause, id)| matches!(clause.labels.def(id), Label::Complement(_)));
     let len = tape.transducer_len() as u32;
     // (node, level, pass) for every node a pass may start at; a label domain is tested at the node.
+    let stage = crate::code_rule_dsl::prof::Stage::start("sweep.entries");
     let mut entries = Vec::new();
     let no_labels = vec![Vec::new(); 0];
     for (at, level) in levels.iter().enumerate() {
@@ -1225,6 +1216,9 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
         }
     }
     entries.sort_by_key(|&(node, at, ..)| (node, at));
+    crate::code_rule_dsl::prof::count("sweep.entry_count", entries.len());
+    drop(stage);
+    let stage = crate::code_rule_dsl::prof::Stage::start("sweep.walks");
     // Each program's micro walk, where it is one (O28): no interpreter task per (node, pass).
     let walks = levels
         .iter()
@@ -1240,10 +1234,13 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
             ((std::ptr::from_ref(clause) as usize, id), walk)
         })
         .collect::<BTreeMap<_, _>>();
+    drop(stage);
+    let _run = crate::code_rule_dsl::prof::Stage::start("sweep.run");
     let mut frames = Frames::default();
     let mut marks = Vec::new();
     let mut reverse = complements;
     for _sweep in 0..=len + 1 {
+        crate::code_rule_dsl::prof::count("sweep.sweeps", 1);
         let mut changed = false;
         let mut run = |&(node, _, clause, id): &(u32, usize, &LoweredMatcher, u16)| -> Result<(), Error> {
             let target = usize::from(id - LABEL_BASE);
