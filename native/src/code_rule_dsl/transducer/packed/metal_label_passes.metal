@@ -85,7 +85,7 @@ struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,t
 // siblings; 0 a forked path) where its candidates continue.
 // Four cursors, as micro.rs's CURSORS.
 struct MicroFrame { uint pc,node,resume,named,next,end,cursors[4],capture0,capture1,captured; };
-constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=128u;
+constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=128u,MICRO_POOL=4096u;
 
 static bool micro_class(device const Supertype* supertypes,device const File* files,uint fileCount,uint node,uint kind){
   if(kind>=61440u){uint words=supertypes[0].kind;device const uint* bits=(device const uint*)(supertypes+1);return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;}
@@ -102,7 +102,11 @@ static uint micro_next(device const Node* nodes,device const uint* children,thre
   return MICRO_NONE;
 }
 
-kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],constant Shape& shape [[buffer(11)]],uint tid [[thread_position_in_grid]]){
+// A walk's frames live in thread memory, which the driver reserves per thread in flight: a
+// walk takes the smallest stack its static depth fits (`Micro::depth`; 06 S7: 128 frames for
+// every walk held ~850 MB a run).
+template<uint FRAMES,typename Stack>
+static void micro_walk(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,uint tid){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   if(tid>=shape.itemCount)return;
   // A pass's threads are contiguous from its threadStart; its items are a range that passes of
@@ -111,7 +115,7 @@ kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint
   MicroPass pass=passes[low];
   uint start=items[pass.itemStart+(tid-pass.threadStart)];
   device atomic_uint* bits=scratch+pass.target*shape.words;
-  thread MicroFrame stack[MICRO_FRAMES];uint depth=0u,steps=0u;
+  uint depth=0u,steps=0u;
   MicroFrame path={0u,start,0u,0u,0u,0u,{MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE},MICRO_NONE,MICRO_NONE,0u};
   #define MICRO_FAIL {atomic_fetch_or_explicit(&flags[0],2u,memory_order_relaxed);return;}
   while(true){
@@ -136,13 +140,13 @@ kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint
           else{frame.resume=3u;frame.next=named?node.nextNamed:node.nextAny;}
           uint candidate=micro_next(nodes,children,frame);
           if(candidate==MICRO_NONE){alive=false;break;}
-          if(depth==MICRO_FRAMES)MICRO_FAIL
+          if(depth==FRAMES)MICRO_FAIL
           stack[depth++]=frame;path.node=candidate;
         }break;
         case 21u:path.cursors[arg&3u]=path.node;break;
         case 22u:{uint saved=path.cursors[arg&3u];if(saved==MICRO_NONE)MICRO_FAIL path.node=saved;}break;
         case 32u:if(path.captured==0u)path.capture0=path.node;else if(path.captured==1u)path.capture1=path.node;else MICRO_FAIL path.captured++;break;
-        case 48u:{if(depth==MICRO_FRAMES)MICRO_FAIL MicroFrame frame=path;frame.pc=arg;frame.resume=0u;stack[depth++]=frame;}break;
+        case 48u:{if(depth==FRAMES)MICRO_FAIL MicroFrame frame=path;frame.pc=arg;frame.resume=0u;stack[depth++]=frame;}break;
         case 49u:path.pc=arg;continue;
         case 64u:
           // As label_sink routes: 0 the start (once), 1 the captured nodes, 2 a tally by start,
@@ -161,10 +165,18 @@ kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint
     while(true){
       if(depth==0u)return;
       if(stack[depth-1u].resume==0u){path=stack[--depth];break;}
-      uint candidate=micro_next(nodes,children,stack[depth-1u]);
+      // The top frame advanced in thread memory (the stack may be in device memory).
+      MicroFrame top=stack[depth-1u];
+      uint candidate=micro_next(nodes,children,top);
       if(candidate==MICRO_NONE){depth--;continue;}
-      path=stack[depth-1u];path.node=candidate;break;
+      stack[depth-1u]=top;path=top;path.node=candidate;break;
     }
   }
   #undef MICRO_FAIL
 }
+kernel void label_micro_8(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device MicroFrame* stacks [[buffer(11)]],constant Shape& shape [[buffer(12)]],uint tid [[thread_position_in_grid]]){thread MicroFrame stack[8];micro_walk<8u>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,shape,stack,tid);}
+kernel void label_micro_32(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device MicroFrame* stacks [[buffer(11)]],constant Shape& shape [[buffer(12)]],uint tid [[thread_position_in_grid]]){thread MicroFrame stack[32];micro_walk<32u>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,shape,stack,tid);}
+// Loops whose depth follows the tree: MICRO_POOL threads stride over the items, each with
+// its stack in device memory (`stacks`), so no thread memory is reserved for 128 frames per
+// thread in flight.
+kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device MicroFrame* stacks [[buffer(11)]],constant Shape& shape [[buffer(12)]],uint tid [[thread_position_in_grid]]){for(uint item=tid;item<shape.itemCount;item+=MICRO_POOL)micro_walk<MICRO_FRAMES>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_FRAMES,item);}

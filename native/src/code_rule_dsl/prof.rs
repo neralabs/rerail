@@ -87,5 +87,30 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
         let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let entry = stages.entry(format!("peak_mb.{stage}")).or_default();
         entry.1 = entry.1.max(mb);
+        // The memory held now, not the process's high-water mark: its physical footprint.
+        #[cfg(target_os = "macos")]
+        {
+            let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v2>() };
+            let got = unsafe {
+                libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V2, (&raw mut info).cast())
+            };
+            if got == 0 {
+                let entry = stages.entry(format!("now_mb.{stage}")).or_default();
+                entry.1 = entry.1.max((info.ri_phys_footprint >> 20) as usize);
+            }
+        }
     }
+}
+
+/// The process's physical footprint now, in MB (macOS; 0 elsewhere).
+pub(in crate::code_rule_dsl) fn footprint_mb() -> usize {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v2>() };
+        let got = unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V2, (&raw mut info).cast()) };
+        if got == 0 {
+            return (info.ri_phys_footprint >> 20) as usize;
+        }
+    }
+    0
 }

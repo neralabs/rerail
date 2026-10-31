@@ -183,6 +183,26 @@ impl Micro {
         Some(Self { words, texts })
     }
 
+    /// The walk's words as (op, mode, arg), for diagnostics.
+    pub(in crate::code_rule_dsl) fn ops(&self) -> Vec<(u8, u8, u16)> {
+        self.words.iter().map(|&word| split(word)).collect()
+    }
+
+    /// The most frames a walk of this program holds at once. The frames on the stack were pushed
+    /// at increasing words: a path goes back only by a jump whose loop holds no pushing word (an
+    /// axis step or a fork), so it never returns before a word that pushed. Each pushing word
+    /// then holds at most one frame. `None` where a loop pushes.
+    pub(in crate::code_rule_dsl) fn depth(&self) -> Option<usize> {
+        let pushes = |word: u32| matches!(split(word).0, FORK | CHILD | DESCEND | FOLLOWING);
+        for (pc, &word) in self.words.iter().enumerate() {
+            let (op, _, arg) = split(word);
+            if matches!(op, FORK | GOTO) && usize::from(arg) <= pc && self.words[usize::from(arg)..=pc].iter().any(|&word| pushes(word)) {
+                return None;
+            }
+        }
+        Some(self.words.iter().filter(|&&word| pushes(word)).count())
+    }
+
     /// Each text slot's bits on `tape` (bit `n` of slot `s`: node `n` passes text test `s`), by the
     /// program's own value programs; `None` where one fails (its work limit), so the program runs
     /// on the interpreter.

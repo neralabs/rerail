@@ -336,12 +336,17 @@ impl PrivateInputUpload {
 }
 
 impl MappedBuffer {
+    #[track_caller]
     fn new(device: &Device, bytes: &[u8]) -> Result<Self, Error> {
         let mapping = Arc::new(MappedRegion::new(bytes)?);
         Self::from_mapping(device, mapping)
     }
 
+    #[track_caller]
     fn from_mapping(device: &Device, mapping: Arc<MappedRegion>) -> Result<Self, Error> {
+        if crate::code_rule_dsl::prof::on() && mapping.length >= 64 << 10 {
+            crate::code_rule_dsl::prof::count_named(format!("alloc_kb.{}", std::panic::Location::caller()), mapping.length >> 10);
+        }
         let _allocation = METAL_ALLOCATION_LOCK
             .lock()
             .map_err(|_| Error::BackendFailure)?;
@@ -381,6 +386,7 @@ impl MappedBuffer {
         Ok(Self { buffer })
     }
 
+    #[track_caller]
     pub(super) fn from_slice<T: Copy>(device: &Device, values: &[T]) -> Result<Self, Error> {
         let bytes = unsafe {
             std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), size_of_val(values))
@@ -414,6 +420,9 @@ impl MappedBuffer {
                 );
             }
             return Err(Error::BackendCapacity);
+        }
+        if crate::code_rule_dsl::prof::on() && length >= 64 << 10 {
+            crate::code_rule_dsl::prof::count_named(format!("alloc_kb.{}", std::panic::Location::caller()), length >> 10);
         }
         let buffer = device.new_buffer(length as u64, storage);
         // Private buffers have no bytes-no-copy deallocator. An associated copied Objective-C

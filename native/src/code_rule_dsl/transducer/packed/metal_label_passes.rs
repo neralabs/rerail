@@ -157,7 +157,27 @@ struct Op {
 }
 
 const SOURCE: &str = include_str!("metal_label_passes.metal");
-const KERNELS: [&str; 4] = ["label_sink", "label_settle", "label_round", "label_micro"];
+const KERNELS: [&str; 6] = ["label_sink", "label_settle", "label_round", "label_micro", "label_micro_8", "label_micro_32"];
+
+/// A walk's stack tier (`label_micro_8`, `label_micro_32`, `label_micro`): the fewest frames its
+/// static depth (`Micro::depth`) fits, 128 where it loops.
+fn tier(depth: Option<usize>) -> usize {
+    // Thread memory is reserved per thread in flight for the kernel's whole stack, so only the
+    // shallow walks (97% of S7's starts) keep theirs there; the rest take the pool's device stacks.
+    // (`label_micro_32` stays for a tier between them.)
+    match depth {
+        Some(depth) if depth <= 8 => 0,
+        _ => 2,
+    }
+}
+
+/// Each tier's kernel in `KERNELS`.
+const TIER_KERNELS: [usize; 3] = [4, 5, 3];
+
+/// The loop tier's threads (`MICRO_POOL`), each striding over the items with a 128-frame stack
+/// of 15 words a frame (`MicroFrame`) in `Runner::stacks`.
+const MICRO_POOL: usize = 4096;
+const MICRO_STACK_WORDS: usize = 128 * 15;
 /// The launches a clause's encoding aims to stay within, below the evaluation's budget
 /// (`metal_launch_budget`); a recursive group's rounds are encoded from what is left.
 const LAUNCHES: usize = 560;
@@ -247,13 +267,13 @@ struct Prepared {
 /// thread}, the passes' words, and their starts
 /// (global nodes).
 struct Walks {
-    passes: MappedBuffer,
+    /// Per stack tier (`tier`) with passes: the tier, its passes (threads from 0), their count
+    /// and their threads.
+    tiers: Vec<(usize, MappedBuffer, usize, usize)>,
     /// Each text slot's bits (`Micro::texts`), one label's words a slot.
     texts: MappedBuffer,
     words: MappedBuffer,
     items: MappedBuffer,
-    pass_count: usize,
-    item_count: usize,
     steps: u32,
 }
 
@@ -299,11 +319,20 @@ struct Runner<'a> {
     /// Whether a level's micro walks run as such, and each level's, by its address.
     micro: bool,
     walks: HashMap<usize, Walks>,
+    /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
+    stacks: Option<MappedBuffer>,
     encoded: bool,
     outcome: Outcome,
 }
 
 pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
+    // The run's command buffers and encoders are autoreleased, and they retain its buffers: drained
+    // here, its buffers go with it rather than living until the thread's pool drains (06 S7: the
+    // 9 runs of a wave held ~1 GB at once).
+    metal::objc::rc::autoreleasepool(|| run_in_pool(plan, files))
+}
+
+fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let _evaluation = super::super::metal_backend::metal_execution_guard()?;
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     // A level's launches: the programs' dispatch and sink, the derived labels, the settle.
@@ -473,6 +502,7 @@ fn encode(
         lanes,
         micro,
         walks: HashMap::new(),
+        stacks: None,
         encoded: false,
         outcome: Outcome {
             words,
@@ -701,7 +731,9 @@ impl Runner<'_> {
         for (key, mut passes, sweep) in batches {
             // A level's micro walks run as such (`label_micro`); its other programs are tasks.
             if self.micro && sweep.is_none() {
-                let (mut records, mut words, mut items) = (Vec::new(), Vec::new(), Vec::new());
+                let (mut words, mut items) = (Vec::new(), Vec::new());
+                // Per tier, its passes; their threads counted from 0 in each.
+                let mut records: [Vec<[u32; 8]>; 3] = Default::default();
                 let (largest, mut longest) = (self.files.iter().map(TapeDoc::transducer_len).max().unwrap_or(0), 0);
                 // Each text slot's bits, `self.words` words a slot over every file's nodes.
                 let (mut texts, mut slots) = (Vec::<u32>::new(), 0_u32);
@@ -711,9 +743,16 @@ impl Runner<'_> {
                 let mut rows = HashMap::<String, Option<u32>>::new();
                 let mut ranges = HashMap::<usize, (u32, u32)>::new();
                 // Threads: a pass's from its own start, over its (shared) item range.
-                let mut threads = 0_u32;
+                let mut threads = [0_u32; 3];
                 passes.retain(|&(program, roots, mode, target)| {
                     let Some(walk) = Micro::of(program) else { return true };
+                    if crate::code_rule_dsl::prof::on() {
+                        let depth = walk.depth().map_or("loop".to_owned(), |depth| format!("{:02}", depth.min(64)));
+                        if walk.depth().is_none() && std::env::var_os("RERAIL_DUMP_LOOP").is_some() {
+                            eprintln!("LOOP {:?}", walk.ops());
+                        }
+                        crate::code_rule_dsl::prof::count_named(format!("depth.{depth}"), roots.iter().map(Vec::len).sum());
+                    }
                     // The walk's slots as rows of `texts`, contiguous from `text_start`; a row
                     // already computed for another pass is copied.
                     let mut own = Vec::new();
@@ -775,8 +814,9 @@ impl Runner<'_> {
                         }
                         (start, items.len() as u32 - start)
                     });
-                    records.push([words.len() as u32, walk.words.len() as u32, target, mode, start, count, text_start, threads]);
-                    threads += count;
+                    let tier = tier(walk.depth());
+                    records[tier].push([words.len() as u32, walk.words.len() as u32, target, mode, start, count, text_start, threads[tier]]);
+                    threads[tier] += count;
                     longest = longest.max(walk.words.len());
                     words.extend_from_slice(&walk.words);
                     false
@@ -786,12 +826,16 @@ impl Runner<'_> {
                     if texts.is_empty() {
                         texts.push(0);
                     }
+                    let mut tiers = Vec::new();
+                    for (tier, records) in records.iter().enumerate() {
+                        if !records.is_empty() {
+                            tiers.push((tier, MappedBuffer::from_slice(self.device, records)?, records.len(), threads[tier] as usize));
+                        }
+                    }
                     let walks = Walks {
                         texts: MappedBuffer::from_slice(self.device, &texts)?,
                         steps: super::super::micro_steps(largest, longest),
-                        pass_count: records.len(),
-                        item_count: threads as usize,
-                        passes: MappedBuffer::from_slice(self.device, &records)?,
+                        tiers,
                         words: MappedBuffer::from_slice(self.device, &words)?,
                         items: MappedBuffer::from_slice(self.device, &items)?,
                     };
@@ -978,7 +1022,7 @@ impl Runner<'_> {
         }
         if !programs.is_empty() {
             self.programs(passes.as_ptr() as usize)?;
-            self.walk(passes.as_ptr() as usize);
+            self.walk(passes.as_ptr() as usize)?;
         }
         let labels = self.tapes.supertypes.buffer.clone();
         let (scratch, counts, flags) =
@@ -1139,11 +1183,19 @@ impl Runner<'_> {
 
     /// The level's micro walks (`label_micro`), one thread per (pass, start), marking scratch as
     /// `label_sink` marks the tasks' results.
-    fn walk(&mut self, level: usize) {
-        let Some(walks) = self.walks.get(&level) else { return };
-        let (passes, words, items) = (walks.passes.buffer.clone(), walks.words.buffer.clone(), walks.items.buffer.clone());
+    fn walk(&mut self, level: usize) -> Result<(), Error> {
+        let Some(walks) = self.walks.get(&level) else { return Ok(()) };
+        let (words, items) = (walks.words.buffer.clone(), walks.items.buffer.clone());
         let texts = walks.texts.buffer.clone();
-        let shape = Shape { item_count: walks.item_count as u32, target_count: walks.pass_count as u32, steps: walks.steps, ..self.shape() };
+        let steps = walks.steps;
+        let tiers = walks.tiers.iter().map(|(tier, passes, count, threads)| (*tier, passes.buffer.clone(), *count, *threads)).collect::<Vec<_>>();
+        if self.stacks.is_none() && tiers.iter().any(|(tier, ..)| *tier == 2) {
+            self.stacks = Some(MappedBuffer::untouched::<u32>(self.device, MICRO_POOL * MICRO_STACK_WORDS)?);
+        }
+        // The small tiers do not read it: any buffer binds there.
+        let stacks = self.stacks.as_ref().map_or_else(|| self.flags.buffer.clone(), |stacks| stacks.buffer.clone());
+        for (tier, passes, count, threads) in tiers {
+        let shape = Shape { item_count: threads as u32, target_count: count as u32, steps, ..self.shape() };
         let tapes = &self.tapes;
         let (nodes, children, supertypes, files) =
             (tapes.nodes.buffer.clone(), tapes.children.buffer.clone(), tapes.supertypes.buffer.clone(), tapes.files.buffer.clone());
@@ -1160,8 +1212,12 @@ impl Runner<'_> {
             (&flags, 0),
             (&texts, 0),
             (&counts, 0),
+            (&stacks, 0),
         ];
-        self.kernel(3, &buffers, shape, shape.item_count as usize);
+        let threads = if tier == 2 { threads.min(MICRO_POOL) } else { threads };
+        self.kernel(TIER_KERNELS[tier], &buffers, shape, threads);
+        }
+        Ok(())
     }
 
     /// The level's prepared batch, then `label_sink` routing each result by its task's program.

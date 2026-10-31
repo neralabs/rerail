@@ -940,7 +940,11 @@ fn apart<'a>(
             initial: Some(std::mem::take(&mut outcome.labels)),
             rows: Some(&rows),
         };
+        let before = crate::code_rule_dsl::prof::footprint_mb();
         let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
+        if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
+            eprintln!("FOOTPRINT run: {before} -> {} MB", crate::code_rule_dsl::prof::footprint_mb());
+        }
         crate::code_rule_dsl::prof::peak("3b.gpu");
         outcome.labels = ran.labels;
         outcome.command_buffers += ran.command_buffers;
