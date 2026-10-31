@@ -21,3 +21,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0020 | CPU execution ranges packed by u32 record counts (demand-zero workspaces); program groups from one batch's counts; text rows shared across a labelling's runs | accepted |
 | 0021 | Micro walk stacks by static depth: 8 frames in thread memory, deeper walks over a 4096-thread pool with device stacks | accepted |
 | 0022 | The engine's footprint within 500 MB: freed pages returned at stage ends, SQLite on jemalloc, GPU buffers sized by the run | accepted |
+| 0023 | Metal's speed by profile: text rows in one pass, NFA early exit, a 2048×64 loop pool with a deep retry, faster host sweeps, unsorted candidate arms | accepted |

@@ -56,7 +56,7 @@ pub(in crate::code_rule_dsl) struct Stage(Option<(&'static str, Instant, Option<
 
 impl Stage {
     pub(in crate::code_rule_dsl) fn start(stage: &'static str) -> Self {
-        Self(ON.then(|| (stage, Instant::now(), (stage.starts_with("labels.") || stage == "size.texts").then(process_cpu))))
+        Self(ON.then(|| (stage, Instant::now(), (stage.starts_with("labels.") || stage.starts_with("demand.") || stage == "size.texts").then(process_cpu))))
     }
 }
 
