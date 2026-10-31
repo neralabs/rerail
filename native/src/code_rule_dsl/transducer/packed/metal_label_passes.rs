@@ -17,7 +17,7 @@
 mod patterns;
 
 use super::super::PackedPattern;
-use super::super::metal_batch_abi::MetalSupertype;
+use super::super::metal_batch_abi::{MetalFile as BatchFile, MetalSupertype};
 use super::super::native_ir::ArenaKind;
 use super::*;
 use super::super::metal_batch_abi::MetalEvaluation;
@@ -75,6 +75,29 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     pub(in crate::code_rule_dsl) initial: Option<Vec<u32>>,
     /// Text rows evaluated by earlier runs over the same files (`TextRows`), shared by them.
     pub(in crate::code_rule_dsl) rows: Option<&'a TextRows>,
+    /// Buffers that earlier runs over the same files left for the next (`RunBuffers`).
+    pub(in crate::code_rule_dsl) buffers: Option<&'a RunBuffers>,
+}
+
+/// What one run over a labelling's files leaves for the next, since only the labels and the
+/// steps change between them (06 S7: 9 runs each rebuilt and uploaded the same tapes, and
+/// allocated the same scratch, counts and stacks).
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct RunBuffers(Mutex<Option<Kept>>);
+
+struct Kept {
+    /// (nodes, labels, counts) the buffers are sized for.
+    key: (usize, usize, usize),
+    nodes: MappedBuffer,
+    children: MappedBuffer,
+    source: MappedBuffer,
+    line_starts: MappedBuffer,
+    /// The batch's files and (node, class) pairs, before the label prefix.
+    files: Vec<BatchFile>,
+    supertypes: Vec<MetalSupertype>,
+    scratch: MappedBuffer,
+    counts: MappedBuffer,
+    stacks: Option<MappedBuffer>,
 }
 
 /// Each distinct text test's (`Micro::slot_key`) row of bits over a run's files, `None` where its
@@ -306,6 +329,8 @@ struct Tapes {
     /// Elements in `supertypes`: a label batch's header says so, which `run_batch` reads as
     /// "the prefix head is there".
     supertype_count: u32,
+    /// The batch's files and (node, class) pairs before the prefix, to keep (`Kept`).
+    base: Option<(Vec<BatchFile>, Vec<MetalSupertype>)>,
 }
 
 /// A level's programs as an interpreter batch, built once: every round encodes the same tasks
@@ -529,6 +554,19 @@ fn encode(
 ) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
+    // An earlier run's buffers, where sized alike; scratch and counts zeroed again (a run that
+    // fails may leave them dirty, and a kept set is taken out while a run holds it).
+    let key = (nodes, plan.labels, plan.counts);
+    let mut kept = plan
+        .buffers
+        .and_then(|buffers| buffers.0.lock().ok()?.take())
+        .filter(|kept| kept.key == key);
+    if let Some(kept) = kept.as_mut() {
+        crate::code_rule_dsl::prof::count("gpu.kept", 1);
+        for buffer in [&kept.scratch, &kept.counts] {
+            unsafe { std::ptr::write_bytes(buffer.buffer.contents().cast::<u8>(), 0, buffer.buffer.length() as usize) };
+        }
+    }
     let queue = device.new_command_queue();
     queue.set_label("Rerail label passes");
     let command = queue.new_command_buffer().to_owned();
@@ -547,12 +585,18 @@ fn encode(
         command,
         queue,
         files,
-        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words))?,
+        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, kept.as_mut()))?,
         plan_labels: plan.labels,
         words,
         nodes,
-        scratch: MappedBuffer::zeroed::<u32>(device, plan.labels * words)?,
-        counts: MappedBuffer::zeroed::<u32>(device, (plan.counts * nodes).max(1))?,
+        scratch: match kept.as_mut() {
+            Some(kept) => MappedBuffer::wrap(kept.scratch.buffer.clone()),
+            None => MappedBuffer::zeroed::<u32>(device, plan.labels * words)?,
+        },
+        counts: match kept.as_mut() {
+            Some(kept) => MappedBuffer::wrap(kept.counts.buffer.clone()),
+            None => MappedBuffer::zeroed::<u32>(device, (plan.counts * nodes).max(1))?,
+        },
         flags: MappedBuffer::zeroed::<u32>(device, 6)?,
         workspace: None,
         retained: Vec::new(),
@@ -562,7 +606,7 @@ fn encode(
         lanes,
         micro,
         walks: HashMap::new(),
-        stacks: None,
+        stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
         encoded: false,
         outcome: Outcome {
             words,
@@ -641,17 +685,57 @@ fn encode(
         )
         .to_vec()
     };
+    if let (Some(buffers), Some((files, supertypes))) = (plan.buffers, runner.tapes.base.take()) {
+        let kept = Kept {
+            key,
+            nodes: MappedBuffer::wrap(runner.tapes.nodes.buffer.clone()),
+            children: MappedBuffer::wrap(runner.tapes.children.buffer.clone()),
+            source: MappedBuffer::wrap(runner.tapes.source.buffer.clone()),
+            line_starts: MappedBuffer::wrap(runner.tapes.line_starts.buffer.clone()),
+            files,
+            supertypes,
+            scratch: MappedBuffer::wrap(runner.scratch.buffer.clone()),
+            counts: MappedBuffer::wrap(runner.counts.buffer.clone()),
+            stacks: runner.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone())),
+        };
+        if let Ok(mut slot) = buffers.0.lock() {
+            *slot = Some(kept);
+        }
+    }
     Ok(runner.outcome)
 }
 
 /// The tape buffers, from a batch of the files with no tasks; the label prefix starts empty.
-fn tapes(device: &Device, files: &[TapeDoc], plan: &Plan<'_>, words: usize) -> Result<Tapes, Error> {
-    let program = Program::new(vec![super::super::word(EMIT, 0, 0)], vec![b"tape".to_vec()], Vec::new(), vec![0], Vec::new())?;
-    let anchors = vec![vec![Vec::new()]; files.len()];
-    let batch = PackedBatch::new(std::slice::from_ref(&program), files, &anchors)?;
+fn tapes(device: &Device, files: &[TapeDoc], plan: &Plan<'_>, words: usize, kept: Option<&mut Kept>) -> Result<Tapes, Error> {
+    // The batch's own parts: kept from an earlier run, or built.
+    let built;
+    let (nodes, children, source, line_starts, base_files, base_supertypes) = match kept {
+        Some(kept) => (
+            kept.nodes.buffer.clone(),
+            kept.children.buffer.clone(),
+            kept.source.buffer.clone(),
+            kept.line_starts.buffer.clone(),
+            &kept.files,
+            &kept.supertypes,
+        ),
+        None => {
+            let program = Program::new(vec![super::super::word(EMIT, 0, 0)], vec![b"tape".to_vec()], Vec::new(), vec![0], Vec::new())?;
+            let anchors = vec![vec![Vec::new()]; files.len()];
+            let batch = PackedBatch::new(std::slice::from_ref(&program), files, &anchors)?;
+            built = (
+                MappedBuffer::from_slice(device, &batch.nodes)?,
+                MappedBuffer::from_slice(device, &batch.children)?,
+                MappedBuffer::from_slice(device, &batch.source)?,
+                MappedBuffer::from_slice(device, &batch.line_starts)?,
+                batch.files.clone(),
+                batch.supertypes.iter().map(|pair| MetalSupertype { node: pair.node, kind: pair.kind }).collect::<Vec<_>>(),
+            );
+            (built.0.buffer.clone(), built.1.buffer.clone(), built.2.buffer.clone(), built.3.buffer.clone(), &built.4, &built.5)
+        }
+    };
     // The labels, then the sweeps' round, failure and per group (by step) changes (`label_sweep`).
     let prefix = 1 + (plan.labels * words + 2 + 2 * plan.steps.len()).div_ceil(2);
-    let mut supertypes = Vec::with_capacity(prefix + batch.supertypes.len());
+    let mut supertypes = Vec::with_capacity(prefix + base_supertypes.len());
     supertypes.push(MetalSupertype {
         node: plan.labels as u32,
         kind: words as u32,
@@ -666,19 +750,20 @@ fn tapes(device: &Device, files: &[TapeDoc], plan: &Plan<'_>, words: usize) -> R
             slot.kind = word;
         }
     }
-    supertypes.extend(batch.supertypes.iter().map(|pair| MetalSupertype { node: pair.node, kind: pair.kind }));
-    let mut batch_files = batch.files.clone();
+    supertypes.extend_from_slice(base_supertypes);
+    let mut batch_files = base_files.clone();
     for file in &mut batch_files {
         file.supertype_start += prefix as u32;
     }
     Ok(Tapes {
         files: MappedBuffer::from_slice(device, &batch_files)?,
-        nodes: MappedBuffer::from_slice(device, &batch.nodes)?,
-        children: MappedBuffer::from_slice(device, &batch.children)?,
-        source: MappedBuffer::from_slice(device, &batch.source)?,
-        line_starts: MappedBuffer::from_slice(device, &batch.line_starts)?,
+        nodes: MappedBuffer::wrap(nodes),
+        children: MappedBuffer::wrap(children),
+        source: MappedBuffer::wrap(source),
+        line_starts: MappedBuffer::wrap(line_starts),
         supertype_count: supertypes.len() as u32,
         supertypes: MappedBuffer::from_slice(device, &supertypes)?,
+        base: Some((base_files.clone(), base_supertypes.clone())),
     })
 }
 

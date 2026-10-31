@@ -336,6 +336,11 @@ impl PrivateInputUpload {
 }
 
 impl MappedBuffer {
+    /// Another owner of `buffer` (Metal retains it), as a kept buffer is handed between runs.
+    pub(super) fn wrap(buffer: Buffer) -> Self {
+        Self { buffer }
+    }
+
     #[track_caller]
     fn new(device: &Device, bytes: &[u8]) -> Result<Self, Error> {
         let mapping = Arc::new(MappedRegion::new(bytes)?);

@@ -413,9 +413,10 @@ fn the_slice_finds_ws_findings_on_real_files() {
     let names = clauses.iter().map(|c| c.name.clone()).collect::<BTreeSet<_>>();
     let total = python_clauses(&policies);
 
-    let (cpu0, wall0) = (cpu(), std::time::Instant::now());
-    let (ws, failed) = ws_keys(&policies, &names, &sources);
-    let w_time = (cpu() - cpu0, wall0.elapsed());
+    // W runs after the first backend's audit, so that audit's footprint is the engine's own
+    // (W's run leaves ~260 MB in the process: 40 MB before it, ~300 MB after).
+    let footprint = crate::code_rule_dsl::prof::footprint_mb;
+    let mut w_run = None;
 
     // `RERAIL_S7_BACKENDS`: the backends, of `cpu` and (on macOS) `metal`; default `cpu`, which
     // keeps the gate within a minute (Metal adds 15 s and agrees; decision 0017).
@@ -434,10 +435,18 @@ fn the_slice_finds_ws_findings_on_real_files() {
         let mut rules = Rules::lower(&policies, backend).unwrap();
         let (cpu0, wall0) = (cpu(), std::time::Instant::now());
         let root = directory_root(&store, &dir).unwrap();
+        let before = footprint();
         let run = audit(&store, WS, root, &mut rules).unwrap();
         let (spent, wall) = (cpu() - cpu0, wall0.elapsed());
+        eprintln!("S7 {name} footprint: {before} MB before the audit, {} MB after{}", footprint(), if w_run.is_none() { " (before W's run)" } else { "" });
         crate::code_rule_dsl::prof::report(name);
-        let difference = Difference::of(&run, &ws, &failed);
+        let (ws, failed, w_time) = w_run.get_or_insert_with(|| {
+            let (cpu0, wall0) = (cpu(), std::time::Instant::now());
+            let (ws, failed) = ws_keys(&policies, &names, &sources);
+            (ws, failed, (cpu() - cpu0, wall0.elapsed()))
+        });
+        let (ws, failed, w_time) = (&*ws, &*failed, *w_time);
+        let difference = Difference::of(&run, ws, failed);
         let ours = keys(&run);
         let exercised = ours.iter().map(|k| (&k.0, &k.1)).collect::<BTreeSet<_>>();
         let unknown = coverage(&run).values().filter(|c| matches!(c, Coverage::Unknown(_))).count();
@@ -464,7 +473,7 @@ fn the_slice_finds_ws_findings_on_real_files() {
             eprintln!("  {rule} {code}: {only_ours} only ours, {only_ws} only W");
         }
         let text = sources.iter().map(|(path, source)| (path.as_str(), source.as_str())).collect::<BTreeMap<_, _>>();
-        for key in ours.symmetric_difference(&ws).take(20) {
+        for key in ours.symmetric_difference(ws).take(20) {
             let line = text[key.2.as_str()].lines().nth(key.3).unwrap_or_default();
             eprintln!("    {} {key:?}: {}", if ours.contains(key) { "only ours" } else { "only W" }, line.trim());
         }
@@ -487,6 +496,7 @@ fn the_slice_finds_ws_findings_on_real_files() {
     // Mutation: one kept span's start one byte earlier, onto the line before its finding's. A key is
     // a line, so the span is an anchor at a line's first byte (the first such finding's).
     let Some((store, mut rules, run, root)) = cpu_store else { return };
+    let (ws, failed, _) = w_run.expect("W ran after the first backend");
     let text = sources.iter().cloned().collect::<BTreeMap<_, _>>();
     let line_start = |path: &str, line: usize| -> Option<usize> {
         let source = &text[path];

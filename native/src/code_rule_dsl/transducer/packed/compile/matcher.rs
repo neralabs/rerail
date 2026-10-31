@@ -878,7 +878,7 @@ fn metal<'a>(
         // The wave's labels: a recursive group that sweeps runs on the CPU's sweep, each file a
         // walk in node order, between the GPU's wide levels (O26).
         Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active)?,
-        None => run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: None, rows: None }, tapes)?,
+        None => run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: None, rows: None, buffers: None }, tapes)?,
     };
     let found = (0..clauses.len())
         .map(|at| {
@@ -928,6 +928,7 @@ fn apart<'a>(
     // The runs label the same tapes, so a text row evaluated by one serves the rest (and the
     // sweeps between them, each a file's slice of it).
     let rows = metal_program_backend::label_passes::TextRows::default();
+    let kept = metal_program_backend::label_passes::RunBuffers::default();
     let bases = tapes
         .iter()
         .scan(0_usize, |base, tape| {
@@ -948,6 +949,7 @@ fn apart<'a>(
             chains: std::mem::take(&mut segment.1),
             initial: Some(std::mem::take(&mut outcome.labels)),
             rows: Some(&rows),
+            buffers: Some(&kept),
         };
         let before = crate::code_rule_dsl::prof::footprint_mb();
         let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
