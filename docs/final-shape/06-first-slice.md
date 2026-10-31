@@ -326,7 +326,7 @@ interpreter.
     its row estimate, and `emit_batch` emits the step. The CPU gates (4 fixtures in chunks of
     one, 8 in one chunk) and the Metal gate still have 0 differ.
 
-### S5. Findings layer (first version of §8)
+### S5. Findings layer (first version of §8) — done (2026-10-30)
 
 - One SQL statement over the match-fact families. It joins the clause's violation shape (anchor, code, message key) and emits `FindingKey`s, with Coverage `Complete`, or `Unknown(resource)` on a budget or limit.
 - `findings::contract::Findings::publish` writes the set as a family, so an unchanged finding set cuts off.
@@ -360,7 +360,7 @@ interpreter.
 - **Not wired into production yet.** As this plan sets out, S6 wires it in through
   `slice::audit` and `slice::apply`.
 
-### S6. Entry points and the warm path
+### S6. Entry points and the warm path — done (2026-10-30)
 
 `slice::audit(store, scope, root, rules)` and `slice::apply(store, scope, edits)`:
 - both call `push_root` and return findings;
