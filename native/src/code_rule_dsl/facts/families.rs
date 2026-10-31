@@ -163,6 +163,8 @@ pub(crate) struct Families {
     facts: HashMap<[u8; 32], Arc<Facts>>,
     /// Prefilter rows built in this recomputation, published together.
     rows: Vec<TapePrefilter>,
+    /// Sources parsed ahead, in parallel, by `parse_ahead`: each its text and its parse.
+    parsed: HashMap<SourceId, (Arc<String>, Option<Result<FileImage, String>>)>,
     pub parses: Parses,
 }
 
@@ -202,7 +204,9 @@ impl Families {
         })?;
         let mut created = 0;
         for chunk in fresh.chunks(CHUNK) {
+            self.parse_ahead(graph, scope, chunk)?;
             let tapes = chunk.iter().map(|path| self.tape(graph, scope, path)).collect::<StoreResult<Vec<_>>>()?;
+            self.parsed.clear();
             graph.record_derivations(&tapes)?;
             let mut readers = Vec::with_capacity(2 * chunk.len());
             for path in chunk {
@@ -270,6 +274,36 @@ impl Families {
         })
     }
 
+    /// Parses the chunk's sources that have no stored tape, in parallel (`encode` takes them):
+    /// their reads stay on this thread's connection, in the push. Parsing was a quarter of a cold
+    /// push, one file after another (06 S7: 113 of ~470 ms).
+    fn parse_ahead(&mut self, graph: &(impl Graph + ?Sized), scope: &str, paths: &[String]) -> StoreResult<()> {
+        use rayon::prelude::*;
+        let store = graph.store();
+        let mut sources = Vec::new();
+        for path in paths {
+            let (Some(blob), Some(language)) = (graph.binding(&path_name(scope, path))?, dialect(path)) else { continue };
+            let Some(source_id) = blob_source_id(graph, blob)? else { continue };
+            let tag = i64::from(tape_tag(language).expect("a tape dialect"));
+            if self.parsed.contains_key(&source_id)
+                || store.tape_by_source(source_id, tag, grammar_version(), i64::from(TAPE_FORMAT_VERSION))?.is_some()
+            {
+                continue;
+            }
+            let Ok(source) = String::from_utf8(store.get_source(source_id)?) else { continue };
+            sources.push((source_id, language, Arc::new(source)));
+        }
+        let parsed = sources
+            .into_par_iter()
+            .map(|(source_id, language, source)| {
+                let parse = tape::Grammar::new(language).map_err(StoreError::Invalid).map(|grammar| TapeImage::parse(&grammar, &source, &|| false));
+                parse.map(|parse| (source_id, (source, parse)))
+            })
+            .collect::<StoreResult<Vec<_>>>()?;
+        self.parsed.extend(parsed);
+        Ok(())
+    }
+
     /// The tape of the blob `blob` binds, stored, and its canonical hash: decoded where the store
     /// has it, else encoded and stored.
     fn encode(
@@ -287,21 +321,28 @@ impl Families {
         if let Some(id) = store.tape_by_source(source_id, tag, grammar_version(), version)? {
             return self.decode(graph, source_id, id, language);
         }
-        let Ok(source) = String::from_utf8(store.get_source(source_id)?) else {
-            return Ok(None);
-        };
-        let source = Arc::new(source);
         let grammar = tape::Grammar::new(language).map_err(StoreError::Invalid)?;
+        let (source, parse) = match self.parsed.remove(&source_id) {
+            Some(parsed) => parsed,
+            None => {
+                let Ok(source) = String::from_utf8(store.get_source(source_id)?) else {
+                    return Ok(None);
+                };
+                let source = Arc::new(source);
+                let parse = TapeImage::parse(&grammar, &source, &|| false);
+                (source, parse)
+            }
+        };
         self.parses.parsed += 1;
-        let Some(image) = TapeImage::parse(&grammar, &source, &|| false) else {
+        let Some(image) = parse else {
             return Ok(None);
         };
         let image = image.map_err(StoreError::Invalid)?;
         // A derived document's tape is not stored here: the slice's dialect (Python) has none.
         let bytes = image.primary.to_bytes().map_err(StoreError::Invalid)?;
-        let id = store.put_tape(source_id, tag, grammar_version(), version, &bytes)?;
+        let id = crate::code_rule_dsl::prof::time("push.put_tape", || store.put_tape(source_id, tag, grammar_version(), version, &bytes))?;
         let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
-        let doc = TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false)
+        let doc = crate::code_rule_dsl::prof::time("push.restore", || TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false))
             .map_err(StoreError::Invalid)?;
         Ok(Some((Sha256::digest(&bytes).into(), Tape { id, doc, lines })))
     }
@@ -382,7 +423,7 @@ impl Families {
         let name = tape_name(scope, path);
         let read = graph.binding(&name)?.unwrap_or(ABSENT);
         let facts = match self.take(graph, scope, path, read)? {
-            Some(tape) => Some(Arc::new(core::from_tape(&tape.doc, Arc::clone(&tape.lines)).map_err(StoreError::Invalid)?)),
+            Some(tape) => Some(Arc::new(crate::code_rule_dsl::prof::time("push.core", || core::from_tape(&tape.doc, Arc::clone(&tape.lines))).map_err(StoreError::Invalid)?)),
             None => None,
         };
         let digest = facts.as_deref().map_or(ABSENT, core::digest);
@@ -408,7 +449,7 @@ impl Families {
         let digest = match self.take(graph, scope, path, read)? {
             Some(tape) => {
                 let budget = crate::code_rule_dsl::budget::matcher_budget_exhausted;
-                self.rows.push(crate::code_rule_dsl::prefilter::image(tape.id, &tape.doc, &budget)?);
+                self.rows.push(crate::code_rule_dsl::prof::time("push.prefilter", || crate::code_rule_dsl::prefilter::image(tape.id, &tape.doc, &budget))?);
                 let mut hash = Sha256::new();
                 hash.update(b"rerail.prefilter-rows/v1\0");
                 hash.update(PREFILTER_VERSION.to_le_bytes());
