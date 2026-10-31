@@ -23,6 +23,7 @@ use super::*;
 use super::super::metal_batch_abi::MetalEvaluation;
 use metal::{Buffer, CommandBuffer};
 use std::collections::HashMap;
+use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
 
 /// A pass writes the label `target` (an index, not a class); labels it reads are its classes.
 pub(in crate::code_rule_dsl) enum Pass<'a> {
@@ -250,6 +251,55 @@ struct Op {
 /// twice; S7's 833-label scratch was 33 MB). A group that runs as sweeps publishes its labels
 /// directly (`label_sweep`) and marks no scratch.
 /// (Where a plan has such a group, scratch keeps a row per label, as its routes name labels.)
+/// The labels a run reads or writes, in the GPU's label prefix by row: (row -> label, label ->
+/// row, `u32::MAX` where absent). The others stay on the host: a run's passes read and write a
+/// few of a labelling's labels, and every bound buffer is charged twice (O30: S7's prefix was
+/// all 833, ~34 MB a run). `None` (every label, by its index) where a pass may read labels by
+/// index otherwise: an interpreter task, or a group that runs as sweeps.
+fn label_rows(plan: &Plan<'_>, micro: bool) -> Option<(Vec<u32>, Vec<u32>)> {
+    if !micro || plan.steps.iter().any(|(recursive, levels)| *recursive && sweeps(levels)) {
+        return None;
+    }
+    let mut used = vec![false; plan.labels];
+    let mut mark = |label: u32| -> Option<()> {
+        *used.get_mut(label as usize)? = true;
+        Some(())
+    };
+    for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
+        match pass {
+            Pass::Program { target, program, .. } | Pass::Count { target, program, .. } => {
+                mark(*target)?;
+                for &word in &Micro::of(program)?.words {
+                    let (op, _, arg) = super::super::split(word);
+                    if op == super::super::SUPERTYPE && arg >= DERIVED_CLASS_BASE {
+                        mark(u32::from(arg - DERIVED_CLASS_BASE))?;
+                    }
+                }
+            }
+            Pass::Complement { target, of } => {
+                mark(*target)?;
+                mark(*of)?;
+            }
+            Pass::Pattern { target, constraints, .. } => {
+                mark(*target)?;
+                for (_, label) in constraints {
+                    mark(*label)?;
+                }
+            }
+            Pass::Empty { target } => mark(*target)?,
+        }
+    }
+    let present = used.iter().enumerate().filter(|(_, used)| **used).map(|(label, _)| label as u32).collect::<Vec<_>>();
+    if present.len() == plan.labels {
+        return None;
+    }
+    let mut row_of = vec![u32::MAX; plan.labels];
+    for (row, &label) in present.iter().enumerate() {
+        row_of[label as usize] = row as u32;
+    }
+    Some((present, row_of))
+}
+
 /// Each of a level's passes' count row: its index among the level's counts. A level's settle
 /// consumes and clears its counts, so `counts` is the level with the most counts' (O30: a row
 /// per count of the plan was 24 MB on S7).
@@ -429,6 +479,8 @@ struct Runner<'a> {
     tapes: Tapes,
     /// Labels in the prefix.
     plan_labels: usize,
+    /// Each label's prefix row (`label_rows`), where the prefix holds some of them.
+    label_rows: Option<Vec<u32>>,
     words: usize,
     nodes: usize,
     scratch: MappedBuffer,
@@ -616,6 +668,9 @@ fn encode(
 ) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
+    let rows = label_rows(plan, micro);
+    let prefix_labels = rows.as_ref().map_or(plan.labels, |(present, _)| present.len());
+    crate::code_rule_dsl::prof::count("gpu.prefix_labels", prefix_labels);
     // An earlier run's buffers, where sized alike; scratch and counts zeroed again (a run that
     // fails may leave them dirty, and a kept set is taken out while a run holds it).
     let key = (nodes, plan.labels, plan.counts);
@@ -648,8 +703,9 @@ fn encode(
         command,
         queue,
         files,
-        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, kept.as_mut()))?,
-        plan_labels: plan.labels,
+        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, kept.as_mut(), rows.as_ref()))?,
+        plan_labels: prefix_labels,
+        label_rows: rows.as_ref().map(|(_, row_of)| row_of.clone()),
         words,
         nodes,
         scratch: match kept.as_mut().filter(|kept| kept.scratch.buffer.length() as usize >= 4 * scratch_rows(plan) * words) {
@@ -728,7 +784,7 @@ fn encode(
     // The sweeps' words: a failure, and per group whether its last sweep still changed a label.
     let sweep_words = unsafe {
         std::slice::from_raw_parts(
-            runner.tapes.supertypes.buffer.contents().cast::<u32>().add(2 + plan.labels * words),
+            runner.tapes.supertypes.buffer.contents().cast::<u32>().add(2 + prefix_labels * words),
             2 + 2 * plan.steps.len(),
         )
         .to_vec()
@@ -746,18 +802,6 @@ fn encode(
         })
         .count();
     runner.outcome.waits[1] = runner.flag(3) as usize + unsettled;
-    let result = unsafe {
-        std::slice::from_raw_parts(runner.tapes.supertypes.buffer.contents().cast::<u32>().add(2), plan.labels * words)
-    };
-    // Into the plan's initial labels where it can take them (no second host copy of the labels).
-    runner.outcome.labels = match plan.initial.take() {
-        Some(mut labels) => {
-            labels.clear();
-            labels.extend_from_slice(result);
-            labels
-        }
-        None => result.to_vec(),
-    };
     if let (Some(buffers), Some((files, supertypes))) = (plan.buffers, runner.tapes.base.take()) {
         let kept = Kept {
             key,
@@ -775,11 +819,46 @@ fn encode(
             *slot = Some(kept);
         }
     }
-    Ok(runner.outcome)
+    // The run's queue, command buffer and other buffers go before the host's copy of the labels
+    // is made: only the prefix stays (the driver's memory for the run is the footprint's peak).
+    let prefix = runner.tapes.supertypes.buffer.clone();
+    let mut outcome = std::mem::take(&mut runner.outcome);
+    drop(runner);
+    let result = unsafe {
+        std::slice::from_raw_parts(prefix.contents().cast::<u32>().add(2), prefix_labels * words)
+    };
+    // Into the plan's initial labels where it can take them (no second host copy of the labels),
+    // each prefix row to its label's place.
+    outcome.labels = match (plan.initial.take(), &rows) {
+        (Some(mut labels), None) => {
+            labels.clear();
+            labels.extend_from_slice(result);
+            labels
+        }
+        (None, None) => result.to_vec(),
+        (initial, Some((present, _))) => {
+            let mut labels = initial.unwrap_or_default();
+            labels.resize(plan.labels * words, 0);
+            for (row, &label) in present.iter().enumerate() {
+                let at = label as usize * words;
+                labels[at..at + words].copy_from_slice(&result[row * words..(row + 1) * words]);
+            }
+            labels
+        }
+    };
+    Ok(outcome)
 }
 
 /// The tape buffers, from a batch of the files with no tasks; the label prefix starts empty.
-fn tapes(device: &Device, files: &[TapeDoc], plan: &Plan<'_>, words: usize, kept: Option<&mut Kept>) -> Result<Tapes, Error> {
+fn tapes(
+    device: &Device,
+    files: &[TapeDoc],
+    plan: &Plan<'_>,
+    words: usize,
+    kept: Option<&mut Kept>,
+    rows: Option<&(Vec<u32>, Vec<u32>)>,
+) -> Result<Tapes, Error> {
+    let prefix_labels = rows.map_or(plan.labels, |(present, _)| present.len());
     // The batch's own parts: kept from an earlier run (moved out, and back with `base`), or built.
     let (nodes, children, source, line_starts, base_files, base_supertypes) = match kept {
         Some(kept) => (
@@ -806,16 +885,27 @@ fn tapes(device: &Device, files: &[TapeDoc], plan: &Plan<'_>, words: usize, kept
     };
     // The labels, then the sweeps' round, failure and per group (by step) changes (`label_sweep`),
     // then the batch's (node, class) pairs: written in place, with no host copy of the labels.
-    let prefix = 1 + (plan.labels * words + 2 + 2 * plan.steps.len()).div_ceil(2);
+    let prefix = 1 + (prefix_labels * words + 2 + 2 * plan.steps.len()).div_ceil(2);
     let count = prefix + base_supertypes.len();
     let supertypes = MappedBuffer::zeroed::<MetalSupertype>(device, count)?;
     unsafe {
         let head = supertypes.buffer.contents().cast::<MetalSupertype>();
-        head.write(MetalSupertype { node: plan.labels as u32, kind: words as u32 });
+        head.write(MetalSupertype { node: prefix_labels as u32, kind: words as u32 });
         let initial = plan.initial.take();
         if let Some(initial) = initial.as_ref() {
-            let length = initial.len().min(plan.labels * words);
-            std::ptr::copy_nonoverlapping(initial.as_ptr(), head.add(1).cast::<u32>(), length);
+            match rows {
+                None => {
+                    let length = initial.len().min(plan.labels * words);
+                    std::ptr::copy_nonoverlapping(initial.as_ptr(), head.add(1).cast::<u32>(), length);
+                }
+                Some((present, _)) => {
+                    for (row, &label) in present.iter().enumerate() {
+                        let from = (label as usize * words).min(initial.len());
+                        let length = initial.len().saturating_sub(from).min(words);
+                        std::ptr::copy_nonoverlapping(initial.as_ptr().add(from), head.add(1).cast::<u32>().add(row * words), length);
+                    }
+                }
+            }
         }
         // Back for a retry, which builds the prefix again.
         plan.initial.set(initial);
@@ -1017,7 +1107,19 @@ impl Runner<'_> {
                     records[tier].push([words.len() as u32, walk.words.len() as u32, target, mode, start, count, text_start, threads[tier]]);
                     threads[tier] += count;
                     longest = longest.max(walk.words.len());
-                    words.extend_from_slice(&walk.words);
+                    // A label class test reads its label's prefix row (`label_rows`).
+                    match &self.label_rows {
+                        None => words.extend_from_slice(&walk.words),
+                        Some(row_of) => words.extend(walk.words.iter().map(|&word| {
+                            let (op, mode, arg) = super::super::split(word);
+                            if op == super::super::SUPERTYPE && arg >= DERIVED_CLASS_BASE {
+                                let row = row_of[usize::from(arg - DERIVED_CLASS_BASE)];
+                                super::super::word(op, mode, DERIVED_CLASS_BASE + row as u16)
+                            } else {
+                                word
+                            }
+                        })),
+                    }
                     false
                 });
                 crate::code_rule_dsl::prof::count("size.walks", items.len());
@@ -1170,12 +1272,15 @@ impl Runner<'_> {
         let mut matches = Vec::new();
         let mut constraints = Vec::new();
         let tallies = count_rows(passes);
+        // A label's place in the prefix (`label_rows`).
+        let rows = self.label_rows.clone();
+        let place = |label: &u32| rows.as_ref().map_or(*label, |rows| rows[*label as usize]);
         for (row, pass) in passes.iter().enumerate() {
             let tally = tallies[row];
             let row = row as u32;
             settles.push(match pass {
                 Pass::Program { target, .. } | Pass::Empty { target } => Op {
-                    target: *target,
+                    target: place(target),
                     row,
                     ..Op::default()
                 },
@@ -1186,7 +1291,7 @@ impl Runner<'_> {
                     ..
                 } => Op {
                     kind: 2,
-                    target: *target,
+                    target: place(target),
                     slot: tally,
                     minimum: *min,
                     maximum: *max,
@@ -1195,8 +1300,8 @@ impl Runner<'_> {
                 },
                 Pass::Complement { target, of } => Op {
                     kind: 1,
-                    target: *target,
-                    of: *of,
+                    target: place(target),
+                    of: place(of),
                     row,
                     ..Op::default()
                 },
@@ -1210,7 +1315,7 @@ impl Runner<'_> {
                     let start = (constraints.len() / 2) as u32;
                     for (name, label) in named {
                         if let Some(var) = vars.iter().position(|known| known == name) {
-                            constraints.extend([var as u32, *label]);
+                            constraints.extend([var as u32, place(label)]);
                         }
                     }
                     let count = (constraints.len() / 2) as u32 - start;
@@ -1218,7 +1323,7 @@ impl Runner<'_> {
                         matches.extend([*pattern as u32, row, *root, start, count]);
                     }
                     Op {
-                        target: *target,
+                        target: place(target),
                         row,
                         ..Op::default()
                     }
