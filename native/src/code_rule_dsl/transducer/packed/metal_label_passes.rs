@@ -340,7 +340,7 @@ fn tier(depth: Option<usize>) -> usize {
     // shallow walks (97% of S7's starts) keep theirs there; the rest take the pool's device stacks.
     // (`label_micro_32` stays for a tier between them.)
     match depth {
-        Some(depth) if depth <= 8 && std::env::var_os("RERAIL_DEVICE_STACKS").is_none() => 0,
+        Some(depth) if depth <= 8 => 0,
         _ => 2,
     }
 }
