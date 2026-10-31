@@ -748,6 +748,22 @@ pub(super) enum NfaState {
 }
 
 impl ByteNfa {
+    /// The most work `is_match_with_work` charges per byte read, and once more for the start: a
+    /// step's ranges (each charged once, each at most one `add_state`), and the states those calls
+    /// pop, at most one per call and one per edge to a state not yet seen in the step.
+    pub(super) fn work_per_byte(&self) -> usize {
+        let (mut ranges, mut edges) = (0, 0);
+        for state in &self.states {
+            match state {
+                NfaState::Bytes(transitions) => ranges += transitions.len(),
+                NfaState::Split(alternatives) => edges += alternatives.len(),
+                NfaState::Look { .. } | NfaState::Capture { .. } => edges += 1,
+                _ => {}
+            }
+        }
+        2 * ranges + edges + 1
+    }
+
     pub(super) fn compile(source: &str) -> Result<Self, Error> {
         let nfa = thompson::NFA::new(source).map_err(|_| Error::UnsupportedPattern)?;
         let states = nfa

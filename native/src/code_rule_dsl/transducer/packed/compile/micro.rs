@@ -94,6 +94,18 @@ impl Emit {
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Frames(Vec<(State, Resume)>);
 
+/// `source` as a search (`regex_automata::meta`, the NFA's own syntax and defaults), built once
+/// per pattern.
+fn searcher(source: &str) -> Option<std::sync::Arc<regex_automata::meta::Regex>> {
+    static SEARCHERS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Option<std::sync::Arc<regex_automata::meta::Regex>>>>> =
+        std::sync::LazyLock::new(Default::default);
+    let mut searchers = SEARCHERS.lock().ok()?;
+    searchers
+        .entry(source.to_owned())
+        .or_insert_with(|| regex_automata::meta::Regex::new(source).ok().map(std::sync::Arc::new))
+        .clone()
+}
+
 impl Micro {
     /// Why `program` is not a micro walk: its first operation outside the walk's, by name.
     pub(in crate::code_rule_dsl) fn refusal(program: &Program) -> &'static str {
@@ -215,12 +227,30 @@ impl Micro {
         let (value, kind) = self.texts[slot];
         let len = tape.transducer_len();
         let mut bits = vec![0_u64; len.div_ceil(64)];
+        let value_program = &program.value_programs[usize::from(value)];
+        // A regex's text bound under which the NFA cannot reach its work limit (`work_per_byte`):
+        // there a DFA search of the same pattern gives the same bit, without an NFA step per byte
+        // per state (06 S7: kindless tests read every node's text, ~0.8 s of CPU).
+        let fast = match (value_program, &program.predicates[usize::from(value)]) {
+            (super::value::ValueProgram::Regex(nfa), TextPredicate::Regex { source, .. }) => std::str::from_utf8(&program.strings[usize::from(*source)])
+                .ok()
+                .and_then(searcher)
+                .map(|regex| (regex, super::MAX_STEPS_PER_PATH / nfa.work_per_byte())),
+            _ => None,
+        };
         for node in 0..len as u32 {
             if kind.is_some_and(|kind| tape.transducer_kind(node) != kind) {
                 continue;
             }
-            let mut work = 0;
-            if program.value_programs[usize::from(value)].is_match(tape.transducer_text(node), &program.strings, &mut work).ok()? {
+            let text = tape.transducer_text(node);
+            let matched = match &fast {
+                Some((regex, longest)) if text.len() < *longest => regex.is_match(text),
+                _ => {
+                    let mut work = 0;
+                    value_program.is_match(text, &program.strings, &mut work).ok()?
+                }
+            };
+            if matched {
                 bits[node as usize / 64] |= 1 << (node % 64);
             }
         }
