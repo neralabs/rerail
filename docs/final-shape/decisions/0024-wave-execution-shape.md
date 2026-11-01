@@ -250,3 +250,45 @@ index, LL lessons ledger) and the final-shape `notes/` tN files.
 - The footprint of GPU-resident sets and match records next to the driver's fixed ~170 MB (0022).
 - How the findings layer's on-demand text and structure keys compare with today's precomputed
   strings, on the layer's own time.
+
+## Progress (2026-11-01)
+
+Each step is gated by S7 (710 keys = W on both backends) and its named tests. Times are smoke
+reads from one S7 run under load, not measurements.
+
+1. **SQLite settings** (7b931a12d): `temp_store=MEMORY` on every connection, and a 32 MB cache
+   for the candidate transaction's span.
+2. **Node space and set executor** (32bf17f98, 26d32ecb9):
+   - `space.rs` holds `NodeSpace` and `NodeSet`.
+   - `prefilter/sets.rs` lowers a batch's plans to one hash-consed program, with `lower.rs`'s
+     superset and exactness rules. SQL reads only its leaves: node counts, posting blobs and the
+     vocabulary's terms.
+   - The operations run on the CPU or as Metal set steps (`metal_set_steps.*`): one slot per
+     operation in one buffer, one dispatch per step.
+   - A Metal wave evaluates its candidates on Metal and compacts each clause's set into starts.
+   - The candidate SQL stays as `select_indexed_sql`, the reference.
+   - `candidates.select` took 146 ms.
+3. **Recursive labels on the device** (8ac2ae084):
+   - A recursive group of micro walks (≤ 32 frames), complements, counts and empties runs as
+     `label_group_8/_32`: one dispatch, a threadgroup per file, rounds looping on the device
+     until one changes nothing.
+   - The sweep's node order turned out to be unnecessary: per-file rounds reach the same
+     fixpoint.
+   - Per-level rounds did not fit: they pushed the one-evaluation test past the launch budget.
+   - On S7, all 8 recursive groups are fused, and no sweep runs on the host.
+   - The labels' CPU time fell from about 3.8 s to about 0.6 s.
+   - The host sweeps (O26) stay as the reference, behind `RERAIL_HOST_SWEEPS`.
+4. **Roots as micro walks, CPU** (752aeb4b0):
+   - `Micro::records` emits every emitting path as a `RootRecord`: start, output label, and up to
+     8 (capture label, node) pairs.
+   - The demand walks a range's roots, with one task per anchor, where every terminal program is
+     a micro walk. Otherwise, or on overflow, it uses the backend's execution.
+   - With `RERAIL_ROOTS_CHECK`, every (file, program) on S7 equals the JIT's record set.
+   - `demand.roots` fell from about 0.9–1.2 s to about 40 ms.
+
+**Next:**
+- **Step 4 on Metal.** The roots join the labels' command buffer. This means the labels wait for
+  the candidates (now ~150 ms) instead of running beside them (0023). The labels then stay on
+  the device for the roots, and `labels.to_sets` and the views are not needed for them.
+- **Step 5.** Rows are integers (`demand.rows`, ~260 ms of strings).
+- **Step 6.** The working-set overlay.
