@@ -66,10 +66,11 @@ impl ContentStore {
         }
         self.require_write_capacity()?;
         self.immediate_transaction(|transaction| {
+            let mut counts = Counts::default();
             for set in sets {
-                put(transaction, set)?;
+                put(transaction, set, &mut counts)?;
             }
-            Ok(())
+            counts.flush(transaction)
         })
     }
 
@@ -195,9 +196,80 @@ impl ContentStore {
     }
 }
 
-fn put(transaction: &Transaction<'_>, set: &TapePrefilter) -> StoreResult<()> {
+/// A publication's store-wide counts and postings, summed over its tapes and written once a key
+/// (06 S7: one upsert per key per tape was ~150 of the push's ~300 ms of publication).
+#[derive(Default)]
+struct Counts {
+    kind_size: BTreeMap<u32, (i64, i64)>,
+    edge_freq: BTreeMap<(i64, i64, i64), i64>,
+    postings: Vec<(i64, String, i64, i64, i64, Vec<u8>)>,
+    term_node_freq: BTreeMap<(i64, String, i64), i64>,
+    term_kind_freq: BTreeMap<u32, i64>,
+    term_freq: BTreeMap<(i64, String), i64>,
+}
+
+impl Counts {
+    fn is_empty(&self) -> bool {
+        self.kind_size.is_empty() && self.edge_freq.is_empty() && self.postings.is_empty()
+    }
+
+    /// Writes and clears the sums; postings in key order, so consecutive rows share leaves.
+    fn flush(&mut self, transaction: &Transaction<'_>) -> StoreResult<()> {
+        let counts = std::mem::take(self);
+        insert(
+            transaction,
+            "INSERT INTO kind_size(kind,n,size)",
+            "ON CONFLICT(kind) DO UPDATE SET n=n+excluded.n,size=size+excluded.size",
+            counts.kind_size.into_iter().map(|(kind, (n, size))| [i64::from(kind).into(), n.into(), size.into()]),
+        )?;
+        insert(
+            transaction,
+            "INSERT INTO edge_freq(pkind,ckind,field,n)",
+            "ON CONFLICT(pkind,ckind,field) DO UPDATE SET n=n+excluded.n",
+            counts.edge_freq.into_iter().map(|((parent, child, field), n)| [parent.into(), child.into(), field.into(), n.into()]),
+        )?;
+        let mut postings = counts.postings;
+        postings.sort_unstable_by(|a, b| (a.0, &a.1, a.2, a.3).cmp(&(b.0, &b.1, b.2, b.3)));
+        insert(
+            transaction,
+            "INSERT INTO term_postings(lang,term,tape_id,kind,n,postings)",
+            "",
+            postings.into_iter().map(|(lang, term, tape, kind, n, packed)| [lang.into(), term.into(), tape.into(), kind.into(), n.into(), Value::Blob(packed)]),
+        )?;
+        insert(
+            transaction,
+            "INSERT INTO term_node_freq(lang,term,kind,n)",
+            "ON CONFLICT(lang,term,kind) DO UPDATE SET n=n+excluded.n",
+            counts.term_node_freq.into_iter().map(|((lang, term, kind), n)| [lang.into(), term.into(), kind.into(), n.into()]),
+        )?;
+        insert(
+            transaction,
+            "INSERT INTO term_kind_freq(kind,n)",
+            "ON CONFLICT(kind) DO UPDATE SET n=n+excluded.n",
+            counts.term_kind_freq.into_iter().map(|(kind, n)| [i64::from(kind).into(), n.into()]),
+        )?;
+        insert(
+            transaction,
+            "INSERT INTO term_freq(lang,term,n)",
+            "ON CONFLICT(lang,term) DO UPDATE SET n=n+excluded.n",
+            counts.term_freq.into_iter().map(|((lang, term), n)| [lang.into(), term.into(), n.into()]),
+        )?;
+        Ok(())
+    }
+}
+
+fn put(transaction: &Transaction<'_>, set: &TapePrefilter, counts: &mut Counts) -> StoreResult<()> {
     let tape = set.tape_id.row();
-    // Publishing again replaces: the cascade and triggers count the old rows down.
+    // Publishing again replaces: the cascade and triggers count the old rows down, so the sums
+    // so far are written first, as they would have been one tape at a time.
+    if !counts.is_empty() {
+        let published: bool = transaction
+            .prepare_cached("SELECT EXISTS(SELECT 1 FROM prefilter_sets WHERE tape_id=?1)")?
+            .query_row([tape], |row| row.get(0))?;
+        if published {
+            counts.flush(transaction)?;
+        }
+    }
     transaction.execute("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape])?;
     transaction.execute(
         "INSERT INTO prefilter_sets(tape_id,version,nodes,edges) VALUES(?1,?2,?3,?4)",
@@ -237,61 +309,24 @@ fn put(transaction: &Transaction<'_>, set: &TapePrefilter) -> StoreResult<()> {
             [tape.into(), i64::from(*kind).into(), i64::from(*n).into(), (*size as i64).into(), Value::Blob(positions.clone())]
         }),
     )?;
-    insert(
-        transaction,
-        "INSERT INTO kind_size(kind,n,size)",
-        "ON CONFLICT(kind) DO UPDATE SET n=n+excluded.n,size=size+excluded.size",
-        set.kinds.iter().map(|(kind, n, size, _)| [i64::from(*kind).into(), i64::from(*n).into(), (*size as i64).into()]),
-    )?;
-    insert(
-        transaction,
-        "INSERT INTO edge_freq(pkind,ckind,field,n)",
-        "ON CONFLICT(pkind,ckind,field) DO UPDATE SET n=n+excluded.n",
-        set.edges.iter().map(|&(parent, child, field, n)| {
-            [i64::from(parent).into(), i64::from(child).into(), i64::from(field).into(), i64::from(n).into()]
-        }),
-    )?;
-    // In key order (term, then kind), so consecutive rows land on neighbouring leaves.
-    let mut rows = postings.iter_mut().collect::<Vec<_>>();
-    rows.sort_unstable_by_key(|((kind, term), _)| (*term, *kind));
-    insert(
-        transaction,
-        "INSERT INTO term_postings(lang,term,tape_id,kind,n,postings)",
-        "",
-        rows.into_iter().map(|((kind, term), pres)| {
-            pres.sort_unstable();
-            [lang.into(), (*term).to_owned().into(), tape.into(), i64::from(*kind).into(), (pres.len() as i64).into(), Value::Blob(pack(pres))]
-        }),
-    )?;
-    insert(
-        transaction,
-        "INSERT INTO term_node_freq(lang,term,kind,n)",
-        "ON CONFLICT(lang,term,kind) DO UPDATE SET n=n+excluded.n",
-        postings.iter().map(|((kind, term), pres)| {
-            [lang.into(), (*term).to_owned().into(), i64::from(*kind).into(), (pres.len() as i64).into()]
-        }),
-    )?;
-    let mut covered = BTreeMap::<u32, i64>::new();
-    for ((kind, _), pres) in &postings {
-        *covered.entry(*kind).or_default() += pres.len() as i64;
+    for (kind, n, size, _) in &set.kinds {
+        let entry = counts.kind_size.entry(*kind).or_default();
+        entry.0 += i64::from(*n);
+        entry.1 += *size as i64;
     }
-    insert(
-        transaction,
-        "INSERT INTO term_kind_freq(kind,n)",
-        "ON CONFLICT(kind) DO UPDATE SET n=n+excluded.n",
-        covered.into_iter().map(|(kind, n)| [i64::from(kind).into(), n.into()]),
-    )?;
+    for &(parent, child, field, n) in &set.edges {
+        *counts.edge_freq.entry((i64::from(parent), i64::from(child), i64::from(field))).or_default() += i64::from(n);
+    }
+    for ((kind, term), pres) in &mut postings {
+        pres.sort_unstable();
+        counts.postings.push((lang, (*term).to_owned(), tape, i64::from(*kind), pres.len() as i64, pack(pres)));
+        *counts.term_node_freq.entry((lang, (*term).to_owned(), i64::from(*kind))).or_default() += pres.len() as i64;
+        *counts.term_kind_freq.entry(*kind).or_default() += pres.len() as i64;
+    }
     // One row per term, counting the tape's kinds that carry it, in place of a per-row trigger.
-    let mut terms = BTreeMap::<&str, i64>::new();
     for (_, term) in postings.keys() {
-        *terms.entry(term).or_default() += 1;
+        *counts.term_freq.entry((lang, (*term).to_owned())).or_default() += 1;
     }
-    insert(
-        transaction,
-        "INSERT INTO term_freq(lang,term,n)",
-        "ON CONFLICT(lang,term) DO UPDATE SET n=n+excluded.n",
-        terms.into_iter().map(|(term, n)| [lang.into(), term.to_owned().into(), n.into()]),
-    )?;
     insert(
         transaction,
         "INSERT INTO term_coverage(tape_id,kind,bad,residue,missing)",
