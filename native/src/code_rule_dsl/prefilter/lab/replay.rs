@@ -47,6 +47,10 @@ pub(super) fn replay(capture: &std::path::Path) -> (Json, CandidateRows) {
                 false
             }))?;
             super::super::execute::request(db, &files)?;
+            // Connection settings under trial (`RERAIL_LAB_PRAGMAS`, e.g. `PRAGMA temp_store=MEMORY`).
+            if let Ok(pragmas) = std::env::var("RERAIL_LAB_PRAGMAS") {
+                db.execute_batch(&pragmas)?;
+            }
             for sql in data["setup"].as_array().unwrap() {
                 db.execute_batch(sql.as_str().unwrap())?;
             }
