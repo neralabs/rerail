@@ -57,6 +57,19 @@ backends.
    pattern gives the same bit. On S7 the two agreed on all 12,061,817 such texts (checked once
    against the NFA). Text rows: ~0.9 → ~0.2 s CPU, on both backends.
 
+9. **Candidate SQL skips releases past its last query.** They were a row-by-row `DELETE FROM
+   candidate_keys` (~185 ms) of a table the cleanup drops whole.
+10. **The CPU JIT runs evaluations in parallel, each one's tasks in order, with no locks.**
+    Tasks locked their evaluation's mutex, so workers parked on a few hot evaluations: a range's
+    run was 2–4× its longest evaluation. `jit.run` ~367 → ~268 ms.
+11. **`to_words` fills each label's row in parallel:** 83 → 18 ms.
+12. **Prefilter publication sums its store-wide counts over the batch** and writes one upsert a
+    key, postings sorted across the batch. A tape already published is deleted only after the
+    sums so far are written, as one tape at a time would have. `slice.push` ~420 → ~330 ms.
+13. **Footprint during the overlap.** The text rows' searches use a cache per call rather than
+    the regex's per-thread pool, and the candidates' rows are (tape index, preorder) `u32`s.
+    Overlapped with the GPU runs, those had pushed the peak to 501–503 MB; it is 461–495 MB.
+
 These were tried and dropped:
 
 | Tried | Why dropped |
@@ -66,6 +79,8 @@ These were tried and dropped:
 | Roots on the GPU (`MetalJit` instead of 0017's `CpuJit`), re-measured after these steps | Metal splits S7 into 260 ranges. Compiling them took 59 s and executing 4.76 s, against 0.8 s for the CPU JIT's whole roots stage. 0017 stands. |
 | A 32 MB page cache (main and temp) for the candidate statement | Candidates went ~1.1–1.2 → 0.97–1.09 s, but the peak rose to 536–538 MB, over budget. |
 | Building a range's rows per file in parallel | Rows went ~300 → ~220 ms, but CPU rose ~0.4 s and wall did not change measurably. |
+| A 256 KB temp page cache for the candidate statement | Peak ~10–20 MB lower, candidates ~120 ms slower. |
+| A 4× range budget for the roots | Still 45 ranges: the budget does not bound them. |
 | Absorbing a roots range's rows on a thread while the next range runs | In an interleaved A/B the wall time did not change and CPU rose 0.7–1.3 s: the rows thread competes with the JIT's pool. |
 
 ## Consequences
@@ -92,6 +107,10 @@ The CPU backend also gained from steps 2 and 5.
 **After step 8,** one `cpu,metal` process at load 14–32: CPU backend 16.0–16.3 s wall /
 17.0–17.5 s CPU; Metal 3.1–3.2 s wall / 6.9–7.1 s CPU (~5× wall, ~2.5× CPU).
 
+**After steps 9–13,** one `cpu,metal` process: at load 18–27, the CPU backend took 14.9–15.7 s
+wall / 15.7–16.4 s CPU and Metal 2.43–2.54 s / 6.4–6.6 s; at load 30–44, 16.5–17.4 s / 17.4–18.1
+s against 3.0–3.1 s / 6.9–7.0 s. That is ~5.5–6.2× in wall time and ~2.5× in CPU.
+
 **Labels alone:** Metal ~0.85 s wall / ~3.1 s CPU, against the CPU backend's ~14 s / 13.4 s.
 That is about 16× in wall time and 4.4× in CPU.
 
@@ -101,7 +120,8 @@ stages: candidates ~1.0 s, execute ~1.05 s (2.2 s CPU), push ~0.55 s, layer ~0.2
 they are ~2.8 s wall and ~4.1 s CPU. These stages are CPU work in both backends.
 
 **Correctness and footprint:** 710 keys equal W's on both backends, both mutations fail, and the
-peak footprint is 484 MB (`phys_footprint_peak`).
+peak footprint is 461–495 MB (`phys_footprint_peak`). The peak is set during a labels GPU run
+that overlaps the candidate SQL, so it varies with their timing.
 
 **What remains:**
 - The candidate SQL still sorts 37 UNION CTEs for merge-dedup, and materializes complements
