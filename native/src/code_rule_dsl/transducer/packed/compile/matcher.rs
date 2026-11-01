@@ -1108,7 +1108,7 @@ fn apart<'a>(
         Ok(())
     };
     for ((step, chain), (recursive, levels)) in steps.into_iter().zip(chains).zip(&host) {
-        if !(*recursive && sweeps(levels)) {
+        if !(*recursive && metal_program_backend::label_passes::host_sweeps() && sweeps(levels)) {
             segment.0.push(step);
             segment.1.push(chain);
             continue;

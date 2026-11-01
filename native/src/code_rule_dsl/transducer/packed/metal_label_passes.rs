@@ -209,10 +209,21 @@ pub(in crate::code_rule_dsl) fn text_slot(
     walk.slot(program, slot, tape)
 }
 
+/// Decision 0024 §3: a recursive group runs on the device, to its fixpoint in one dispatch where
+/// its passes are micro walks (`Runner::group`), else as rounds of levels. The host's sweeps
+/// between the GPU's segments (O26) stay as the reference, `RERAIL_HOST_SWEEPS`.
+pub(in crate::code_rule_dsl) fn host_sweeps() -> bool {
+    static HOST: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_HOST_SWEEPS").is_some());
+    *HOST
+}
+
 /// Whether a recursive group runs as sweeps: its passes are programs (or empty), whose results only
 /// add to their labels, or complements as well, where its programs mark their roots (a node's
 /// verdicts are then all its own, computed at it in a reverse sweep).
 fn sweeps(levels: &[Vec<Pass<'_>>]) -> bool {
+    if !host_sweeps() {
+        return false;
+    }
     let passes = || levels.iter().flatten();
     passes().all(|pass| matches!(pass, Pass::Program { .. } | Pass::Empty { .. } | Pass::Complement { .. }))
         && passes().any(|pass| matches!(pass, Pass::Program { .. }))
@@ -343,6 +354,40 @@ fn label_rows(plan: &Plan<'_>, micro: bool) -> Option<(Vec<u32>, Vec<u32>)> {
 /// Each of a level's passes' count row: its index among the level's counts. A level's settle
 /// consumes and clears its counts, so `counts` is the level with the most counts' (O30: a row
 /// per count of the plan was 24 MB on S7).
+/// How a pass's target settles (`label_settle`'s `Op`): `None` for a pattern's, whose level
+/// matches its pattern first. `place`: a label's row in the prefix.
+fn settle(pass: &Pass<'_>, row: u32, tally: u32, place: impl Fn(&u32) -> u32) -> Option<Op> {
+    Some(match pass {
+                Pass::Program { target, .. } | Pass::Empty { target } => Op {
+                    target: place(target),
+                    row,
+                    ..Op::default()
+                },
+                Pass::Count {
+                    target,
+                    min,
+                    max,
+                    ..
+                } => Op {
+                    kind: 2,
+                    target: place(target),
+                    slot: tally,
+                    minimum: *min,
+                    maximum: *max,
+                    of: 0,
+                    row,
+                },
+                Pass::Complement { target, of } => Op {
+                    kind: 1,
+                    target: place(target),
+                    of: place(of),
+                    row,
+                    ..Op::default()
+                },
+        Pass::Pattern { .. } => return None,
+    })
+}
+
 fn count_rows(passes: &[Pass<'_>]) -> Vec<u32> {
     passes
         .iter()
@@ -371,7 +416,21 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 }
 
 const SOURCE: &str = include_str!("metal_label_passes.metal");
-const KERNELS: [&str; 7] = ["label_sink", "label_settle", "label_round", "label_micro", "label_micro_8", "label_micro_32", "label_micro_deep"];
+const KERNELS: [&str; 9] = [
+    "label_sink",
+    "label_settle",
+    "label_round",
+    "label_micro",
+    "label_micro_8",
+    "label_micro_32",
+    "label_micro_deep",
+    "label_group_8",
+    "label_group_32",
+];
+/// The fused group kernels in `KERNELS` (`Runner::group`): 8 and 32 frames a walk.
+const GROUP_KERNELS: [usize; 2] = [7, 8];
+/// A group dispatch's threads per file.
+const GROUP_WIDTH: u64 = 64;
 
 /// A walk's stack tier (`label_micro_8`, `label_micro_32`, `label_micro`): the fewest frames its
 /// static depth (`Micro::depth`) fits, 128 where it loops.
@@ -500,6 +559,9 @@ struct Walks {
     words: MappedBuffer,
     items: MappedBuffer,
     steps: u32,
+    /// Every walk's record and static depth, for a recursive group fused into one dispatch
+    /// (`Runner::group`).
+    fused: Vec<([u32; 8], Option<usize>)>,
 }
 
 /// A workspace lease with what it was sized for.
@@ -822,6 +884,10 @@ fn encode(
             for round in 0..rounds {
                 runner.sweep(levels.as_ptr() as usize, group, round, reverse)?;
             }
+            continue;
+        }
+        // A group of micro walks: its rounds to the fixpoint in one dispatch, a file a threadgroup.
+        if runner.group(levels)? {
             continue;
         }
         // Rounds as the CPU's, on the GPU: every member once per round; once a round changes
@@ -1162,6 +1228,7 @@ impl Runner<'_> {
                 let mut ranges = HashMap::<usize, (u32, u32)>::new();
                 // Threads: a pass's from its own start, over its (shared) item range.
                 let mut threads = [0_u32; 3];
+                let mut fused = Vec::new();
                 passes.retain(|&(program, roots, mode, target)| {
                     let Some(walk) = Micro::of(program) else { return true };
                     if crate::code_rule_dsl::prof::on() {
@@ -1217,6 +1284,7 @@ impl Runner<'_> {
                         (start, items.len() as u32 - start)
                     });
                     let tier = tier(walk.depth());
+                    fused.push(([words.len() as u32, walk.words.len() as u32, target, mode, start, count, text_start, 0], walk.depth()));
                     records[tier].push([words.len() as u32, walk.words.len() as u32, target, mode, start, count, text_start, threads[tier]]);
                     threads[tier] += count;
                     longest = longest.max(walk.words.len());
@@ -1250,6 +1318,7 @@ impl Runner<'_> {
                         texts: MappedBuffer::from_slice(self.device, &texts)?,
                         steps: super::super::micro_steps(largest, longest),
                         tiers,
+                        fused,
                         words: MappedBuffer::from_slice(self.device, &words)?,
                         items: MappedBuffer::from_slice(self.device, &items)?,
                     };
@@ -1392,32 +1461,9 @@ impl Runner<'_> {
             let tally = tallies[row];
             let row = row as u32;
             settles.push(match pass {
-                Pass::Program { target, .. } | Pass::Empty { target } => Op {
-                    target: place(target),
-                    row,
-                    ..Op::default()
-                },
-                Pass::Count {
-                    target,
-                    min,
-                    max,
-                    ..
-                } => Op {
-                    kind: 2,
-                    target: place(target),
-                    slot: tally,
-                    minimum: *min,
-                    maximum: *max,
-                    of: 0,
-                    row,
-                },
-                Pass::Complement { target, of } => Op {
-                    kind: 1,
-                    target: place(target),
-                    of: place(of),
-                    row,
-                    ..Op::default()
-                },
+                pass @ (Pass::Program { .. } | Pass::Empty { .. } | Pass::Count { .. } | Pass::Complement { .. }) => {
+                    settle(pass, row, tally, place).expect("a settle")
+                }
                 Pass::Pattern {
                     target,
                     pattern,
@@ -1603,6 +1649,108 @@ impl Runner<'_> {
         self.encoded = true;
         self.outcome.dispatches += 1;
         Ok(())
+    }
+
+    /// A recursive group's rounds to its fixpoint as one dispatch (`label_group_*`, decision 0024
+    /// §3), where every pass is a micro walk of at most 32 frames, a complement, a count or empty:
+    /// each level's walks, words, starts and text rows concatenated, its settles after them.
+    /// `false` where the group is not such (it runs as rounds of levels).
+    fn group(&mut self, levels: &[Vec<Pass<'_>>]) -> Result<bool, Error> {
+        let unfused = |why: &str| {
+            crate::code_rule_dsl::prof::count_named(format!("gpu.unfused.{why}"), 1);
+            Ok(false)
+        };
+        if !self.micro {
+            return unfused("interpreted");
+        }
+        let place = |rows: &Option<Vec<u32>>, label: &u32| rows.as_ref().map_or(*label, |rows| rows[*label as usize]);
+        let (mut records, mut words, mut items, mut texts) = (Vec::<[u32; 8]>::new(), Vec::<u32>::new(), Vec::<u32>::new(), Vec::<u32>::new());
+        let (mut shape_levels, mut ops, mut steps, mut deepest) = (Vec::<[u32; 4]>::new(), Vec::<Op>::new(), 0_u32, 0_usize);
+        let read = |buffer: &MappedBuffer| unsafe {
+            std::slice::from_raw_parts(buffer.buffer.contents().cast::<u32>(), buffer.buffer.length() as usize / 4).to_vec()
+        };
+        for level in levels {
+            let key = level.as_ptr() as usize;
+            if self.prepared.get(&key).is_some_and(Option::is_some) {
+                return unfused("tasks");
+            }
+            if level.iter().any(|pass| matches!(pass, Pass::Pattern { .. })) {
+                return unfused("patterns");
+            }
+            let walked = programs_of(level, true).len();
+            let walks = self.walks.get(&key);
+            if walks.map_or(0, |walks| walks.fused.len()) != walked {
+                return unfused("unwalked");
+            }
+            let (pass_start, op_start) = (records.len() as u32, ops.len() as u32);
+            if let Some(walks) = walks {
+                if walks.fused.iter().any(|(_, depth)| depth.is_none_or(|depth| depth > 32)) {
+                    return unfused("deep");
+                }
+                deepest = deepest.max(walks.fused.iter().filter_map(|(_, depth)| *depth).max().unwrap_or(0));
+                steps = steps.max(walks.steps);
+                let (word_at, item_at) = (words.len() as u32, items.len() as u32);
+                let text_at = (texts.len() / self.words) as u32;
+                records.extend(walks.fused.iter().map(|(record, _)| {
+                    let mut record = *record;
+                    record[0] += word_at;
+                    record[4] += item_at;
+                    record[6] += text_at;
+                    record
+                }));
+                words.extend(read(&walks.words));
+                items.extend(read(&walks.items));
+                // Whole text rows only: a level without any holds one placeholder word.
+                let own = read(&walks.texts);
+                texts.extend_from_slice(&own[..own.len() / self.words * self.words]);
+            }
+            let tallies = count_rows(level);
+            let rows = self.label_rows.clone();
+            ops.extend(
+                level
+                    .iter()
+                    .enumerate()
+                    .map(|(row, pass)| settle(pass, row as u32, tallies[row], |label| place(&rows, label)).expect("no pattern")),
+            );
+            shape_levels.push([pass_start, records.len() as u32 - pass_start, op_start, ops.len() as u32 - op_start]);
+        }
+        crate::code_rule_dsl::prof::count("gpu.fused_groups", 1);
+        let (passes, words, items) = (self.upload(&records)?, self.upload(&words)?, self.upload(&items)?);
+        let texts = if texts.is_empty() { self.upload(&[0_u32])? } else { self.upload(&texts)? };
+        let (group_levels, ops) = (self.upload(&shape_levels)?, self.upload(&ops)?);
+        let shape = Shape { target_count: shape_levels.len() as u32, steps, ..self.shape() };
+        let tapes = &self.tapes;
+        let buffers = [
+            tapes.nodes.buffer.clone(),
+            tapes.children.buffer.clone(),
+            tapes.supertypes.buffer.clone(),
+            tapes.files.buffer.clone(),
+            passes,
+            words,
+            items,
+            self.scratch.buffer.clone(),
+            self.flags.buffer.clone(),
+            texts,
+            self.counts.buffer.clone(),
+            group_levels,
+            ops,
+        ];
+        let pipeline = GROUP_KERNELS[usize::from(deepest > 8)];
+        let state = self.kernels[pipeline].clone();
+        let encoder = self.command.new_compute_command_encoder();
+        encoder.set_label(KERNELS[pipeline]);
+        crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[pipeline]), 1);
+        encoder.set_compute_pipeline_state(&state);
+        for (index, buffer) in buffers.iter().enumerate() {
+            encoder.set_buffer(index as u64, Some(buffer), 0);
+        }
+        encoder.set_bytes(buffers.len() as u64, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+        encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, 1, 1), MTLSize::new(GROUP_WIDTH, 1, 1));
+        encoder.end_encoding();
+        self.encoded = true;
+        self.outcome.dispatches += 1;
+        self.split(KERNELS[pipeline]);
+        Ok(true)
     }
 
     /// The level's micro walks (`label_micro`), one thread per (pass, start), marking scratch as
