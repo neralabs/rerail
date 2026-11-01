@@ -1,6 +1,6 @@
 # 0024: a wave's execution shape: one node space, sets as bitmaps, every walk on the device
 
-Status: proposed (2026-11-01)
+Status: accepted (2026-11-01); built through step 6 except the writer thread (Progress)
 
 ## Context
 
@@ -286,9 +286,32 @@ reads from one S7 run under load, not measurements.
    - With `RERAIL_ROOTS_CHECK`, every (file, program) on S7 equals the JIT's record set.
    - `demand.roots` fell from about 0.9–1.2 s to about 40 ms.
 
-**Next:**
-- **Step 4 on Metal.** The roots join the labels' command buffer. This means the labels wait for
-  the candidates (now ~150 ms) instead of running beside them (0023). The labels then stay on
-  the device for the roots, and `labels.to_sets` and the views are not needed for them.
-- **Step 5.** Rows are integers (`demand.rows`, ~260 ms of strings).
-- **Step 6.** The working-set overlay.
+5. **Roots on Metal** (72f14baa1):
+   - A Metal wave takes its candidates first. It then runs labels and roots in one run:
+     `root_records_8/_32` walk every (program, file, task, start) after the passes, reading the
+     labels in place.
+   - Each walk counts its paths, reserves its slots with one atomic per item, and writes 20-word
+     integer records.
+   - With `RERAIL_ROOTS_CHECK`, S7's records equal the backend's. 5,023 of 5,028 were walked on
+     the device; programs that cannot run there fall back to the host walk.
+6. **Integer rows** (14fc7f8f6):
+   - A root capture row holds ids, node and span. Its label, source text and structure key are
+     derived when SQL reads them (`Derive`, structure keys cached per node).
+   - `demand.rows` fell from ~260 ms to ~3 ms.
+   - The layer still reads every column (`SELECT batch, *` in the typed boundary). Narrowing
+     those projections is where reading on demand will pay off.
+7. **Working set** (d574c5357):
+   - The store holds decoded tapes by digest and each tape's kind image, written through at push
+     and read as overlay ∪ SQLite. On S7 every tape and kind image hit (`demand.tapes` 43 ms →
+     0.3 ms).
+   - The 32-frame device walks keep their stacks in device memory: in thread memory they cost
+     ~140 MB of footprint. Metal now ends the audit at 440–489 MB.
+   - **Not done: write-back on a writer thread.** Push writes inside the push's own transaction
+     on the store's one connection. A second connection writing behind it would contend for
+     SQLite's single writer. Moving the push's writes there means splitting that transaction,
+     and keeping derivation records from claiming rows not yet written.
+
+**Open:**
+- Metal's `select.sets` read 979 ms once (146 ms in other runs).
+- One Metal run's wall time was 3.9 s (2.4 s in another) under load 30–40.
+- Neither has been measured yet; both are for measurement now that the shape is in place.
