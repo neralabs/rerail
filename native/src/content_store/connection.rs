@@ -320,6 +320,9 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.pragma_update(None, "cache_size", -1_024_i64)?;
     connection.pragma_update(None, "mmap_size", 0_i64)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
+    // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay
+    // in memory, not in temp files read back through the 1 MB cache (decision 0024 §6).
+    connection.pragma_update(None, "temp_store", "MEMORY")?;
     super::postings::install(connection)?;
     super::vocabulary::install(connection)?;
     Ok(())

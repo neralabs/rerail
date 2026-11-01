@@ -114,15 +114,27 @@ impl ContentStore {
         writes: bool,
         mut operation: impl FnMut(&rusqlite::Connection) -> rusqlite::Result<T>,
     ) -> StoreResult<T> {
-        if writes {
-            self.require_write_capacity()?;
-            return self.immediate_transaction(|transaction| Ok(operation(transaction)?));
-        }
-        let mut connection = self.connection.lock().expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)?;
-        let value = operation(&transaction)?;
-        transaction.commit()?;
-        Ok(value)
+        // The candidate statement's page cache, for its span only: the store's connections keep
+        // 1 MB each (`configure_connection`; decision 0024 §6).
+        const CANDIDATE_CACHE_KB: i64 = 32 * 1024;
+        let cache = |kb: i64| -> StoreResult<()> {
+            self.connection.lock().expect("content store mutex poisoned").pragma_update(None, "cache_size", -kb)?;
+            Ok(())
+        };
+        cache(CANDIDATE_CACHE_KB)?;
+        let value = (|| {
+            if writes {
+                self.require_write_capacity()?;
+                return self.immediate_transaction(|transaction| Ok(operation(transaction)?));
+            }
+            let mut connection = self.connection.lock().expect("content store mutex poisoned");
+            let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)?;
+            let value = operation(&transaction)?;
+            transaction.commit()?;
+            Ok(value)
+        })();
+        cache(1_024)?;
+        value
     }
 
     /// Copies the prefilter rows of `tapes`, the store-wide counts and the regex vocabulary into a
