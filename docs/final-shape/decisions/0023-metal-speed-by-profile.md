@@ -119,6 +119,14 @@ steps 1–5, at lower load). It is bounded by the shared
 stages: candidates ~1.0 s, execute ~1.05 s (2.2 s CPU), push ~0.55 s, layer ~0.22 s. Together
 they are ~2.8 s wall and ~4.1 s CPU. These stages are CPU work in both backends.
 
+**The bound.** On Metal the labels run beside the candidate SQL and finish first, so Metal's wall
+time is already the shared stages' (candidates ~1.0 s, roots ~0.9 s, push ~0.3 s, layer ~0.2 s).
+With labels free, the wall ratio could not pass ~15 s / ~2.4 s ≈ 6×; with labels at zero CPU,
+the CPU ratio could not pass ~16 s / ~3.5 s ≈ 4.5×. A higher ratio needs the shared stages
+themselves cheaper: the candidate SQL's lowering, or the roots on another engine (0017). A
+timestamp-precise sweep skip (rerun an entry only where a label it read changed since) did not
+help: the second sweeps already skip, and the cost is each entry's first visit.
+
 **Correctness and footprint:** 710 keys equal W's on both backends, both mutations fail, and the
 peak footprint is 461–495 MB (`phys_footprint_peak`). The peak is set during a labels GPU run
 that overlaps the candidate SQL, so it varies with their timing.
