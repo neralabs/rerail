@@ -136,6 +136,9 @@ struct Reuse {
     terms: HashMap<(String, bool), String>,
     decoded: HashMap<(String, usize), String>,
     kinds: HashMap<String, BTreeSet<u16>>,
+    /// Each `EXCEPT` set's (left, right): a later narrowing to tapes narrows its left side
+    /// before the difference (`within_tapes`).
+    differences: HashMap<String, (String, String)>,
 }
 
 impl Lower {
@@ -307,6 +310,9 @@ impl Lower {
             ),
             exact,
         )?;
+        if operator == "EXCEPT" {
+            self.reuse.differences.insert(selected.name.clone(), (left.name.clone(), right.name.clone()));
+        }
         if let Some(factors) = factors {
             let within = self
                 .containing(&left.name)
@@ -625,14 +631,16 @@ impl Lower {
                 ..scope
             });
         }
-        let selected = self.relation(
-            format!(
-                "SELECT s.fid,s.pre FROM {} s WHERE {}",
-                scope.name,
+        // (L \ R) within tapes is (L within them) \ R: a complement of every node is not built
+        // whole only to keep a few tapes' (06 S7: `all_nodes EXCEPT …`, 370 K rows, ~220 ms).
+        let body = match self.reuse.differences.get(&scope.name) {
+            Some((left, right)) => format!(
+                "SELECT s.fid,s.pre FROM {left} s WHERE {} EXCEPT SELECT fid,pre FROM {right}",
                 tests.join(" AND ")
             ),
-            false,
-        )?;
+            None => format!("SELECT s.fid,s.pre FROM {} s WHERE {}", scope.name, tests.join(" AND ")),
+        };
+        let selected = self.relation(body, false)?;
         Ok(self.narrowed(selected, &scope))
     }
 
