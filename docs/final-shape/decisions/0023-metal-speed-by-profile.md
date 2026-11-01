@@ -231,3 +231,29 @@ For Metal to be much faster, roots, rows or candidates have to run on the GPU. R
 were measured four ways in this decision; the best took 1.03 s, against 0.6 s on the CPU JIT. The
 next shape to try is candidate sets as per-tape bitmaps with GPU set algebra, which would also
 remove the row-per-node SQL.
+
+### Parallelism per stage, and the roots' shape (2026-11-01, load 23)
+
+Process CPU over wall per stage:
+
+| Stage | Metal | CPU backend |
+|---|---|---|
+| labels | ×4.8 (3.7 s CPU) | ×2.3 (3.8 s CPU) |
+| roots | ×2.4 | ×2.3 |
+| rows | ×0.9 | ×0.9 |
+| layer | ×1.0 | ×1.0 |
+| push | ×2.3 | ×1.3 |
+| candidates | — | ×1.0 (one connection) |
+
+- **Metal's labels still spend as much CPU as the CPU backend's.** The GPU does ~0.2 s of them; the
+  recursive sweeps and text rows stay on the CPU (O26).
+- **Candidates cannot close the gap on their own.** With free candidates, Metal would be push +
+  labels + execute + layer ≈ 2.3 s against the CPU's ≈ 3.3 s, which is 1.4×.
+- **Every S7 root program is a micro walk** (173 of 173, 1.9 M starts). The GPU-roots attempts above
+  ran the interpreter's general machinery; the regular shape for them is the label kernel's walk.
+  - At the labels' rate (82 M starts in ~1 s of CPU), the roots' 1.9 M starts would be tens of ms.
+  - What it needs: the walk emits each path's start, output label and labelled captures, and the
+    rows stage reads those in place of `PackedExecution::program_results`, with the same ordinals,
+    result limits and statuses.
+  - That change speeds up the CPU backend by as much as Metal. Metal's lead comes only from what
+    the GPU runs faster than the CPU's cores.
