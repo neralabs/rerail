@@ -94,6 +94,71 @@ struct MaterializedDemand {
     rows: Arc<Vec<PackedRow>>,
     producer_kinds: Arc<Vec<ProducerKind>>,
     counters: PackedExecutionCounters,
+    /// What a derived row's text columns are read from (`PackedRow::derived`).
+    derive: Option<Arc<Derive>>,
+}
+
+/// A batch's files and programs, from which a root capture row's label, source text and
+/// structure key are derived when SQL reads them (decision 0024 §4): the rows hold integers.
+struct Derive {
+    files: Vec<TapeDoc>,
+    programs: Vec<Program>,
+    /// Structure keys by (file, node), each computed at its first read.
+    keys: Mutex<HashMap<(usize, u32), Arc<str>>>,
+}
+
+impl Derive {
+    fn label(&self, row: &PackedRow, label: u16) -> Option<&str> {
+        self.programs.get(usize::try_from(row.producer_id?).ok()?)?.label_name(label)
+    }
+
+    fn text(&self, row: &PackedRow) -> Option<String> {
+        let tape = self.files.get(usize::try_from(row.file_index?).ok()?)?;
+        let (start, end) = (usize::try_from(row.start_byte?).ok()?, usize::try_from(row.end_byte?).ok()?);
+        tape.transducer_source().get(start..end).map(|text| String::from_utf8_lossy(text).into_owned())
+    }
+
+    fn key(&self, row: &PackedRow) -> Option<Arc<str>> {
+        let file = usize::try_from(row.file_index?).ok()?;
+        let node = u32::try_from(row.node?).ok()?;
+        let tape = self.files.get(file)?;
+        if let Some(key) = self.keys.lock().ok()?.get(&(file, node)) {
+            return Some(Arc::clone(key));
+        }
+        let key: Arc<str> = terminal_structure_key(tape, node).into();
+        self.keys.lock().ok()?.insert((file, node), Arc::clone(&key));
+        Some(key)
+    }
+}
+
+/// A terminal capture's structure key: its syntax key's digest and its plain semantic key's.
+fn terminal_structure_key(tape: &TapeDoc, node: u32) -> String {
+    let structure_document = AstGrep::doc(tape.clone());
+    let root = structure_document.root();
+    let semantic = (|| {
+        let node = structure_document.adopt(root.get_doc().node(node));
+        let mut remaining = root.get_doc().transducer_len().saturating_add(1);
+        let mut spend = || {
+            let available = remaining > 0;
+            remaining = remaining.saturating_sub(1);
+            available
+        };
+        let mut context = ValueContext::new(&mut spend);
+        let family = Family::of(*root.get_doc().get_lang());
+        if family == Family::Ecma {
+            return None;
+        }
+        let tokens = with_adapter!(
+            family,
+            A => <<A as Adapter>::Value as ValueRules>::structure(&node, Equality::Plain, &mut context)
+        );
+        (!context.exhausted()).then_some(tokens).flatten().map(|tokens| structure_digest(&format!("{tokens:?}")))
+    })();
+    serde_json::json!({
+        "syntax": structure_digest(&tape.transducer_structural_key(node)),
+        "semanticPlain": semantic,
+    })
+    .to_string()
 }
 
 pub(in crate::code_rule_dsl) struct PackedDemand {
@@ -1050,11 +1115,9 @@ impl PackedDemand {
                                     .filter(|candidate| candidate.label == label)
                                     .count();
                                 let span = capture.span.clone();
-                                let source_text = self.files[file]
-                                    .transducer_source()
-                                    .get(span.clone())
-                                    .map(|text| String::from_utf8_lossy(text).into_owned());
-                                rows.push(PackedRow::capture(CaptureData {
+                                // Integers: the label, text and structure key are derived when
+                                // read (`Derive`); a transformed text is held.
+                                let mut row = PackedRow::capture(CaptureData {
                                     batch: token,
                                     file,
                                     producer: program,
@@ -1064,52 +1127,13 @@ impl PackedDemand {
                                     sequence_start,
                                     sequence_count,
                                     node: capture.node,
-                                    capture_label: self.programs[program]
-                                        .label_name(label)
-                                        .map(str::to_owned),
+                                    capture_label: None,
                                     text_value: capture
                                         .text
                                         .as_deref()
                                         .map(|text| String::from_utf8_lossy(text).into_owned()),
-                                    source_text,
-                                    structural_key: {
-                                        let node = capture.node;
-                                        let semantic =
-                                        structure_keys.entry((file, node)).or_insert_with(|| {
-                                            let root = structure_document.root();
-                                            let node =
-                                                structure_document.adopt(root.get_doc().node(node));
-                                            let mut remaining =
-                                                root.get_doc().transducer_len().saturating_add(1);
-                                            let mut spend = || {
-                                                let available = remaining > 0;
-                                                remaining = remaining.saturating_sub(1);
-                                                available
-                                            };
-                                            let mut context = ValueContext::new(&mut spend);
-                                            let family = Family::of(*root.get_doc().get_lang());
-                                            if family == Family::Ecma {
-                                                return None;
-                                            }
-                                            let tokens = with_adapter!(
-                                                family,
-                                                A => <<A as Adapter>::Value as ValueRules>::structure(
-                                                    &node,
-                                                    Equality::Plain,
-                                                    &mut context,
-                                                )
-                                            );
-                                            (!context.exhausted())
-                                                .then_some(tokens)
-                                                .flatten()
-                                                .map(|tokens| structure_digest(&format!("{tokens:?}")))
-                                        });
-                                        serde_json::json!({
-                                            "syntax": structure_digest(&self.files[file].transducer_structural_key(node)),
-                                            "semanticPlain": semantic,
-                                        })
-                                        .to_string()
-                                    },
+                                    source_text: None,
+                                    structural_key: String::new(),
                                     named_leaf: self.files[file]
                                         .transducer_is_named_leaf(capture.node),
                                     capture_kind: 1,
@@ -1119,7 +1143,10 @@ impl PackedDemand {
                                     equality_occurrence: 0,
                                     start_byte: span.start,
                                     end_byte: span.end,
-                                }));
+                                });
+                                row.structural_key = None;
+                                row.derived = Some(label);
+                                rows.push(row);
                             }
                         }
                     }
@@ -1165,6 +1192,7 @@ impl PackedDemand {
                 rows: Arc::new(rows),
                 producer_kinds: Arc::new(self.producer_kinds.clone()),
                 counters,
+                derive: None,
             };
         }
         counters.command_buffers = usize::from(metal) * executed;
@@ -1199,10 +1227,12 @@ impl PackedDemand {
         );
         rows.insert(0, PackedRow::batch_status(token, true, None));
         drop(_documents);
+        let producer_kinds = Arc::new(self.producer_kinds.clone());
         MaterializedDemand {
             rows: Arc::new(rows),
-            producer_kinds: Arc::new(self.producer_kinds.clone()),
+            producer_kinds,
             counters,
+            derive: Some(Arc::new(Derive { files: self.files, programs: self.programs, keys: Mutex::default() })),
         }
     }
 }
@@ -1316,6 +1346,9 @@ pub(in crate::code_rule_dsl) struct PackedRow {
     capture_kind: Option<i64>,
     capture_named: Option<i64>,
     equality_occurrence: Option<i64>,
+    /// A root capture's label id, where its label, source text and structure key are derived
+    /// on read (`Derive`), not held.
+    derived: Option<u16>,
 }
 
 impl PackedRow {
@@ -1357,6 +1390,7 @@ impl PackedRow {
             capture_kind: None,
             capture_named: None,
             equality_occurrence: None,
+            derived: None,
         }
     }
 
@@ -1512,6 +1546,7 @@ impl PackedRow {
             capture_kind: row.get(32)?,
             capture_named: row.get(33)?,
             equality_occurrence: row.get(34)?,
+            derived: None,
         })
     }
 }
@@ -1527,6 +1562,7 @@ fn execute_without_unwind(
             Some("packed producer panicked".to_owned()),
         )]),
         producer_kinds: Arc::new(Vec::new()),
+        derive: None,
         counters: PackedExecutionCounters {
             registrations: 1,
             backend_invocations: 1,
@@ -1559,6 +1595,10 @@ impl MatchBatch {
 
     fn rows(&self) -> Arc<Vec<PackedRow>> {
         Arc::clone(&self.materialized().rows)
+    }
+
+    fn derive(&self) -> Option<Arc<Derive>> {
+        self.materialized().derive.clone()
     }
 }
 
@@ -1925,6 +1965,7 @@ unsafe impl<'vtab> VTab<'vtab> for MatchTable {
             base: ffi::sqlite3_vtab_cursor::default(),
             module: Arc::clone(&self.module),
             rows: Arc::new(Vec::new()),
+            derive: None,
             position: 0,
             producers: None,
             file: None,
@@ -1940,6 +1981,7 @@ struct MatchCursor<'vtab> {
     base: ffi::sqlite3_vtab_cursor,
     module: Arc<RelationModule>,
     rows: Arc<Vec<PackedRow>>,
+    derive: Option<Arc<Derive>>,
     position: usize,
     producers: Option<BTreeSet<i64>>,
     file: Option<i64>,
@@ -2021,6 +2063,7 @@ unsafe impl VTabCursor for MatchCursor<'_> {
         })?;
         batch.filters.fetch_add(1, Ordering::Relaxed);
         self.rows = batch.rows();
+        self.derive = batch.derive();
         self.position = 0;
         self.seek_relation_row();
         Ok(())
@@ -2068,7 +2111,10 @@ unsafe impl VTabCursor for MatchCursor<'_> {
             16 => context.set_result(&row.mapped_document_id),
             17 => context.set_result(&row.start_ordinal),
             18 => context.set_result(&row.output_label.as_deref()),
-            19 => context.set_result(&row.capture_label.as_deref()),
+            19 => match (row.derived, &self.derive) {
+                (Some(label), Some(derive)) => context.set_result(&derive.label(row, label)),
+                _ => context.set_result(&row.capture_label.as_deref()),
+            },
             20 => context.set_result(&row.text_value.as_deref()),
             21 => context.set_result(&row.start_byte),
             22 => context.set_result(&row.end_byte),
@@ -2078,8 +2124,14 @@ unsafe impl VTabCursor for MatchCursor<'_> {
             26 => context.set_result(&row.error_code.as_deref()),
             27 => context.set_result(&row.field_id),
             28 => context.set_result(&row.related_named),
-            29 => context.set_result(&row.source_text.as_deref()),
-            30 => context.set_result(&row.structural_key.as_deref()),
+            29 => match (row.derived, &self.derive) {
+                (Some(_), Some(derive)) => context.set_result(&derive.text(row)),
+                _ => context.set_result(&row.source_text.as_deref()),
+            },
+            30 => match (row.derived, &self.derive) {
+                (Some(_), Some(derive)) => context.set_result(&derive.key(row).as_deref()),
+                _ => context.set_result(&row.structural_key.as_deref()),
+            },
             31 => context.set_result(&row.named_leaf),
             32 => context.set_result(&row.capture_kind),
             33 => context.set_result(&row.capture_named),
