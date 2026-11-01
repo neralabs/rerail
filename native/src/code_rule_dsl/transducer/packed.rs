@@ -94,7 +94,7 @@ pub(in crate::code_rule_dsl) use compile_matcher::{LoweredMatcher, LoweredWave};
 // A label program's walk without the interpreter's machinery (O28).
 #[path = "packed/compile/micro.rs"]
 mod compile_micro;
-pub(in crate::code_rule_dsl) use compile_micro::{Emit, Frames, Micro, steps as micro_steps};
+pub(in crate::code_rule_dsl) use compile_micro::{Emit, Frames, Micro, RootRecord, steps as micro_steps};
 #[cfg(test)]
 #[path = "packed/compile/matcher_tests.rs"]
 mod compile_matcher_tests;

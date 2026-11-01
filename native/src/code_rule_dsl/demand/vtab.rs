@@ -111,6 +111,93 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     failure_injections: HashMap<usize, String>,
 }
 
+/// A range's roots: the backend's execution, or the micro walks' records (decision 0024 §3).
+enum RootsExecution {
+    Packed(crate::code_rule_dsl::transducer::packed::PackedExecution),
+    /// Per local file, per local program: its matches, or the walk's overflow.
+    Walked { files: usize, programs: usize, matches: Vec<Vec<Vec<RootMatch>>> },
+}
+
+/// A root program's match as the rows read it.
+#[derive(Debug, PartialEq, Eq)]
+struct RootMatch {
+    task_ordinal: u32,
+    local_ordinal: u32,
+    start: u32,
+    label: u16,
+    captures: Vec<RootCapture>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RootCapture {
+    label: u16,
+    node: u32,
+    span: Range<usize>,
+    text: Option<Vec<u8>>,
+}
+
+impl RootsExecution {
+    fn file_count(&self) -> usize {
+        match self {
+            Self::Packed(execution) => execution.file_count(),
+            Self::Walked { files, .. } => *files,
+        }
+    }
+
+    fn program_count(&self) -> usize {
+        match self {
+            Self::Packed(execution) => execution.program_count(),
+            Self::Walked { programs, .. } => *programs,
+        }
+    }
+
+    fn results(&self, file: usize, program: usize) -> Result<(Vec<RootMatch>, Option<PackedError>), PackedError> {
+        match self {
+            Self::Packed(execution) => execution.program_results(file, program).map(|(results, error)| {
+                let results = results
+                    .into_iter()
+                    .map(|result| RootMatch {
+                        task_ordinal: result.task_ordinal(),
+                        local_ordinal: result.local_ordinal(),
+                        start: result.start_node(),
+                        label: result.label(),
+                        captures: result
+                            .captures()
+                            .map(|capture| RootCapture {
+                                label: capture.label(),
+                                node: capture.node(),
+                                span: capture.span(),
+                                text: capture.transformed_text().map(<[u8]>::to_vec),
+                            })
+                            .collect(),
+                    })
+                    .collect();
+                (results, error)
+            }),
+            Self::Walked { matches, .. } => {
+                let found = matches.get(file).and_then(|file| file.get(program)).ok_or(PackedError::InvalidAnchor)?;
+                Ok((
+                    found
+                        .iter()
+                        .map(|found| RootMatch {
+                            task_ordinal: found.task_ordinal,
+                            local_ordinal: found.local_ordinal,
+                            start: found.start,
+                            label: found.label,
+                            captures: found
+                                .captures
+                                .iter()
+                                .map(|capture| RootCapture { label: capture.label, node: capture.node, span: capture.span.clone(), text: None })
+                                .collect(),
+                        })
+                        .collect(),
+                    None,
+                ))
+            }
+        }
+    }
+}
+
 /// The workspace bytes one execution's files may take together (`execution_partitions`).
 const RANGE_BYTES: u64 = 64 << 20;
 
@@ -245,6 +332,107 @@ impl PackedDemand {
         }
         self.document_maps = document_maps;
         Ok(self)
+    }
+
+    /// The roots of `range` x `programs` as micro walks' records, each terminal program's walk
+    /// from each of its anchors in order (a task an anchor, its matches the walk's paths that
+    /// emit): `None` where a terminal program is not a micro walk or a walk overflows.
+    fn walked(&self, range: Range<usize>, programs: Range<usize>) -> Option<RootsExecution> {
+        use super::super::transducer::packed::{Frames, Micro};
+        use rayon::prelude::*;
+        let walks = programs
+            .clone()
+            .map(|program| match self.producer_kinds[program] {
+                ProducerKind::Terminal => Micro::of(&self.programs[program]).map(Some),
+                _ => Some(None),
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let matches = range
+            .clone()
+            .into_par_iter()
+            .map(|file| {
+                let tape = &self.files[file];
+                let mut frames = Frames::default();
+                let mut records = Vec::new();
+                programs
+                    .clone()
+                    .zip(&walks)
+                    .map(|(program, walk)| {
+                        let mut found = Vec::new();
+                        let (Some(walk), true) = (walk, self.task_grid[file][program]) else { return Some(found) };
+                        let anchors = &self.anchors[file][program];
+                        if anchors.is_empty() {
+                            return Some(found);
+                        }
+                        let texts = walk.texts(&self.programs[program], tape)?;
+                        let limit = self.result_limits[program] as usize;
+                        for (task, &start) in anchors.iter().enumerate() {
+                            records.clear();
+                            walk.records(tape, &texts, start, &mut frames, &mut records).ok()?;
+                            for (local, record) in records.iter().enumerate() {
+                                if found.len() >= limit {
+                                    break;
+                                }
+                                found.push(RootMatch {
+                                    task_ordinal: task as u32,
+                                    local_ordinal: local as u32,
+                                    start: record.start,
+                                    label: record.label,
+                                    captures: record
+                                        .captures()
+                                        .iter()
+                                        .map(|&(label, node)| RootCapture { label, node, span: tape.transducer_span(node), text: None })
+                                        .collect(),
+                                });
+                            }
+                        }
+                        Some(found)
+                    })
+                    .collect::<Option<Vec<_>>>()
+            })
+            .collect::<Option<Vec<_>>>()?;
+        crate::code_rule_dsl::prof::count("demand.walked", matches.iter().flatten().map(Vec::len).sum());
+        Some(RootsExecution::Walked { files: range.len(), programs: programs.len(), matches })
+    }
+
+    /// `RERAIL_ROOTS_CHECK`: the walked roots against the backend's, as sets of (start, output
+    /// label, captures) per file and program; differences printed.
+    fn check_walked(&self, walked: &RootsExecution, packed: &RootsExecution, range: Range<usize>, programs: Range<usize>) {
+        type Key = (u32, u16, Vec<(u16, u32)>);
+        let keys = |execution: &RootsExecution, file: usize, program: usize| -> Option<std::collections::BTreeSet<Key>> {
+            let (results, error) = execution.results(file, program).ok()?;
+            if error.is_some() {
+                return None;
+            }
+            Some(results.into_iter().map(|found| (found.start, found.label, found.captures.iter().map(|c| (c.label, c.node)).collect())).collect())
+        };
+        let (mut same, mut differ) = (0, 0);
+        for file in 0..range.len() {
+            for program in 0..programs.len() {
+                if self.producer_kinds[programs.start + program] != ProducerKind::Terminal {
+                    continue;
+                }
+                let (a, b) = (keys(walked, file, program), keys(packed, file, program));
+                if a == b {
+                    same += 1;
+                } else {
+                    differ += 1;
+                    if differ <= 5 {
+                        let (a, b) = (a.unwrap_or_default(), b.unwrap_or_default());
+                        eprintln!(
+                            "ROOTS differ: file {} program {}: walked {} packed {}; only walked {:?}; only packed {:?}",
+                            range.start + file,
+                            programs.start + program,
+                            a.len(),
+                            b.len(),
+                            a.difference(&b).take(3).collect::<Vec<_>>(),
+                            b.difference(&a).take(3).collect::<Vec<_>>()
+                        );
+                    }
+                }
+            }
+        }
+        eprintln!("ROOTS check: {same} same, {differ} differ");
     }
 
     #[cfg(test)]
@@ -476,6 +664,23 @@ impl PackedDemand {
                 }
             }
             let _roots = crate::code_rule_dsl::prof::Stage::start("demand.roots");
+            // The roots as micro walks' records where every terminal program is one (decision
+            // 0024 §3), else (or where a walk overflows) the backend's execution.
+            if !metal && std::env::var_os("RERAIL_ROOTS_JIT").is_none() {
+                if let Some(walked) = self.walked(range.clone(), programs.clone()) {
+                    if std::env::var_os("RERAIL_ROOTS_CHECK").is_some() {
+                        let packed = execute_with_backend_packed_result_limits(
+                            self.backend,
+                            &self.programs[programs.clone()],
+                            &self.files[range.clone()],
+                            &anchors,
+                            Some(&self.result_limits[programs.clone()]),
+                        )?;
+                        self.check_walked(&walked, &RootsExecution::Packed(packed), range.clone(), programs.clone());
+                    }
+                    return Ok((range.start, programs.start, walked));
+                }
+            }
             execute_with_backend_packed_result_limits(
                 self.backend,
                 &self.programs[programs.clone()],
@@ -483,7 +688,7 @@ impl PackedDemand {
                 &anchors,
                 Some(&self.result_limits[programs.clone()]),
             )
-            .map(|execution| (range.start, programs.start, execution))
+            .map(|execution| (range.start, programs.start, RootsExecution::Packed(execution)))
         };
         let execute = |(range, programs): &(Range<usize>, Range<usize>)| {
             match run(range.clone(), programs.clone()) {
@@ -514,7 +719,7 @@ impl PackedDemand {
         let mut executed = 0_usize;
         let mut failure = None;
         {
-            let mut absorb = |(file_start, program_start, execution): (usize, usize, crate::code_rule_dsl::transducer::packed::PackedExecution)| {
+            let mut absorb = |(file_start, program_start, execution): (usize, usize, RootsExecution)| {
                 let _rows = crate::code_rule_dsl::prof::Stage::start("demand.rows");
                 for local_file in 0..execution.file_count() {
                     let file = file_start + local_file;
@@ -740,7 +945,7 @@ impl PackedDemand {
                             }
                             continue;
                         }
-                        let (results, error) = match execution.program_results(local_file, local_program) {
+                        let (results, error) = match execution.results(local_file, local_program) {
                             Ok(result) => result,
                             Err(error) => {
                                 let message = format!("{error:?}");
@@ -781,30 +986,30 @@ impl PackedDemand {
                                 file,
                                 producer: program,
                                 match_index,
-                                task_index: result.task_ordinal(),
-                                start_ordinal: result.local_ordinal(),
-                                node: result.start_node(),
-                                span: self.files[file].transducer_span(result.start_node()),
+                                task_index: result.task_ordinal,
+                                start_ordinal: result.local_ordinal,
+                                node: result.start,
+                                span: self.files[file].transducer_span(result.start),
                                 output_label: self.programs[program]
-                                    .label_name(result.label())
+                                    .label_name(result.label)
                                     .map(str::to_owned),
                             }));
-                            let captures = result.captures().collect::<Vec<_>>();
-                            for (capture_index, capture) in captures.iter().copied().enumerate() {
-                                let label = capture.label();
+                            let captures = &result.captures;
+                            for (capture_index, capture) in captures.iter().enumerate() {
+                                let label = capture.label;
                                 let occurrence = captures[..capture_index]
                                     .iter()
-                                    .filter(|candidate| candidate.label() == label)
+                                    .filter(|candidate| candidate.label == label)
                                     .count();
                                 let sequence_start = captures
                                     .iter()
-                                    .position(|candidate| candidate.label() == label)
+                                    .position(|candidate| candidate.label == label)
                                     .expect("the current capture has a sequence");
                                 let sequence_count = captures
                                     .iter()
-                                    .filter(|candidate| candidate.label() == label)
+                                    .filter(|candidate| candidate.label == label)
                                     .count();
-                                let span = capture.span();
+                                let span = capture.span.clone();
                                 let source_text = self.files[file]
                                     .transducer_source()
                                     .get(span.clone())
@@ -818,16 +1023,17 @@ impl PackedDemand {
                                     occurrence,
                                     sequence_start,
                                     sequence_count,
-                                    node: capture.node(),
+                                    node: capture.node,
                                     capture_label: self.programs[program]
                                         .label_name(label)
                                         .map(str::to_owned),
                                     text_value: capture
-                                        .transformed_text()
+                                        .text
+                                        .as_deref()
                                         .map(|text| String::from_utf8_lossy(text).into_owned()),
                                     source_text,
                                     structural_key: {
-                                        let node = capture.node();
+                                        let node = capture.node;
                                         let semantic =
                                         structure_keys.entry((file, node)).or_insert_with(|| {
                                             let root = structure_document.root();
@@ -865,9 +1071,9 @@ impl PackedDemand {
                                         .to_string()
                                     },
                                     named_leaf: self.files[file]
-                                        .transducer_is_named_leaf(capture.node()),
+                                        .transducer_is_named_leaf(capture.node),
                                     capture_kind: 1,
-                                    capture_named: self.files[file].transducer_flags(capture.node())
+                                    capture_named: self.files[file].transducer_flags(capture.node)
                                         & super::super::transducer::packed::NAMED
                                         != 0,
                                     equality_occurrence: 0,

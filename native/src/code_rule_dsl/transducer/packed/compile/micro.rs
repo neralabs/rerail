@@ -24,6 +24,8 @@ use crate::code_rule_dsl::transducer::packed::value::ValueProgram;
 /// Cursor slots, captures and frames a walk carries, and the steps it takes.
 pub(in crate::code_rule_dsl) const CURSORS: usize = 8;
 pub(in crate::code_rule_dsl) const CAPTURES: usize = 2;
+/// Captures a root walk's path carries (`Micro::records`): a root program's metavariables.
+pub(in crate::code_rule_dsl) const ROOT_CAPTURES: usize = 8;
 pub(in crate::code_rule_dsl) const FRAMES: usize = 128;
 pub(in crate::code_rule_dsl) const STEPS: u32 = 1 << 16;
 
@@ -55,8 +57,27 @@ struct State {
     pc: u16,
     node: u32,
     cursors: [u32; CURSORS],
-    captures: [u32; CAPTURES],
+    captures: [u32; ROOT_CAPTURES],
+    /// Each capture's label (`CAPTURE`'s operand).
+    labels: [u16; ROOT_CAPTURES],
     captured: u8,
+}
+
+/// A root walk's path that emits (decision 0024 §3): its start, the emit's output label, and its
+/// captures as (capture label, node), in capture order. Integers only: spans and text are the
+/// tape's, read where a row needs them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct RootRecord {
+    pub(in crate::code_rule_dsl) start: u32,
+    pub(in crate::code_rule_dsl) label: u16,
+    pub(in crate::code_rule_dsl) captured: u8,
+    pub(in crate::code_rule_dsl) captures: [(u16, u32); ROOT_CAPTURES],
+}
+
+impl RootRecord {
+    pub(in crate::code_rule_dsl) fn captures(&self) -> &[(u16, u32)] {
+        &self.captures[..usize::from(self.captured)]
+    }
 }
 
 /// What a frame resumes: a forked path, or a move's next candidate.
@@ -291,6 +312,55 @@ impl Micro {
         frames: &mut Frames,
         mark: &mut impl FnMut(u32),
     ) -> Result<(), Overflow> {
+        self.walk(tape, labels, texts, start, CAPTURES, frames, &mut |state: &State, _| match emit {
+            Emit::Start => {
+                mark(start);
+                true
+            }
+            Emit::EveryStart => {
+                mark(start);
+                false
+            }
+            Emit::Captures => {
+                state.captures[..usize::from(state.captured)].iter().for_each(|&node| mark(node));
+                false
+            }
+        })
+    }
+
+    /// A root program's walk from `start` on `tape` (labelled: `transducer_labels`), every path
+    /// that emits appended to `out` as a record, in the walk's order.
+    pub(in crate::code_rule_dsl) fn records(
+        &self,
+        tape: &TapeDoc,
+        texts: &[Vec<u64>],
+        start: u32,
+        frames: &mut Frames,
+        out: &mut Vec<RootRecord>,
+    ) -> Result<(), Overflow> {
+        self.walk(tape, tape.transducer_labels(), texts, start, ROOT_CAPTURES, frames, &mut |state: &State, label| {
+            let mut captures = [(0_u16, NONE); ROOT_CAPTURES];
+            for at in 0..usize::from(state.captured) {
+                captures[at] = (state.labels[at], state.captures[at]);
+            }
+            out.push(RootRecord { start, label, captured: state.captured, captures });
+            false
+        })
+    }
+
+    /// The walk from `start`, `emitted` called at each path that emits with the emit's label
+    /// (`true`: the walk ends there); a path holds at most `most` captures.
+    #[allow(clippy::too_many_arguments)]
+    fn walk(
+        &self,
+        tape: &TapeDoc,
+        labels: &[Vec<u64>],
+        texts: &[Vec<u64>],
+        start: u32,
+        most: usize,
+        frames: &mut Frames,
+        emitted: &mut impl FnMut(&State, u16) -> bool,
+    ) -> Result<(), Overflow> {
         let stack = &mut frames.0;
         stack.clear();
         let has = |node: u32, class: u16| {
@@ -303,7 +373,14 @@ impl Micro {
                 tape.transducer_has_supertype(node, class)
             }
         };
-        let mut state = State { pc: 0, node: start, cursors: [NONE; CURSORS], captures: [NONE; CAPTURES], captured: 0 };
+        let mut state = State {
+            pc: 0,
+            node: start,
+            cursors: [NONE; CURSORS],
+            captures: [NONE; ROOT_CAPTURES],
+            labels: [0; ROOT_CAPTURES],
+            captured: 0,
+        };
         let mut steps = 0_u32;
         let limit = self::steps(tape.transducer_len() as usize, self.words.len());
         loop {
@@ -361,10 +438,11 @@ impl Micro {
                     },
                     CAPTURE => {
                         let at = usize::from(state.captured);
-                        if at == CAPTURES {
+                        if at == most {
                             return Err(Overflow("captures"));
                         }
                         state.captures[at] = state.node;
+                        state.labels[at] = arg;
                         state.captured += 1;
                         true
                     }
@@ -380,13 +458,8 @@ impl Micro {
                         continue;
                     }
                     EMIT => {
-                        match emit {
-                            Emit::Start => {
-                                mark(start);
-                                return Ok(());
-                            }
-                            Emit::EveryStart => mark(start),
-                            Emit::Captures => state.captures[..usize::from(state.captured)].iter().for_each(|&node| mark(node)),
+                        if emitted(&state, arg) {
+                            return Ok(());
                         }
                         false
                     }
