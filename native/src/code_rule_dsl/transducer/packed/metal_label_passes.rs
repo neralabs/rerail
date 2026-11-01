@@ -577,13 +577,17 @@ const MOST_ROUNDS: usize = 64;
 /// Bytes of per-level uploads one command buffer carries before the host waits for it.
 const SEGMENT_BYTES: usize = 64 << 20;
 
-/// Compiles the label passes' pipelines (the interpreter, the sweep and the label kernels) on a
+/// Compiles the wave's pipelines (the set steps, the interpreter, the sweep and the label kernels) on a
 /// thread, once a process: each is compiled from source, 0.6 s together, and a pass that needs
 /// one before it is ready waits for the rest of its compile (they are cached behind locks).
 pub(in crate::code_rule_dsl) fn warm() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
         std::thread::spawn(|| {
+            // The set program's kernels first: it runs first in a wave (its candidates). The shared
+            // device is not opened here: on S7 a wave waiting on this thread's open waited longer
+            // (to 0.8 s under load) than opening it itself (50-80 ms).
+            let _ = super::set_steps::pipelines();
             let _ = compile_interpreter_cached();
             let _ = pipelines();
             let _ = compile_sweep_cached();
@@ -1879,6 +1883,7 @@ impl Runner<'_> {
         self.encoded = true;
         self.outcome.dispatches += 1;
         self.split(KERNELS[pipeline]);
+        self.split(KERNELS[pipeline]);
         Ok(true)
     }
 
@@ -1985,6 +1990,7 @@ impl Runner<'_> {
                 self.encoded = true;
                 self.outcome.dispatches += 1;
                 self.retained.push(stacks);
+                self.split(KERNELS[ROOT_KERNELS[1]]);
             }
             offset += tier_items.len() as u64;
         }
