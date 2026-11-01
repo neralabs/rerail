@@ -28,6 +28,7 @@ pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;
 // P's incremental BLOB reader and `nera_tree`, for the §17 pure-SQL fallback.
 #[allow(dead_code)]
 mod reader;
+mod sets;
 #[allow(dead_code)]
 mod tree;
 mod values;
@@ -131,6 +132,34 @@ pub(in crate::code_rule_dsl) fn select(
 /// `select`'s rows as (index in `tapes`, preorder), unordered: 8 bytes a row, not 16. On Metal the
 /// rows are held while the labels' GPU runs are (06 S7: 1.15 M rows, at the footprint's peak).
 pub(in crate::code_rule_dsl) fn select_indexed(
+    store: &ContentStore,
+    lang: u32,
+    plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
+    tapes: &[TapeId],
+) -> StoreResult<Vec<Vec<(u32, u32)>>> {
+    let (space, sets) = select_sets(store, lang, plans, tapes)?;
+    let rows = sets
+        .iter()
+        .map(|set| (0..space.files()).flat_map(|file| set.file_nodes(&space, file).map(move |pre| (file as u32, pre))).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    crate::code_rule_dsl::prof::count("select.rows", rows.iter().map(Vec::len).sum());
+    Ok(rows)
+}
+
+/// Each plan's candidates over `tapes` as sets over their node space (`sets`; decision 0024 §2).
+pub(in crate::code_rule_dsl) fn select_sets(
+    store: &ContentStore,
+    lang: u32,
+    plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
+    tapes: &[TapeId],
+) -> StoreResult<(crate::code_rule_dsl::space::NodeSpace, Vec<crate::code_rule_dsl::space::NodeSet>)> {
+    let files = tapes.iter().map(|tape| tape.row()).collect::<Vec<_>>();
+    crate::code_rule_dsl::prof::time("select.sets", || sets::select(store, lang, plans, &files))
+}
+
+/// `select_indexed` by the candidate SQL (`lower::batch`, `execute`): the reference the set
+/// program is checked against, and the anchor lab's subject.
+pub(in crate::code_rule_dsl) fn select_indexed_sql(
     store: &ContentStore,
     lang: u32,
     plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],

@@ -703,6 +703,18 @@ pub(super) fn batch(plans: &[&AnchorPlan], lang: u32, files: &[i64], statistics:
     batch_scope(plans, lang, files, statistics)
 }
 
+/// The vocabulary's stages after the regex predicates are registered (`vocabulary_predicate`,
+/// ready 0): their literal sets, their terms, and the predicates marked ready.
+pub(super) const VOCABULARY: [(&str, &str); 4] = [
+    (
+        "vocabulary_literals",
+        "INSERT OR IGNORE INTO vocabulary_literal SELECT p.lang,p.expression,j.value FROM vocabulary_predicate p CROSS JOIN json_each(nera_literal_set(p.expression)) j WHERE p.ready=0",
+    ),
+    ("vocabulary_fill", include_str!("vocabulary-fill.sql")),
+    ("vocabulary_complete", "UPDATE vocabulary_predicate SET ready=1 WHERE ready=0"),
+    ("vocabulary_release", "DELETE FROM vocabulary_pending"),
+];
+
 fn scope(lang: u32, statistics: &Statistics) -> Lower {
     let mut lower = Lower::new(lang);
     lower.statistics = statistics.clone();
@@ -716,7 +728,7 @@ fn scope(lang: u32, statistics: &Statistics) -> Lower {
 
 /// Whether a plan selects from kind postings before it reads its scope: then evaluating it over
 /// every node costs only its postings. A conjunction evaluates its anchored members first (`plan`).
-fn anchored(plan: &AnchorPlan) -> bool {
+pub(super) fn anchored(plan: &AnchorPlan) -> bool {
     plan.root_kinds.is_some()
         || match &plan.condition {
             Condition::Pattern(required) => !required.is_empty(),
@@ -883,24 +895,9 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Stat
                     values.into_iter().collect::<Vec<_>>().join(",")
                 ),
             ),
-            (
-                "vocabulary_literals",
-                "INSERT OR IGNORE INTO vocabulary_literal SELECT p.lang,p.expression,j.value FROM vocabulary_predicate p CROSS JOIN json_each(nera_literal_set(p.expression)) j WHERE p.ready=0".to_owned(),
-            ),
-            (
-                "vocabulary_fill",
-                include_str!("vocabulary-fill.sql").to_owned(),
-            ),
-            (
-                "vocabulary_complete",
-                "UPDATE vocabulary_predicate SET ready=1 WHERE ready=0".to_owned(),
-            ),
-            (
-                "vocabulary_release",
-                "DELETE FROM vocabulary_pending".to_owned(),
-            ),
         ]
         .into_iter()
+        .chain(VOCABULARY.iter().map(|&(name, sql)| (name, sql.to_owned())))
         .map(|(name, sql)| Stage {
             name: name.into(),
             sql,

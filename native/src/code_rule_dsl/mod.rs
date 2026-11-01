@@ -32,6 +32,7 @@ mod producers;
 // Published from the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
 pub(crate) mod prefilter;
+pub(in crate::code_rule_dsl) mod space;
 // Read by the prefilter's lowering; the compiled-plan cache is wired with the plans row.
 #[allow(dead_code)]
 mod stats;
