@@ -142,3 +142,56 @@ that overlaps the candidate SQL, so it varies with their timing.
 
 **Spike sources:** `prof` adds `cpu_ms.*` (process CPU for `slice.`, `demand.` and `labels.`
 stages), `gpu.device_us`, `threads.<kernel>` and `size.text_slots` to the stage indexes.
+
+## Re-profile, 2026-11-01: GPU counters, per-kernel times, and the CPU's shape
+
+**Tools:** Metal System Trace (`xctrace`, 40-core M5 Max) gives per-encoder GPU intervals. Apple's
+GPU exposes only `GPUTimestamp` to applications (`MTLCounterSet`), so there are no occupancy or
+ALU counters. `RERAIL_GPU_KERNEL_TIMES` commits each kernel as its own command buffer and adds its
+GPU time to `kernel_us.<label>`. The CPU side is from the xctrace Time Profiler.
+
+**GPU:** the whole S7 run is ~280 ms of GPU time over a ~2.4 s run, so the GPU is idle about 90% of
+the time. Of that GPU time:
+
+| Kernel | Items | GPU ms (pool 2048 → 4096) |
+|---|---|---|
+| `label_micro` (loop tier) | 1.73 M | 193 → 121 |
+| `label_micro_8` | 81 M | 78 |
+| settle, patterns | — | < 1 |
+
+The loop tier is a pool of threads that stride over the items, so its pool size is its occupancy.
+At 8192 threads it runs in 85 ms, but the peak footprint reaches 511–515 MB, over budget. The pool
+stays at 4096 (commit 19052e067).
+
+**CPU:** the CPU backend ran non-recursive labels on the interpreter, a task per start, one file
+after another (~6.5 s of 12.5 s of labels in the Time Profiler). They now run the same micro walk as
+Metal and the sweeps, with files in parallel (b40b897be):
+
+| CPU backend | Before | After |
+|---|---|---|
+| Labels | 12.5 s | 1.4–1.8 s |
+| S7 wall | 15.7 s | 4.1–4.7 s |
+| S7 CPU | 16.4 s | 7.3–7.6 s |
+| Peak footprint | — | 358 MB |
+
+The "Metal ~6× the CPU" figure was mostly the CPU running a worse shape, not Metal being fast.
+
+**The common floor:** both backends now spend most of their time in the same CPU stages, about 2.4 s
+together:
+- candidates SQL, ~1.1 s on one connection;
+- execute (roots on the CPU JIT, then rows), ~1.0 s;
+- push, ~0.35 s;
+- layer, ~0.25 s.
+
+The labels are the only work Metal takes off this floor. For Metal to be much faster end to end, the
+floor has to move.
+
+**Where the candidate SQL goes:** S7's stages total ~430 ms, plus ~570 ms for two queries:
+- `r161` is `all_nodes EXCEPT r12`, 239 K + 130 K rows, 146 + 72 ms.
+- `r2` is 300 K rows, 72 ms.
+- `r44` and `r210` follow, under ~75 ms each.
+
+Many sets are "every node of the files in X" or a complement, stored as one `(fid, pre)` row per
+node. The shape to change is the row format: a candidate set as `(file, all | bitmap)`. Complements
+and whole-file sets then cost one row per file, and an intersection becomes a bitmap `AND`, which
+the GPU can also do. That is a prefilter-lowering change, iterated in its lab.
