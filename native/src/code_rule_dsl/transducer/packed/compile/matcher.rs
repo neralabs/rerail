@@ -402,8 +402,29 @@ impl LoweredMatcher {
                     .collect()
             }
             Label::Roots(program, starts) | Label::Targets(program, starts) | Label::Count { program, domain: starts, .. } => {
-                let outputs = run(program, views, starts, sets)?;
-                Ok(from_outputs(label, views, outputs.into_iter().map(|outputs| outputs.iter().map(Found::of).collect()).collect()))
+                // A file's verdicts are its own, so the files run in parallel; each by the program's
+                // micro walk where it is one, as Metal's label passes and the sweeps run it, else
+                // (or where the walk overflows) on the interpreter. 06 S7: the interpreter's task per
+                // start was ~6.5 s of the CPU backend's ~12.5 s of labels.
+                use rayon::prelude::*;
+                let walk = Micro::of(program);
+                let entry = Entry::of(program);
+                views
+                    .par_iter()
+                    .zip(sets.par_iter())
+                    .map(|(view, sets)| {
+                        let starts = || domain(starts, view, sets).filter(|&node| entry.admits(view, node));
+                        if let Some(walk) = &walk
+                            && let Some(bits) = walked(label, walk, program, view, sets, starts())
+                        {
+                            return Ok(bits);
+                        }
+                        crate::code_rule_dsl::prof::count("labels.interpreted", 1);
+                        let outputs = program.execute_roots(view, starts())?;
+                        let found = vec![outputs.iter().map(Found::of).collect()];
+                        Ok(from_outputs(label, std::slice::from_ref(view), found).pop().expect("one file"))
+                    })
+                    .collect()
             }
             Label::Complement(of) => Ok(views
                 .iter()
@@ -1642,6 +1663,42 @@ fn from_outputs(label: &Label, views: &[TapeDoc], outputs: Vec<Vec<Found>>) -> V
             bits
         })
         .collect()
+}
+
+/// A roots, targets or count label's bits on `tape` by `walk`, from each of `starts`: what
+/// `from_outputs` makes of the interpreter's outputs (a roots label its emitting starts, a targets
+/// label the nodes its emitting paths captured, a count its tallies in bounds). None where the
+/// walk's text slots cannot be read or a walk overflows.
+fn walked(label: &Label, walk: &Micro, program: &Program, tape: &TapeDoc, sets: &[Vec<u64>], starts: impl Iterator<Item = u32>) -> Option<Vec<u64>> {
+    let texts = walk.texts(program, tape)?;
+    let len = tape.transducer_len();
+    let mut bits = vec![0_u64; len.div_ceil(64)];
+    let mut frames = Frames::default();
+    let set = |bits: &mut Vec<u64>, node: u32| bits[node as usize / 64] |= 1 << (node % 64);
+    match label {
+        Label::Count { by, min, max, .. } => {
+            let emit = match by {
+                Tally::Start => Emit::EveryStart,
+                Tally::Capture => Emit::Captures,
+            };
+            let mut counts = vec![0_usize; len];
+            for start in starts {
+                walk.run(tape, sets, &texts, start, emit, &mut frames, &mut |node| counts[node as usize] += 1).ok()?;
+            }
+            for (node, &count) in counts.iter().enumerate() {
+                if count >= *min && max.is_none_or(|max| count <= max) {
+                    set(&mut bits, node as u32);
+                }
+            }
+        }
+        _ => {
+            let emit = if matches!(label, Label::Targets(..)) { Emit::Captures } else { Emit::Start };
+            for start in starts {
+                walk.run(tape, sets, &texts, start, emit, &mut frames, &mut |node| set(&mut bits, node)).ok()?;
+            }
+        }
+    }
+    Some(bits)
 }
 
 /// The nodes of `tape` in `domain`, in preorder.
