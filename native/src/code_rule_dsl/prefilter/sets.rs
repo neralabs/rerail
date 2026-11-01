@@ -263,6 +263,10 @@ pub(super) fn select(
             let counts = files
                 .iter()
                 .map(|&file| {
+                    // The working set's image of the tape where it holds one (decision 0024 §5).
+                    if let Some(image) = store.working_set().kinds(file) {
+                        return Ok(if i64::from(image.lang) == lang { image.nodes } else { 0 });
+                    }
                     let count: Option<i64> = nodes.query_row(rusqlite::params![file, lang], |row| row.get(0)).map(Some).or_else(|error| match error {
                         rusqlite::Error::QueryReturnedNoRows => Ok(None),
                         error => Err(error),
@@ -295,7 +299,14 @@ pub(super) fn select(
                     continue;
                 }
                 let base = space.base(at);
-                if !wanted.is_empty() {
+                if let (false, Some(image)) = (wanted.is_empty(), store.working_set().kinds(file)) {
+                    crate::code_rule_dsl::prof::count("working_set.kind_hits", 1);
+                    for (&atom, &kind) in &wanted {
+                        let Some(postings) = u32::try_from(atom).ok().and_then(|atom| image.postings(atom)) else { continue };
+                        let set = by_kind.entry(kind).or_insert_with(|| NodeSet::empty(&space));
+                        decode(postings, base, space.count(at), set)?;
+                    }
+                } else if !wanted.is_empty() {
                     let mut rows = kinds.query([file])?;
                     while let Some(row) = rows.next()? {
                         let Some(&kind) = wanted.get(&row.get::<_, i64>(0)?) else { continue };

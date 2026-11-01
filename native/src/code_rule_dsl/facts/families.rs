@@ -262,7 +262,11 @@ impl Families {
         };
         let digest = tape.as_ref().map_or(ABSENT, |(digest, _)| *digest);
         if let Some((digest, tape)) = tape {
-            self.tapes.insert(digest, (Arc::new(tape), TAPE_READERS));
+            let tape = Arc::new(tape);
+            // Held in the store's working set for the waves that read it (decision 0024 §5).
+            let bytes = tape.doc.transducer_source().len() + 64 * tape.doc.transducer_len();
+            graph.store().working_set().put_tape(digest, Arc::clone(&tape) as Arc<dyn std::any::Any + Send + Sync>, bytes);
+            self.tapes.insert(digest, (tape, TAPE_READERS));
         }
         Ok(DerivationRecord {
             output: tape_name(scope, path),
@@ -407,8 +411,16 @@ impl Families {
 
     /// The tape `path`'s tape name binds now, decoded from the store: what a reader of the
     /// families outside a push (a wave) reads.
+    /// The working set's copy where it holds the tape (by its digest, the binding: the same
+    /// tape), else the store's.
     pub(crate) fn stored(graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<Option<Arc<Tape>>> {
         let read = graph.binding(&tape_name(scope, path))?.unwrap_or(ABSENT);
+        if read != ABSENT {
+            if let Some(tape) = graph.store().working_set().tape(read).and_then(|tape| tape.downcast::<Tape>().ok()) {
+                crate::code_rule_dsl::prof::count("working_set.tape_hits", 1);
+                return Ok(Some(tape));
+            }
+        }
         Self::default().take(graph, scope, path, read)
     }
 

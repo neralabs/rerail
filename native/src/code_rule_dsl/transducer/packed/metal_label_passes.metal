@@ -206,8 +206,8 @@ static uint group_mask(uint index,uint first,uint end){
   return (to-from==32u)?0xffffffffu:(((1u<<(to-from))-1u)<<from);
 }
 
-template<uint FRAMES>
-static void label_group_run(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,device const GroupLevel* levels,device const Op* ops,constant Shape& shape,uint file,uint lane,uint width,threadgroup atomic_uint* changed){
+template<uint FRAMES,typename Stack>
+static void label_group_run(Stack stack,device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,device const GroupLevel* levels,device const Op* ops,constant Shape& shape,uint file,uint lane,uint width,threadgroup atomic_uint* changed){
   device atomic_uint* labels=(device atomic_uint*)(supertypes+1);
   File own=files[file];
   uint first=own.nodeStart,end=own.nodeStart+own.nodeCount;
@@ -228,7 +228,6 @@ static void label_group_run(device const Node* nodes,device const uint* children
         uint from=low;high=pass.itemCount;
         while(low<high){uint middle=(low+high)/2u;if(items[pass.itemStart+middle]<end)low=middle+1u;else high=middle;}
         for(uint item=from+lane;item<low;item+=width){
-          thread MicroFrame stack[FRAMES];
           micro_from<FRAMES>(nodes,children,supertypes,files,pass,words,items[pass.itemStart+item],scratch,flags,texts,counts,shape,stack);
         }
       }
@@ -265,8 +264,8 @@ static void label_group_run(device const Node* nodes,device const uint* children
   if(!settled&&lane==0u)atomic_fetch_or_explicit(&flags[3],1u,memory_order_relaxed);
 }
 
-kernel void label_group_8(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device const GroupLevel* levels [[buffer(11)]],device const Op* ops [[buffer(12)]],constant Shape& shape [[buffer(13)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]]){threadgroup atomic_uint changed;label_group_run<8u>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,&changed);}
-kernel void label_group_32(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device const GroupLevel* levels [[buffer(11)]],device const Op* ops [[buffer(12)]],constant Shape& shape [[buffer(13)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]]){threadgroup atomic_uint changed;label_group_run<32u>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,&changed);}
+kernel void label_group_8(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device const GroupLevel* levels [[buffer(11)]],device const Op* ops [[buffer(12)]],constant Shape& shape [[buffer(13)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]]){threadgroup atomic_uint changed;thread MicroFrame stack[8];label_group_run<8u>(stack,nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,&changed);}
+kernel void label_group_32(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device const GroupLevel* levels [[buffer(11)]],device const Op* ops [[buffer(12)]],constant Shape& shape [[buffer(13)]],device MicroFrame* stacks [[buffer(14)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]]){threadgroup atomic_uint changed;label_group_run<32u>(stacks+(file*width+lane)*32u,nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,&changed);}
 
 // A root program's walk as records (decision 0024 §3, `Micro::records`, the same walk): a
 // thread per (program, file, task, start) item, after the labels, reading them in place. Each
@@ -277,7 +276,8 @@ kernel void label_group_32(device const Node* nodes [[buffer(0)]],device const u
 // the buffer was too small). A walk outgrowing its frames, captures or steps flags its program.
 struct RootPass { uint wordStart,wordCount,textStart,pad; };
 struct RootFrame { uint pc,node,resume,named,next,end,cursors[8],captured,caps[8],labs[8]; };
-constant uint ROOT_CAPTURES=8u,ROOT_RECORD=20u;
+// The 32-frame roots run as a pool of ROOT_POOL threads with device stacks (metal_label_passes.rs's ROOT_POOL).
+constant uint ROOT_CAPTURES=8u,ROOT_RECORD=20u,ROOT_POOL=4096u;
 
 static uint root_next(device const Node* nodes,device const uint* children,thread RootFrame& frame){
   if(frame.resume==1u){Node parent=nodes[frame.end];while(frame.next<parent.childCount){uint child=children[parent.childStart+frame.next];frame.next++;if(frame.named==0u||(nodes[child].flags&1u))return child;}return MICRO_NONE;}
@@ -286,8 +286,8 @@ static uint root_next(device const Node* nodes,device const uint* children,threa
   return MICRO_NONE;
 }
 
-template<uint FRAMES>
-static bool root_walk(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,RootPass pass,device const uint* words,uint start,device const uint* texts,constant Shape& shape,thread RootFrame* stack,device uint* out,uint capacity,uint item,uint at,thread uint& emitted){
+template<uint FRAMES,typename Stack>
+static bool root_walk(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,RootPass pass,device const uint* words,uint start,device const uint* texts,constant Shape& shape,Stack stack,device uint* out,uint capacity,uint item,uint at,thread uint& emitted){
   uint depth=0u,steps=0u;
   RootFrame path;
   path.pc=0u;path.node=start;path.resume=0u;path.named=0u;path.next=0u;path.end=0u;path.captured=0u;
@@ -344,11 +344,10 @@ static bool root_walk(device const Node* nodes,device const uint* children,devic
   }
 }
 
-template<uint FRAMES>
-static void root_records_run(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,device const RootPass* passes,device const uint* words,device const uint4* items,device const uint* texts,device uint* records,device atomic_uint* cursor,device atomic_uint* failures,constant Shape& shape,uint tid){
+template<uint FRAMES,typename Stack>
+static void root_records_run(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,device const RootPass* passes,device const uint* words,device const uint4* items,device const uint* texts,device uint* records,device atomic_uint* cursor,device atomic_uint* failures,constant Shape& shape,uint tid,Stack stack){
   if(tid>=shape.itemCount)return;
   uint4 item=items[tid];RootPass pass=passes[item.x];
-  thread RootFrame stack[FRAMES];
   uint emitted=0u;
   if(!root_walk<FRAMES>(nodes,children,supertypes,files,pass,words,item.w,texts,shape,stack,nullptr,0u,tid,0u,emitted)){atomic_fetch_or_explicit(&failures[item.x],1u,memory_order_relaxed);return;}
   if(emitted==0u)return;
@@ -358,5 +357,5 @@ static void root_records_run(device const Node* nodes,device const uint* childre
   root_walk<FRAMES>(nodes,children,supertypes,files,pass,words,item.w,texts,shape,stack,records,shape.targetCount,shape.round+tid,at,again);
 }
 
-kernel void root_records_8(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const RootPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint4* items [[buffer(6)]],device const uint* texts [[buffer(7)]],device uint* records [[buffer(8)]],device atomic_uint* cursor [[buffer(9)]],device atomic_uint* failures [[buffer(10)]],constant Shape& shape [[buffer(11)]],uint tid [[thread_position_in_grid]]){root_records_run<8u>(nodes,children,supertypes,files,passes,words,items,texts,records,cursor,failures,shape,tid);}
-kernel void root_records_32(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const RootPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint4* items [[buffer(6)]],device const uint* texts [[buffer(7)]],device uint* records [[buffer(8)]],device atomic_uint* cursor [[buffer(9)]],device atomic_uint* failures [[buffer(10)]],constant Shape& shape [[buffer(11)]],uint tid [[thread_position_in_grid]]){root_records_run<32u>(nodes,children,supertypes,files,passes,words,items,texts,records,cursor,failures,shape,tid);}
+kernel void root_records_8(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const RootPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint4* items [[buffer(6)]],device const uint* texts [[buffer(7)]],device uint* records [[buffer(8)]],device atomic_uint* cursor [[buffer(9)]],device atomic_uint* failures [[buffer(10)]],constant Shape& shape [[buffer(11)]],uint tid [[thread_position_in_grid]]){thread RootFrame stack[8];root_records_run<8u>(nodes,children,supertypes,files,passes,words,items,texts,records,cursor,failures,shape,tid,stack);}
+kernel void root_records_32(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const RootPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint4* items [[buffer(6)]],device const uint* texts [[buffer(7)]],device uint* records [[buffer(8)]],device atomic_uint* cursor [[buffer(9)]],device atomic_uint* failures [[buffer(10)]],constant Shape& shape [[buffer(11)]],device RootFrame* stacks [[buffer(12)]],uint tid [[thread_position_in_grid]]){for(uint item=tid;item<shape.itemCount;item+=ROOT_POOL)root_records_run<32u>(nodes,children,supertypes,files,passes,words,items,texts,records,cursor,failures,shape,item,stacks+tid*32u);}

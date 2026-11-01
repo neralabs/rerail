@@ -186,6 +186,8 @@ impl ContentStore {
             }
         }
         let current_generation = generation(&transaction)?;
+        // Tapes leave in bulk, and their ids may be reused: the working set holds none of them.
+        self.working_set().clear();
         report.tapes = execute_collect(
             &transaction,
             "DELETE FROM tape_objects WHERE tape_id IN (SELECT t.tape_id FROM tape_objects t \

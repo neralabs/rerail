@@ -42,6 +42,7 @@ mod tree_result_segments;
 #[cfg(test)]
 mod tests;
 mod workspaces;
+pub(crate) mod working_set;
 
 pub(crate) use compression::compress;
 pub(crate) use connection::BusyRetries;
@@ -585,6 +586,8 @@ pub struct ContentStore {
     facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
     /// The mirror of the `atoms` table (atoms.rs).
     atoms: parking_lot::Mutex<atoms::Interner>,
+    /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
+    working_set: working_set::WorkingSet,
     #[cfg(test)]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(test)]
@@ -594,6 +597,11 @@ pub struct ContentStore {
 }
 
 impl ContentStore {
+    /// The store's RAM working set (`working_set`, decision 0024 §5).
+    pub(crate) fn working_set(&self) -> &working_set::WorkingSet {
+        &self.working_set
+    }
+
     pub fn open(path: &Path) -> StoreResult<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -619,6 +627,7 @@ impl ContentStore {
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms: parking_lot::Mutex::new(atoms::Interner::default()),
+            working_set: working_set::WorkingSet::default(),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),
             #[cfg(test)]

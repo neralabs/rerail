@@ -101,6 +101,12 @@ pub(in crate::code_rule_dsl) type RootsFound = Vec<Option<Vec<Vec<(u32, super::s
 const ROOT_KERNELS: [usize; 2] = [9, 10];
 /// Words of a root record (`root_records_*`).
 const ROOT_RECORD: usize = 20;
+/// The 32-frame root walks' pool: threads striding over the items, each a device stack of 32
+/// `RootFrame`s of 31 words (thread memory for every item in flight held ~140 MB of footprint).
+const ROOT_POOL: usize = 4096;
+const ROOT_STACK_WORDS: usize = 32 * 31;
+/// A deep group walk's device stack: 32 `MicroFrame`s of 17 words, per thread launched.
+const GROUP_STACK_WORDS: usize = 32 * 17;
 
 /// The flushed roots as `RootsFound`: each record to its item's (program, file, task), its
 /// nodes back to the file's, sorted by task and the walk's order.
@@ -1849,15 +1855,25 @@ impl Runner<'_> {
             ops,
         ];
         let pipeline = GROUP_KERNELS[usize::from(deepest > 8)];
+        // The deep kernel's stacks in device memory, one per thread launched.
+        let mut buffers = buffers.to_vec();
+        if deepest > 8 {
+            let stacks = MappedBuffer::untouched::<u32>(self.device, self.files.len().max(1) * GROUP_WIDTH as usize * GROUP_STACK_WORDS)?;
+            buffers.push(stacks.buffer.clone());
+            self.retained.push(stacks);
+        }
         let state = self.kernels[pipeline].clone();
         let encoder = self.command.new_compute_command_encoder();
         encoder.set_label(KERNELS[pipeline]);
         crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[pipeline]), 1);
         encoder.set_compute_pipeline_state(&state);
-        for (index, buffer) in buffers.iter().enumerate() {
+        for (index, buffer) in buffers.iter().take(13).enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), 0);
         }
-        encoder.set_bytes(buffers.len() as u64, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+        encoder.set_bytes(13, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+        if let Some(stacks) = buffers.get(13) {
+            encoder.set_buffer(14, Some(stacks), 0);
+        }
         encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, 1, 1), MTLSize::new(GROUP_WIDTH, 1, 1));
         encoder.end_encoding();
         self.encoded = true;
@@ -1948,7 +1964,28 @@ impl Runner<'_> {
                 (&cursor.buffer.clone(), 0),
                 (&failures.buffer.clone(), 0),
             ];
-            self.kernel(ROOT_KERNELS[tier], &buffers, shape, tier_items.len());
+            if tier == 0 {
+                self.kernel(ROOT_KERNELS[0], &buffers, shape, tier_items.len());
+            } else {
+                // The pool's device stacks follow the shape (`root_records_32`'s buffer 12).
+                let stacks = MappedBuffer::untouched::<u32>(self.device, ROOT_POOL * ROOT_STACK_WORDS)?;
+                let threads = tier_items.len().min(ROOT_POOL);
+                let state = self.kernels[ROOT_KERNELS[1]].clone();
+                let encoder = self.command.new_compute_command_encoder();
+                encoder.set_label(KERNELS[ROOT_KERNELS[1]]);
+                encoder.set_compute_pipeline_state(&state);
+                for (index, (buffer, offset)) in buffers.iter().enumerate() {
+                    encoder.set_buffer(index as u64, Some(buffer), *offset);
+                }
+                encoder.set_bytes(11, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+                encoder.set_buffer(12, Some(&stacks.buffer), 0);
+                let width = state.thread_execution_width().max(1);
+                encoder.checked_dispatch_threads(&self.command, MTLSize::new(threads as u64, 1, 1), MTLSize::new(width.min(threads as u64), 1, 1));
+                encoder.end_encoding();
+                self.encoded = true;
+                self.outcome.dispatches += 1;
+                self.retained.push(stacks);
+            }
             offset += tier_items.len() as u64;
         }
         self.roots = Some(RootsEncoded { walked, items, records, cursor, failures, capacity });

@@ -71,11 +71,24 @@ impl ContentStore {
                 put(transaction, set, &mut counts)?;
             }
             counts.flush(transaction)
-        })
+        })?;
+        // Written through: the kind images, tape-local, held for the wave that reads them.
+        for set in sets {
+            self.working_set().put_kinds(
+                set.tape_id.row(),
+                super::working_set::KindImage {
+                    lang: set.lang,
+                    nodes: set.nodes,
+                    kinds: set.kinds.iter().map(|(kind, _, _, postings)| (*kind, postings.clone())).collect(),
+                },
+            );
+        }
+        Ok(())
     }
 
     /// Removes a tape's prefilter rows (they also go when the tape is collected).
     pub(crate) fn remove_prefilter(&self, tape: TapeId) -> StoreResult<()> {
+        self.working_set().forget_kinds(tape.row());
         self.immediate_transaction(|transaction| {
             transaction.execute("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape.row()])?;
             Ok(())
@@ -187,6 +200,7 @@ impl ContentStore {
     /// Deletes a tape, as collection does, for tests of the cascade.
     #[cfg(test)]
     pub(crate) fn delete_tape_for_test(&self, tape: TapeId) -> StoreResult<()> {
+        self.working_set().clear();
         self.immediate_transaction(|transaction| {
             transaction.execute("DELETE FROM tape_objects WHERE tape_id=?1", [tape.row()])?;
             Ok(())
