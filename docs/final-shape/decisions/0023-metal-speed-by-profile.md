@@ -195,3 +195,39 @@ Many sets are "every node of the files in X" or a complement, stored as one `(fi
 node. The shape to change is the row format: a candidate set as `(file, all | bitmap)`. Complements
 and whole-file sets then cost one row per file, and an intersection becomes a bitmap `AND`, which
 the GPU can also do. That is a prefilter-lowering change, iterated in its lab.
+
+### Candidate SQL, measured in the lab (`candidate_replay` over S7's captures)
+
+The candidates return 1.15 M + 0.76 M rows. The largest plans have no root kinds; they are unions
+with sets of every node in some tapes, e.g. plan 38 = `r58 ∪ all(tapes r39) ∪ all(tapes r76)`.
+
+- **Kept, 5479c6563:** `(L \ R)` within tapes is built as `(L within tapes) \ R`. A full
+  complement is no longer materialized; `sql.prepare` went from ~480 ms to ~270 ms.
+- **Kept, f0a1cba36:** in a plan's output, a whole-tape set is emitted as one row per tape. `pre` is
+  minus the tape's node count, and these rows come before the plan's other branches, which are one
+  union. `execute` expands them and drops the other arm's rows in those tapes.
+  - `sql.query` went from ~550 ms to ~345 ms; `demand.candidates` from ~0.85 s to ~0.62 s.
+  - Every plan's rows are identical (count and checksum per plan and chunk).
+  - Metal peak is 489–506 MB. A per-plan dedupe set had pushed it to 495–503 MB; it was replaced by
+    the single union arm.
+- **Dropped:** flattening nested tape tests, so that the tapes of `within(Y, T)` are tested as
+  `Y`'s and `T`'s. Rows were the same, but VM steps rose from 74.5 M to 84.6 M with no CPU gain:
+  each `IN (SELECT …)` builds its own ephemeral index.
+
+### End to end, 2026-11-01 (load 23–27)
+
+| Backend | Wall | CPU |
+|---|---|---|
+| CPU | 3.6–3.7 s | 6.9 s |
+| Metal | 2.3–3.1 s | 6.4–6.7 s |
+
+Both give 710 keys, equal to W.
+
+Metal's whole gain is the labels, which overlap the candidates there. Everything else is the same CPU
+work on both backends: candidates ~0.6 s, roots and rows ~1.0 s, push ~0.35 s, layer ~0.25 s. The
+GPU's own time is ~200 ms.
+
+For Metal to be much faster, roots, rows or candidates have to run on the GPU. Roots on the GPU
+were measured four ways in this decision; the best took 1.03 s, against 0.6 s on the CPU JIT. The
+next shape to try is candidate sets as per-tape bitmaps with GPU set algebra, which would also
+remove the row-per-node SQL.
