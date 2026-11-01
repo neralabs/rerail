@@ -1,6 +1,6 @@
 # 0024: a wave's execution shape: one node space, sets as bitmaps, every walk on the device
 
-Status: accepted (2026-11-01); built through step 6 except the writer thread (Progress)
+Status: accepted (2026-11-01); built through step 6 (Progress)
 
 ## Context
 
@@ -306,12 +306,39 @@ reads from one S7 run under load, not measurements.
      0.3 ms).
    - The 32-frame device walks keep their stacks in device memory: in thread memory they cost
      ~140 MB of footprint. Metal now ends the audit at 440–489 MB.
-   - **Not done: write-back on a writer thread.** Push writes inside the push's own transaction
-     on the store's one connection. A second connection writing behind it would contend for
-     SQLite's single writer. Moving the push's writes there means splitting that transaction,
-     and keeping derivation records from claiming rows not yet written.
+8. **Write-back on the overlay's writer thread** (eef1994d2):
+   - The slice's push runs over `Overlay::scoped` (the store borrowed; flushed and its writer
+     joined before it returns), with the background writer on.
+   - Bindings and derivations freeze into layers, which the writer merges into SQLite oldest
+     first.
+   - Prefilter rows go through `Graph::publish_prefilters`. Over the overlay they join the same
+     FIFO as a `Rows` layer, and their kind images enter the working set at once. The rows reach
+     SQLite before any derivation recorded after them, so SQLite never holds a prefilter
+     derivation without its rows. A crash leaves that derivation unrecorded, and recovery's
+     validity join runs it again (`push_pending` marks the push unclean until `end_push`).
+   - `end_push` flushes everything before clearing the marker, so the wave reads SQLite whole.
+   - The order is pinned by `prefilter_rows_reach_sqlite_before_the_derivations_that_claim_them`.
+     The crash-recovery tests over the overlay pass.
 
-**Open:**
-- Metal's `select.sets` read 979 ms once (146 ms in other runs).
-- One Metal run's wall time was 3.9 s (2.4 s in another) under load 30–40.
-- Neither has been measured yet; both are for measurement now that the shape is in place.
+**Measured** (S7 Metal, load 21–44, one wave):
+- **`select.sets`** (146–1060 ms across runs):
+  - The set program itself is 533 steps over 5,039 words, 15 ms on the GPU.
+  - The rest is one-time process setup:
+    - opening the shared Metal device: 46–822 ms;
+    - compiling the set kernels from source: 16–89 ms.
+  - The kernels now compile on the wave's warm-up thread (3b285c0f5).
+  - Opening the device on that thread did not help. A wave that waited on the thread's open
+    once waited 0.8 s; a wave that opened the device itself took 50–80 ms. So the device is
+    still opened on the wave's path.
+  - Open: the device-open time is the remaining variance. It is external (GPU contention from
+    other processes) and is not shaped by the wave.
+- **Metal wall time** (2.0–3.9 s): the command buffer's device time is ~890 ms in every run.
+  By kernel (`RERAIL_GPU_KERNEL_TIMES`):
+  - `label_group_32`: 457 ms;
+  - `label_group_8`: 250 ms;
+  - `label_micro` + `_8`: 187 ms;
+  - root walks and patterns: < 1 ms.
+  - The fused recursive groups dominate, with a threadgroup per file iterating to the
+    fixpoint. The spread across runs is load.
+  - Open: this is where optimization starts. Candidates: splitting large files across
+    threadgroups, and fewer rounds through settle order.
