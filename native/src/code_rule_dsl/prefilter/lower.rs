@@ -52,6 +52,14 @@ pub(super) struct Statement {
     pub parameters: Vec<Value>,
     pub ownership: ownership::Layout,
 }
+
+/// A plan's output arm: a set's rows, or (`whole`) every node of the file scope's (`node`) tapes
+/// where each of `whole`'s sets has a node.
+struct Root {
+    node: usize,
+    qid: usize,
+    whole: Option<Vec<usize>>,
+}
 impl Statement {
     pub fn preparations(&self) -> usize {
         self.schedule.actions.iter().filter(|a| matches!(a, lifetime::Action::Prepare(_))).count()
@@ -139,6 +147,11 @@ struct Reuse {
     /// Each `EXCEPT` set's (left, right): a later narrowing to tapes narrows its left side
     /// before the difference (`within_tapes`).
     differences: HashMap<String, (String, String)>,
+    /// Each union's branches, and each set of every node in the tapes where each of its sets
+    /// has a node (`within_tapes` of every node): a plan whose output is a union of them emits
+    /// the latter as one row a tape (`batch_scope`).
+    unions: HashMap<String, Vec<String>>,
+    wholes: HashMap<String, Vec<String>>,
 }
 
 impl Lower {
@@ -479,7 +492,9 @@ impl Lower {
                     .map(|name| format!("SELECT fid,pre FROM {name}"))
                     .collect::<Vec<_>>()
                     .join(" UNION ");
-                self.relation(body, exact)?
+                let selected = self.relation(body, exact)?;
+                self.reuse.unions.insert(selected.name.clone(), names.clone());
+                selected
             }
         };
         if let Some(within) = within {
@@ -641,6 +656,9 @@ impl Lower {
             None => format!("SELECT s.fid,s.pre FROM {} s WHERE {}", scope.name, tests.join(" AND ")),
         };
         let selected = self.relation(body, false)?;
+        if scope.name == "all_nodes" {
+            self.reuse.wholes.insert(selected.name.clone(), sets.iter().map(|set| set.name.clone()).collect());
+        }
         Ok(self.narrowed(selected, &scope))
     }
 
@@ -715,7 +733,7 @@ fn anchored(plan: &AnchorPlan) -> bool {
 fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Statistics) -> Statement {
     use super::graph::program::Program;
     let mut program = Program::default();
-    let mut roots = Vec::new();
+    let mut roots: Vec<Root> = Vec::new();
     let mut indexed_nodes = BTreeSet::new();
     let mut predicates = std::collections::BTreeMap::new();
     let mut admissions = Vec::new();
@@ -744,14 +762,49 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Stat
                 }
             }
         };
+        // A union with sets of every node in some tapes emits its branches, those sets as a row
+        // a tape (`execute` expands them): not every node of those tapes built, sorted against
+        // the other branches and returned (06 S7: 440 K of a plan's rows).
+        let mut branches: Vec<(String, Option<Vec<String>>)> = Vec::new();
+        let mut pending = vec![selected.name.clone()];
+        while let Some(name) = pending.pop() {
+            if let Some(names) = lower.reuse.unions.get(&name) {
+                pending.extend(names.iter().cloned());
+            } else if !branches.iter().any(|(branch, _)| *branch == name) {
+                branches.push((name.clone(), lower.reuse.wholes.get(&name).cloned()));
+            }
+        }
+        // The other branches as one union (its rows distinct, as the plan's were).
+        let rest = branches.iter().filter(|(_, whole)| whole.is_none()).map(|(name, _)| Set { name: name.clone(), exact: false }).collect::<Vec<_>>();
+        let rest = match rest.len() {
+            0 => Ok(None),
+            _ => lower.union(rest).map(Some),
+        };
+        match rest {
+            Ok(rest) if branches.iter().any(|(_, whole)| whole.is_some()) => {
+                branches.retain(|(_, whole)| whole.is_some());
+                branches.extend(rest.map(|rest| (rest.name, None)));
+            }
+            _ => branches = vec![(selected.name.clone(), None)],
+        }
+        let read = branches
+            .iter()
+            .flat_map(|(name, whole)| match whole {
+                Some(sets) => sets.iter().cloned().chain(["cf".to_owned()]).collect::<Vec<_>>(),
+                None => vec![name.clone()],
+            })
+            .map(|name| format!("SELECT fid FROM {name}"))
+            .collect::<Vec<_>>()
+            .join(" UNION ALL ");
         let definitions = Definitions::new(std::mem::take(&mut lower.ctes));
-        let live = definitions
-            .live(&format!("SELECT fid,pre FROM {}", selected.name))
-            .into_iter()
-            .cloned()
-            .collect::<Vec<_>>();
+        let live = definitions.live(&read).into_iter().cloned().collect::<Vec<_>>();
         let nodes = program.add(&live, &lower.parameters, lang);
-        roots.push((nodes[&selected.name].id, qid));
+        for (name, whole) in branches {
+            roots.push(match whole {
+                Some(sets) => Root { node: nodes["cf"].id, qid, whole: Some(sets.iter().map(|set| nodes[set].id).collect()) },
+                None => Root { node: nodes[&name].id, qid, whole: None },
+            });
+        }
         for name in lower.indexed {
             if let Some(node) = nodes.get(&name) {
                 indexed_nodes.insert(node.id);
@@ -778,10 +831,26 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Stat
     let layout = program.finish();
     // Group output arms by the canonical producer, while retaining caller identities.
     // Packet boundaries then depend on shared work rather than allocation order.
-    roots.sort_unstable_by_key(|&(node, qid)| (layout.ranks[&node], qid));
+    // A split plan's arms stay together, its whole tapes (rows with a negative `pre`, minus the
+    // tape's nodes) first: `execute` expands them and drops the other arm's rows in those tapes.
+    let mut first = HashMap::new();
+    for root in &roots {
+        let rank = layout.ranks[&root.node];
+        first.entry(root.qid).and_modify(|at: &mut _| *at = std::cmp::min(*at, rank)).or_insert(rank);
+    }
+    roots.sort_unstable_by_key(|root| (first[&root.qid], root.qid, root.whole.is_none(), layout.ranks[&root.node]));
     let mut arms = roots
         .iter()
-        .map(|(node, qid)| format!("SELECT {qid} AS qid,fid,pre FROM {}", layout.names[node]))
+        .map(|root| match &root.whole {
+            None => format!("SELECT {} AS qid,fid,pre FROM {}", root.qid, layout.names[&root.node]),
+            Some(sets) => {
+                let tests = std::iter::once(root.node)
+                    .chain(sets.iter().copied())
+                    .map(|node| format!(" AND s.tape_id IN (SELECT fid FROM {})", layout.names[&node]))
+                    .collect::<String>();
+                format!("SELECT {} AS qid,s.tape_id AS fid,-s.nodes AS pre FROM prefilter_sets s WHERE s.nodes>0{tests}", root.qid)
+            }
+        })
         .collect::<Vec<_>>();
     if arms.is_empty() {
         arms.push("SELECT 0 AS qid,0 AS fid,0 AS pre WHERE 0".into());

@@ -60,6 +60,13 @@ pub(super) fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut
         Some(last) if !tail_reads => last,
         _ => actions.len(),
     };
+    // The plan whose arms are streaming, and its whole tapes so far.
+    #[derive(Default)]
+    struct Split {
+        plan: usize,
+        whole: std::collections::HashSet<i64>,
+    }
+    let mut split = Split { plan: usize::MAX, ..Split::default() };
     let result = (|| {
         request(db, &statement.files)?;
         for sql in &statement.ownership.setup {
@@ -118,11 +125,21 @@ pub(super) fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut
                     let count = query.parameter_count();
                     let mut rows = query.query(params_from_iter(&statement.parameters[..count]))?;
                     while let Some(row) = rows.next()? {
-                        emit(
-                            row.get::<_, u32>(0)? as usize,
-                            row.get(1)?,
-                            row.get::<_, u32>(2)? as usize,
-                        );
+                        let (plan, tape, pre) = (row.get::<_, u32>(0)? as usize, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?);
+                        if plan != split.plan {
+                            split = Split { plan, ..Split::default() };
+                        }
+                        if pre < 0 {
+                            // A whole tape, its rows before the plan's other arms' (`lower::batch_scope`).
+                            if split.whole.insert(tape) {
+                                (0..-pre).for_each(|pre| emit(plan, tape, pre as usize));
+                            }
+                            continue;
+                        }
+                        if split.whole.contains(&tape) {
+                            continue;
+                        }
+                        emit(plan, tape, pre as usize);
                     }
                     drop(rows);
                     drop(query);
