@@ -346,3 +346,43 @@ fn regex_vocabulary_fills_once_follows_new_terms_and_dies_with_its_terms() {
     assert_eq!(count("SELECT count(*) FROM vocabulary_term WHERE term='tarp'"), 0);
     assert_eq!(count("SELECT count(*) FROM vocabulary_term"), 6);
 }
+
+/// The set program on Metal computes the CPU's sets (decision 0024 §2).
+#[cfg(target_os = "macos")]
+#[test]
+fn metal_set_steps_compute_the_cpus_candidate_sets() {
+    let store = store();
+    let lang = GrammarDialect::TypeScript;
+    let tapes: Vec<_> = [
+        "const a = foo(1); const b = bar(2); const c = foo(3);",
+        "function f(x) { if (x) { return foo(x); } return 0; }\nlet s = 'foo';",
+        "class K { m() { return this.n; } }",
+        "const broken = foo(;",
+    ]
+    .iter()
+    .map(|source| put(&store, source, lang))
+    .collect();
+    let rules = [
+        json!({"kind": "call_expression"}),
+        json!({"kind": "identifier", "regex": "o"}),
+        json!({"pattern": "foo($A)"}),
+        json!({"kind": "call_expression", "not": {"pattern": "foo($A)"}}),
+        json!({"any": [{"not": {"regex": "foo"}}, {"pattern": "foo($A)"}]}),
+        json!({"kind": "return_statement", "inside": {"kind": "if_statement", "stopBy": "end"}}),
+        json!({"kind": "lexical_declaration", "has": {"kind": "call_expression"}}),
+        json!({"regex": "foo"}),
+    ];
+    let matchers: Vec<_> = rules.iter().map(|rule| matcher(rule, lang)).collect();
+    let plans: Vec<_> = matchers.iter().map(AnchorPlan::compile).collect();
+    let refs: Vec<_> = plans.iter().collect();
+    let ids: Vec<_> = tapes.iter().map(|(tape, _)| *tape).collect();
+    let tag = u32::from(language::tape_tag(lang).unwrap());
+    use super::super::sets::Device;
+    let (cpu_space, cpu) = super::super::select_sets(&store, tag, &refs, &ids, Device::Cpu).unwrap();
+    let (metal_space, metal) = super::super::select_sets(&store, tag, &refs, &ids, Device::Metal).unwrap();
+    assert_eq!(cpu_space, metal_space);
+    for (rule, (cpu, metal)) in rules.iter().zip(cpu.iter().zip(&metal)) {
+        assert_eq!(cpu, metal, "{rule}");
+    }
+    assert!(cpu.iter().any(|set| set.len() > 0));
+}

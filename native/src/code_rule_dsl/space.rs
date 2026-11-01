@@ -72,6 +72,14 @@ impl NodeSet {
         set
     }
 
+    /// The set of `words`, a slot of the space's words (Metal's `set_steps`).
+    pub(in crate::code_rule_dsl) fn from_words(space: &NodeSpace, words: Vec<u64>) -> Self {
+        assert_eq!(words.len().max(1), space.words().max(1), "a slot of the space");
+        let mut words = words;
+        words.truncate(space.words());
+        Self { words }
+    }
+
     pub(in crate::code_rule_dsl) fn words(&self) -> &[u64] {
         &self.words
     }

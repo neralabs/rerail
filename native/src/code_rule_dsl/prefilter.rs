@@ -28,7 +28,7 @@ pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;
 // P's incremental BLOB reader and `nera_tree`, for the §17 pure-SQL fallback.
 #[allow(dead_code)]
 mod reader;
-mod sets;
+pub(in crate::code_rule_dsl) mod sets;
 #[allow(dead_code)]
 mod tree;
 mod values;
@@ -137,7 +137,7 @@ pub(in crate::code_rule_dsl) fn select_indexed(
     plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
     tapes: &[TapeId],
 ) -> StoreResult<Vec<Vec<(u32, u32)>>> {
-    let (space, sets) = select_sets(store, lang, plans, tapes)?;
+    let (space, sets) = select_sets(store, lang, plans, tapes, sets::Device::Cpu)?;
     let rows = sets
         .iter()
         .map(|set| (0..space.files()).flat_map(|file| set.file_nodes(&space, file).map(move |pre| (file as u32, pre))).collect::<Vec<_>>())
@@ -152,9 +152,10 @@ pub(in crate::code_rule_dsl) fn select_sets(
     lang: u32,
     plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
     tapes: &[TapeId],
+    device: sets::Device,
 ) -> StoreResult<(crate::code_rule_dsl::space::NodeSpace, Vec<crate::code_rule_dsl::space::NodeSet>)> {
     let files = tapes.iter().map(|tape| tape.row()).collect::<Vec<_>>();
-    crate::code_rule_dsl::prof::time("select.sets", || sets::select(store, lang, plans, &files))
+    crate::code_rule_dsl::prof::time("select.sets", || sets::select(store, lang, plans, &files, device))
 }
 
 /// `select_indexed` by the candidate SQL (`lower::batch`, `execute`): the reference the set

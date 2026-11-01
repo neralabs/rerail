@@ -231,25 +231,30 @@ impl Wave {
     ) -> StoreResult<Vec<Vec<Vec<u32>>>> {
         let ids = tapes.iter().map(|tape| tape.id).collect::<Vec<_>>();
         let plans = self.plans.iter().map(Arc::as_ref).collect::<Vec<_>>();
-        let rows = crate::code_rule_dsl::prof::time("candidates.select", || crate::code_rule_dsl::prefilter::select_indexed(graph.store(), self.lang, &plans, &ids))?;
-        let _sort = crate::code_rule_dsl::prof::Stage::start("candidates.sort");
+        // The plans' sets over the batch's node space, on the wave's device (decision 0024 §2).
+        use crate::code_rule_dsl::prefilter::sets::Device;
+        let device = match self.backend {
+            #[cfg(target_os = "macos")]
+            ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground => Device::Metal,
+            _ => Device::Cpu,
+        };
+        let (space, sets) = crate::code_rule_dsl::prof::time("candidates.select", || {
+            crate::code_rule_dsl::prefilter::select_sets(graph.store(), self.lang, &plans, &ids, device)
+        })?;
+        let _compact = crate::code_rule_dsl::prof::Stage::start("candidates.compact");
         use rayon::prelude::*;
-        rows.into_par_iter()
+        // Each clause's starts per file: its set's nodes where its root program starts, ascending
+        // (the set's order). Held through the labels and the roots: no growth slack.
+        sets.into_par_iter()
             .enumerate()
-            .map(|(clause, rows)| {
-                let mut out = vec![Vec::new(); tapes.len()];
-                for (file, node) in rows {
-                    let file = file as usize;
-                    if self.lowered.starts(clause, &tapes[file].doc, node) {
-                        out[file].push(node);
-                    }
-                }
-                out.iter_mut().for_each(|nodes| {
-                    nodes.sort_unstable();
-                    nodes.dedup();
-                    // Held through the labels and the roots: no growth slack.
-                    nodes.shrink_to_fit();
-                });
+            .map(|(clause, set)| {
+                let out = (0..tapes.len())
+                    .map(|file| {
+                        let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<Vec<_>>();
+                        nodes.shrink_to_fit();
+                        nodes
+                    })
+                    .collect::<Vec<_>>();
                 crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
                 Ok(out)
             })

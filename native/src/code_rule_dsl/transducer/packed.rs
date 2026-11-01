@@ -47,6 +47,8 @@ mod metal_batch_abi;
 mod metal_parallel;
 #[cfg(target_os = "macos")]
 mod metal_program_backend;
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) use metal_program_backend::set_steps;
 
 #[cfg(all(test, target_os = "macos"))]
 pub(in crate::code_rule_dsl) fn reset_metal_execution_metrics() {

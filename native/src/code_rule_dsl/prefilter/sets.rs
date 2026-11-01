@@ -232,12 +232,18 @@ impl Program {
 
 /// Each plan's candidates over `files` (tape rows, in the caller's order) of language `lang`: the
 /// space of their nodes (a file of another language, or without prefilter rows, has none) and
-/// one set per plan.
-pub(super) fn select(store: &ContentStore, lang: u32, plans: &[&AnchorPlan], files: &[i64]) -> StoreResult<(NodeSpace, Vec<NodeSet>)> {
+/// one set per plan, the operations run on `device`.
+pub(super) fn select(
+    store: &ContentStore,
+    lang: u32,
+    plans: &[&AnchorPlan],
+    files: &[i64],
+    device: Device,
+) -> StoreResult<(NodeSpace, Vec<NodeSet>)> {
     let program = crate::code_rule_dsl::prof::time("sets.lower", || Program::lower(plans));
     let regexes = program.regexes();
     let lang = i64::from(lang);
-    store.candidate_transaction(!regexes.is_empty(), |db| {
+    let (space, leaves) = store.candidate_transaction(!regexes.is_empty(), |db| {
         // The vocabulary's terms for each regex, as the SQL's vocabulary stages fill them.
         if !regexes.is_empty() {
             let _stage = crate::code_rule_dsl::prof::Stage::start("sets.vocabulary");
@@ -328,13 +334,10 @@ pub(super) fn select(store: &ContentStore, lang: u32, plans: &[&AnchorPlan], fil
             }
             Ok(set)
         };
-        drop(_stage);
-        let _stage = crate::code_rule_dsl::prof::Stage::start("sets.evaluate");
-        let mut values: Vec<NodeSet> = Vec::with_capacity(program.ops.len());
-        for op in &program.ops {
-            let value = match op {
-                Op::Empty => NodeSet::empty(&space),
-                Op::All => NodeSet::all(&space),
+        // The leaves the operations read: kinds, texts, and the uncovered nodes.
+        let mut leaves = HashMap::new();
+        for (id, op) in program.ops.iter().enumerate() {
+            let leaf = match op {
                 Op::Kinds(kinds) => {
                     let mut set = NodeSet::empty(&space);
                     kinds.iter().filter_map(|kind| by_kind.get(kind)).for_each(|kind| set.union_with(kind));
@@ -342,32 +345,93 @@ pub(super) fn select(store: &ContentStore, lang: u32, plans: &[&AnchorPlan], fil
                 }
                 Op::Terms { expression, literal } => terms_of(expression, *literal)?,
                 Op::Uncovered => uncovered.clone(),
-                Op::Union(ids) => {
-                    let mut set = values[ids[0]].clone();
-                    ids[1..].iter().for_each(|&id| set.union_with(&values[id]));
-                    set
-                }
-                Op::Intersect(a, b) => {
-                    let mut set = values[*a].clone();
-                    set.intersect_with(&values[*b]);
-                    set
-                }
-                Op::Except(a, b) => {
-                    let mut set = values[*a].clone();
-                    set.difference_with(&values[*b]);
-                    set
-                }
-                Op::Within(scope, tests) => {
-                    let mut set = values[*scope].clone();
-                    set.within_files(&space, &tests.iter().map(|&id| &values[id]).collect::<Vec<_>>());
-                    set
-                }
+                _ => continue,
             };
-            values.push(value);
+            leaves.insert(id, leaf);
         }
-        let outputs = program.outputs.iter().map(|&id| values[id].clone()).collect();
-        Ok((space, outputs))
-    })
+        Ok((space, leaves))
+    })?;
+    let _stage = crate::code_rule_dsl::prof::Stage::start("sets.evaluate");
+    let outputs = match device {
+        Device::Cpu => evaluate(&program, &space, leaves),
+        #[cfg(target_os = "macos")]
+        Device::Metal => evaluate_metal(&program, &space, &leaves)?,
+    };
+    Ok((space, outputs))
+}
+
+/// Where a set program's operations run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) enum Device {
+    Cpu,
+    #[cfg(target_os = "macos")]
+    Metal,
+}
+
+/// The program's outputs, its operations on the host's bitmaps.
+fn evaluate(program: &Program, space: &NodeSpace, mut leaves: HashMap<usize, NodeSet>) -> Vec<NodeSet> {
+    let mut values: Vec<NodeSet> = Vec::with_capacity(program.ops.len());
+    for (id, op) in program.ops.iter().enumerate() {
+        let value = match op {
+            Op::Empty => NodeSet::empty(space),
+            Op::All => NodeSet::all(space),
+            Op::Kinds(_) | Op::Terms { .. } | Op::Uncovered => leaves.remove(&id).expect("a read leaf"),
+            Op::Union(ids) => {
+                let mut set = values[ids[0]].clone();
+                ids[1..].iter().for_each(|&id| set.union_with(&values[id]));
+                set
+            }
+            Op::Intersect(a, b) => {
+                let mut set = values[*a].clone();
+                set.intersect_with(&values[*b]);
+                set
+            }
+            Op::Except(a, b) => {
+                let mut set = values[*a].clone();
+                set.difference_with(&values[*b]);
+                set
+            }
+            Op::Within(scope, tests) => {
+                let mut set = values[*scope].clone();
+                set.within_files(space, &tests.iter().map(|&id| &values[id]).collect::<Vec<_>>());
+                set
+            }
+        };
+        values.push(value);
+    }
+    program.outputs.iter().map(|&id| values[id].clone()).collect()
+}
+
+/// The program's outputs, its operations as Metal set steps: a slot per operation, the leaves
+/// written in theirs (`set_steps`).
+#[cfg(target_os = "macos")]
+fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, NodeSet>) -> StoreResult<Vec<NodeSet>> {
+    use crate::code_rule_dsl::transducer::packed::set_steps::{self, SetStep};
+    let slot = |id: usize| id as u32;
+    let mut steps = Vec::new();
+    for (id, op) in program.ops.iter().enumerate() {
+        let out = slot(id);
+        match op {
+            Op::Empty => steps.push(SetStep::Clear { out }),
+            Op::All => steps.push(SetStep::Fill { out }),
+            Op::Kinds(_) | Op::Terms { .. } | Op::Uncovered => {}
+            Op::Union(ids) => {
+                steps.push(SetStep::Copy { out, a: slot(ids[0]) });
+                steps.extend(ids[1..].iter().map(|&b| SetStep::Or { out, a: out, b: slot(b) }));
+            }
+            Op::Intersect(a, b) => steps.push(SetStep::And { out, a: slot(*a), b: slot(*b) }),
+            Op::Except(a, b) => steps.push(SetStep::AndNot { out, a: slot(*a), b: slot(*b) }),
+            Op::Within(scope, tests) => {
+                steps.push(SetStep::Copy { out, a: slot(*scope) });
+                steps.extend(tests.iter().map(|&test| SetStep::Within { out, test: slot(test) }));
+            }
+        }
+    }
+    let files = (0..space.files()).map(|file| (space.base(file), space.count(file))).collect::<Vec<_>>();
+    let leaves = leaves.iter().map(|(&id, set)| (id, set.words())).collect::<Vec<_>>();
+    let words = set_steps::run(&files, space.len(), program.ops.len(), &leaves, &steps, &program.outputs)
+        .map_err(|error| crate::content_store::StoreError::Invalid(format!("the set steps failed on Metal: {error:?}")))?;
+    Ok(words.into_iter().map(|words| NodeSet::from_words(space, words)).collect())
 }
 
 /// Adds a posting segment's nodes (preorders as varint deltas, from 0) of a file of `count`
