@@ -709,7 +709,7 @@ impl LoweredMatcher {
     ) -> Result<(Vec<BTreeSet<u32>>, metal_program_backend::label_passes::Outcome), Error> {
         let no_labels = empty_sets(tapes, self.labels.defs.len());
         let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&self.domain, tape, sets).collect()).collect();
-        let (mut found, outcome) = metal(&[self], self.labels.defs.len(), tapes, &[roots], None)?;
+        let (mut found, outcome) = metal(&[self], self.labels.defs.len(), tapes, &[roots], None, None)?;
         Ok((found.pop().expect("one clause"), outcome))
     }
 }
@@ -730,8 +730,9 @@ impl LoweredWave {
         &self,
         tapes: &[TapeDoc],
         active: &[Vec<bool>],
+        roots: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
     ) -> Result<(Vec<TapeDoc>, metal_program_backend::label_passes::Outcome), Error> {
-        let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[], Some(active))?;
+        let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[], Some(active), roots)?;
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3e.before_views");
         let _views = crate::code_rule_dsl::prof::Stage::start("labels.views");
@@ -748,7 +749,7 @@ impl LoweredWave {
         tapes: &[TapeDoc],
         roots: &[Vec<Vec<u32>>],
     ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
-        metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, roots, None)
+        metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, roots, None, None)
     }
 }
 
@@ -767,6 +768,7 @@ fn metal<'a>(
     tapes: &[TapeDoc],
     clause_roots: &[Vec<Vec<u32>>],
     active: Option<&[Vec<bool>]>,
+    records: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
 ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
     use metal_program_backend::label_passes::{Pass, Plan, run};
     let bases = tapes
@@ -932,10 +934,10 @@ fn metal<'a>(
     let outcome = match active {
         // The wave's labels: a recursive group that sweeps runs on the CPU's sweep, each file a
         // walk in node order, between the GPU's wide levels (O26).
-        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active, &materialize)?,
+        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active, &materialize, records)?,
         None => {
             materialize(&mut steps);
-            run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: Default::default(), rows: None, buffers: None }, tapes)?
+            run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: Default::default(), rows: None, buffers: None, roots: records }, tapes)?
         }
     };
     let found = (0..clauses.len())
@@ -988,6 +990,7 @@ fn apart<'a>(
     tapes: &[TapeDoc],
     active: &[Vec<bool>],
     materialize: &dyn Fn(&mut [(bool, Vec<Vec<metal_program_backend::label_passes::Pass<'a>>>)]),
+    roots: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
 ) -> Result<metal_program_backend::label_passes::Outcome, Error> {
     use metal_program_backend::label_passes::{Outcome, Plan, run};
     let (host, _) = levels(clauses, |clause, id| Ok((clause, id)))?;
@@ -1037,8 +1040,9 @@ fn apart<'a>(
         let evaluated = metal_program_backend::label_passes::text_rows(&slots, tapes, &row_bases, words);
         rows.lock().map_err(|_| Error::BackendFailure)?.extend(keys.into_iter().zip(evaluated));
     }
-    let flush = |segment: &mut (Vec<_>, Vec<_>), outcome: &mut Outcome| -> Result<(), Error> {
-        if segment.0.is_empty() {
+    // The roots join the last run, after every label (`Plan::roots`).
+    let flush = |segment: &mut (Vec<_>, Vec<_>), outcome: &mut Outcome, last: bool| -> Result<(), Error> {
+        if segment.0.is_empty() && !(last && roots.is_some()) {
             return Ok(());
         }
         materialize(&mut segment.0);
@@ -1052,6 +1056,7 @@ fn apart<'a>(
             initial: std::cell::Cell::new(Some(std::mem::take(&mut outcome.labels)).filter(|labels| !labels.is_empty())),
             rows: Some(&rows),
             buffers: Some(&kept),
+            roots: if last { roots } else { None },
         };
         crate::code_rule_dsl::prof::release();
         let before = crate::code_rule_dsl::prof::footprint_mb();
@@ -1101,6 +1106,9 @@ fn apart<'a>(
         }
         crate::code_rule_dsl::prof::peak("3b.gpu");
         outcome.labels = ran.labels;
+        if !ran.records.is_empty() {
+            outcome.records = ran.records;
+        }
         outcome.command_buffers += ran.command_buffers;
         outcome.dispatches += ran.dispatches;
         outcome.rounds = outcome.rounds.max(ran.rounds);
@@ -1113,7 +1121,7 @@ fn apart<'a>(
             segment.1.push(chain);
             continue;
         }
-        flush(&mut segment, &mut outcome)?;
+        flush(&mut segment, &mut outcome, false)?;
         let mut sets = crate::code_rule_dsl::prof::time("labels.to_sets", || to_sets(&outcome.labels, labels, words, tapes));
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3c.to_sets");
@@ -1176,7 +1184,7 @@ fn apart<'a>(
         outcome.labels = crate::code_rule_dsl::prof::time("labels.to_words", || to_words(&sets, labels, words, tapes));
         mark("to_words");
     }
-    flush(&mut segment, &mut outcome)?;
+    flush(&mut segment, &mut outcome, true)?;
     Ok(outcome)
 }
 

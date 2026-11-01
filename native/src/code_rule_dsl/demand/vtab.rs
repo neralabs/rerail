@@ -109,6 +109,9 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     sound_under_errors: Vec<bool>,
     result_limits: Vec<u32>,
     failure_injections: HashMap<usize, String>,
+    /// Per program, per file: its roots' match records walked on the device with the labels
+    /// (`with_records`), or `None` where the host walks them.
+    records: Vec<Option<Vec<Vec<(u32, super::super::transducer::packed::RootRecord)>>>>,
 }
 
 /// A range's roots: the backend's execution, or the micro walks' records (decision 0024 §3).
@@ -258,6 +261,7 @@ impl PackedDemand {
             task_grid,
             result_limits,
             failure_injections: HashMap::new(),
+            records: Vec::new(),
         })
     }
 
@@ -340,9 +344,11 @@ impl PackedDemand {
     fn walked(&self, range: Range<usize>, programs: Range<usize>) -> Option<RootsExecution> {
         use super::super::transducer::packed::{Frames, Micro};
         use rayon::prelude::*;
+        let given = |program: usize| self.records.get(program).and_then(Option::as_ref);
         let walks = programs
             .clone()
             .map(|program| match self.producer_kinds[program] {
+                ProducerKind::Terminal if given(program).is_some() => Some(None),
                 ProducerKind::Terminal => Micro::of(&self.programs[program]).map(Some),
                 _ => Some(None),
             })
@@ -359,6 +365,28 @@ impl PackedDemand {
                     .zip(&walks)
                     .map(|(program, walk)| {
                         let mut found = Vec::new();
+                        // Records the device walked: as the host's walk lists them.
+                        if let (Some(given), true) = (given(program), self.task_grid[file][program]) {
+                            let limit = self.result_limits[program] as usize;
+                            let mut local = 0_u32;
+                            let mut last = None;
+                            for (task, record) in given[file].iter().take(limit) {
+                                local = if last == Some(*task) { local + 1 } else { 0 };
+                                last = Some(*task);
+                                found.push(RootMatch {
+                                    task_ordinal: *task,
+                                    local_ordinal: local,
+                                    start: record.start,
+                                    label: record.label,
+                                    captures: record
+                                        .captures()
+                                        .iter()
+                                        .map(|&(label, node)| RootCapture { label, node, span: tape.transducer_span(node), text: None })
+                                        .collect(),
+                                });
+                            }
+                            return Some(found);
+                        }
                         let (Some(walk), true) = (walk, self.task_grid[file][program]) else { return Some(found) };
                         let anchors = &self.anchors[file][program];
                         if anchors.is_empty() {
@@ -433,6 +461,18 @@ impl PackedDemand {
             }
         }
         eprintln!("ROOTS check: {same} same, {differ} differ");
+    }
+
+    /// The roots' match records walked elsewhere (per program, per file, `None` where not).
+    pub(in crate::code_rule_dsl) fn with_records(
+        mut self,
+        records: Vec<Option<Vec<Vec<(u32, super::super::transducer::packed::RootRecord)>>>>,
+    ) -> Result<Self, PackedError> {
+        if records.len() != self.programs.len() || records.iter().flatten().any(|files| files.len() != self.files.len()) {
+            return Err(PackedError::InvalidAnchor);
+        }
+        self.records = records;
+        Ok(self)
     }
 
     #[cfg(test)]
@@ -666,7 +706,7 @@ impl PackedDemand {
             let _roots = crate::code_rule_dsl::prof::Stage::start("demand.roots");
             // The roots as micro walks' records where every terminal program is one (decision
             // 0024 §3), else (or where a walk overflows) the backend's execution.
-            if !metal && std::env::var_os("RERAIL_ROOTS_JIT").is_none() {
+            if (!metal || !self.records.is_empty()) && std::env::var_os("RERAIL_ROOTS_JIT").is_none() {
                 if let Some(walked) = self.walked(range.clone(), programs.clone()) {
                     if std::env::var_os("RERAIL_ROOTS_CHECK").is_some() {
                         let packed = execute_with_backend_packed_result_limits(

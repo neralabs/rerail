@@ -81,6 +81,95 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     pub(in crate::code_rule_dsl) rows: Option<&'a TextRows>,
     /// Buffers that earlier runs over the same files left for the next (`RunBuffers`).
     pub(in crate::code_rule_dsl) buffers: Option<&'a RunBuffers>,
+    /// Root programs walked after the passes, in the same command buffer, as match records
+    /// (`root_records_*`, decision 0024 §3): `Outcome::records`.
+    pub(in crate::code_rule_dsl) roots: Option<&'a RootJobs<'a>>,
+}
+
+/// Root programs and, per program, per file, their starts (an anchor a task).
+pub(in crate::code_rule_dsl) struct RootJobs<'a> {
+    pub(in crate::code_rule_dsl) programs: Vec<&'a Program>,
+    pub(in crate::code_rule_dsl) starts: Vec<Vec<Vec<u32>>>,
+}
+
+/// Per root program: per file its (task, record)s in task then walk order, or `None` where the
+/// program did not run on the device (not a micro walk of at most 32 frames, a walk that
+/// overflowed, or records past the buffer); the host walks those.
+pub(in crate::code_rule_dsl) type RootsFound = Vec<Option<Vec<Vec<(u32, super::super::RootRecord)>>>>;
+
+/// The root walks' kernels in `KERNELS`: 8 and 32 frames.
+const ROOT_KERNELS: [usize; 2] = [9, 10];
+/// Words of a root record (`root_records_*`).
+const ROOT_RECORD: usize = 20;
+
+/// The flushed roots as `RootsFound`: each record to its item's (program, file, task), its
+/// nodes back to the file's, sorted by task and the walk's order.
+fn decode_roots(roots: RootsEncoded, files: &[TapeDoc]) -> RootsFound {
+    use super::super::RootRecord;
+    let read = |buffer: &MappedBuffer, count: usize| unsafe { std::slice::from_raw_parts(buffer.buffer.contents().cast::<u32>(), count) };
+    let cursor = read(&roots.cursor, 2);
+    let (written, overflow) = (cursor[0] as usize, cursor[1] != 0);
+    let failures = read(&roots.failures, roots.walked.len().max(1));
+    if overflow || written > roots.capacity {
+        crate::code_rule_dsl::prof::count("gpu.root_overflow", 1);
+        return vec![None; roots.walked.len()];
+    }
+    let bases = files
+        .iter()
+        .scan(0_u32, |base, tape| {
+            let at = *base;
+            *base += tape.transducer_len() as u32;
+            Some(at)
+        })
+        .collect::<Vec<_>>();
+    type Staged = Vec<Option<Vec<Vec<((u32, u32), RootRecord)>>>>;
+    let mut found: Staged = roots
+        .walked
+        .iter()
+        .enumerate()
+        .map(|(program, &walked)| (walked && failures[program] == 0).then(|| vec![Vec::new(); files.len()]))
+        .collect();
+    let mut sorted = Vec::<()>::with_capacity(written);
+    let words = read(&roots.records, written * ROOT_RECORD);
+    for record in words.chunks_exact(ROOT_RECORD) {
+        let [program, file, task, start] = roots.items[record[0] as usize];
+        let Some(per_file) = found[program as usize].as_mut() else { continue };
+        let base = bases[file as usize];
+        let captured = record[3].min(8) as u8;
+        let mut captures = [(0_u16, u32::MAX); 8];
+        for at in 0..usize::from(captured) {
+            captures[at] = (record[12 + at] as u16, record[4 + at] - base);
+        }
+        sorted.push(());
+        per_file[file as usize].push(((task, record[1]), RootRecord { start: start - base, label: record[2] as u16, captured, captures }));
+    }
+    crate::code_rule_dsl::prof::count("gpu.root_records", sorted.len());
+    found
+        .into_iter()
+        .map(|per_file| {
+            per_file.map(|per_file| {
+                per_file
+                    .into_iter()
+                    .map(|mut records: Vec<((u32, u32), RootRecord)>| {
+                        records.sort_unstable_by_key(|(key, _)| *key);
+                        records.into_iter().map(|((task, _), record)| (task, record)).collect()
+                    })
+                    .collect()
+            })
+        })
+        .collect()
+}
+
+/// The roots' device state between encoding and the flush (`Runner::records`).
+struct RootsEncoded {
+    /// Per program whether it runs on the device.
+    walked: Vec<bool>,
+    /// Per item (program, file, task, global start).
+    items: Vec<[u32; 4]>,
+    records: MappedBuffer,
+    cursor: MappedBuffer,
+    failures: MappedBuffer,
+    capacity: usize,
 }
 
 /// What one run over a labelling's files leaves for the next, since only the labels and the
@@ -264,6 +353,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) widened: bool,
     /// Whether a micro walk outgrew its frames, so every program ran on the interpreter.
     pub(in crate::code_rule_dsl) interpreted: bool,
+    /// The plan's root records (`Plan::roots`); empty without roots.
+    pub(in crate::code_rule_dsl) records: RootsFound,
 }
 
 #[repr(C)]
@@ -338,6 +429,17 @@ fn label_rows(plan: &Plan<'_>, micro: bool) -> Option<(Vec<u32>, Vec<u32>)> {
                 }
             }
             Pass::Empty { target } => mark(*target)?,
+        }
+    }
+    // The root programs read their labels after the passes (those walked on the host read the
+    // host's copy).
+    for program in plan.roots.iter().flat_map(|roots| &roots.programs) {
+        let Some(walk) = Micro::of(program) else { continue };
+        for &word in &walk.words {
+            let (op, _, arg) = super::super::split(word);
+            if op == super::super::SUPERTYPE && arg >= DERIVED_CLASS_BASE {
+                mark(u32::from(arg - DERIVED_CLASS_BASE))?;
+            }
         }
     }
     let present = used.iter().enumerate().filter(|(_, used)| **used).map(|(label, _)| label as u32).collect::<Vec<_>>();
@@ -416,7 +518,7 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 }
 
 const SOURCE: &str = include_str!("metal_label_passes.metal");
-const KERNELS: [&str; 9] = [
+const KERNELS: [&str; 11] = [
     "label_sink",
     "label_settle",
     "label_round",
@@ -426,6 +528,8 @@ const KERNELS: [&str; 9] = [
     "label_micro_deep",
     "label_group_8",
     "label_group_32",
+    "root_records_8",
+    "root_records_32",
 ];
 /// The fused group kernels in `KERNELS` (`Runner::group`): 8 and 32 frames a walk.
 const GROUP_KERNELS: [usize; 2] = [7, 8];
@@ -614,6 +718,8 @@ struct Runner<'a> {
     stacks: Option<MappedBuffer>,
     encoded: bool,
     outcome: Outcome,
+    /// The plan's root walks, encoded after its passes (`records`).
+    roots: Option<RootsEncoded>,
 }
 
 pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
@@ -858,6 +964,7 @@ fn encode(
             rounds: rounds.iter().copied().max().unwrap_or(0),
             ..Outcome::default()
         },
+        roots: None,
     };
     mark("buffers");
     if crate::code_rule_dsl::prof::on() {
@@ -899,6 +1006,10 @@ fn encode(
             }
         }
         runner.boundary(rounds);
+    }
+    // The roots after every pass, reading the labels in place (decision 0024 §3).
+    if let Some(jobs) = plan.roots {
+        runner.records(jobs)?;
     }
     drop(_encode);
     // Encoding's host vectors are freed: their pages go back before the GPU's memory is taken.
@@ -955,7 +1066,9 @@ fn encode(
     // The run's queue, command buffer and other buffers go before the host's copy of the labels
     // is made: only the prefix stays (the driver's memory for the run is the footprint's peak).
     let prefix = runner.tapes.supertypes.buffer.clone();
+    let records = runner.roots.take().map(|roots| decode_roots(roots, files)).unwrap_or_default();
     let mut outcome = std::mem::take(&mut runner.outcome);
+    outcome.records = records;
     drop(runner);
     let result = unsafe {
         std::slice::from_raw_parts(prefix.contents().cast::<u32>().add(2), prefix_labels * words)
@@ -1751,6 +1864,95 @@ impl Runner<'_> {
         self.outcome.dispatches += 1;
         self.split(KERNELS[pipeline]);
         Ok(true)
+    }
+
+    /// The root walks (`root_records_*`): a thread per (program, file, task, start) of each
+    /// program that is a micro walk of at most 32 frames, by its depth's kernel.
+    fn records(&mut self, jobs: &RootJobs<'_>) -> Result<(), Error> {
+        let bases = self
+            .files
+            .iter()
+            .scan(0_u32, |base, tape| {
+                let at = *base;
+                *base += tape.transducer_len() as u32;
+                Some(at)
+            })
+            .collect::<Vec<_>>();
+        let (largest, mut longest) = (self.files.iter().map(TapeDoc::transducer_len).max().unwrap_or(0), 0);
+        let (mut passes, mut words, mut texts, mut walked) = (Vec::<[u32; 4]>::new(), Vec::<u32>::new(), Vec::<u32>::new(), Vec::new());
+        let mut tiers: [Vec<[u32; 4]>; 2] = Default::default();
+        for (at, program) in jobs.programs.iter().enumerate() {
+            let walk = Micro::of(program).filter(|walk| walk.depth().is_some_and(|depth| depth <= 32));
+            let rows = walk.as_ref().and_then(|walk| {
+                (0..walk.texts.len()).map(|slot| text_row(walk, program, slot, self.files, &bases, self.words)).collect::<Option<Vec<_>>>()
+            });
+            let (Some(walk), Some(rows)) = (walk, rows) else {
+                passes.push([0; 4]);
+                walked.push(false);
+                continue;
+            };
+            let text_start = (texts.len() / self.words) as u32;
+            rows.iter().for_each(|row| texts.extend_from_slice(row));
+            passes.push([words.len() as u32, walk.words.len() as u32, text_start, 0]);
+            longest = longest.max(walk.words.len());
+            match &self.label_rows {
+                None => words.extend_from_slice(&walk.words),
+                Some(row_of) => words.extend(walk.words.iter().map(|&word| {
+                    let (op, mode, arg) = super::super::split(word);
+                    if op == super::super::SUPERTYPE && arg >= DERIVED_CLASS_BASE {
+                        super::super::word(op, mode, DERIVED_CLASS_BASE + row_of[usize::from(arg - DERIVED_CLASS_BASE)] as u16)
+                    } else {
+                        word
+                    }
+                })),
+            }
+            walked.push(true);
+            let tier = usize::from(walk.depth().is_some_and(|depth| depth > 8));
+            for (file, starts) in jobs.starts[at].iter().enumerate() {
+                tiers[tier].extend(starts.iter().enumerate().map(|(task, &start)| [at as u32, file as u32, task as u32, bases[file] + start]));
+            }
+        }
+        let items = tiers.iter().flatten().copied().collect::<Vec<_>>();
+        crate::code_rule_dsl::prof::count("gpu.root_items", items.len());
+        let capacity = items.len() * 4 + 4096;
+        let records = MappedBuffer::untouched::<u32>(self.device, capacity * ROOT_RECORD)?;
+        let cursor = MappedBuffer::zeroed::<u32>(self.device, 2)?;
+        let failures = MappedBuffer::zeroed::<u32>(self.device, jobs.programs.len().max(1))?;
+        let steps = super::super::micro_steps(largest, longest.max(1));
+        let (passes, words) = (self.upload(&passes)?, self.upload(&words)?);
+        let texts = if texts.is_empty() { self.upload(&[0_u32])? } else { self.upload(&texts)? };
+        let mut offset = 0_u64;
+        for (tier, tier_items) in tiers.iter().enumerate() {
+            if tier_items.is_empty() {
+                continue;
+            }
+            let items_buffer = self.upload(tier_items)?;
+            let shape = Shape {
+                item_count: tier_items.len() as u32,
+                target_count: capacity as u32,
+                round: offset as u32,
+                steps,
+                ..self.shape()
+            };
+            let tapes = &self.tapes;
+            let buffers = [
+                (&tapes.nodes.buffer.clone(), 0),
+                (&tapes.children.buffer.clone(), 0),
+                (&tapes.supertypes.buffer.clone(), 0),
+                (&tapes.files.buffer.clone(), 0),
+                (&passes, 0),
+                (&words, 0),
+                (&items_buffer, 0),
+                (&texts, 0),
+                (&records.buffer.clone(), 0),
+                (&cursor.buffer.clone(), 0),
+                (&failures.buffer.clone(), 0),
+            ];
+            self.kernel(ROOT_KERNELS[tier], &buffers, shape, tier_items.len());
+            offset += tier_items.len() as u64;
+        }
+        self.roots = Some(RootsEncoded { walked, items, records, cursor, failures, capacity });
+        Ok(())
     }
 
     /// The level's micro walks (`label_micro`), one thread per (pass, start), marking scratch as

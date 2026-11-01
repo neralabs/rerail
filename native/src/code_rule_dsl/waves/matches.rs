@@ -175,24 +175,26 @@ impl Wave {
         let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
         let metal = cfg!(target_os = "macos")
             && matches!(self.backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground);
+        let programs = self.lowered.programs();
+        let mut found = None;
         let (candidates, views) = if metal {
-            // On Metal the labels are a dense pass over every node, which costs the same with every
-            // clause active (06 S7: ~0.9 s either way), so they run beside the candidates' SQL, a
-            // single connection's work, rather than after it (decision 0023).
+            // On Metal the candidates come first (set steps on the device, ~150 ms), then every
+            // clause's labels and its roots from those candidates in one run: the roots read the
+            // labels in place and come back as match records (decision 0024 §3).
+            let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
             let active = vec![vec![true; docs.len()]; self.plans.len()];
-            std::thread::scope(|scope| -> StoreResult<_> {
-                let labelling = scope.spawn(|| {
-                    crate::code_rule_dsl::prof::time("demand.labels", || {
-                        #[cfg(target_os = "macos")]
-                        return labelled_metal(&self.lowered, &docs, &active).map_err(invalid);
-                        #[cfg(not(target_os = "macos"))]
-                        return self.lowered.labelled(&docs, &active).map_err(invalid);
-                    })
-                });
-                let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes));
-                let views = labelling.join().map_err(|_| StoreError::Invalid("the labels' thread panicked".to_owned()))?;
-                Ok((candidates?, views?))
-            })?
+            let views = crate::code_rule_dsl::prof::time("demand.labels", || {
+                #[cfg(target_os = "macos")]
+                {
+                    let jobs = crate::code_rule_dsl::transducer::packed::RootJobs { programs: programs.iter().collect(), starts: candidates.clone() };
+                    let (views, records) = labelled_metal(&self.lowered, &docs, &active, &jobs).map_err(invalid)?;
+                    found = Some(records);
+                    Ok::<_, StoreError>(views)
+                }
+                #[cfg(not(target_os = "macos"))]
+                self.lowered.labelled(&docs, &active).map_err(invalid)
+            })?;
+            (candidates, views)
         } else {
             let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
             crate::code_rule_dsl::prof::release();
@@ -204,7 +206,6 @@ impl Wave {
         };
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3.labels");
-        let programs = self.lowered.programs();
         let anchors = (0..views.len())
             .map(|file| candidates.iter().map(|clause| clause[file].clone()).collect::<Vec<_>>())
             .collect::<Vec<_>>();
@@ -217,7 +218,10 @@ impl Wave {
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit => ExecutionBackend::CpuJit,
             backend => backend,
         };
-        let demand = PackedDemand::new(roots, programs, views, anchors, grid, limits).map_err(invalid)?;
+        let mut demand = PackedDemand::new(roots, programs, views, anchors, grid, limits).map_err(invalid)?;
+        if let Some(found) = found {
+            demand = demand.with_records(found).map_err(invalid)?;
+        }
         self.chunks.push(Chunk { candidates });
         Ok(Some(demand))
     }
@@ -306,22 +310,41 @@ pub(in crate::code_rule_dsl) fn documents(graph: &(impl Graph + ?Sized), scope: 
 
 /// The tapes labelled on Metal, all at once or, where their label levels outgrow a workspace
 /// (06 S7: 250 files in one chunk), each half on its own: a file's labels read only that file.
+/// Their roots' records come with them (`RootsFound`): a half's program that did not run on the
+/// device makes the program's records `None` for both.
 #[cfg(target_os = "macos")]
 fn labelled_metal(
     lowered: &LoweredWave,
     docs: &[crate::code_rule_dsl::tape::TapeDoc],
     active: &[Vec<bool>],
-) -> Result<Vec<crate::code_rule_dsl::tape::TapeDoc>, crate::code_rule_dsl::transducer::packed::Error> {
-    use crate::code_rule_dsl::transducer::packed::Error as PackedError;
-    match lowered.labelled_metal(docs, active) {
+    jobs: &crate::code_rule_dsl::transducer::packed::RootJobs<'_>,
+) -> Result<(Vec<crate::code_rule_dsl::tape::TapeDoc>, crate::code_rule_dsl::transducer::packed::RootsFound), crate::code_rule_dsl::transducer::packed::Error> {
+    use crate::code_rule_dsl::transducer::packed::{Error as PackedError, RootJobs};
+    match lowered.labelled_metal(docs, active, Some(jobs)) {
         Err(PackedError::BackendCapacity) if docs.len() > 1 => {
             let half = docs.len() / 2;
             let split = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
-            let mut views = labelled_metal(lowered, &docs[..half], &split(0..half))?;
-            views.extend(labelled_metal(lowered, &docs[half..], &split(half..docs.len()))?);
-            Ok(views)
+            let part = |range: std::ops::Range<usize>| RootJobs {
+                programs: jobs.programs.clone(),
+                starts: jobs.starts.iter().map(|clause| clause[range.clone()].to_vec()).collect(),
+            };
+            let (mut views, left) = labelled_metal(lowered, &docs[..half], &split(0..half), &part(0..half))?;
+            let (right_views, right) = labelled_metal(lowered, &docs[half..], &split(half..docs.len()), &part(half..docs.len()))?;
+            views.extend(right_views);
+            let records = left
+                .into_iter()
+                .zip(right)
+                .map(|(left, right)| left.zip(right).map(|(mut left, right)| {
+                    left.extend(right);
+                    left
+                }))
+                .collect();
+            Ok((views, records))
         }
-        labelled => labelled.map(|(views, _)| views),
+        labelled => labelled.map(|(views, outcome)| {
+            let records = if outcome.records.is_empty() { vec![None; jobs.programs.len()] } else { outcome.records };
+            (views, records)
+        }),
     }
 }
 
