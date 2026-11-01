@@ -391,11 +391,13 @@ const TIER_KERNELS: [usize; 3] = [4, 5, 3];
 /// The loop tier's threads (`MICRO_POOL`), each striding over the items with a 64-frame stack
 /// of 17 words a frame (`MicroFrame`) in `Runner::stacks`. The pool's threads are the kernel's
 /// occupancy: at 1024 threads of 128 frames the loop tier's 3% of S7's starts took ~280 ms of
-/// its ~350 ms on the GPU, 2048 of 64 ~150 ms. A run whose walk outgrows 64 frames runs again
-/// with the same stacks as 1024 of 128 (`label_micro_deep`, `MICRO_DEEP_POOL`).
-const MICRO_POOL: usize = 2048;
+/// its ~350 ms on the GPU, 2048 of 64 ~150 ms. Timed per kernel (`RERAIL_GPU_KERNEL_TIMES`),
+/// 1.73 M loop items took 193 ms at 2048 threads, 121 ms at 4096 and 85 ms at 8192, which put
+/// the footprint over budget (511–515 MB). A run whose walk outgrows 64 frames runs again with
+/// the same stacks as 2048 of 128 (`label_micro_deep`, `MICRO_DEEP_POOL`).
+const MICRO_POOL: usize = 4096;
 const MICRO_STACK_WORDS: usize = 64 * 17;
-const MICRO_DEEP_POOL: usize = 1024;
+const MICRO_DEEP_POOL: usize = 2048;
 /// The deep pool's kernel in `KERNELS`.
 const DEEP_KERNEL: usize = 6;
 /// The launches a clause's encoding aims to stay within, below the evaluation's budget
@@ -1029,6 +1031,32 @@ impl Runner<'_> {
         Ok(())
     }
 
+    /// Profiling (`RERAIL_GPU_KERNEL_TIMES`): the command buffer so far committed and waited on,
+    /// its GPU time added to `kernel_us.<label>` and `kernel_n.<label>`, and a new one begun.
+    /// Kernels then run one buffer each, in the same order on the same queue.
+    fn split(&mut self, label: &str) {
+        static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_KERNEL_TIMES").is_some());
+        if !*ON {
+            return;
+        }
+        self.command.commit();
+        self.command.wait_until_completed();
+        unsafe extern "C" {
+            fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+            fn objc_msgSend();
+        }
+        let send: unsafe extern "C" fn(*const std::ffi::c_void, *mut std::ffi::c_void) -> f64 =
+            unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+        let object = std::ptr::from_ref::<metal::CommandBufferRef>(&self.command).cast::<std::ffi::c_void>();
+        let (start, end) = unsafe {
+            (send(object, sel_registerName(c"GPUStartTime".as_ptr())), send(object, sel_registerName(c"GPUEndTime".as_ptr())))
+        };
+        crate::code_rule_dsl::prof::count_named(format!("kernel_us.{label}"), ((end - start) * 1e6) as usize);
+        crate::code_rule_dsl::prof::count_named(format!("kernel_n.{label}"), 1);
+        self.command = self.queue.new_command_buffer().to_owned();
+        self.command.set_label("Rerail label passes");
+    }
+
     fn upload<T: Copy>(&mut self, values: &[T]) -> Result<Buffer, Error> {
         let buffer = if values.is_empty() {
             MappedBuffer::zeroed::<T>(self.device, 1)?
@@ -1082,6 +1110,7 @@ impl Runner<'_> {
         encoder.end_encoding();
         self.encoded = true;
         self.outcome.dispatches += 1;
+        self.split(label);
     }
 
     /// A recursive group's end after `rounds` rounds (`label_round`).
@@ -1609,6 +1638,9 @@ impl Runner<'_> {
             (&counts, 0),
             (&stacks, 0),
         ];
+        if crate::code_rule_dsl::prof::on() {
+            crate::code_rule_dsl::prof::count_named(format!("items.tier{tier}"), threads);
+        }
         let (pipeline, threads) = match tier {
             2 if self.deep => (DEEP_KERNEL, threads.min(MICRO_DEEP_POOL)),
             2 => (TIER_KERNELS[2], threads.min(MICRO_POOL)),
@@ -1649,6 +1681,7 @@ impl Runner<'_> {
             lease.final_captures.buffer.clone(),
             lease.statuses.buffer.clone(),
         );
+        self.split("programs");
         let (scratch, counts, flags) =
             (self.scratch.buffer.clone(), self.counts.buffer.clone(), self.flags.buffer.clone());
         let shape = Shape {

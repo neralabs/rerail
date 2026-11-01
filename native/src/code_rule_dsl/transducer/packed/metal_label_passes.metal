@@ -85,9 +85,9 @@ struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,t
 // siblings; 0 a forked path) where its candidates continue.
 // Eight cursors, as micro.rs's CURSORS.
 struct MicroFrame { uint pc,node,resume,named,next,end,cursors[8],capture0,capture1,captured; };
-// The loop tier's pool: 2048 threads of 64 frames, or (a run that outgrew them) 1024 of 128 in
+// The loop tier's pool: 4096 threads of 64 frames, or (a run that outgrew them) 2048 of 128 in
 // the same stacks (metal_label_passes.rs's MICRO_POOL, MICRO_DEEP_POOL).
-constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=64u,MICRO_POOL=2048u,MICRO_DEEP_FRAMES=128u,MICRO_DEEP_POOL=1024u;
+constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=64u,MICRO_POOL=4096u,MICRO_DEEP_FRAMES=128u,MICRO_DEEP_POOL=2048u;
 
 static bool micro_class(device const Supertype* supertypes,device const File* files,uint fileCount,uint node,uint kind){
   if(kind>=61440u){uint words=supertypes[0].kind;device const uint* bits=(device const uint*)(supertypes+1);return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;}
