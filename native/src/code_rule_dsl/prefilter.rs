@@ -111,12 +111,31 @@ pub(in crate::code_rule_dsl) fn publish(store: &ContentStore, tapes: &[TapeId], 
 /// The candidates of `plans`, all of language `lang` (a tape tag), over `tapes`: per plan, its
 /// (tape, preorder) rows in order. Tapes of another language or without prefilter rows have none.
 /// A superset of each plan's roots (`lower.rs`); the matcher confirms them.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(in crate::code_rule_dsl) fn select(
     store: &ContentStore,
     lang: u32,
     plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
     tapes: &[TapeId],
 ) -> StoreResult<Vec<Vec<(i64, u32)>>> {
+    let mut rows = select_indexed(store, lang, plans, tapes)?
+        .into_iter()
+        .map(|rows| rows.into_iter().map(|(file, pre)| (tapes[file as usize].row(), pre)).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    // In order per plan (the statement's arms stream unsorted, `lower::batch`).
+    use rayon::prelude::*;
+    rows.par_iter_mut().for_each(|rows| rows.sort_unstable());
+    Ok(rows)
+}
+
+/// `select`'s rows as (index in `tapes`, preorder), unordered: 8 bytes a row, not 16. On Metal the
+/// rows are held while the labels' GPU runs are (06 S7: 1.15 M rows, at the footprint's peak).
+pub(in crate::code_rule_dsl) fn select_indexed(
+    store: &ContentStore,
+    lang: u32,
+    plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
+    tapes: &[TapeId],
+) -> StoreResult<Vec<Vec<(u32, u32)>>> {
     let files = tapes.iter().map(|tape| tape.row()).collect::<Vec<_>>();
     // Statistics only order the lowering, so reading them in their own snapshot is safe.
     use crate::code_rule_dsl::prof::time;
@@ -127,13 +146,18 @@ pub(in crate::code_rule_dsl) fn select(
     })?;
     let statement = time("select.lower", || lower::batch(plans, lang, &files, &statistics));
     time("select.capture", || lab::capture::save(store, &statement))?;
+    let index = files.iter().enumerate().map(|(file, &row)| (row, file as u32)).collect::<std::collections::HashMap<_, _>>();
     let mut rows = vec![Vec::new(); plans.len()];
-    time("select.execute", || execute::candidates(store, &statement, |plan, tape, pre| rows[plan].push((tape, pre as u32))))?;
-    // In order per plan (the statement's arms stream unsorted, `lower::batch`).
-    time("select.sort", || {
-        use rayon::prelude::*;
-        rows.par_iter_mut().for_each(|rows| rows.sort_unstable());
-    });
+    let mut outside = None;
+    time("select.execute", || {
+        execute::candidates(store, &statement, |plan, tape, pre| match index.get(&tape) {
+            Some(&file) => rows[plan].push((file, pre as u32)),
+            None => outside = Some(tape),
+        })
+    })?;
+    if let Some(tape) = outside {
+        return Err(StoreError::Corrupt(format!("candidate of tape {tape} outside the chunk")));
+    }
     crate::code_rule_dsl::prof::count("select.rows", rows.iter().map(Vec::len).sum());
     Ok(rows)
 }

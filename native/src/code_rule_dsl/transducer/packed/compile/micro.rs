@@ -235,16 +235,24 @@ impl Micro {
             (super::value::ValueProgram::Regex(nfa), TextPredicate::Regex { source, .. }) => std::str::from_utf8(&program.strings[usize::from(*source)])
                 .ok()
                 .and_then(searcher)
-                .map(|regex| (regex, super::MAX_STEPS_PER_PATH / nfa.work_per_byte())),
+                .map(|regex| {
+                    let cache = regex.create_cache();
+                    (regex, cache, super::MAX_STEPS_PER_PATH / nfa.work_per_byte())
+                }),
             _ => None,
         };
+        // The search's cache is this call's: the regex's own pool would keep one per thread for
+        // the process (06 S7: ~18 MB at the labels' GPU peak).
+        let mut fast = fast;
         for node in 0..len as u32 {
             if kind.is_some_and(|kind| tape.transducer_kind(node) != kind) {
                 continue;
             }
             let text = tape.transducer_text(node);
-            let matched = match &fast {
-                Some((regex, longest)) if text.len() < *longest => regex.is_match(text),
+            let matched = match &mut fast {
+                Some((regex, cache, longest)) if text.len() < *longest => {
+                    regex.search_with(cache, &regex_automata::Input::new(text).earliest(true)).is_some()
+                }
                 _ => {
                     let mut work = 0;
                     value_program.is_match(text, &program.strings, &mut work).ok()?
