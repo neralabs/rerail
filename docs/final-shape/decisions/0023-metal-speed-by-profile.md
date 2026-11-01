@@ -81,6 +81,7 @@ These were tried and dropped:
 | Building a range's rows per file in parallel | Rows went ~300 → ~220 ms, but CPU rose ~0.4 s and wall did not change measurably. |
 | A 256 KB temp page cache for the candidate statement | Peak ~10–20 MB lower, candidates ~120 ms slower. |
 | A 4× range budget for the roots | Still 45 ranges: the budget does not bound them. |
+| Two roots ranges at a time (0020 measured all at once) | `demand.execute` ~100–200 ms less, but the peak rose to 518–523 MB, over budget. 0020 stands. |
 | Absorbing a roots range's rows on a thread while the next range runs | In an interleaved A/B the wall time did not change and CPU rose 0.7–1.3 s: the rows thread competes with the JIT's pool. |
 
 ## Consequences
