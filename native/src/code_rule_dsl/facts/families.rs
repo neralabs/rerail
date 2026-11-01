@@ -482,11 +482,7 @@ impl Families {
 
     /// Publishes the prefilter rows built since the last call, 64 tapes per transaction.
     fn publish(&mut self, graph: &(impl Graph + ?Sized)) -> StoreResult<()> {
-        for sets in self.rows.chunks(64) {
-            graph.store().put_prefilters_bulk(sets)?;
-        }
-        self.rows.clear();
-        Ok(())
+        graph.publish_prefilters(std::mem::take(&mut self.rows))
     }
 
     /// The kinds derivation of `path`, from the facts its core name binds now.

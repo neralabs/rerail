@@ -129,7 +129,21 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
     // The paths that may have changed: every path of the root when cold, else the observer's.
     let old = if cold { None } else { store.binding(&tree_name(scope, ""))? };
     prof::peak("0.start");
-    let ingested = prof::time("slice.push", || Families::default().push(store, scope, root, PUSH_WAVES, |_| Ok(Vec::new())))?;
+    // The push writes through the overlay, its writer behind it on its own thread (decision 0024
+    // §5): bindings, derivations and prefilter rows reach SQLite in order, and all of them before
+    // the push ends, so the wave reads SQLite whole.
+    let limits = crate::code_rule_dsl::facts::overlay::Limits {
+        top: 1 << 20,
+        resident: 64 << 20,
+        behind: 8,
+        spill: store.database_path().with_extension("overlay"),
+        background: true,
+    };
+    let ingested = prof::time("slice.push", || {
+        crate::code_rule_dsl::facts::overlay::Overlay::scoped(store, limits, |overlay| {
+            Families::default().push(overlay, scope, root, PUSH_WAVES, |_| Ok(Vec::new()))
+        })
+    })?;
     let changes = store.tree_changes_since(old, root)?;
     let kept = kept_documents(&lease, scope)?;
     let paths = kept

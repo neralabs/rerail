@@ -54,6 +54,15 @@ pub(crate) trait Graph {
     fn begin_push(&self) -> StoreResult<()>;
     /// Marks the push ended once all its writes are in SQLite.
     fn end_push(&self) -> StoreResult<()>;
+    /// Publishes tapes' prefilter rows: before any derivation recorded after this call reaches
+    /// SQLite (a recorded prefilter derivation claims its rows), and in the store's working set
+    /// at once. The store writes them now; the overlay queues them for its writer.
+    fn publish_prefilters(&self, sets: Vec<crate::content_store::prefilter::TapePrefilter>) -> StoreResult<()> {
+        for sets in sets.chunks(64) {
+            self.store().put_prefilters_bulk(sets)?;
+        }
+        Ok(())
+    }
 }
 
 impl Graph for ContentStore {

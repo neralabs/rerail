@@ -72,7 +72,13 @@ impl ContentStore {
             }
             counts.flush(transaction)
         })?;
-        // Written through: the kind images, tape-local, held for the wave that reads them.
+        self.hold_prefilters(sets);
+        Ok(())
+    }
+
+    /// The kind images of `sets`, tape-local, held in the working set for the wave that reads
+    /// them (written through by `put_prefilters_bulk`; ahead of it by a write-back queue).
+    pub(crate) fn hold_prefilters(&self, sets: &[TapePrefilter]) {
         for set in sets {
             self.working_set().put_kinds(
                 set.tape_id.row(),
@@ -83,7 +89,6 @@ impl ContentStore {
                 },
             );
         }
-        Ok(())
     }
 
     /// Removes a tape's prefilter rows (they also go when the tape is collected).

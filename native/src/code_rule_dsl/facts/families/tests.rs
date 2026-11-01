@@ -212,3 +212,38 @@ fn a_clean_checkouts_snapshot_is_its_head_tree() {
     let ingested = families.push(&store, WS, head, 8, |_| Ok(Vec::new())).unwrap();
     assert_eq!((ingested.created, families.parses.parsed), (8, 2));
 }
+
+/// Through the overlay, a push's prefilter rows wait for its writer, ahead of the derivations
+/// recorded after them: SQLite never holds a prefilter derivation without its rows (a crash then
+/// leaves the derivation unrecorded, so recovery runs it again), and the push's end writes all.
+#[test]
+fn prefilter_rows_reach_sqlite_before_the_derivations_that_claim_them() {
+    let store = Arc::new(ContentStore::open(&temp("rows-first").with_extension("sqlite")).unwrap());
+    let roots = contents(&store);
+    let rows = |store: &ContentStore| -> i64 { store.query_rows("SELECT count(*) FROM prefilter_sets", [], |r| r.get(0)).unwrap()[0] };
+    let prefilter_recorded = |store: &ContentStore| store.binding(&prefilter_name(WS, "a.py")).unwrap().is_some_and(|digest| digest != ABSENT);
+    // No background writer: every layer waits until written by hand, oldest first.
+    let limits = Limits { top: usize::MAX, resident: 1 << 20, behind: usize::MAX, spill: temp("rows-first-spill"), background: false };
+    let overlay = Overlay::new(Arc::clone(&store), limits).unwrap();
+    let mut families = Families::default();
+    overlay.begin_push().unwrap();
+    let (changed, _) = crate::code_rule_dsl::facts::observe::observe_root(&overlay, WS, roots[0]).unwrap();
+    assert!(!changed.is_empty());
+    let tape = families.tape(&overlay, WS, "a.py").unwrap();
+    overlay.record_derivations(&[tape]).unwrap();
+    let readers = [families.core(&overlay, WS, "a.py").unwrap().0, families.prefilter(&overlay, WS, "a.py").unwrap()];
+    families.publish(&overlay).unwrap();
+    overlay.record_derivations(&readers).unwrap();
+    // The rows are queued, the derivation held above them: SQLite has neither yet, and the
+    // working set already holds the tape's kind image.
+    assert_eq!(rows(&store), 0);
+    assert!(!prefilter_recorded(&store));
+    assert!(store.working_set().kinds(families_tape_row(&store)).is_some());
+    overlay.end_push().unwrap();
+    assert_eq!(rows(&store), 1);
+    assert!(prefilter_recorded(&store) && store.push_clean().unwrap());
+}
+
+fn families_tape_row(store: &ContentStore) -> i64 {
+    store.query_rows("SELECT max(tape_id) FROM tape_objects", [], |r| r.get(0)).unwrap()[0]
+}

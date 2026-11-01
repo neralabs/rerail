@@ -86,6 +86,10 @@ struct Layer {
 enum Resident {
     Memory(Arc<Runs>),
     Spilled(PathBuf),
+    /// Prefilter rows waiting for the writer (`publish_prefilters`): no bindings or derivations,
+    /// so reads pass over them, and never spilled. Their place in the queue puts them in SQLite
+    /// before every layer frozen after them.
+    Rows(Arc<Vec<crate::content_store::prefilter::TapePrefilter>>),
 }
 
 struct Runs {
@@ -178,8 +182,30 @@ struct State {
     counters: Counters,
 }
 
+/// The overlay's store: shared, or borrowed for `Overlay::scoped`'s call.
+enum StoreHandle {
+    Shared(Arc<ContentStore>),
+    /// Valid while the scoped call runs: the overlay (and its writer) ends before it returns.
+    Scoped(std::ptr::NonNull<ContentStore>),
+}
+
+// The store is Send and Sync (the shared form crosses threads); the scoped pointer is used only
+// while the borrow it came from lives (`Overlay::scoped`).
+unsafe impl Send for StoreHandle {}
+unsafe impl Sync for StoreHandle {}
+
+impl std::ops::Deref for StoreHandle {
+    type Target = ContentStore;
+    fn deref(&self) -> &ContentStore {
+        match self {
+            Self::Shared(store) => store,
+            Self::Scoped(store) => unsafe { store.as_ref() },
+        }
+    }
+}
+
 struct Shared {
-    store: Arc<ContentStore>,
+    store: StoreHandle,
     limits: Limits,
     state: Mutex<State>,
     wake: Condvar,
@@ -193,6 +219,22 @@ pub(crate) struct Overlay {
 
 impl Overlay {
     pub(crate) fn new(store: Arc<ContentStore>, limits: Limits) -> StoreResult<Self> {
+        Self::with(StoreHandle::Shared(store), limits)
+    }
+
+    /// `run` over an overlay of `store`, borrowed: the overlay is flushed and its writer joined
+    /// before this returns (or unwinds), so the borrow outlives every use of it.
+    pub(crate) fn scoped<T>(store: &ContentStore, limits: Limits, run: impl FnOnce(&Overlay) -> StoreResult<T>) -> StoreResult<T> {
+        let overlay = Self::with(StoreHandle::Scoped(std::ptr::NonNull::from(store)), limits)?;
+        let result = run(&overlay);
+        let flushed = overlay.flush();
+        drop(overlay);
+        let value = result?;
+        flushed?;
+        Ok(value)
+    }
+
+    fn with(store: StoreHandle, limits: Limits) -> StoreResult<Self> {
         std::fs::create_dir_all(&limits.spill)?;
         let background = limits.background;
         let shared = Arc::new(Shared {
@@ -470,6 +512,21 @@ impl Graph for Overlay {
         self.flush()?;
         self.shared.store.end_push()
     }
+
+    fn publish_prefilters(&self, sets: Vec<crate::content_store::prefilter::TapePrefilter>) -> StoreResult<()> {
+        if sets.is_empty() {
+            return Ok(());
+        }
+        self.shared.store.hold_prefilters(&sets);
+        let mut state = self.shared.lock();
+        failed(&state)?;
+        let id = state.next;
+        state.next += 1;
+        state.frozen.push_back(Layer { id, resident: Resident::Rows(Arc::new(sets)) });
+        self.shared.wake.notify_all();
+        drop(state);
+        self.after_write()
+    }
 }
 
 impl Shared {
@@ -482,6 +539,7 @@ impl Shared {
     fn load(&self, layer: Resident) -> StoreResult<Option<Arc<Runs>>> {
         match layer {
             Resident::Memory(runs) => Ok(Some(runs)),
+            Resident::Rows(_) => Ok(None),
             Resident::Spilled(path) => {
                 let runs = match Runs::decode(&path) {
                     Ok(runs) => runs,
@@ -571,10 +629,13 @@ impl Shared {
         state.writing = Some(id);
         drop(state);
         // The layer being written is never spilled or removed, so it loads.
-        let written = self.load(resident).and_then(|runs| {
-            let (bindings, derivations) = runs.expect("the layer being written").rows();
-            self.store.write_derivation_layer(&bindings, &derivations)
-        });
+        let written = match resident {
+            Resident::Rows(sets) => sets.chunks(64).try_for_each(|sets| self.store.put_prefilters_bulk(sets)),
+            resident => self.load(resident).and_then(|runs| {
+                let (bindings, derivations) = runs.expect("the layer being written").rows();
+                self.store.write_derivation_layer(&bindings, &derivations)
+            }),
+        };
         let mut state = self.lock();
         state.writing = None;
         self.wake.notify_all();
@@ -620,7 +681,7 @@ fn resident_layer_bytes(state: &State) -> usize {
         .iter()
         .map(|layer| match &layer.resident {
             Resident::Memory(runs) => runs.bytes(),
-            Resident::Spilled(_) => 0,
+            Resident::Spilled(_) | Resident::Rows(_) => 0,
         })
         .sum()
 }
