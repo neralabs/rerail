@@ -9,11 +9,12 @@
 //! segments as one token `\u{1}<run length>` (`compact`). The reader substitutes the real module
 //! (Y1's `path::block`).
 use ast_grep_core::AstGrep;
-use rerail_engine::code_rule_dsl::calls::contracts;
-use rerail_engine::code_rule_dsl::calls::summary::Summary;
-use rerail_engine::code_rule_dsl::calls::summarize;
-use rerail_engine::code_rule_dsl::language::GrammarDialect;
-use rerail_engine::code_rule_dsl::module_path::ModulePath;
+use crate::code_rule_dsl::calls::contracts;
+use crate::code_rule_dsl::calls::summary::Summary;
+use crate::code_rule_dsl::calls::summarize;
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::module_path::ModulePath;
+use crate::code_rule_dsl::tape::TapeDoc;
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
 
@@ -143,7 +144,7 @@ pub fn links_key(links: &str) -> Result<contracts::Key, String> {
 }
 
 /// Native's summary of one document under `module` (`calls::summarize`, as the workspace calls it).
-pub fn summary(doc: &rerail_engine::code_rule_dsl::tape::TapeDoc, path: &str, module: &ModulePath, has_errors: bool, bytes: usize) -> Summary {
+pub fn summary(doc: &TapeDoc, path: &str, module: &ModulePath, has_errors: bool, bytes: usize) -> Summary {
     let grep = AstGrep::doc(doc.clone());
     summarize(grep.root(), GrammarDialect::Python, path, Some(module), has_errors, bytes, None).0
 }
