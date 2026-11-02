@@ -465,6 +465,12 @@ table:
 
 Pack versions are managed with [changesets](https://github.com/changesets/changesets): a pull request that changes a
 pack adds a changeset (`npx changeset`) naming the pack's package and its bump, with a one-line summary for users.
+The summary is the pack's release note, and goes out as it is on the pack's GitHub Release: it says what changed for
+the person upgrading, in plain language, in a sentence or two (at most 60 words), and leaves out commit hashes,
+ticket ids, pull request numbers and repository-internal maintenance; the **Changesets** job fails a pull request
+whose changeset says otherwise ([release notes](release.md#release)). `changeset version` writes each summary as one
+changelog entry, as written (`scripts/release/changeset-changelog.mjs`, the generator `.changeset/config.json`
+names), without the commit hash changesets' default generator led each entry with.
 A change counts when it touches what the pack publishes: its `package.json` (except `publishConfig` alone, which only
 steers `npm publish`) or a path its `files` lists (`pack.json`, `rules/`, `licenses/`, `LICENSE`, `NOTICE`,
 `README.md`); expected findings, candidates and `CHANGELOG.md` do not. The
@@ -524,12 +530,14 @@ them; core's `v*` release (`release.yml`) is separate.
 
 Every released pack version gets a GitHub Release on its tag `@neralabs/rerail-pack-<id>@<version>`, whose notes are
 that version's section of the pack's `CHANGELOG.md`, so a pack's release notes are written once, in its changeset's
-summary, in words for the people who upgrade. After the **Published dist-tags** job passes, the run's **GitHub
+summary, in words for the people who upgrade. The notes are the section's entries alone: its one `### Patch Changes`
+heading, which changesets writes over every section of a pack below 1.0.0, and the commit hash the entries of versions
+released before this generator carry, are left out. After the **Published dist-tags** job passes, the run's **GitHub
 Releases** job makes one for each version it published (`scripts/release/github-release.mjs`). A pack's Release is
 never the repository's latest release, which is core's, and is a pre-release only for a held pack published under
-`next`. Run again, the job rewrites the notes of a Release that exists. Releases missing for tags released before
-this, or by a run that failed before its Release, are made by hand with the script's backfill
-([release.md](release.md#release)).
+`next`. Run again, the job rewrites the notes and flags of a Release that exists. Releases missing for tags released
+before this, or by a run that failed before its Release, are made by hand with the script's backfill, which skips a
+version whose changelog has no section ([release.md](release.md#release)).
 
 The scripts are in `scripts/release/`. To check a pack's tarball locally:
 `node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>`.
