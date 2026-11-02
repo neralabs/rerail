@@ -37,6 +37,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
 | O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
 | O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open |
+| O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -923,3 +924,9 @@ outermost function, depth (t17 § 3). The programs write them as `@within($x, $r
 new literal would change `logic/plan`'s exhaustive matches. Two walks through chosen kinds (dispatch `annotations`,
 steps `payload_values`) remain Datalog recursion over tree edges, against §7. **Closure:** `within` and a
 kind-filtered climb/descent (the matcher's `inside`/`has` with `stopBy`) as tree built-ins.
+
+## O64. The data-layer's regex forbid clauses
+
+109 forbid clauses regex the file's text (108 with line options, 8 with a line state machine) and 4 its path, in
+14 rules; 9 rules have nothing else. `yaml::add` refuses them. PIAT §5.1 (`notes/t1` :446) found 107 expressible as
+AST rules, 2 needing line positions, 4 path-only. **Closure:** the rewrite, done for the gate's pack.
