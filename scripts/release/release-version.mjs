@@ -13,7 +13,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { changelogSection, PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
+import { changelogLead, changelogSection, PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { listPacks, readChangesets, ROOT } from "./packs.mjs";
 
@@ -104,6 +104,8 @@ if (rows.length === 0) {
     lines.push("", `Core is released because what it ships changed since \`${coreTag(core.from)}\`: ${listed}${more}.`);
     if (!core.notes) {
       lines.push("", "> [!WARNING]", `> \`CHANGELOG.md\` has no unreleased section, so ${core.version}'s says it has no changelog entries. To add notes, add a \`## Unreleased\` section on \`main\`: this pull request picks it up.`);
+    } else if (changelogLead(changelogSection(readText("CHANGELOG.md"), core.version)) === "") {
+      lines.push("", "> [!WARNING]", `> ${core.version}'s notes open with an entry and have no lead: CI fails this pull request until a paragraph saying what the release gives the people who upgrade is written at the top of \`## Unreleased\` on \`main\` (docs/release.md, "Release notes"). This pull request picks it up.`);
     }
     lines.push("", ...notes(`${CORE_NAME} ${core.version}`, "CHANGELOG.md", core.version));
   }
