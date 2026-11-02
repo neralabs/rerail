@@ -160,6 +160,41 @@ fn term_postings_and_uncovered_ordinals_partition_every_tape_exactly() {
     }
 }
 
+/// `tid`: each node's term id, from the postings, is the atom of the node's own text where a term
+/// covers it, and no term exactly where `term_coverage` lists the node as uncovered.
+#[test]
+fn term_ids_are_each_covered_nodes_text_atom() {
+    let store = open(&temp());
+    let long_comment = format!("// {}\n", "large free text ".repeat(40000));
+    for (name, source, lang) in [
+        ("a.ts", "const café = \"two words\"; target(café); target(1);", GrammarDialect::TypeScript),
+        ("b.py", "def target(value):\n    return value + 42\n", GrammarDialect::Python),
+        ("broken.ts", "function f( {\n debugger;\n", GrammarDialect::TypeScript),
+        ("long.ts", long_comment.as_str(), GrammarDialect::TypeScript),
+    ] {
+        let (tape, doc) = put(&store, source, lang);
+        let ids = store.term_ids(tape).unwrap();
+        assert_eq!(ids.len(), doc.transducer_len(), "{name}");
+        let uncovered = store
+            .query_rows("SELECT p.pre FROM term_coverage c,nera_postings(c.missing) p WHERE c.tape_id=?1", [tape.row()], |r| r.get::<_, u32>(0))
+            .unwrap()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut covered = 0;
+        for (node, &id) in ids.iter().enumerate() {
+            if id == crate::content_store::prefilter::NO_TERM {
+                assert!(uncovered.contains(&(node as u32)), "{name}: node {node} has neither a term nor coverage");
+                continue;
+            }
+            assert!(!uncovered.contains(&(node as u32)), "{name}: node {node} both covered and uncovered");
+            assert_eq!(store.atom_value(id).unwrap().as_deref(), Some(doc.transducer_text_str(node as u32)), "{name}: node {node}");
+            covered += 1;
+        }
+        // The long comment is too long to be a term: its file has no covered node.
+        assert_eq!(covered == 0, name == "long.ts", "{name}");
+    }
+}
+
 #[test]
 fn kind_positions_are_every_preorder_of_the_kind_and_feed_kind_frequencies() {
     assert_eq!([0, 35, 36, 1024, 65535].map(kind_token), ["k0", "kz", "k10", "ksg", "k1ekf"]);

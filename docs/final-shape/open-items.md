@@ -12,7 +12,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
 | O6 | Phase 1 | Overlay byte accounting is an estimate; single pushing thread | open |
-| O7 | Phase 2 | `tid` and text-hash sidecars wait for the vocabulary | open (Phase 3) |
+| O7 | Phase 2 | `tid` and text-hash sidecars wait for the vocabulary | `tid` done (2026-11-02): derived from each tape's term postings (`ContentStore::term_ids`), not stored; text hashes open (no consumer before step 17's `R[tid]`) |
 | O8 | Phase 2 | Tape format: v9np (structure-only, regular) is not decided or built; W runs v8 | closed (2026-11-01): decision 0025, v9np (user decision; measured on Rerail's grammars); `tape.rs` stores v9np (format 10), supertype memberships folded into the codes (0025 amended 2026-11-02: no sidecar); 0.72–0.92× v8's stored size |
 | O9 | Phase 2 | Kind histograms are digests only; their rows are not stored | open (Phase 3) |
 | O10 | Phase 2 | Core facts of a non-UTF-8 blob, an unknown language or a parse stopped at a limit are `ABSENT` | open |
@@ -177,6 +177,15 @@ a second pusher needs per-scope ordering of layers.
 `core::Sidecars` holds `par`, `cidx`, `cidx_named` and line starts. `tid` (each token's id in the
 language vocabulary) and text hashes need Phase 3's vocabulary. Closure: Phase 3 adds them to
 `Sidecars`, keyed by (tape digest, vocabulary length) as 03 §16 says.
+
+**`tid` (2026-11-02, list step 10).** Terms are atoms (store floor 2), which are append-only, so a
+node's `tid` never changes with the vocabulary's length: it is keyed by the tape alone. It is not
+stored: a column would be 4 bytes a node, about half a tape (8.4–9.1 B/node), and the tape's term
+postings already map each term to its nodes. `ContentStore::term_ids(tape)` reads them into a
+vector by preorder (`NO_TERM` where `term_coverage` lists the node as uncovered);
+`term_ids_are_each_covered_nodes_text_atom` checks each id is the atom of the node's own text. Its
+reader is the transducer's `R[tid]` (Phase 4 (g), list step 17). Text hashes stay open: nothing
+reads them before then.
 
 ## O8. Tape format
 
