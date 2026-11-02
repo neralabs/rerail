@@ -23,4 +23,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0022 | The engine's footprint within 500 MB: freed pages returned at stage ends, SQLite on jemalloc, GPU buffers sized by the run | accepted |
 | 0023 | Metal's speed by profile: text rows in one pass, NFA early exit, a 2048×64 loop pool with a deep retry, faster host sweeps, unsorted candidate arms | accepted |
 | 0024 | A wave's execution shape: one node space, sets as bitmaps evaluated natively from SQL's plan, labels and roots as device micro walks, integer match records, a RAM working set written back | accepted |
-| 0025 | The tape format stays v8; v9np is not locked until a consumer needs its access pattern (O8's measurements on Rerail's grammars) | proposed |
+| 0025 | The tape format becomes v9np: random access for anchor indexing (O8's measurements on Rerail's grammars) | accepted |

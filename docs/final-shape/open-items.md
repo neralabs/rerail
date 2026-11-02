@@ -13,7 +13,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
 | O6 | Phase 1 | Overlay byte accounting is an estimate; single pushing thread | open |
 | O7 | Phase 2 | `tid` and text-hash sidecars wait for the vocabulary | open (Phase 3) |
-| O8 | Phase 2 | Tape format: v9np (structure-only, regular) is not decided or built; W runs v8 | measured (2026-11-01): the five pre-lock measurements on Rerail's grammars; decision 0025 proposes staying on v8 until a consumer needs v9np's access pattern |
+| O8 | Phase 2 | Tape format: v9np (structure-only, regular) is not decided or built; W runs v8 | decided (2026-11-01): decision 0025, v9np (user decision; measured on Rerail's grammars); the switch in `tape.rs` is open |
 | O9 | Phase 2 | Kind histograms are digests only; their rows are not stored | open (Phase 3) |
 | O10 | Phase 2 | Core facts of a non-UTF-8 blob, an unknown language or a parse stopped at a limit are `ABSENT` | open |
 | O11 | Phase 6 | §12's "unbounded value cycle" has no definition of a bound; T's programs recurse through `@cat` | open, **decision needed** |

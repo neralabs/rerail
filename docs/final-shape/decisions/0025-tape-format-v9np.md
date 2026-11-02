@@ -1,6 +1,6 @@
-# 0025: the tape format stays v8; v9np is not locked until a consumer needs its access pattern
+# 0025: the tape format becomes v9np
 
-Status: proposed (2026-11-01)
+Status: accepted (2026-11-01, user decision)
 
 ## Context
 
@@ -57,29 +57,28 @@ The rejected v8 SoA proposal is 11.0–14.1 B/node on the same corpora.
 
 ## Decision
 
-The tape format stays v8 (`TMPTAPE8`), and v9np is not locked now.
-- v9np meets the size requirement: no increase. It is regular apart from the one non-uniform
-  `extra` kind.
-- Its gains are random node and span access (1.6–4.3×) and column upload. Neither is on a hot
-  path of the engine as built:
-  - waves read tapes sequentially through `TapeDoc`'s `transducer_*` accessors;
-  - the GPU's tape build is 0.7% of a cold audit;
-  - no SQL reads spans from tapes (the §17 pure-SQL fallback is not built).
-- A format switch touches every stored tape and `tape.rs`, for no measured benefit today.
+The tape format becomes v9np (user decision, 2026-11-01): random access is needed for proper anchor
+indexing. The measurements above meet the user's requirements: no size increase (0.96–1.04× v7,
+0.94–1.06× after zstd) and a regular format. Random node access is 1.6–2.6× faster, random span
+access 2.5–4.3× faster.
 
-**Revisit when** a consumer needs v9np's access pattern:
-- the §17 SQL fallback, whose span extraction the spike measured 2.7–8× faster;
-- or Phase 9's resident slabs, where the at-rest and resident formats are designed together
-  (O8's requirement).
+How it is locked:
+- **Flags folded into the code space** (named, extra, missing, error), with a code for the one
+  Python kind whose `extra` varies.
+- **Supertype memberships** (W's v8 table) go to a sidecar keyed by the tape digest. They are a
+  grammar property of the structure, not of the tape.
+- **No parent column**: parents are rebuilt with a stack where a consumer needs them. Revisit only
+  if SQL parent climbs prove hot.
+- **Reads stay behind `TapeDoc`'s `transducer_*` accessors**, so the switch is local to `tape.rs`.
+  `TAPE_FORMAT_VERSION` is bumped, so stored v8 tapes re-derive.
 
-Then rerun these five measurements on that consumer's path, and lock v9np with the minority
-`extra` code, supertypes as a sidecar keyed by the tape digest, and no parent column unless SQL
-parent climbs prove hot.
+The measurement harness keeps every node in memory (783 MB for 31.5 MB of source). The production
+encoder must stream within the 500 MB budget.
 
 ## Agrees with / departs from
 
 - **Agrees with** P 0003's size and regularity findings, now measured on Rerail's grammars:
   0.96–1.04× v7, against the spike's 0.93–1.01×.
-- **Departs from** 0003's direction to adopt v9np now. The spike's access-time gains are real, but
-  nothing in this engine reads tapes that way yet. This follows the ledger's measure-on-the-path
-  rule: spike 2.18, measure at deployment size, not by proxy.
+- **Agrees with** 0003's direction to adopt v9np. Anchor indexing needs its random access.
+- The measurements follow the ledger's spike 2.18: measured at deployment size, on Rerail's
+  grammars, not by proxy.
