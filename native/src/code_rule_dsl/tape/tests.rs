@@ -1541,3 +1541,42 @@ fn a_blade_tapes_errors_are_blades_reading() {
         );
     }
 }
+
+/// The production image's stored bytes against v8's tables (the harness's v7 encoding, which is
+/// v8 without supertypes) on a corpus: `RERAIL_TAPE_SIZE='<lang> <dir>'`.
+#[test]
+#[ignore = "measurement; RERAIL_TAPE_SIZE='<lang> <dir>', --ignored --nocapture"]
+fn stored_tape_bytes_against_v8() {
+    let spec = std::env::var("RERAIL_TAPE_SIZE").expect("RERAIL_TAPE_SIZE='<lang> <dir>'");
+    let (lang, dir) = spec.split_once(' ').expect("<lang> <dir>");
+    let (docs, _, _) = super::v9np::load(lang, &[dir.to_owned()], usize::MAX);
+    let (mut nodes, mut v8, mut v9, mut table, mut small_v8, mut small_v9, mut memberships) = (0, 0, 0, 0, 0, 0, 0);
+    for doc in &docs {
+        let dialect = crate::code_rule_dsl::language::dialect_by_label(crate::code_rule_dsl::language::label_of_path(doc.path.to_str().unwrap()).unwrap()).unwrap();
+        let grammar = Grammar::new(dialect).unwrap();
+        let native = StrDoc::new(&doc.source, dialect);
+        let image = TapeImage::encode(native.tree.root_node(), &grammar, &doc.source, &|| false).unwrap().primary;
+        let old = super::v9np::V7::encode(&doc.nodes).unwrap().to_bytes().len();
+        let new = image.to_bytes().unwrap().len() - 6 * image.supertypes.len();
+        nodes += image.node_count();
+        v8 += old;
+        v9 += new;
+        table += 5 * image.codes.len();
+        memberships += image.supertypes.len();
+        if image.node_count() < 2_000 {
+            small_v8 += old;
+            small_v9 += new;
+        }
+    }
+    println!(
+        "{} files, {nodes} nodes: v8 {:.3} B/node, v9np {:.3} B/node ({:.3}x), of which the code table {:.3} B/node; files under 2,000 nodes: {:.3}x; supertype memberships {memberships} ({:.3} per node, {:.3} B/node at 6 B each)",
+        docs.len(),
+        v8 as f64 / nodes as f64,
+        v9 as f64 / nodes as f64,
+        v9 as f64 / v8 as f64,
+        table as f64 / nodes as f64,
+        small_v9 as f64 / small_v8.max(1) as f64,
+        memberships as f64 / nodes as f64,
+        6.0 * memberships as f64 / nodes as f64,
+    );
+}
