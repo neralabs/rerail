@@ -34,6 +34,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
+| O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -895,3 +896,11 @@ groups, `transform` text): 1,672 projections in 54 clauses of 14 rules (`gate/da
 binds only the document and the node. The front end now reads `ast($D, $N, {…}, NAME: $v)` (a match that leaves
 `NAME` unbound gives no row); `logic::plan` still refuses every `ast` literal. **Closure:** the §3 lowering returns
 exported captures with each match.
+
+## O61. A builtin catalogue
+
+The data-layer programs (`cr/logic/programs/data_layer/`) use 30 builtins; only `@cat` is built. They are SQL's
+scalars (`@rx_matches` 224 uses, `@concat` 66, `@substr` 60, …), three string helpers (`@drop_components`,
+`@join_nonempty`, `@glob`), and tape builtins (`@within`, `@depth`, `@line`, `@id`, `@qualname`, `@class_path`,
+`@class_prefix`). **Closure:** a fixed catalogue, each entry marked value-creating or not (§12's fourth
+exclusion needs that mark), with `@rx_*` on §16's regex path.
