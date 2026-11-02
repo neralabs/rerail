@@ -4,10 +4,10 @@
 
 use super::{Rules, Run, apply, audit};
 use crate::code_rule_dsl::CodeRuleDslRuntime;
-use crate::code_rule_dsl::facts::observe::roots::directory_root;
+use crate::code_rule_dsl::facts::observe::roots::{directory_root, git_root};
 use crate::code_rule_dsl::findings::contract::Coverage;
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
-use crate::content_store::ContentStore;
+use crate::content_store::{ContentStore, HashKey};
 use napi::{Error, Result};
 use napi_derive::napi;
 use serde_json::json;
@@ -59,20 +59,35 @@ impl CodeRuleSlice {
         self.rules.clauses() as u32
     }
 
-    /// A cold audit of `scope` at the snapshot of `directory`.
+    /// A cold audit of `scope` at `directory`, as `observer` sees it: `"directory"` (the default,
+    /// the working tree's snapshot) or `"head"` (the `HEAD` tree of its Git checkout).
     #[napi]
-    pub fn audit(&mut self, scope: String, directory: String) -> Result<String> {
-        let root = directory_root(&self.store, Path::new(&directory)).map_err(failed)?;
+    pub fn audit(&mut self, scope: String, directory: String, observer: Option<String>) -> Result<String> {
+        let root = self.root(&directory, observer.as_deref())?;
         let run = audit(&self.store, &scope, root, &mut self.rules).map_err(failed)?;
         Ok(report(&run))
     }
 
-    /// `scope` after edits: the snapshot of `directory`, evaluating only what changed.
+    /// `scope` after edits: `directory` as `observer` sees it (as `audit`'s), evaluating only what
+    /// changed since the last run.
     #[napi]
-    pub fn apply(&mut self, scope: String, directory: String) -> Result<String> {
-        let root = directory_root(&self.store, Path::new(&directory)).map_err(failed)?;
+    pub fn apply(&mut self, scope: String, directory: String, observer: Option<String>) -> Result<String> {
+        let root = self.root(&directory, observer.as_deref())?;
         let run = apply(&self.store, &scope, root, &mut self.rules).map_err(failed)?;
         Ok(report(&run))
+    }
+}
+
+impl CodeRuleSlice {
+    /// The root tree `observer` sees at `directory`, stored with its sources.
+    fn root(&self, directory: &str, observer: Option<&str>) -> Result<HashKey> {
+        let directory = Path::new(directory);
+        match observer.unwrap_or("directory") {
+            "directory" => directory_root(&self.store, directory),
+            "head" => git_root(&self.store, directory),
+            other => return Err(Error::from_reason(format!("unknown slice observer `{other}`"))),
+        }
+        .map_err(failed)
     }
 }
 

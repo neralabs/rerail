@@ -258,10 +258,13 @@ export interface NativeSlicePolicy {
  */
 export interface NativeCodeRuleSlice {
   clauses(): number;
-  /** A cold audit of `scope` at the snapshot of `directory`. */
-  audit(scope: string, directory: string): string;
-  /** `scope` at the snapshot of `directory`, evaluating only the documents that changed since the last run. */
-  apply(scope: string, directory: string): string;
+  /**
+   * A cold audit of `scope` at `directory` as `observer` sees it: `"directory"` (default, the working tree's
+   * snapshot) or `"head"` (the `HEAD` tree of its Git checkout).
+   */
+  audit(scope: string, directory: string, observer?: "directory" | "head" | null): string;
+  /** `scope` at `directory` as `observer` sees it, evaluating only the documents that changed since the last run. */
+  apply(scope: string, directory: string, observer?: "directory" | "head" | null): string;
 }
 
 export interface NativeCodeRuleSliceConstructor {

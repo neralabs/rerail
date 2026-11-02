@@ -7,7 +7,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | Id | Found | Item | Status |
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated; 2026-11-01: called by every slice run before its push (`a_run_after_a_crashed_push_recovers_it`) |
-| O2 | Phase 1 | Nothing calls the push path yet (ingest wired in S3) | open |
+| O2 | Phase 1 | Nothing calls the push path yet (ingest wired in S3) | production caller wired (2026-11-01): the slice's napi `CodeRuleSlice` pushes a directory snapshot or a Git `HEAD` (W's `git_workspace` discovery); open: editor buffers, and the corpus capture for the anchor lab (Phase 3's check) |
 | O3 | Phase 1 | A new name is interned by a synchronous SQLite write | open |
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
@@ -135,6 +135,12 @@ once, builds core facts from it, and publishes its prefilter rows, each a deriva
 on its digest. Named `git add` works in tests, so a committed repository is tested. What remains:
 a production caller (W's workspace scan, or the slice's entry points, S6), and the corpus capture
 for the anchor lab.
+
+2026-11-01 update: the production caller is the slice's napi method, `CodeRuleSlice`
+(`slice/napi.rs`). `audit`/`apply` take an observer: `"directory"`, the working tree's snapshot, or
+`"head"`, the checkout's `HEAD` tree through W's `git_workspace::discover`. Both push through the
+overlay with its writer, after recovering any push that did not end (O1). Left: editor buffers as
+an observer (an overlay snapshot of unsaved sources), and the corpus capture for the anchor lab.
 
 ## O3. Synchronous interning
 

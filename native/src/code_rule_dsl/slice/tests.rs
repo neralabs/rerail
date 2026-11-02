@@ -630,11 +630,27 @@ fn the_napi_slice_audits_and_applies_as_the_slice_does() {
             .collect();
         (keys, value["evaluated"].as_array().unwrap().len(), value["rerun"].as_u64().unwrap())
     };
-    let (keys, evaluated, _) = found(&slice.audit(WS.to_owned(), dir.to_string_lossy().into_owned()).unwrap());
+    let (keys, evaluated, _) = found(&slice.audit(WS.to_owned(), dir.to_string_lossy().into_owned(), None).unwrap());
     assert_eq!(keys, self::keys(&cold(&dir, &policies())));
     assert!(!keys.is_empty() && evaluated == 2);
-    let (warm, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned()).unwrap());
-    assert_eq!((warm, evaluated, rerun), (keys, 0, 0));
+    let (warm, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), None).unwrap());
+    assert_eq!((warm, evaluated, rerun), (keys.clone(), 0, 0));
+    // The Git observer: a clean checkout's `HEAD` is the directory's snapshot, so it is warm too.
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=rerail", "-c", "user.email=rerail@example.invalid", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&status.stderr));
+    };
+    git(&["init", "-q"]);
+    git(&["add", "a.py", "b.py"]);
+    git(&["commit", "-q", "-m", "fixture"]);
+    let (head, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), Some("head".to_owned())).unwrap());
+    assert_eq!((head, evaluated, rerun), (keys, 0, 0));
+    assert!(slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), Some("buffers".to_owned())).is_err());
 }
 
 /// S8 (06): the first measurements against 03's targets, on S7's sample. Each pass runs, per
