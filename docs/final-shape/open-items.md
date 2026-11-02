@@ -35,6 +35,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
 | O41 | Phase 4 / 10 | Producer labels in the lowering: `match_tree` reads a semantic leaf a producer answers as a label (O24, t15) | open |
 | O42 | Phase 4 / 10 | Three-valued semantic labels: `binds` is unknown at 36 fixture nodes; a set label under `not` reads unknown as false (t15) | open |
+| O43 | Phase 4 / 10 | Capture-dependent semantic filters as joins: `binds.bindings.within` reads a capture's range (SIM113) (t15) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -911,3 +912,12 @@ holds both to W. A lowering that keeps only the true set would read unknown as f
 `not` as true, where W reports nothing. **Closure:** a semantic label is a pair (true, unknown);
 `not` complements the pair, and a root whose verdict is unknown is no match. Or such a leaf stays
 refused under `not`. Validated by S1's gate on the clauses that read `binds` under `not`.
+
+## O43. Capture-dependent semantic filters as joins
+
+**Requirement.** `binds.bindings.within` counts a name's bindings inside the node another leaf
+captures (SIM113's `LOOP`). The rows hold each chain's name ranges, and `binds::label` takes the
+captures' ranges as an input (`Region`). The gate binds no capture, so it checks only the
+unbound case: the count reads as 0. **Closure:** in the wave, a join between the label's chain
+rows and the capture's column (O24's direction for shared bindings), validated by S1's gate on
+SIM113 with its captures bound.
