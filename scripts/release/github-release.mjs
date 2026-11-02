@@ -43,14 +43,29 @@ export function changelogPath(name) {
 }
 
 /**
+ * A pack's changelog section as its Release notes: without the one `### <Type> Changes` heading changesets writes
+ * over every section of a pack below 1.0.0 (kept when a section has two or more types), and without the commit hash
+ * the default generator led each entry with before changeset-changelog.mjs (the backfilled sections keep it).
+ */
+export function packReleaseNotes(section) {
+  const lines = section.split("\n").map((line) => line.replace(/^(\s*- )(?=[0-9a-f]*\d)[0-9a-f]{7,40}: /u, "$1"));
+  const headings = lines.filter((line) => /^### \w+ Changes$/u.test(line));
+  if (headings.length !== 1) return lines.join("\n").trim();
+  const at = lines.indexOf(headings[0]);
+  return lines.filter((line, index) => index !== at && (index !== at + 1 || line !== "")).join("\n").trim();
+}
+
+/**
  * The GitHub Release of `name`'s `version`, published under npm dist-tag `distTag`, given the text of its changelog:
- * `{ tag, title, notes, prerelease, latest }`, its notes the version's changelog section, or that none was written.
+ * `{ tag, title, notes, prerelease, latest }`, its notes the version's changelog section (a pack's as
+ * packReleaseNotes reads it), or that none was written.
  */
 export function githubRelease({ name, version, distTag }, changelog) {
   const core = name === CORE_NAME;
   const tag = core ? coreTag(version) : releaseTag(name, version);
   const section = changelogSection(changelog, version);
-  return { tag, title: tag, notes: section === "" ? NO_CHANGELOG_ENTRIES : section, prerelease: distTag !== "latest", latest: core && distTag === "latest" };
+  const notes = section === "" ? NO_CHANGELOG_ENTRIES : core ? section : packReleaseNotes(section);
+  return { tag, title: tag, notes, prerelease: distTag !== "latest", latest: core && distTag === "latest" };
 }
 
 /**

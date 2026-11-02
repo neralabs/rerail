@@ -66,6 +66,68 @@ export function changelogSection(text, version) {
   return lines.slice(start + 1, end === -1 ? undefined : end).join("\n").trim();
 }
 
+/**
+ * The first section of a changelog: `{ heading, released, body }`, `released` false for an unreleased heading
+ * (`Unreleased`, `<version> (unreleased)`), the body to the next `## ` heading, trimmed; null with no section.
+ */
+export function firstChangelogSection(text) {
+  const section = firstSection(text);
+  if (section === null) return null;
+  const rest = text.slice(section.index + section.length);
+  const next = /^## /mu.exec(rest);
+  return { heading: section.heading, released: unreleasedVersion(section.heading) === null, body: (next === null ? rest : rest.slice(0, next.index)).trim() };
+}
+
+/**
+ * A changelog section's lead: the prose before its first entry or `### ` heading, trimmed, `""` when it opens with one.
+ * It is the release's pitch to the people who upgrade (docs/release.md, "Release notes").
+ */
+export function changelogLead(section) {
+  const lines = section.split("\n");
+  const end = lines.findIndex((line) => line.startsWith("- ") || line.startsWith("### "));
+  return lines.slice(0, end === -1 ? undefined : end).join("\n").trim();
+}
+
+/** A changelog section's entries: each `- ` line with the indented lines under it, as one string each. */
+export function changelogEntries(section) {
+  const entries = [];
+  for (const line of section.split("\n")) {
+    if (line.startsWith("- ")) entries.push(line);
+    else if (entries.length > 0 && /^\s+\S/u.test(line)) entries[entries.length - 1] += `\n${line}`;
+  }
+  return entries;
+}
+
+/** The entries of `after`'s first section that `before` (a changelog's earlier text, or null) does not hold. */
+export function newChangelogEntries(before, after) {
+  const section = firstChangelogSection(after);
+  if (section === null) return [];
+  return changelogEntries(section.body).filter((entry) => before === null || !before.includes(entry));
+}
+
+/** The most words a release note (a changelog entry, a changeset summary) may run to. */
+export const RELEASE_NOTE_WORDS = 60;
+
+const wordCount = (text) => text.split(/\s+/u).filter((word) => word !== "").length;
+
+/**
+ * Why `note`, a release note (a changelog entry or a changeset summary, `- ` and all), is not written for the person
+ * upgrading, or null: it runs past `words` words (RELEASE_NOTE_WORDS; null for no limit, a lead paragraph's), or
+ * names a ticket, a pull request or a commit, which say nothing to them (docs/release.md, "Release notes").
+ */
+export function releaseNoteRefusal(note, words = RELEASE_NOTE_WORDS) {
+  const text = note.replace(/^- /u, "");
+  const count = wordCount(text);
+  if (words !== null && count > words) return `runs to ${count} words; a release note says what changed in a sentence or two (at most ${words} words)`;
+  const ticket = /\b[A-Z][A-Z0-9]+-\d+\b/u.exec(text);
+  if (ticket !== null) return `names the ticket ${ticket[0]}, which says nothing to the person upgrading`;
+  const pullRequest = /(?:^|[\s(])#(\d+)\b/u.exec(text);
+  if (pullRequest !== null) return `names pull request #${pullRequest[1]}, which says nothing to the person upgrading`;
+  const commit = /\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/u.exec(text);
+  if (commit !== null) return `names the commit ${commit[0]}, which says nothing to the person upgrading`;
+  return null;
+}
+
 /** `package.json`'s text with its own `version` set to `version`, and nothing else changed. */
 export function setPackageVersion(text, version) {
   const updated = text.replace(/^( {2}"version": ")[^"]*(")/mu, `$1${version}$2`);

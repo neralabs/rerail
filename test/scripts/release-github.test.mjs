@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { NO_CHANGELOG_ENTRIES } from "../../scripts/release/core.mjs";
-import { backfillPlan, backfillTags, changelogPath, ghReleaseArgs, githubRelease, parseRemoteTags, releasedByTag } from "../../scripts/release/github-release.mjs";
+import { backfillPlan, backfillTags, changelogPath, ghReleaseArgs, githubRelease, packReleaseNotes, parseRemoteTags, releasedByTag } from "../../scripts/release/github-release.mjs";
 
 const CORE = "@neralabs/rerail";
 const PYTHON = "@neralabs/rerail-pack-python";
@@ -42,15 +42,31 @@ describe("githubRelease", () => {
     expect(githubRelease({ name: CORE, version: "0.1.0", distTag: "latest" }, "").notes).toBe(NO_CHANGELOG_ENTRIES);
   });
 
-  it("never makes a pack's release the latest, and makes it a pre-release only when held under next", () => {
+  it("never makes a pack's release the latest, and makes it a pre-release only when held under next, its notes the entries alone", () => {
     expect(githubRelease({ name: PYTHON, version: "0.1.4", distTag: "latest" }, packChangelog)).toEqual({
       tag: `${PYTHON}@0.1.4`,
       title: `${PYTHON}@0.1.4`,
-      notes: "### Patch Changes\n\n- e06db22: Messages.",
+      notes: "- Messages.",
       prerelease: false,
       latest: false,
     });
     expect(githubRelease({ name: PYTHON, version: "0.1.5", distTag: "next" }, packChangelog)).toMatchObject({ prerelease: true, latest: false });
+  });
+});
+
+describe("packReleaseNotes", () => {
+  it("drops the lone changes heading and the commit hash the old generator led each entry with, keeping the entry's paragraphs", () => {
+    const section = ["### Patch Changes", "", "- 7392aea: README notes.", "", "  A second paragraph.", "- Rename: `a` is `b`.", "  - a nested point"].join("\n");
+    expect(packReleaseNotes(section)).toBe(["- README notes.", "", "  A second paragraph.", "- Rename: `a` is `b`.", "  - a nested point"].join("\n"));
+  });
+
+  it("keeps the headings of a section with more than one kind of change", () => {
+    const section = "### Minor Changes\n\n- 1234abc: A rule added.\n\n### Patch Changes\n\n- A fix.";
+    expect(packReleaseNotes(section)).toBe("### Minor Changes\n\n- A rule added.\n\n### Patch Changes\n\n- A fix.");
+  });
+
+  it("leaves text that is no hash alone", () => {
+    expect(packReleaseNotes("- deadbee: not a hash, no digit\n- Version 0.1.0 is out.")).toBe("- deadbee: not a hash, no digit\n- Version 0.1.0 is out.");
   });
 });
 
@@ -148,7 +164,7 @@ describe("backfillPlan", () => {
   it("makes the Release of every release tag without one, in tag order, with the notes at that tag", () => {
     const { releases } = backfillPlan(tags, new Set(["port-readiness-recordings"]), readAt);
     expect(releases.map(({ tag }) => tag)).toEqual([`${PYTHON}@0.1.4`, "v0.1.0", "v0.1.1"]);
-    expect(releases[0]).toMatchObject({ notes: "### Patch Changes\n\n- e06db22: Messages.", prerelease: false, latest: false });
+    expect(releases[0]).toMatchObject({ notes: "- Messages.", prerelease: false, latest: false });
     expect(releases[1]).toMatchObject({ notes: "First release.", latest: false });
     expect(releases[2]).toMatchObject({ notes: "- Fixed a thing.", latest: true });
   });

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
 import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { PLUGIN_PINS, changelogSection, coreTagRefusal, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
+import { PLUGIN_PINS, RELEASE_NOTE_WORDS, changelogEntries, changelogLead, changelogSection, coreTagRefusal, firstChangelogSection, newChangelogEntries, nextCoreVersion, releaseChangelog, releaseNoteRefusal, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -98,6 +98,51 @@ describe("releaseChangelog and changelogSection", () => {
     expect(changelogSection(text, "0.1.4")).toBe("### Patch Changes\n\n- b");
     expect(changelogSection(text, "0.1.3")).toBe("- a");
     expect(changelogSection(text, "0.1.2")).toBe("");
+  });
+});
+
+describe("release notes: the lead, the entries, and what a note may say", () => {
+  const released = ["# Changelog", "", "## 0.1.1 (2026-11-02)", "", "Rerail now reads Vue components.", "The daemon needs no login.", "", "### Rules", "", "- Vue is a code-rule language.", "  Its scripts are ECMAScript.", "- A `using` declaration binds.", "", "## 0.1.0 (2026-10-27)", "", "First release.", ""].join("\n");
+  const unreleased = "# Changelog\n\n## Unreleased\n\n- A new entry.\n- An old entry.\n\n## 0.1.0 (2026-10-27)\n\n- An old entry.\n";
+
+  it("reads the first section, whether released or not", () => {
+    expect(firstChangelogSection(released)).toEqual({ heading: "0.1.1 (2026-11-02)", released: true, body: "Rerail now reads Vue components.\nThe daemon needs no login.\n\n### Rules\n\n- Vue is a code-rule language.\n  Its scripts are ECMAScript.\n- A `using` declaration binds." });
+    expect(firstChangelogSection(unreleased)).toMatchObject({ heading: "Unreleased", released: false });
+    expect(firstChangelogSection("# Changelog\n\n## 0.2.0 (unreleased)\n\n- a\n")).toMatchObject({ released: false });
+    expect(firstChangelogSection("# Changelog\n")).toBeNull();
+  });
+
+  it("reads the lead as the prose before the first entry or heading, and none when the section opens with one", () => {
+    expect(changelogLead(firstChangelogSection(released).body)).toBe("Rerail now reads Vue components.\nThe daemon needs no login.");
+    expect(changelogLead("- An entry.")).toBe("");
+    expect(changelogLead("### Rules\n\n- An entry.")).toBe("");
+    expect(changelogLead("Only a lead.")).toBe("Only a lead.");
+  });
+
+  it("reads each entry with the lines indented under it, under any heading", () => {
+    expect(changelogEntries(firstChangelogSection(released).body)).toEqual(["- Vue is a code-rule language.\n  Its scripts are ECMAScript.", "- A `using` declaration binds."]);
+    expect(changelogEntries("No entries.")).toEqual([]);
+  });
+
+  it("tells the entries a pull request adds from the ones its base already had", () => {
+    expect(newChangelogEntries("# Changelog\n\n## Unreleased\n\n- An old entry.\n", unreleased)).toEqual(["- A new entry."]);
+    expect(newChangelogEntries(null, unreleased)).toEqual(["- A new entry.", "- An old entry."]);
+    expect(newChangelogEntries("", "# Changelog\n")).toEqual([]);
+  });
+
+  it("refuses a note that runs long or names a ticket, a pull request or a commit, and takes one written for the person upgrading", () => {
+    expect(releaseNoteRefusal("- Rerail reads Vue components: a rule names tree-sitter-vue's kinds.")).toBeNull();
+    expect(releaseNoteRefusal(`- ${"word ".repeat(RELEASE_NOTE_WORDS)}`)).toBeNull();
+    expect(releaseNoteRefusal(`- ${"word ".repeat(RELEASE_NOTE_WORDS + 1)}`)).toBe(`runs to ${RELEASE_NOTE_WORDS + 1} words; a release note says what changed in a sentence or two (at most ${RELEASE_NOTE_WORDS} words)`);
+    expect(releaseNoteRefusal("- ABC-2217: licences are checked at the commit.")).toBe("names the ticket ABC-2217, which says nothing to the person upgrading");
+    expect(releaseNoteRefusal("- The renamer (#360) keeps literals.")).toBe("names pull request #360, which says nothing to the person upgrading");
+    expect(releaseNoteRefusal("- e06db22: Messages.")).toBe("names the commit e06db22, which says nothing to the person upgrading");
+    expect(releaseNoteRefusal("- Rerail 0.1.0 reads `#!/usr/bin/env node` and `#[derive]`, and sha256 digests of 1.2.3.")).toBeNull();
+  });
+
+  it("caps no words on a lead, only what it names", () => {
+    expect(releaseNoteRefusal("word ".repeat(RELEASE_NOTE_WORDS + 10), null)).toBeNull();
+    expect(releaseNoteRefusal("See ABC-1.", null)).toContain("ABC-1");
   });
 });
 

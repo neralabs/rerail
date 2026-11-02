@@ -85,6 +85,22 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
+      # Core's release notes, on a pull request: each entry it adds to CHANGELOG.md stays at a sentence or two and
+      # names no ticket, pull request or commit, and on the Release pull request the dated section leads with a
+      # paragraph for the people who upgrade (scripts/release/core-changelog-check.mjs). The base commit is fetched
+      # alone, so the entries the pull request adds can be told from the ones it had.
+      - name: Fetch the pull request's base commit
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --depth=1 origin "$BASE"
+
+      - name: Check core's release notes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/release/core-changelog-check.mjs "$BASE"
+
       # `npm run check` type-checks and runs the structure gate (docs/repository-structure.md); then the UI
       # token reference check and the policy DSL reference grammar check.
       - name: Type-check, structure gate, and generated references

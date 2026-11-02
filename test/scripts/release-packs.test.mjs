@@ -1,11 +1,13 @@
 // scripts/release/packs.mjs: what a pack release run publishes and under which dist-tag, what a promotion moves to
 // `latest` (and `next`), the lockfile sync after `changeset version`, the publish gate's reading of the pack
-// validation, the patch-only bumps of packs below 1.0.0, and the changeset a pull request owes each pack whose
-// published files it changes.
+// validation, the patch-only bumps of packs below 1.0.0, the changeset a pull request owes each pack whose
+// published files it changes, and the changelog entry a changeset becomes (changeset-changelog.mjs).
 
 import { describe, expect, it } from "vitest";
+import changelog, { releaseLine } from "../../scripts/release/changeset-changelog.mjs";
 import {
   changesetBumpFailures,
+  changesetSummary,
   gateFailures,
   heldPacks,
   listPacks,
@@ -22,6 +24,22 @@ import {
 } from "../../scripts/release/packs.mjs";
 
 const pack = (id, version) => ({ id, name: `@neralabs/rerail-pack-${id}`, version });
+
+describe("changesetSummary and the changelog generator", () => {
+  const text = '---\n"@neralabs/rerail-pack-blade": patch\n---\n\nBlade pack: ships 7 rules.\n\nThree go back to candidates.\n';
+
+  it("reads the summary after the front matter", () => {
+    expect(changesetSummary(text)).toBe("Blade pack: ships 7 rules.\n\nThree go back to candidates.");
+    expect(changesetSummary("---\n---\n")).toBe("");
+  });
+
+  it("writes the summary as one entry, its later paragraphs under the bullet, with no commit hash", async () => {
+    const changeset = { id: "blade-pack", summary: changesetSummary(text), commit: "7392aea", releases: [] };
+    expect(releaseLine(changeset)).toBe("- Blade pack: ships 7 rules.\n\n  Three go back to candidates.");
+    await expect(changelog.getReleaseLine(changeset, "patch", null)).resolves.toBe(releaseLine(changeset));
+    await expect(changelog.getDependencyReleaseLine([], [], null)).resolves.toBe("");
+  });
+});
 
 describe("planPacks", () => {
   it("publishes a version without its tag, skips one with it, and sends a never-published pack to its first publish", () => {
