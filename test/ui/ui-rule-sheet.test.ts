@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASK, ASK_OPEN, agentSeesPrompt, askPrompt, canDelete, deleteConsequences, fmtDay, libraryAttachments, splitPath } from "../../ui/render/rule-sheet-model.js";
+import { ASK, ASK_OPEN, LOG_NOTE, agentSeesHint, agentSeesPrompt, askPrompt, canDelete, deleteConsequences, fmtDay, libraryAttachments, splitPath } from "../../ui/render/rule-sheet-model.js";
 import { createSuggestions } from "../../ui/views/create.js";
 
 const RULE = { id: "lib:no-raw-fetch", title: "No raw fetch", scope: "src/**/*.ts", mode: "Steer" };
@@ -34,6 +34,20 @@ describe("the Edit with coding agent prompts", () => {
     const prompt = agentSeesPrompt(RULE.id, "  Use the api client instead.\n");
     expect(prompt.startsWith(`Using Rerail, update the rule "${RULE.id}"`)).toBe(true);
     expect(prompt.endsWith("to: Use the api client instead.")).toBe(true);
+  });
+});
+
+describe("the What the agent sees hint", () => {
+  const reaches = "Reaches open sessions once your agent saves it.";
+  const copy = "Saved as your copy. This one turns off.";
+
+  it.each([
+    [{ byRerail: false, log: false }, reaches],
+    [{ byRerail: false, log: true }, LOG_NOTE],
+    [{ byRerail: true, log: false }, `${copy} ${reaches}`],
+    [{ byRerail: true, log: true }, `${copy} ${LOG_NOTE}`],
+  ])("for %j says what saving does", (rule, hint) => {
+    expect(agentSeesHint(rule)).toBe(hint);
   });
 });
 

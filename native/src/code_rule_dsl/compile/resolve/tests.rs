@@ -145,7 +145,7 @@ fn resolves_composes_with_constraints_relations_and_counts() {
 }
 
 #[test]
-fn eslint_global_comments_count_only_with_the_opt_in() {
+fn eslint_global_comments_only_switch_listed_globals_off_with_the_opt_in() {
     let source = "/* global jQuery, alert: off */\njQuery(1);\nalert(2);\nconfirm(3);\n";
     let plain = typescript(
         json!({ "rule": { "kind": "identifier", "resolves": { "global": ["alert", "confirm"] } } }),
@@ -156,11 +156,17 @@ fn eslint_global_comments_count_only_with_the_opt_in() {
         json!({ "rule": { "kind": "identifier", "resolves": { "global": ["alert", "confirm"], "directives": "eslint" } } }),
     );
     let result = evaluate_file(&honored, "typescript", "a.ts", source);
-    assert_eq!(
-        found(&result, source),
-        ["2:jQuery", "4:confirm"],
-        "{result}"
+    // `off` removes `alert`; the comment makes `jQuery` a global named jQuery, not a listed one.
+    assert_eq!(found(&result, source), ["4:confirm"], "{result}");
+    // ESLint's no-new-func: `/* global foo */` never makes `foo` the global `Function`.
+    let function = typescript(
+        json!({ "rule": { "kind": "identifier", "resolves": { "global": ["Function"], "directives": "eslint" } } }),
     );
+    let source = "foo(); /* global foo */
+Function(); /* global Function */
+";
+    let result = evaluate_file(&function, "typescript", "a.ts", source);
+    assert_eq!(found(&result, source), ["2:Function"], "{result}");
     // A comment declares a global; a local binding still shadows it.
     let source = "/* global jQuery */\nfunction f(jQuery) { jQuery(1); }\n";
     let result = evaluate_file(&honored, "typescript", "a.ts", source);
@@ -948,6 +954,14 @@ fn lib_adds_typescript_eslint_lib_globals_in_their_namespaces() {
         "{result}"
     );
     // A `/* global */` comment's `off` and a configured `off` leave a lib variable in place.
+    // An escaped reference names its decoded name (ESLint's no-undef/227): the comment declares it.
+    let source = "/*global 𠮷𩸽*/ \\u{20BB7}\\u{29E3D}; \\u0078;\n";
+    let rule = typescript(json!({
+        "languageOptions": {},
+        "rule": { "kind": "identifier", "resolves": { "unresolved": true, "directives": "eslint" } },
+    }));
+    let result = evaluate_file(&rule, "javascript", "a.js", source);
+    assert_eq!(found(&result, source), ["1:\\u0078"], "{result}");
     let source = "/* global NodeList: off */\nNodeList; Node;\n";
     let rule = typescript(json!({
         "languageOptions": { "lib": ["dom"], "globals": { "Node": "off" } },

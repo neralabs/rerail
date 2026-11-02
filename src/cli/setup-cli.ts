@@ -355,7 +355,9 @@ async function runRefresh(context: SetupContext): Promise<number> {
     const changed = result.changes.filter(change => change.action === "created" || change.action === "updated");
     const names = result.agents.map(id => CODING_AGENT_NAMES[id]).join(", ");
     process.stdout.write(changed.length === 0 ? `Coding agents up to date: ${names}\n` : `Refreshed Rerail in ${names}:\n`);
-    printReport({ changes: changed, notes: changed.length === 0 ? [] : result.notes }, false);
+    // Notes about a change come only with one; a note about the agent's state (OMP's plugin install loading Rerail
+    // too) holds whether or not this refresh changed anything, so every note is printed.
+    printReport({ changes: changed, notes: result.notes }, false);
   }
   for (const { agent, message } of result.unchecked) {
     process.stdout.write(`  note: left ${CODING_AGENT_NAMES[agent]} alone: its configuration could not be read to tell whether Rerail is connected (${message})\n`);
@@ -409,15 +411,18 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
     ? registrationRoot(context)
     : await activateExplicitRoot(context, explicitRoot, remove, parsed.dryRun);
   process.stdout.write(`${remove ? "Removing Rerail from" : "Connecting Rerail to"} coding agents for ${root}${parsed.dryRun ? " (dry run)" : ""}\n`);
+  // The managed install: `current`, or before any set-up the running package, which is what Pi's gallery entry stands
+  // in for, so its removal takes that entry out too. A checkout registered with `--root` never wrote it.
+  const managed = explicitRoot === undefined || root === context.updater.currentLink;
   const report = remove
-    ? await unregisterHarnesses(registrationOptions(root, codingAgentHome(), parsed))
+    ? await unregisterHarnesses({ ...registrationOptions(root, codingAgentHome(), parsed), managed })
     : await registerHarnesses(registrationOptions(root, codingAgentHome(), parsed));
   printReport(report, parsed.dryRun);
   // What `rerail install` found or was named is seen, so set-up run again connects no agent behind this choice.
   if (!parsed.dryRun) await recordSeenCodingAgents(context.home, [...detectHarnesses(codingAgentHome()), ...(parsed.hosts ?? [])]);
   // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
   // checkout registered with `--root`, leaves the shared rules and history in place.
-  const uninstall = remove && parsed.hosts === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
+  const uninstall = remove && parsed.hosts === undefined && managed;
   if (uninstall) {
     await backUpRulesAndHistory(context.home, parsed.dryRun);
     const binDir = dirname(context.updater.launcherPath);

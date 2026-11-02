@@ -127,6 +127,7 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 | `/rerail-start`, `/rerail-stop` | Start or stop Rerail in this checkout and the worktrees inside it; rules and history are kept |
 | `/rerail-create` | Create a rule in your own words |
 | `/rerail-show-me` | See Rerail catch a broken rule in this repository and steer the fix, then clean up |
+| `/rerail-support-bundle` | Write a file of Rerail's diagnostics to attach to an issue, and check it with you first |
 | `/rerail-manage` | Open the dashboard |
 | `/rerail-update` | Update Rerail to the newest version |
 | `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
@@ -201,7 +202,7 @@ npm run test:all
 
 ## Feedback
 
-Found a false positive, a missed violation or a confusing steer? [Open an issue](https://github.com/neralabs/rerail/issues/new/choose) with the rule id and the session link. To report a vulnerability, follow [SECURITY.md](SECURITY.md) instead.
+Found a false positive, a missed violation or a confusing steer? [Open an issue](https://github.com/neralabs/rerail/issues/new/choose) with the rule id, and attach a support bundle: a dashboard link only opens on your computer, so run `/rerail-support-bundle` for a file of Rerail's diagnostics, with no prompts, replies or code in it ([what it holds](docs/troubleshooting.md#reporting-a-problem)). To report a vulnerability, follow [SECURITY.md](SECURITY.md) instead.
 
 ## License
 

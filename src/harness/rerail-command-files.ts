@@ -2,6 +2,7 @@ import {
   createRuleInstructions,
   uninstallInstructions,
   showMeInstructions,
+  supportBundleInstructions,
   RERAIL_COMMANDS,
   type CommandSigil,
   type RerailCommand,
@@ -173,6 +174,11 @@ const COMMAND_BODIES: Record<RerailCommandName, BodyBuilder> = {
   "rerail-show-me": (agent, { cli }) => ({
     text: showMeInstructions({ cli, sigil: sigilFor(agent), write: agent === "codex" ? "shell" : "edit-tool" }),
     allowed: [`${cli} show-me --json`, `${cli} show-me --cleanup`],
+  }),
+  // `--output` writes any path, so it is left out; reading and editing the file go through the agent's own permissions.
+  "rerail-support-bundle": (_agent, { cli }) => ({
+    text: supportBundleInstructions(cli),
+    allowed: [`${cli} support-bundle --json`, `${cli} support-bundle --json --session *`],
   }),
 };
 
