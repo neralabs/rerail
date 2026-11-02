@@ -6,8 +6,9 @@
 # ("@neralabs-reviewer help" lists the commands). Only people with write access can trigger it. Pushes do
 # nothing. The review reads the PR and its CI results; it never builds, runs or pushes anything. It approves
 # only PRs that pass every low-risk rule (no blockers, CI green, no high-risk paths, not from a fork or a
-# bot), and its approval counts toward this repo's required review. Like a human approval, it stays through
-# later pushes; "@neralabs-reviewer stop" withdraws it.
+# bot), and its approval counts toward this repo's required review. It counts only for the push it reviewed:
+# main requires approval of the most recent push, so a later push needs a new approval (another review, or a
+# person). "@neralabs-reviewer stop" withdraws it.
 name: reviewer
 
 on:
@@ -41,15 +42,12 @@ jobs:
       allow_approve: true
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
-      # Claude Opus 5.5 on Amazon Bedrock. The repo variable REVIEWER_MODEL holds the pinned model id or
-      # inference profile, so no AWS account id sits in this public file. Until AWS credits cover the dedicated
-      # reviewer account (from 1 November) it is the main account's tagged profile, with the main account's
-      # key below; then set REVIEWER_MODEL to us.anthropic.claude-opus-5-5 and pass
-      # secrets.REVIEWER_BEDROCK_API_KEY instead.
+      # Claude Opus 5.5 on Amazon Bedrock, in the dedicated reviewer AWS account: the cross-region inference
+      # profile, pinned here so a model change is a reviewed change to this file.
       provider: bedrock
-      model: ${{ vars.REVIEWER_MODEL }}
+      model: us.anthropic.claude-opus-5-5
       aws_region: us-east-1
     # Named, not `secrets: inherit`: the reviewer gets these and nothing else this repo can see.
     secrets:
       REVIEWER_APP_PRIVATE_KEY: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
-      REVIEWER_BEDROCK_API_KEY: ${{ secrets.REVIEWER_BEDROCK_API_KEY_MAIN }}
+      REVIEWER_BEDROCK_API_KEY: ${{ secrets.REVIEWER_BEDROCK_API_KEY }}
