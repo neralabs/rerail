@@ -25,8 +25,8 @@
 - [conformance/README.md](../conformance/README.md): the conformance check every shipped ported rule passes, its pull
   request comment, divergences, and promoting a candidate
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
-- [porting-a-pack.md](porting-a-pack.md): the contributor's path for a rule pack port: candidates, the Conformance
-  comment, test data, promotion and demotion, and the maintainers' publish steps
+- [porting-a-pack.md](porting-a-pack.md): contributing a ported rule, a new tool-pack or a new pack: who does what,
+  the steps for each, the Conformance comment, promotion and demotion, and the maintainers' publish steps
 
 ## Release
 - [release.md](release.md): how core is built, versioned and published
