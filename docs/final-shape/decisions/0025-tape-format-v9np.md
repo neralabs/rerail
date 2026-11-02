@@ -75,7 +75,28 @@ How it is locked:
 The measurement harness keeps every node in memory (783 MB for 31.5 MB of source). The production
 encoder must stream within the 500 MB budget.
 
-## Agrees with / departs from
+## Implementation (2026-11-01)
+
+`tape.rs`'s `TapeImage` is v9np (`TAPE_FORMAT_VERSION` 9, magic `TMPTAP9N`):
+- columns `code` (u16), `size`, `base` (u32 per 16 nodes, the block's least start), `off`, `tail`,
+  each 2 or 4 bytes wide per document (widths in the header);
+- `code` indexes a per-tape table of folded codes: v8's kind and field, the flags (extra, error,
+  missing) and the contextual alias. Per tape, not per grammar: no grammar-wide code catalog
+  exists to number them deterministically, and a table of a few hundred codes costs 5 bytes each;
+- `end = start(last descendant) + tail`; where some node ends before its last descendant starts,
+  the tape measures every tail from the node's own start instead (a header bit), so encoding is
+  total;
+- no parent column: `restore_tree` rebuilds parents from the sizes with a stack;
+- `TapeDoc` and its accessors are unchanged, so nothing outside `tape.rs` changed.
+
+Not done here: supertype memberships stay in the image (their sidecar keyed by the tape digest
+comes with the sidecars, list step 28), and nothing reads the stored columns randomly yet (the
+anchor index's SQL reads, `tape/v9np/sql.rs`, are the spike's harness).
+
+Checks: the tape tests (41, adapted from v8's tables to the columns), S7 710 keys = W on CPU and
+Metal, and the prefilter, slice, facts and workspace storage tests.
+
+
 
 - **Agrees with** P 0003's size and regularity findings, now measured on Rerail's grammars:
   0.96–1.04× v7, against the spike's 0.93–1.01×.
