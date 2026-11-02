@@ -8,7 +8,7 @@ import { h } from "./dom.js";
 import { failed } from "./format.js";
 import { settingWrites } from "./settings-writes.js";
 import { attachmentWrites } from "./attachments.js";
-import { data, ui, panelRuleId, readScope, setScope, repoName, packById } from "./state.js";
+import { data, ui, panelRuleId, readScope, setScope, repoName, packById, packRuleOf, isAttached } from "./state.js";
 import { isWorktreePack } from "./derive.js";
 import { refreshNow, changeScope } from "./poll.js";
 import { bootRoute, parseRoute, repositoryUrl, urlFor } from "./routes.js";

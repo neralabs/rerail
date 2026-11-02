@@ -141,7 +141,7 @@ declare module "*/ui/state.js" {
     activityAllSessions: { started: number; withViolations: number } | null;
     packs: unknown[];
     attachedPacks: Map<string, string[]>;
-    repository: { setUp: boolean; repositoryKey?: string } | null;
+    repository: { setUp: boolean; repositoryKey?: string; name?: string } | null;
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
     followGitignore: boolean | null;
@@ -188,6 +188,13 @@ declare module "*/ui/settings-writes.js" {
 declare module "*/ui/shell.js" {
   /** Who a change to pack `packId`'s rules belongs to: this worktree for its own rules, else the repository. */
   export function changeOwner(packId?: string): "repository" | "checkout";
+}
+
+declare module "*/ui/rule-remove.js" {
+  /** Delete rule `id`, created by you, from the repository the page shows; the toast offers Undo. */
+  export function removeRule(id: string): Promise<void>;
+  /** Undo: add rule `id` back to the repository its delete removed it from. */
+  export function restoreRule(id: string): Promise<void>;
 }
 
 declare module "*/ui/pack-model.js" {
