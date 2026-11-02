@@ -37,7 +37,9 @@ CI ([How contribution works](../CONTRIBUTING.md#how-contribution-works)). So the
 | --- | --- |
 | Write the rule documents, their port entries, their `gates.yaml` entries and README sections; name their upstream tests | Contributor |
 | Write a new tool-pack's generator, upstream manifest and licence records; a new pack's skeleton | Contributor |
-| Derive the data (it runs upstream's code, in a sandbox), stage it, dispatch and approve the publish | Maintainer |
+| Derive one rule's data (it runs upstream's code, in a sandbox) and stage it | Maintainer |
+| Derive and stage a new tool-pack's whole set; a maintainer derives it again before publishing | Contributor |
+| Dispatch and approve the publish | Maintainer |
 | Read the Conformance comment; fix the rules, declare checked divergences, add clean samples | Contributor |
 | Promote a candidate that passes every check | Contributor proposes, a reviewer decides |
 | Merge; a new pack's first publish to npm | Maintainer |
@@ -101,10 +103,10 @@ the pack publishes.
    only on the tests it is told to read; a rule it does not know has no expected findings, and the conformance check
    reports a scoring error for its port. Where the tests are named is what `gates.yaml` `watch.tests` says: a
    hand-kept list beside the generator (`fixtures.json`: `{ "rules": { "<upstream rule>": ["<upstream path>", …] } }`,
-   for Ruff, Bandit, PHPStan and Clippy), or a path convention (`test/{rule}.js`, the ESLint-family tools), where the
-   generator finds the test from the port entry alone. For Ruff and Bandit, also add the rule's suppression case to the
-   generator's table (`NOQA`, `NOSEC`): the generator refuses to derive while a shipped rule has none, and CI does not
-   catch a missing case.
+   for Ruff, Bandit, PHPStan and Clippy), or a path convention (`tests/lib/rules/{rule}.js`, the ESLint-family
+   tools), where the generator finds the test from the port entry alone. For Ruff and Bandit, also add the rule's
+   suppression case to the generator's table (`NOQA`, `NOSEC`): the generator refuses to derive while a shipped rule
+   has none, and CI does not catch a missing case.
 
 5. **Add the `gates.yaml` entry**, when the rule has none: `deprecated` (upstream's message, or `null`) and
    `recommended` (the first approved configuration that turns it on, with the option values that configuration uses,
@@ -166,7 +168,10 @@ ESLint-family generators, which share `scripts/pack-data/eslint-expected.mjs`).
 5. **Real-code samples**, optional but what `stays-silent` usually needs: whole files from repositories in
    `scripts/samples/licences.ts`, labelled per rule, built with the sample builders and published like test data
    (`samples.lock`, `SAMPLES.md`; [Samples](upstream.md#samples)). A new source repository needs its licence read at
-   the samples' commits and an entry in the same pull request ([Sample licences](upstream.md#sample-licences)).
+   the samples' commits and an entry in `scripts/samples/licences.ts`, landed on `main` in its own pull request
+   before the samples are published: the publish's prep validates the staged samples with `main`'s code, and refuses
+   a sample whose repository has no entry there ([Sample licences](upstream.md#sample-licences)). The same holds for
+   any change to `scripts/samples/` the staged samples need.
 
 6. **The rules**, each as [One rule into an existing tool-pack](#one-rule-into-an-existing-tool-pack) describes, all
    as candidates.
@@ -192,7 +197,10 @@ git add packs/<id>/upstream/<tool>/publish
 
 - The derive runs upstream's code, so it runs in a sandbox with no AWS or GitHub credentials
   ([Derive in a sandbox](upstream.md#derive-in-a-sandbox)). It stops before running if any authored file the tool's
-  `UPSTREAM.md` lists is missing on disk.
+  `UPSTREAM.md` lists is missing on disk. `npm run fixtures:pull` puts them there; without the read, a generator
+  that writes its own authored cases (Ruff's and Bandit's, from their `NOQA`, `NOSEC` and `PROBES` tables through
+  `common.write_authored`) can be run for those first, and the written set must equal the `UPSTREAM.md` listing.
+  Hand-written authored files need the pull.
 - Staging reads the locked archive to say what a publish would drop, so it needs the AWS CLI even with `--all`. While
   `publish/` is tracked, structure metric #3 fails by design; every path in its failures must be a `publish/` path.
 - A file the archive holds is in no diff. Renaming or merging an authored case waits for the next derive and a
@@ -481,7 +489,10 @@ The steps are [Merging (maintainers)](../CONTRIBUTING.md#merging-maintainers) an
    another approval.
 
 6. **Merge when CI is green on the finish commit**, with `publish/` gone and the Conformance comment showing no
-   blocking failure. Two notes:
+   blocking failure. Three notes:
+   - The finish step writes each `samples.lock`, not `SAMPLES.md`. After a samples publish, paste the lock's
+     archive name, file count and bytes into the tool-pack's `SAMPLES.md` opening line by hand, on the pull request's
+     branch: no check compares the two, so a stale line stays stale.
    - An overlay never restages `LICENSES.md`, so a samples archive's keeps listing the earlier samples until a
      `replace` repack. Note it in the pull request; do not hand-edit it.
    - A move of unchanged documents between `rules/` and `candidates/` changes no verdict, so an earlier run's
