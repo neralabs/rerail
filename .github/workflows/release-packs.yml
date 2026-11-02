@@ -7,10 +7,12 @@ name: Release packs
 # opened by release-pr.yml; merging it is the release. On a push to main this workflow publishes:
 #   Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
 #   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, published
-#   under `latest` with trusted publishing, and tagged. A pack held at an older `latest` (put back on purpose) is
+#   under `latest` with trusted publishing, and tagged; its `next` is moved up to that version too, unless `next` is
+#   already at a newer one, so `next` never trails `latest`. A pack held at an older `latest` (put back on purpose) is
 #   published under `next` instead, so the hold stays. The dist-tags job then lists each published pack's dist-tags in
-#   the run summary and fails if one is not where it was published. A pack never published at all needs its first
-#   publish by hand; the run reports it and fails after publishing the others.
+#   the run summary and fails if one is not where it was published, or one's `next` is older than its `latest`. A
+#   pack never published at all needs its first publish by hand; the run reports it and fails after publishing the
+#   others.
 # A pull request touching packs runs the validation and packing as a dry run and publishes nothing, and fails if it
 # changes what a pack publishes without a changeset naming that pack (the Release pull request is not checked). Its
 # paths see only the git diff, not the packs' test data: a change to that data is a change to a tool-pack's
@@ -19,7 +21,8 @@ name: Release packs
 # puts it back and holds it there (`held`), and naming the pack alone, at its package.json version, promotes it again
 # and releases the hold. With no inputs, every pack whose released version is not `latest` yet, less any pack held.
 # The promote-plan job lists them in the run summary before the promote job, which needs the `release` environment's
-# approval, moves them all (docs/pack-format.md, "Release").
+# approval, moves them all, moves each one's `next` up to it unless `next` is at a newer version, and then fails if a
+# promoted pack's `latest` is not the version or its `next` is older (docs/pack-format.md, "Release").
 
 on:
   push:
@@ -259,7 +262,7 @@ jobs:
         with:
           node-version: "24"
 
-      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (the promote job) 11.21.0.
+      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (moving `next`, and the promote job) 11.21.0.
       - name: Install npm with trusted publishing support
         run: |
           npm install --global "npm@^11.21.0"
@@ -278,7 +281,7 @@ jobs:
           path: ${{ runner.temp }}/rule-packs
 
       - id: publish
-        name: Publish under latest and tag each release
+        name: Publish under latest, raise next and tag each release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -286,7 +289,8 @@ jobs:
         run: node scripts/release/packs-publish.mjs "$RUNNER_TEMP/rule-packs"
 
   # Reads back what the publish job released, with the read-only NPM_PACKS_READ_TOKEN: each pack's dist-tags in the
-  # run summary, failing if one's `latest` (`next` for a held pack) is not the version just published.
+  # run summary, failing if one's `latest` (`next` for a held pack) is not the version just published, or its `next` is
+  # older than its `latest`.
   dist-tags:
     name: Published dist-tags
     needs: publish
@@ -410,9 +414,18 @@ jobs:
           persist-credentials: false
 
       # PROMOTE is the plan's JSON list of `{ id, version, hold, release }`.
-      - name: Point latest at each version
+      - id: promote
+        name: Point latest at each version and raise next
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PROMOTE: ${{ needs.promote-plan.outputs.promote }}
         run: node scripts/release/packs-promote.mjs
+
+      # The packs are public, so `npm dist-tag ls` reads them back with no token. Runs for the packs that moved even when
+      # another failed.
+      - name: Check each promoted pack's dist-tags
+        if: ${{ !cancelled() && steps.promote.outputs.promoted != '' }}
+        env:
+          RELEASED: ${{ steps.promote.outputs.promoted }}
+        run: node scripts/release/dist-tags-check.mjs

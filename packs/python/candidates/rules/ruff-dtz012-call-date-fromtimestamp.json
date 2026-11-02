@@ -1,0 +1,71 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz012-call-date-fromtimestamp",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Derive a date from a timestamp through a timezone-aware datetime instead of the naive local date; the local date depends on the machine's timezone.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "call-date-fromtimestamp",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      }
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "datetime.date.fromtimestamp"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ012",
+    "message": "Use `datetime.datetime.fromtimestamp(<timestamp>, tz=...).date()` with the timezone whose date you need; `date.fromtimestamp` gives the naive local date, so keep it only if intended.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ012"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,187 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c901-complex-structure",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Split Python functions with many branches, loops, exception handlers and nested functions into smaller ones; heavily branching code is hard to read, test and change.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "mccabe.max-complexity": {
+            "type": "integer",
+            "default": 10,
+            "description": "The highest complexity a function may have: one, plus one for each decision point and nested function in its body."
+          }
+        }
+      }
+    },
+    {
+      "id": "complex-structure",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "irrefutable": {
+              "any": [
+                {
+                  "regex": "^_$"
+                },
+                {
+                  "kind": "dotted_name",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\.$"
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "case_pattern"
+                    },
+                    {
+                      "kind": "as_pattern"
+                    },
+                    {
+                      "kind": "union_pattern"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "irrefutable"
+                  }
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "case_pattern",
+                    "matches": "irrefutable"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "decision-point": {
+              "any": [
+                {
+                  "kind": "if_statement"
+                },
+                {
+                  "kind": "elif_clause"
+                },
+                {
+                  "kind": "for_statement"
+                },
+                {
+                  "kind": "while_statement"
+                },
+                {
+                  "kind": "except_clause"
+                },
+                {
+                  "kind": "else_clause",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "try_statement"
+                  }
+                },
+                {
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition"
+                  }
+                },
+                {
+                  "kind": "case_clause",
+                  "not": {
+                    "all": [
+                      {
+                        "not": {
+                          "precedes": {
+                            "stopBy": "end",
+                            "kind": "case_clause"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "if_clause"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^,$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "case_pattern",
+                          "matches": "irrefutable"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "function_definition",
+              "not": {
+                "count": {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "decision-point"
+                  },
+                  "max": {
+                    "$option": "mccabe.max-complexity"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "C901",
+        "message": "Extract parts of `$NAME` into functions defined outside it (nested ones still count), or turn an if/elif chain that maps values into a lookup table; leave it if the branching is inherent.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C901"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

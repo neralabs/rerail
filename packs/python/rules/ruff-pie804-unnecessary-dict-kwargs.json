@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-pie804-unnecessary-dict-kwargs",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Pass keyword arguments directly instead of unpacking a dict literal into a Python call.",
   "scope": {
@@ -153,7 +153,11 @@
             "kind": "dictionary_splat",
             "inside": {
               "stopBy": "neighbor",
-              "kind": "argument_list"
+              "kind": "argument_list",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "call"
+              }
             },
             "has": {
               "stopBy": "neighbor",
