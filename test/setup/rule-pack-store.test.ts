@@ -292,6 +292,7 @@ describe("installPackVersions", { timeout: INSTALL_TIMEOUT_MS }, () => {
 });
 
 describe("addPackSpecs", () => {
+  // Two installs and two catalog loads of a real pack: about 2 s alone, past vitest's 5 s default on a loaded CI shard.
   it("puts back a loaded pack that the install replaced with one its core range leaves out, and says why", async () => {
     const home = temporaryHome();
     // What `rerail packs add typescript` installs once `latest` moves past this core.
@@ -302,7 +303,7 @@ describe("addPackSpecs", () => {
 
     expect(problem).toMatch(/^@neralabs\/rerail-pack-typescript@0\.2\.0 cannot be used: .*>=0\.2\.0.*\. Nothing was changed\.$/u);
     expect(loadRuleCatalog(home).packs.get("typescript")?.version).toBe("0.1.1");
-  });
+  }, 30_000);
 });
 
 describe("packsLeftOutByCore", () => {
