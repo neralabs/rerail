@@ -60,7 +60,13 @@ function globSource(glob: string): string {
     choices !== undefined ? `(?:${choices.split(",").map(literal).join("|")})` : match === "*" ? ".*" : literal(match));
 }
 
-const SENSITIVE_FILE = new RegExp(`^(?:${SENSITIVE_FILE_NAMES.map(globSource).join("|")})$`, "i");
+/**
+ * {@link SENSITIVE_FILE_NAMES} as one regular expression's source, anchored to a whole name: escaped literals, `.*`,
+ * `(?:…)` and `|` only, so the native repository index compiles it too. Matched case-insensitively.
+ */
+export const SENSITIVE_FILE_PATTERN = `^(?:${SENSITIVE_FILE_NAMES.map(globSource).join("|")})$`;
+
+const SENSITIVE_FILE = new RegExp(SENSITIVE_FILE_PATTERN, "i");
 const SENSITIVE_FOLDERS: ReadonlySet<string> = new Set(SENSITIVE_FOLDER_NAMES);
 
 /**

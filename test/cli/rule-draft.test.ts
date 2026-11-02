@@ -248,6 +248,46 @@ describe("rerail rules test", () => {
     expect(stdout).toContain("    src/a.ts:5:1  console.log(1);\n    … and 2 more.");
   });
 
+  it("reports every match once across a repo too large for one request, cross-file clauses included", async () => {
+    // 70 files of 600 KiB: more than the 40 MiB one request to the Engine may carry. The `select_when` holds where its
+    // `exists` witness is the last file, sent long after the first, which it selects.
+    const padding = `// ${"x".repeat(1021)}\n`.repeat(600);
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 70; index += 1) {
+      const name = `src/f${String(index).padStart(2, "0")}.ts`;
+      files[name] = `${padding}console.log(${index});\n${index === 0 ? "debugger;\n" : ""}${index === 69 ? "// DEBUG_BUILD\n" : ""}`;
+    }
+    const repo = await repository(files);
+    const policy = noConsolePolicy();
+    const file = writeDraft(repo, {
+      kind: "code",
+      rule: {
+        ...policy,
+        clauses: [...policy.clauses, {
+          id: "debugger-in-debug-build",
+          forbid: {
+            select_when: {
+              exists: { regex: { pattern: "DEBUG_BUILD", source: "file.content" } },
+              select: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+            },
+          },
+          violation: { anchor: "witness.span", code: "DEBUGGER", message: "No debugger." },
+        }],
+      },
+    });
+
+    const { exit, report } = await testReport(file, repo);
+
+    expect(exit).toBe(0);
+    expect(report.repository).toMatchObject({ unchecked: { files: [], unattributed: [] }, binary: 0, leftOut: 0 });
+    expect(report.repository?.matches).toEqual([
+      ...Object.keys(files).flatMap((path, index) => [
+        { path, line: 601, column: 1, text: `console.log(${index});` },
+        ...(index === 0 ? [{ path, line: 602, column: 1, text: "debugger;" }] : []),
+      ]),
+    ]);
+  });
+
   it("reads files no language lists as text for a regex rule, skipping binary ones", async () => {
     const repo = await repository({
       Justfile: "release:\n\techo TODO\n",

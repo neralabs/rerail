@@ -178,6 +178,13 @@ export interface NativeRepositoryIndexOptions {
   sourceLanguages: Record<string, string>;
   /** The file label of each file evaluated by its whole name, keyed lowercase (`.npmignore` → `text`); wins over `sourceLanguages`. */
   sourceNames?: Record<string, string>;
+  /**
+   * A regular expression's source (`SENSITIVE_FILE_PATTERN`) matched case-insensitively against an unlisted file's last
+   * path segment: a match is secret-like by name, never read, as if binary. Listed files are read whatever their name.
+   */
+  sensitiveFileName: string;
+  /** Folder names (`SENSITIVE_FOLDER_NAMES`): an unlisted file with a path segment equal to one, case-insensitively, is never read. */
+  sensitiveFolderNames: string[];
   /** Folders below the workspace root that are checkouts judged by their own rules: not walked, only reported. */
   nestedCheckouts: string[];
   /** Leave out what Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`); never a tracked file. */

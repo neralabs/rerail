@@ -22,6 +22,8 @@ import { binaryPrefix } from "./binary-prefix.js";
 
 
 const MAX_SOURCE_BYTES = 1_000_000;
+/** The read error of a file past `MAX_SOURCE_BYTES`, never read whole. */
+const OVERSIZE_ERROR = `Source exceeds ${MAX_SOURCE_BYTES} byte policy limit`;
 /** The most source text the session keeps as later preimages (`#texts`); the least recently changed goes first. */
 const MAX_SESSION_TEXT_BYTES = 64 * 1024 * 1024;
 /** Paths observed per wave; on network or virtualised mounts each lstat/read is a round trip, so latency, not bandwidth, bounds the walk. */
@@ -52,7 +54,8 @@ export type ObservedSource = Omit<Source, "text" | "deleted">;
 export type SourceObservationCache = Map<string, ReadonlyMap<string, ObservedSource>>;
 /**
  * A file the auditor may read: `unlisted` when no language lists it, so it is read as `UNLISTED_TEXT_LANGUAGE` and,
- * being binary or no regular file, is no source at all and skipped without a read error.
+ * being binary (a NUL byte in its first bytes, `binaryPrefix`, tested before it is read whole) or no regular file, is
+ * no source at all and skipped without a read error.
  */
 interface SourceLocation {
   readonly absolute: string;
@@ -108,6 +111,13 @@ interface SourceDiscovery {
   error: string | undefined;
   /** A boundary answered while the current walk was running; closing before it finishes says so again. */
   pendingReported: boolean;
+  /**
+   * The unlisted files the last walk found too large to read, by path, with their stamps. Each is reported as not
+   * checked at one boundary only while its stamp holds (`reported`), not at every turn: it is no listed source.
+   */
+  unread: ReadonlyMap<string, { readonly stamp: string; readonly readError: string }>;
+  /** The stamp each unlisted file in `unread` was last reported with this session. */
+  readonly reported: Map<string, string>;
 }
 
 /**
@@ -133,6 +143,8 @@ interface SourceScan {
   readonly sources: Map<string, Source>;
   readonly failedRoots: Set<string>;
   readonly errors: string[];
+  /** Unlisted files too large to read, by path (`SourceDiscovery.unread`); left out of `errors`. */
+  readonly unread: Map<string, { readonly stamp: string; readonly readError: string }>;
 }
 /** One traversal of the workspace: what it compares against, when it started, and what it has found so far. */
 interface SourceWalk {
@@ -304,7 +316,7 @@ export class CodeRuleBridge {
       this.#lastResponse = emptyResponse(0);
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
-        versions: new Map(), baselineRoots: new Set(), error: undefined, pendingReported: false,
+        versions: new Map(), baselineRoots: new Set(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
       };
       this.#discovery = discovery;
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
@@ -681,7 +693,7 @@ export class CodeRuleBridge {
     const seed = baseline ? this.#observations?.get(this.#cwd) : undefined;
     const scan = await this.#observeSources({
       discovery, observedAt: await filesystemClock(), previousSources: seed === undefined ? previous : new Map([...seed, ...previous]),
-      captureChanges: !baseline, scan: { sources: new Map(), failedRoots: new Set(), errors: [] }, stack: [discovery.root],
+      captureChanges: !baseline, scan: { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map() }, stack: [discovery.root],
     });
     if (discovery.cancelled || this.#discovery !== discovery) return;
     await this.#enqueue(async () => {
@@ -704,6 +716,7 @@ export class CodeRuleBridge {
       discovery.baselineComplete = true;
       discovery.baselineRoots = scan.failedRoots;
       discovery.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
+      discovery.unread = scan.unread;
       this.#observations?.set(this.#cwd, new Map(this.#observed));
     });
     // Reconcile changes to already-observed files made during the initial traversal.
@@ -768,8 +781,12 @@ export class CodeRuleBridge {
       const wave = stack.splice(-OBSERVATION_CONCURRENCY);
       await Promise.all(wave.map(absolute => this.#observePath(walk, absolute)));
     }
-    for (const source of scan.sources.values())
-      if (source.readError !== undefined) scan.errors.push(`${source.path}: ${source.readError}`);
+    for (const source of scan.sources.values()) {
+      if (source.readError === undefined) continue;
+      if (source.readError === OVERSIZE_ERROR && source.stamp !== undefined && sourceLanguageOfPath(source.path) === undefined)
+        scan.unread.set(source.path, { stamp: source.stamp, readError: source.readError });
+      else scan.errors.push(`${source.path}: ${source.readError}`);
+    }
     return scan;
   }
 
@@ -804,7 +821,7 @@ export class CodeRuleBridge {
     if (!this.#auditor.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
   }
 
-  /** An unlisted binary file is observed without a read error, so it is not read again while its stamp holds. */
+  /** An unlisted binary file is observed without a read, nor a read error, so it is not read again while its stamp holds. */
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
     const { discovery, observedAt, previousSources, captureChanges, scan: { sources: observed } } = walk;
     const { absolute, path, language, unlisted } = location;
@@ -819,9 +836,12 @@ export class CodeRuleBridge {
       observed.set(path, previous!);
       return;
     }
+    if (unlisted && await binaryPrefix(absolute)) {
+      observed.set(path, { path, language, stamp, modifiedAt, observedAt });
+      return;
+    }
     if (info.size > MAX_SOURCE_BYTES) {
-      if (unlisted && await binaryPrefix(absolute)) observed.set(path, { path, language, stamp, modifiedAt, observedAt });
-      else observed.set(path, { path, language, stamp, modifiedAt, observedAt, readError: `Source exceeds ${MAX_SOURCE_BYTES} byte policy limit` });
+      observed.set(path, { path, language, stamp, modifiedAt, observedAt, readError: OVERSIZE_ERROR });
       return;
     }
     const source = await readFile(absolute);
@@ -937,10 +957,8 @@ export class CodeRuleBridge {
       if (canonical !== owner && !canonical.startsWith(`${owner}${sep}`)) return undefined;
       const named = await lstat(canonical);
       if (named.dev !== info.dev || named.ino !== info.ino) return undefined;
-      if (info.size > MAX_SOURCE_BYTES) {
-        if (location.unlisted && await binaryPrefix(handle)) return undefined;
-        return { path: location.path, language: location.language, readError: `Source exceeds ${MAX_SOURCE_BYTES} byte policy limit` };
-      }
+      if (location.unlisted && await binaryPrefix(handle)) return undefined;
+      if (info.size > MAX_SOURCE_BYTES) return { path: location.path, language: location.language, readError: OVERSIZE_ERROR };
       const source = await handle.readFile();
       if (location.unlisted && source.includes(0)) return undefined;
       if (source.length > MAX_SOURCE_BYTES || source.includes(0))
@@ -1057,8 +1075,15 @@ export class CodeRuleBridge {
     if (this.#discovery !== discovery) throw new Error("Policy workspace is not open");
   }
 
+  /** The last walk's errors, with each unlisted file too large to read that this session has not yet reported at its stamp. */
   #discoveryResponse(discovery: SourceDiscovery): CodeRuleResponse {
-    let message = discovery.error;
+    const errors = discovery.error === undefined ? [] : [discovery.error];
+    for (const [path, { stamp, readError }] of discovery.unread) {
+      if (discovery.reported.get(path) === stamp) continue;
+      discovery.reported.set(path, stamp);
+      errors.push(`${path}: ${readError}`);
+    }
+    let message = errors.length === 0 ? undefined : errors.join("; ");
     if (message === undefined && !discovery.baselineComplete) message = "Initial source discovery is still pending";
     else if (message === undefined && discovery.idle !== undefined) message = "Source reconciliation is still pending";
     if (message === undefined) return this.#lastResponse;

@@ -58,6 +58,7 @@ import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { binaryPrefix } from "./binary-prefix.js";
+import { SENSITIVE_FILE_PATTERN, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
 
 export { SOURCE_LANGUAGES };
 
@@ -88,7 +89,10 @@ export const IGNORED_DIRECTORIES = new Set([
   "target",
   "vendor",
 ]);
-/** A repository index honours the walk's bounds, ignored directories and source languages; the lane adds Git's ignores. */
+/**
+ * A repository index honours the walk's bounds, ignored directories and source languages, and skips an unlisted file
+ * named like a secret as `workspaceLanguage` does; the lane adds Git's ignores.
+ */
 const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedCheckouts" | "followGitignore"> = {
   maxFiles: AUDIT_MAX_FILES,
   maxSourceBytes: AUDIT_MAX_SOURCE_BYTES,
@@ -96,6 +100,8 @@ const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedChecko
   ignoredDirectories: [...IGNORED_DIRECTORIES],
   sourceLanguages: Object.fromEntries(SOURCE_LANGUAGES),
   sourceNames: Object.fromEntries(SOURCE_NAMES),
+  sensitiveFileName: SENSITIVE_FILE_PATTERN,
+  sensitiveFolderNames: [...SENSITIVE_FOLDER_NAMES],
 };
 const sourceSpanSchema = z.strictObject({
   startByte: z.number().int().nonnegative(),
@@ -291,11 +297,12 @@ export function languageFor(path: string): CodeRuleSourceLanguage | undefined {
 /**
  * The label `workspace` reads `path` with: a listed file's own where some code rule's scope holds it, an unlisted
  * file's `UNLISTED_TEXT_LANGUAGE` where a code rule that reads text has it in scope; undefined where no rule reads it.
+ * An unlisted file named like a secret (`sensitiveByName`) is no source at all, read by no rule, as if binary.
  */
 function workspaceLanguage(workspace: NativeCodeRuleDslWorkspace, path: string): CodeRuleSourceLanguage | undefined {
   const language = languageFor(path);
   if (language !== undefined) return workspace.acceptsPath(path) ? language : undefined;
-  return workspace.acceptsTextPath(path) ? UNLISTED_TEXT_LANGUAGE : undefined;
+  return workspace.acceptsTextPath(path) && !sensitiveByName(path) ? UNLISTED_TEXT_LANGUAGE : undefined;
 }
 
 /**
@@ -646,13 +653,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * Next server module graphs, any source a manifest reads, since its imports move other sources in or out of a graph,
    * and any file in an `app/` folder, which may make a root `app/` (hiding `src/app/`) present. Without such a rule,
    * the scopes alone decide. An unlisted file (no `languageFor`) is accepted only in the scope of a code rule that reads
-   * text, and never before the workspace opens. Whatever they say, a path Git ignores is refused while the lane follows
-   * `.gitignore`.
+   * text, never when it is named like a secret (`sensitiveByName`), and never before the workspace opens. Whatever they
+   * say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
     const language = languageFor(path);
     const workspace = (this.#replacement ?? this.#workspace)?.workspace;
-    if (language === undefined) return (workspace?.acceptsTextPath(path) ?? false) && !this.ignoresPath(path, false);
+    if (language === undefined)
+      return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path) && !this.ignoresPath(path, false);
     const graphInput = loadNativeBinding().readsPackageManifests(language) || inAppFolder(path);
     return (
       (((manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path)) &&

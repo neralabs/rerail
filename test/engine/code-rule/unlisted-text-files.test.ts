@@ -36,11 +36,11 @@ const TREE: Readonly<Record<string, string>> = {
   "web/a.ts": "NEEDLE(1);\n",
 };
 
-async function workspace(git: boolean, codeRules: readonly CodeRule[]) {
+async function workspace(git: boolean, codeRules: readonly CodeRule[], tree: Readonly<Record<string, string>> = TREE) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-unlisted-")));
   const home = await mkdtemp(join(tmpdir(), "rerail-unlisted-catalog-"));
   roots.push(root, home);
-  for (const [path, content] of Object.entries(TREE)) {
+  for (const [path, content] of Object.entries(tree)) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), content);
   }
@@ -170,6 +170,80 @@ describe("files no language lists", () => {
       await bridge.begin("text", "write", { path: "Justfile" });
       await writeFile(join(root, "Justfile"), "build:\n\techo NEEDLE\nNEEDLE\n");
       expect(await bridge.finish("text")).toEqual([]);
+    } finally { await bridge.close(); }
+  });
+
+  it("past the session's byte limit are reported as not checked at one boundary, not at every one", async () => {
+    const { root, enforcer } = await workspace(true, [REGEX_ANYWHERE]);
+    await mkdir(join(root, "data"));
+    await writeFile(join(root, "data", "dump.raw"), "NEEDLE\n".repeat(200_000));
+    const bridge = new CodeRuleBridge(root, enforcer);
+    const unchecked = { clauseId: "source-discovery", code: "source-incomplete", message: "data/dump.raw: Source exceeds 1000000 byte policy limit", stage: "scan" };
+    try {
+      await bridge.openWorkspace("oversize");
+      expect((await bridge.checkpoint("turn")).failures).toEqual([unchecked]);
+      expect((await bridge.checkpoint("turn")).failures).toEqual([]);
+      expect((await bridge.checkpoint("final")).failures).toEqual([]);
+
+      await writeFile(join(root, "data", "dump.raw"), "NEEDLE\n".repeat(200_001));
+      expect((await bridge.checkpoint("turn")).failures).toEqual([unchecked]);
+      expect((await bridge.checkpoint("final")).failures).toEqual([]);
+    } finally { await bridge.close(); }
+  });
+});
+
+/** Files named like ones holding secrets: unlisted ones, and a listed one (`.yaml`) a rule still reads. */
+const SECRETS: Readonly<Record<string, string>> = {
+  ".env": "TOKEN=NEEDLE\n",
+  ".npmrc": "//registry.npmjs.org/:_authToken=NEEDLE\n",
+  "secrets/id_rsa": "NEEDLE\n",
+  "keys/server.pem": "NEEDLE\n",
+  "infra/terraform.tfstate": "{\"NEEDLE\": 1}\n",
+  "config/secrets.yaml": "NEEDLE: 1\n",
+};
+const UNLISTED_SECRETS = [".env", ".npmrc", "secrets/id_rsa", "keys/server.pem", "infra/terraform.tfstate"];
+
+describe("unlisted files named like ones holding secrets", () => {
+  it.each(WALKS)("are never read through %s, without a failure, while a listed one is", async (_name, git) => {
+    const { enforcer, audit } = await workspace(git, [REGEX_ANYWHERE], { ...TREE, ...SECRETS });
+    try {
+      await enforcer.openWorkspace("unlisted");
+      expect(UNLISTED_SECRETS.filter(path => enforcer.acceptsPath(path))).toEqual([]);
+      expect(enforcer.acceptsPath("config/secrets.yaml")).toBe(true);
+      await expect(audit("repository")).resolves.toEqual({
+        status: "completed", paths: ["Justfile", "LICENSE", "config/secrets.yaml", "deps/yarn.lock", "web/a.ts"], failures: [],
+      });
+    } finally { await enforcer.close(); }
+  });
+
+  it("are never read by a touched-files audit, without a failure, while a listed one is", async () => {
+    const { enforcer, audit } = await workspace(true, [REGEX_ANYWHERE], { ...TREE, ...SECRETS });
+    try {
+      await enforcer.openWorkspace("unlisted");
+      await expect(audit("touched-files", Object.keys(SECRETS))).resolves.toEqual({ status: "completed", paths: ["config/secrets.yaml"], failures: [] });
+    } finally { await enforcer.close(); }
+  });
+
+  it("are never read when a session edits them, while a listed one is", async () => {
+    const { root, enforcer } = await workspace(true, [REGEX_ANYWHERE], { ...TREE, ...SECRETS });
+    const bridge = new CodeRuleBridge(root, enforcer);
+    try {
+      await bridge.openWorkspace("secrets");
+      for (const path of UNLISTED_SECRETS) {
+        await bridge.begin(path, "write", { path });
+        await writeFile(join(root, path), "NEEDLE again\n");
+        expect(await bridge.finish(path)).toEqual([]);
+      }
+      await bridge.begin("shell", "bash", { command: "cp keys/server.pem keys/client.pem" });
+      await writeFile(join(root, "keys", "client.pem"), "NEEDLE\n");
+      expect((await bridge.finish("shell")).flatMap(response => response.failures)).toEqual([]);
+      expect((await bridge.checkpoint("final")).failures).toEqual([]);
+      expect(await settledViolationPaths(enforcer)).toEqual([]);
+
+      await bridge.begin("listed", "write", { path: "config/secrets.yaml" });
+      await writeFile(join(root, "config", "secrets.yaml"), "NEEDLE: 2\n");
+      expect(await bridge.finish("listed")).toEqual([expect.objectContaining({ failures: [] })]);
+      expect(await settledViolationPaths(enforcer)).toEqual(["config/secrets.yaml"]);
     } finally { await bridge.close(); }
   });
 });

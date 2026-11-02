@@ -1654,6 +1654,71 @@ fn repository_index_reads_unlisted_text_files_only_for_code_rules_that_read_text
     }
 }
 
+/// An unlisted file named like a secret, by its own name or a folder on its path, is no source:
+/// a code rule that reads text neither indexes it nor reports it. A listed file is read whatever
+/// its name, and a pattern the index cannot compile fails the index.
+#[test]
+fn repository_index_skips_unlisted_files_named_like_secrets() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let files: &[(&str, &[u8])] = &[
+        (".env", b"TOKEN=TODO\n"),
+        (".NPMRC", b"//registry/:_authToken=TODO\n"),
+        (".ssh/config", b"Host TODO\n"),
+        ("Justfile", b"build:\n\techo TODO\n"),
+        ("config/secrets.yaml", b"token: TODO\n"),
+        ("infra/terraform.tfstate", b"{\"TODO\": 1}\n"),
+        ("keys/server.pem", b"-----BEGIN TODO-----\n"),
+        ("secrets/id_rsa", b"TODO\n"),
+    ];
+    let directory = committed_repository("sensitive-unlisted", files);
+    let mut workspace = storage_workspace(&directory.0.join("repo"), directory.store());
+    let todo = compile(
+        "todo",
+        json!([{ "id": "todo", "violation": { "anchor": "witness.span", "code": "T",
+            "message": "todo" },
+          "forbid": { "regex": { "source": "file.content", "pattern": "TODO" } } }]),
+    );
+    workspace.add_code_rule(&todo, None).unwrap();
+    let task = || {
+        let mut task = WorkspaceIndexTask::for_test(
+            Arc::clone(&workspace.state),
+            Arc::clone(&workspace.closed),
+            u32::MAX,
+        );
+        task.options
+            .source_languages
+            .insert(".yaml".to_owned(), "yaml".to_owned());
+        task
+    };
+    let mut invalid = task();
+    invalid.options.sensitive_file_name = "^(?:".to_owned();
+    assert!(invalid.compute().is_err(), "an invalid pattern indexed");
+
+    let mut failures = Vec::new();
+    loop {
+        let response: Value = serde_json::from_str(&task().compute().unwrap()).unwrap();
+        failures.extend(response["failures"].as_array().cloned().unwrap_or_default());
+        if response["done"] != json!(false) {
+            break;
+        }
+    }
+    assert_eq!(failures, Vec::<Value>::new());
+    {
+        let state = workspace.state.lock().unwrap();
+        let mut paths = state.files.keys().map(String::as_str).collect::<Vec<_>>();
+        paths.sort_unstable();
+        assert_eq!(paths, vec!["Justfile", "config/secrets.yaml"]);
+    }
+    assert_eq!(
+        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES)),
+        vec![
+            ("Justfile".to_owned(), "todo".to_owned(), 13),
+            ("config/secrets.yaml".to_owned(), "todo".to_owned(), 7),
+        ]
+    );
+    workspace.close();
+}
+
 /// An unlisted file over the per-file budget is binary, and dropped without a failure, where its
 /// first 8000 bytes hold a NUL (Git's test); otherwise, and for any listed file, it is reported
 /// over budget.

@@ -80,6 +80,15 @@ pub struct RepositoryIndexOptions {
     /// Whether files Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`;
     /// never a tracked file) are left out of the walk, as the host's own walks leave them out.
     pub follow_gitignore: bool,
+    /// The source of a regular expression, matched case-insensitively against the last segment of
+    /// a file with no listed label: a match is named like a file holding secrets (`.env`,
+    /// `id_rsa`, `*.pem`), so it is no source of the workspace, never read and never a failure,
+    /// as a binary is not. A listed file (`secrets.yaml`) is read whatever its name.
+    pub sensitive_file_name: String,
+    /// Folder names whose every file holds secrets (`.ssh`, `.aws`): a file with no listed label
+    /// below one, matched case-insensitively at any depth of its repository path, is skipped as a
+    /// `sensitive_file_name` match is.
+    pub sensitive_folder_names: Vec<String>,
 }
 
 pub struct WorkspaceIndexTask {
@@ -88,10 +97,15 @@ pub struct WorkspaceIndexTask {
     pub(super) options: RepositoryIndexOptions,
 }
 
+/// The `sensitiveFileName` the host sends: `SENSITIVE_FILE_PATTERN` in
+/// `src/engine/path-boundary.ts`, built from its `SENSITIVE_FILE_NAMES` globs.
+#[cfg(test)]
+pub(super) const SENSITIVE_FILE_PATTERN: &str = r"^(?:\.env|\.env\..*|.*\.env|\.npmrc|\.pypirc|\.netrc|\.pgpass|\.htpasswd|id_rsa.*|id_dsa.*|id_ecdsa.*|id_ed25519.*|.*\.pem|.*\.key|.*\.p12|.*\.pfx|.*\.jks|.*\.keystore|.*\.kdbx|.*\.ppk|.*\.p8|.*\.gpg|.*\.asc|.*\.ovpn|.*\.keytab|credentials|credentials\..*|credentials(?:-|_).*\.(?:json|yaml|yml|xml|ini|toml|conf|cfg|properties|txt|csv)|secrets\..*|.*\.secret|.*\.secrets|.*\.tfstate|.*\.tfstate\..*|.*\.tfvars|service-account.*\.json|auth\.json|wp-config\.php|database\.yml|appsettings\..*\.json)$";
+
 #[cfg(test)]
 impl WorkspaceIndexTask {
-    /// One index call over `state`, with sources above `max_file_bytes` refused and `.git` ignored
-    /// as the host ignores it.
+    /// One index call over `state`, with sources above `max_file_bytes` refused, `.git` ignored
+    /// and secret-named unlisted files skipped as the host ignores and skips them.
     pub(super) fn for_test(
         state: Arc<Mutex<WorkspaceState>>,
         closed: Arc<AtomicBool>,
@@ -116,6 +130,12 @@ impl WorkspaceIndexTask {
                 nested_checkouts: Vec::new(),
                 source_names: None,
                 follow_gitignore: false,
+                sensitive_file_name: SENSITIVE_FILE_PATTERN.to_owned(),
+                sensitive_folder_names: [
+                    ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".gcloud", ".azure",
+                ]
+                .map(str::to_owned)
+                .to_vec(),
             },
         }
     }
@@ -323,7 +343,8 @@ impl WorkspaceIndexTask {
 
     /// The workspace's scoped sources as the host's walk selects them: every regular file below
     /// the workspace root with a host source language and a code-rule scope, or with no listed
-    /// language (read as `text`) and the scope of a code rule that reads text; outside the host's
+    /// language (read as `text`), a name unlike a secret's (`sensitive_file_name`, outside
+    /// `sensitive_folder_names`) and the scope of a code rule that reads text; outside the host's
     /// ignored directories, outside what Git ignores when the host follows `.gitignore` (a path
     /// whose ignore files cannot be read is kept and reported), and never through a symlink,
     /// sorted by path. `scoped(path, text)` is whether a code rule's scope holds `path`, with
@@ -351,6 +372,16 @@ impl WorkspaceIndexTask {
             .iter()
             .map(String::as_str)
             .collect::<HashSet<_>>();
+        let sensitive_name =
+            regex::Regex::new(&format!("(?i){}", self.options.sensitive_file_name))
+                .map_err(|error| invalid(format!("invalid sensitiveFileName: {error}")))?;
+        let sensitive_folders = self
+            .options
+            .sensitive_folder_names
+            .iter()
+            .map(|name| name.to_lowercase())
+            .collect::<HashSet<_>>();
+        let sensitive_folder = |name: &str| sensitive_folders.contains(&name.to_lowercase());
         let max_files = self.options.max_files as usize;
         let mut git_ignore = if self.options.follow_gitignore {
             crate::git_ignore::GitIgnore::open(&repository.worktree_root).map_err(invalid)?
@@ -360,8 +391,13 @@ impl WorkspaceIndexTask {
         let mut files = Vec::new();
         let mut nested_checkouts = BTreeSet::new();
         let mut over_budget = false;
-        let mut directories = vec![(repository.worktree_root.join(prefix), String::new())];
-        'walk: while let Some((directory, relative)) = directories.pop() {
+        // Each directory carries whether its repository path passes through a sensitive folder.
+        let mut directories = vec![(
+            repository.worktree_root.join(prefix),
+            String::new(),
+            prefix.split('/').any(sensitive_folder),
+        )];
+        'walk: while let Some((directory, relative, in_sensitive_folder)) = directories.pop() {
             check_closed(&self.closed)?;
             let entries = match std::fs::read_dir(&directory) {
                 Ok(entries) => entries,
@@ -401,6 +437,12 @@ impl WorkspaceIndexTask {
                 } else if kind.is_file() {
                     match self.source_language(&path) {
                         Some(language) if scoped(&path, false) => Some((language, false)),
+                        // Named like a secret: no source, never read, as a binary is not.
+                        None if in_sensitive_folder
+                            || sensitive_name.is_match(&name.to_string_lossy()) =>
+                        {
+                            continue;
+                        }
                         None if scoped(&path, true) => Some(("text".to_owned(), true)),
                         _ => continue,
                     }
@@ -432,7 +474,11 @@ impl WorkspaceIndexTask {
                     }
                 }
                 match language {
-                    None => directories.push((entry.path(), path)),
+                    None => {
+                        let sensitive =
+                            in_sensitive_folder || sensitive_folder(&name.to_string_lossy());
+                        directories.push((entry.path(), path, sensitive));
+                    }
                     Some(_) if files.len() == max_files => {
                         over_budget = true;
                         break 'walk;

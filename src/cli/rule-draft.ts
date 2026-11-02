@@ -18,6 +18,7 @@ import {
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
+  RESULT_PAGE_BYTES,
   type NativeBinding,
   type NativeCompiledCodeRuleDsl,
   type NativeGitIgnoreMatcher,
@@ -43,6 +44,9 @@ const REPOSITORY_SHOWN = 5;
 const REPOSITORY_MAX_FILES = 100_000;
 const REPOSITORY_MAX_FILE_BYTES = 32_000_000;
 const REPOSITORY_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
+/** The batches an audit sends its files to the Engine in: at most this many files, or about this many bytes. */
+const BATCH_FILES = 32;
+const BATCH_BYTES = 1024 * 1024;
 const MATCH_TEXT_LENGTH = 200;
 const CASE_LABEL_LENGTH = 60;
 
@@ -222,21 +226,23 @@ function compileCodeRule(rule: CodeRule): { binding: NativeBinding; compiled: Na
 }
 
 type SourceFile = { path: string; language: string; source: string } & SourceFileFacts;
-/** The part of the Engine's evaluation the report reads: where each violation starts (zero-based), and each failure. */
-const evaluationSchema = z.object({
-  evaluation: z.object({
-    violations: z.array(z.object({
-      path: z.string().optional(),
-      span: z.object({ startLine: z.number().int(), startColumn: z.number().int() }).optional(),
-    })),
-    failures: z.array(z.object({ code: z.string(), message: z.string(), path: z.string().optional() })),
-  }),
+/** The part of a page of the Engine's results the report reads: where each violation starts (zero-based), and each failure. */
+const resultPageSchema = z.object({
+  cursor: z.number().int().nonnegative(),
+  done: z.boolean(),
+  violations: z.array(z.object({
+    path: z.string().optional(),
+    span: z.object({ startLine: z.number().int(), startColumn: z.number().int() }).optional(),
+  })),
+  failures: z.array(z.object({ code: z.string(), message: z.string(), path: z.string().optional() })),
 });
-type Evaluation = z.infer<typeof evaluationSchema>["evaluation"];
+type Evaluation = Pick<z.infer<typeof resultPageSchema>, "violations" | "failures">;
 
 /**
  * Violations and failures of `compiled` over `files`, in a private workspace with no content store attached. Import
- * targets resolve against the files below `root` the workspace does not hold, as in the daemon.
+ * targets resolve against the files below `root` the workspace does not hold, as in the daemon. The files go in the
+ * batches an audit sends, with cross-file clauses held until a last empty apply sees them all; the whole result is
+ * then read a page at a time, as an audit reads it.
  */
 async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRuleDsl, root: string, files: readonly SourceFile[]): Promise<Evaluation> {
   const workspace = new binding.CodeRuleDslWorkspace();
@@ -245,8 +251,30 @@ async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRule
     workspace.setRoot(resolve(root));
     const accepted = files.filter(file => workspace.acceptsPath(file.path));
     if (accepted.length === 0) return { violations: [], failures: [] };
-    const result = await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 1, files: accepted, removed: [] }));
-    return evaluationSchema.parse(JSON.parse(result)).evaluation;
+    let revision = 0;
+    let batch: SourceFile[] = [];
+    let bytes = 0;
+    for (const [index, file] of accepted.entries()) {
+      batch.push(file);
+      bytes += Buffer.byteLength(file.source);
+      if (batch.length < BATCH_FILES && bytes < BATCH_BYTES && index < accepted.length - 1) continue;
+      revision += 1;
+      await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: batch, removed: [], deferGlobal: true }));
+      batch = [];
+      bytes = 0;
+    }
+    revision += 1;
+    await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true }));
+    const evaluation: Evaluation = { violations: [], failures: [] };
+    let cursor = 0;
+    while (true) {
+      const page = resultPageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
+      evaluation.violations.push(...page.violations);
+      evaluation.failures.push(...page.failures);
+      if (page.done) return evaluation;
+      if (page.cursor <= cursor) throw new Error("the Engine's result pages did not advance");
+      cursor = page.cursor;
+    }
   } finally {
     workspace.close();
   }
