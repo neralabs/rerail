@@ -1,0 +1,1 @@
+/*global b a:false*/  a;  function f() { b; a; }

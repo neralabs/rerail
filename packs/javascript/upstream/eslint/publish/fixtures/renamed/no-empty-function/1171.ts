@@ -1,0 +1,1 @@
+class G { oxg(vdgzo: string) {} }

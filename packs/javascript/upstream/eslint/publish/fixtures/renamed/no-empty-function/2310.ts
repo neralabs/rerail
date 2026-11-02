@@ -1,0 +1,1 @@
+class J extends K { @kwtjyzeng() override qpl() {} } // allow: arrowFunctions

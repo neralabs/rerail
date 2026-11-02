@@ -1,0 +1,1 @@
+class A {static get oag() {}} // allow: asyncMethods

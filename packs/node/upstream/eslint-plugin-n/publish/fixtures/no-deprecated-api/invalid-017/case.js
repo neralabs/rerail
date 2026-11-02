@@ -1,0 +1,1 @@
+var {SlowBuffer: b} = require('buffer');

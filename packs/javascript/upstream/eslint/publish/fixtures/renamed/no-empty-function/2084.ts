@@ -1,0 +1,1 @@
+class B {@dbucohoxm() static get qmy(): string {}} // allow: asyncMethods

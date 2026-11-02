@@ -1,0 +1,1 @@
+a = module.exports.foo + module.exports['bar']

@@ -1,0 +1,1 @@
+for (let i in [1,2,3]) { let x = 1; foo(x); }

@@ -1,0 +1,1 @@
+class A { a(){} set b(foo){} get b(){} c(){} get d(){} set d(bar){} }

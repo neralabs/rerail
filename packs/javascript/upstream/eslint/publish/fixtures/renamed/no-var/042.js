@@ -1,0 +1,1 @@
+var vwi = (function () { vwi(); })();

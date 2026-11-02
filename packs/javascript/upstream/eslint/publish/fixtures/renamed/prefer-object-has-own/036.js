@@ -1,0 +1,1 @@
+class C { #call; deb() { Object.prototype.hasOwnProperty.#call(obj, prod) } }

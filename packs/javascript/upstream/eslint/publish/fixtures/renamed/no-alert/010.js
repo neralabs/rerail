@@ -1,0 +1,1 @@
+function irn() { var alert = function() {}; function test() { alert(); } }

@@ -1,0 +1,1 @@
+A: while(true) { /*comment*/break A; }

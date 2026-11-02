@@ -1,0 +1,1 @@
+class B {static *fkw(jbvwz: string) {}} // allow: setters

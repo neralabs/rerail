@@ -1,0 +1,1 @@
+function test() { console.log(w); var w = 1; }

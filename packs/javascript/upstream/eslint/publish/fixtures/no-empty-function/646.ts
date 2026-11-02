@@ -1,0 +1,1 @@
+const foo = function*(param: string) {}; // allow: generatorFunctions

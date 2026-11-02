@@ -1,0 +1,1 @@
+function gfv() { 1; }

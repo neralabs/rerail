@@ -1,0 +1,3 @@
+while (bar && 
+ baz) 
+ foo()

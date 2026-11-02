@@ -1,0 +1,1 @@
+var value = 'a';var canHhf = true;var pwyagw = value || (canHhf ? 'unset' : 'can not set')

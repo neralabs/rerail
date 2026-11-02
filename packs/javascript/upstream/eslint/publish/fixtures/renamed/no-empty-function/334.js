@@ -1,0 +1,1 @@
+class H {*rkl() {}} // allow: asyncMethods

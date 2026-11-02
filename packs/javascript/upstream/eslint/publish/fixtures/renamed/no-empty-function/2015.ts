@@ -1,0 +1,1 @@
+class Y { protected constructor() {} } // allow: generatorMethods

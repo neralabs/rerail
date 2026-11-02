@@ -1,0 +1,1 @@
+async function foo() { with ( await obj?.foo) {}; }

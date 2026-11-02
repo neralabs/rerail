@@ -1,0 +1,1 @@
+function a([[c], p]) { alert(p); } a();

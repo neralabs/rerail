@@ -1,0 +1,1 @@
+const mil = {btz(tnkyq: string) {}}; // allow: functions

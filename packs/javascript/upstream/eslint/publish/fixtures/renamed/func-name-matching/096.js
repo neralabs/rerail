@@ -1,0 +1,1 @@
+class A { m = (function n() {})(); }

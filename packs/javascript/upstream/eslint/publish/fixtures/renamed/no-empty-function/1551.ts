@@ -1,0 +1,1 @@
+class K {@msygobwzb() static get pbi(): string {}} // allow: asyncFunctions

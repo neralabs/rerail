@@ -1,0 +1,1 @@
+(class { set [`abc`](dmb){} get abc(){} })

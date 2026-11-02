@@ -1,0 +1,1 @@
+class O extends V { @vvasidflk() override ymf() {} } // allow: getters

@@ -1,0 +1,1 @@
+const A = class {@lqrcvjsci() set ust(value: string) { ifb(); }};

@@ -1,0 +1,1 @@
+const C = class extends D {override set twj(value: string) {}}; // allow: arrowFunctions

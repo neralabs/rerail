@@ -1,0 +1,1 @@
+var fullPath = import.meta.filename + "/foo.js";

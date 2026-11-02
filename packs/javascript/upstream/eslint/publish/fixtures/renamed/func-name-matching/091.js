@@ -1,0 +1,1 @@
+class A { [1] = function e1() {}; }

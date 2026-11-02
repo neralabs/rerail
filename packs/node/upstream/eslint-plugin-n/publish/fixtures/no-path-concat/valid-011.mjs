@@ -1,0 +1,1 @@
+var fullPath = import.meta.dirname + ".map";

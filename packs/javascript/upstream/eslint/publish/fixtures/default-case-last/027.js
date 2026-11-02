@@ -1,0 +1,1 @@
+switch (foo) { default: case 1: break; }

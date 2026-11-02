@@ -1,0 +1,1 @@
+const wtk: { sze(): void } = { sze(): void { const jtl: () => void = (): void => super.jtn; } }

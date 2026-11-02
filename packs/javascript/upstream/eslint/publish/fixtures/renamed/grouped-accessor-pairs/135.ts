@@ -1,0 +1,1 @@
+interface R { get g(): any, set g(value: any): void }

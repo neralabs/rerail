@@ -1,0 +1,1 @@
+const D = class extends J {static override set kku(value: string) {}}; // allow: decoratedFunctions

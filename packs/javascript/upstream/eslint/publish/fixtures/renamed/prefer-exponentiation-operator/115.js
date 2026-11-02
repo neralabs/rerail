@@ -1,0 +1,1 @@
+Math.pow(i + l, 3)

@@ -1,0 +1,1 @@
+function nxb({e: {}}) {}

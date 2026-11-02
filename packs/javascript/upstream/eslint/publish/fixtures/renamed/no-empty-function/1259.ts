@@ -1,0 +1,1 @@
+const G = class {sfl(xskvh: string) {}}; // allow: generatorMethods

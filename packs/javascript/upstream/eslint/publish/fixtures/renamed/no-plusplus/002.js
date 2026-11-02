@@ -1,0 +1,1 @@
+for (h = 0; h < l; h++) { console.log(h); }

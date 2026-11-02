@@ -1,0 +1,1 @@
+do{for (let a = (b, c, d) => { return vb in c in dd ; }; ;);}while(true){}

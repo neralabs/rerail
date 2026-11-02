@@ -1,0 +1,1 @@
+async function run() { using resource = getResource(); }

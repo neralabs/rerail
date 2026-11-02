@@ -1,0 +1,1 @@
+ejt.lastIndexOf((NaN, 1))

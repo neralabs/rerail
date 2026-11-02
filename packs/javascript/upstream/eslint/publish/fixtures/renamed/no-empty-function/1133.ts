@@ -1,0 +1,1 @@
+const cms = function*(grmsj: string) {}; // allow: generatorMethods

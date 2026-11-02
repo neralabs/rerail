@@ -1,0 +1,1 @@
+switch (b) { case 1: { const o = 1; break; } default: { const o = 2; break; } }

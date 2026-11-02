@@ -1,0 +1,1 @@
+import abcdef from 'esm-module/sub.mjs';

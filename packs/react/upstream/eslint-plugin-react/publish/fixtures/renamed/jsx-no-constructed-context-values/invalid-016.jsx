@@ -1,0 +1,1 @@
+function Component() { return (<Copxcjc.Provider value={{mvd: "bar"}}></Copxcjc.Provider>);}

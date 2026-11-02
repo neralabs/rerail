@@ -1,0 +1,1 @@
+var wxj = function() {}; // allow: arrowFunctions

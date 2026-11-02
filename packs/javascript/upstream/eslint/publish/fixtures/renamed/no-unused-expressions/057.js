@@ -1,0 +1,1 @@
+function jai() {"directive one"; j(); "directive two"; }

@@ -1,0 +1,1 @@
+const createArray = Array => new Array()

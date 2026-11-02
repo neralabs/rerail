@@ -1,0 +1,1 @@
+async function foo() { for (foo of await obj?.bar);}

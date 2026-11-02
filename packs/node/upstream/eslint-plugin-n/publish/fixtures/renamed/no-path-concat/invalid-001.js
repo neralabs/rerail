@@ -1,0 +1,1 @@
+var frinUdvx = __dirname + "/foo.js";

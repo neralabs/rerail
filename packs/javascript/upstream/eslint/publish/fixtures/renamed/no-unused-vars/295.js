@@ -1,0 +1,1 @@
+class Ybc { static acc() {} }

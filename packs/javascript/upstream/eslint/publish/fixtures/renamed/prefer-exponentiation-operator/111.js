@@ -1,0 +1,1 @@
+Math.pow(b * k, l)

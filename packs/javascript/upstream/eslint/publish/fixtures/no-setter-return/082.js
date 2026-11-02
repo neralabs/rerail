@@ -1,0 +1,1 @@
+Object.create(foo, { bar: { set: (val) => { (val) => 1; } } })

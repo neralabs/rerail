@@ -1,0 +1,1 @@
+import { createRequire as makeRequire } from "module"; const require = makeRequire(import.meta.url); require("node:fs")

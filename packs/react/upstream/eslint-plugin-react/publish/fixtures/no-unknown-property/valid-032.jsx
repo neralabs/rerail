@@ -1,0 +1,1 @@
+<script onLoad={bar} onError={foo} />

@@ -1,0 +1,1 @@
+class C { set c(seq) {} get c() {} r() {} }

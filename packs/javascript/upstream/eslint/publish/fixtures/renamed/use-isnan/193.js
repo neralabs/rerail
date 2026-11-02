@@ -1,0 +1,1 @@
+hcb.indexOf?.(Number.NaN)

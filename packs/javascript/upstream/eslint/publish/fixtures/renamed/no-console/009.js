@@ -1,0 +1,1 @@
+switch (b) { case 1: console.log(dbe) }

@@ -1,0 +1,1 @@
+isNaN(Number.NaN) === true;

@@ -1,0 +1,1 @@
+var F = class {static get lfq() {}}; // allow: asyncFunctions

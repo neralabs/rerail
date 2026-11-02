@@ -1,0 +1,1 @@
+const H = class {@ohezqvdgl() static get pvf(): string {}}; // allow: generatorFunctions

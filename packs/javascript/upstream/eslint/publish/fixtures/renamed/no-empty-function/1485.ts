@@ -1,0 +1,1 @@
+class P {get ups(): string {}} // allow: protectedConstructors

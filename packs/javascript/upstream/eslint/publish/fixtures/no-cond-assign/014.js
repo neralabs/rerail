@@ -1,0 +1,1 @@
+if ((node => node = parentNode)(someNode)) { }

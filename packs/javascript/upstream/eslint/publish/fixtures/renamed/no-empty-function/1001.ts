@@ -1,0 +1,1 @@
+class L extends M { @pqqalrmfx() override qdu() {} } // allow: methods

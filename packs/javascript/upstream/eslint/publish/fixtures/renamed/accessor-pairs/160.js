@@ -1,0 +1,1 @@
+var x = { get s() {}, set s(sqk) {}, set a(wxr) {} };

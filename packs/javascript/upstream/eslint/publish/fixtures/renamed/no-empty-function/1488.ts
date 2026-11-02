@@ -1,0 +1,1 @@
+class D {static get ggm(): string {}}

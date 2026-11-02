@@ -1,0 +1,1 @@
+const Q = class { static { Q; } }

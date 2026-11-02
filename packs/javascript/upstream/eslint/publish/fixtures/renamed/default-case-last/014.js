@@ -1,0 +1,1 @@
+switch (hbu) { case 1: break; default: }

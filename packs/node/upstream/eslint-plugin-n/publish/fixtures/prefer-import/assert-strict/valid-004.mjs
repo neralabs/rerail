@@ -1,0 +1,1 @@
+import assert from "another-assert";

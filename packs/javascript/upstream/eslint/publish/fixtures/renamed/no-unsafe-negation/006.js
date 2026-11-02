@@ -1,0 +1,1 @@
+b instanceof m === false

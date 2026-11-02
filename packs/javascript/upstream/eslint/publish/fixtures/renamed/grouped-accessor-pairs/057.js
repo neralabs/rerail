@@ -1,0 +1,1 @@
+(class { set p(yrh){} get p(){} get s(){} set s(sjf){} })

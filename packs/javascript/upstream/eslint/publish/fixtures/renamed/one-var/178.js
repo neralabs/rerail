@@ -1,0 +1,1 @@
+const q = 0, u = 1; const y = 2;

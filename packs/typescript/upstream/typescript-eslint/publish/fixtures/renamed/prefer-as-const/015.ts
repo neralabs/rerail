@@ -1,0 +1,1 @@
+let xjg: 'bar' = bas;

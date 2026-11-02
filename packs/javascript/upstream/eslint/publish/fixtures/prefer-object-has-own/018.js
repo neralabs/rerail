@@ -1,0 +1,1 @@
+class C { #call; foo() { Object.hasOwnProperty.#call(obj, prop) } }

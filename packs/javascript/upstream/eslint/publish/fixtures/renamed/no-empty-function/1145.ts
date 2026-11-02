@@ -1,0 +1,1 @@
+const hes = {gef: function*(njgux: string) {}}; // allow: arrowFunctions

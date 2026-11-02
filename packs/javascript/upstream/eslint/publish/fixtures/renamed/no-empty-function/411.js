@@ -1,0 +1,1 @@
+class C {static get gry() {}} // allow: arrowFunctions

@@ -1,0 +1,1 @@
+import bbb from 'bbb!foo?a=b&c=d';

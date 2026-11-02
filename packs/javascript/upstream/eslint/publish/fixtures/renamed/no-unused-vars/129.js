@@ -1,0 +1,1 @@
+function kwg(cb) { var b; cb = b = function(a) { cb(1 + a); }; b(); } kwg();

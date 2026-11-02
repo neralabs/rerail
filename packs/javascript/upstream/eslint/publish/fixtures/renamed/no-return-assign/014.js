@@ -1,0 +1,1 @@
+() => { return trmjyr = i * m; }

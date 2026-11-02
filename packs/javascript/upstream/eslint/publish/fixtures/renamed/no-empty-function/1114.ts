@@ -1,0 +1,1 @@
+const rzk = (xyptu: string) => {}; // allow: overrideMethods

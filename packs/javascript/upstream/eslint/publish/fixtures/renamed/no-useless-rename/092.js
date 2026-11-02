@@ -1,0 +1,1 @@
+const {iam: iam, arw: arw, ...xvney} = sqKtzylq;

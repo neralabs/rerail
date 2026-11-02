@@ -1,0 +1,1 @@
+var string = (number + 1) + 'px';

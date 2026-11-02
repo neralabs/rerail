@@ -1,0 +1,1 @@
+var ftrgTtos = `${__dirname}\/foo.js`;

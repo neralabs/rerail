@@ -1,0 +1,1 @@
+class D extends L {override get vdl(): string {}} // allow: asyncFunctions

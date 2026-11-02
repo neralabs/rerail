@@ -1,0 +1,1 @@
+var L = class {static *ume() {}}; // allow: arrowFunctions

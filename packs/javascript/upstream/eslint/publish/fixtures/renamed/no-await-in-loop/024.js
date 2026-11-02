@@ -1,0 +1,1 @@
+async function fwc() { for (var dhi of dhq) { await dhi; } }

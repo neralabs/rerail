@@ -1,0 +1,1 @@
+var b = test[`__iterator__`];

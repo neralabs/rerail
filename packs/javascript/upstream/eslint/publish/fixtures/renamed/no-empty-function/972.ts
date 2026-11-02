@@ -1,0 +1,1 @@
+class H {@lzljekaao() set uwr(value: string) { hno(); }}

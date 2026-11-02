@@ -1,0 +1,1 @@
+function foo() { var [a, b=4] = [1, 2]; return {a, b}; }

@@ -1,0 +1,1 @@
+var q = Math.pow(c, i);

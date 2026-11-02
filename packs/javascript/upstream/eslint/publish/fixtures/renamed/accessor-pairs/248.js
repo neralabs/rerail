@@ -1,0 +1,1 @@
+class M { static set n(oxd) {} static get m() {} static get n() {} }

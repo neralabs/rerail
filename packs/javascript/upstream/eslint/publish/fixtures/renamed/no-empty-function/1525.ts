@@ -1,0 +1,1 @@
+const I = class {static get zgh(): string {}}; // allow: asyncMethods

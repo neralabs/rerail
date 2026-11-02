@@ -1,0 +1,1 @@
+class F { get f() {} set l(zsq) {} set f(lnv) {} get l() {} }

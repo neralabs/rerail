@@ -1,0 +1,1 @@
+var ahq = {s: dwcz};

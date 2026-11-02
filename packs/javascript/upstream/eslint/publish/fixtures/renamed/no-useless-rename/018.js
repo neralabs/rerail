@@ -1,0 +1,1 @@
+function lymx({lbz: ibq}) {}

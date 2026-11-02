@@ -1,0 +1,1 @@
+class C extends Q {static override set rve(value: string) {}} // allow: asyncFunctions

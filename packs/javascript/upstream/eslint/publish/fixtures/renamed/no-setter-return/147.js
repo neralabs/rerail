@@ -1,0 +1,1 @@
+Object.defineProperty(kfu, 'bar', { set: zxx => zxx })

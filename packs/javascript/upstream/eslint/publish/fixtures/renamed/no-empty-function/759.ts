@@ -1,0 +1,1 @@
+const D = class {get evi(): string {}}; // allow: getters

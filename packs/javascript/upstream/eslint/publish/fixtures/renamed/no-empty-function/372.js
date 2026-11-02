@@ -1,0 +1,1 @@
+var B = class {static *npi() {}}; // allow: getters

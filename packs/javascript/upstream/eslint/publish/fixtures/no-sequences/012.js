@@ -1,0 +1,1 @@
+while ((doSomething(), !!test));

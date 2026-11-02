@@ -1,0 +1,1 @@
+parseInt('11', 2)in foo

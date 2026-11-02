@@ -1,0 +1,1 @@
+function x() { return (vlzhye) = (h * s); };

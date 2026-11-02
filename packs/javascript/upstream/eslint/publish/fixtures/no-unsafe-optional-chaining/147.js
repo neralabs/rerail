@@ -1,0 +1,1 @@
+async function foo() { (await (a ? obj?.foo : b))[1]; }

@@ -1,0 +1,1 @@
+({ foo }.hasOwnProperty.call(obj, prop))

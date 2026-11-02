@@ -1,0 +1,1 @@
+var bar = true, baz = false, a, b;

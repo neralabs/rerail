@@ -1,0 +1,1 @@
+class I {wrd() {}} // allow: overrideMethods

@@ -1,0 +1,1 @@
+const Component = () => <Context.Provider value="Some string"></Context.Provider>

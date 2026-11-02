@@ -1,0 +1,1 @@
+if (error instanceof AggregateError) {}

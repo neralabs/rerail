@@ -1,0 +1,1 @@
+var a = 0; export {a as \u0061};

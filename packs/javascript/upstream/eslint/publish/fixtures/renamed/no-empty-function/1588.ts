@@ -1,0 +1,1 @@
+class H extends J {override get xxu(): string {}} // allow: setters

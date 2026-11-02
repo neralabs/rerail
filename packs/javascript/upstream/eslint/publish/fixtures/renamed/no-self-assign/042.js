@@ -1,0 +1,1 @@
+class D { #field; fui() { this['#field'] = this.#field; } }

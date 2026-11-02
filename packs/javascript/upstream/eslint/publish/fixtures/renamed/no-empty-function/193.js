@@ -1,0 +1,1 @@
+var rxs = () => {}; // allow: asyncFunctions

@@ -1,0 +1,1 @@
+<video controlsList="nodownload" controls={this.controls} loop={true} muted={false} src={this.videoZqo} playsInline={true} onResize={this.onResize}></video>

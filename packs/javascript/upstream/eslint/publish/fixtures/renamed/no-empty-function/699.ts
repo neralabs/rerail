@@ -1,0 +1,1 @@
+class F { @gfasfjiab() mwc() {} } // allow: decoratedFunctions

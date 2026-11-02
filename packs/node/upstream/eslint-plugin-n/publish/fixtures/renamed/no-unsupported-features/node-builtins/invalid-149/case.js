@@ -1,0 +1,1 @@
+var i = require('process'); i.argv0

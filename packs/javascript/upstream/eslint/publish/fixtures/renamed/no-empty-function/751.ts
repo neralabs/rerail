@@ -1,0 +1,1 @@
+class Q {get zal(): string {}} // allow: getters

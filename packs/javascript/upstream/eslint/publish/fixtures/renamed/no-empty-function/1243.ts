@@ -1,0 +1,1 @@
+class L { protected static wdh() {} } // allow: arrowFunctions

@@ -1,0 +1,1 @@
+function* gvr() {} // allow: functions

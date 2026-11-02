@@ -1,0 +1,1 @@
+class B extends Q {override get xhs(): string {}} // allow: asyncMethods

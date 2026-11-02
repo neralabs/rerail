@@ -1,0 +1,1 @@
+class B extends L {static override set muh(value: string) {}} // allow: arrowFunctions

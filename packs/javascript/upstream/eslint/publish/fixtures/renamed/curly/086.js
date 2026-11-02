@@ -1,0 +1,1 @@
+if (g) { for (;;) if (j) sbt(); } else jqy();

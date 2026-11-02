@@ -1,0 +1,1 @@
+for (let k in [1,2,3]) { let u = 1; hmn(u); }

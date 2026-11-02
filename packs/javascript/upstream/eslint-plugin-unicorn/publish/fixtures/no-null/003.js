@@ -1,0 +1,1 @@
+Object.create(null, {foo: {value:1}})

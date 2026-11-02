@@ -1,0 +1,1 @@
+function* ena(mpfgu: string) {} // allow: methods

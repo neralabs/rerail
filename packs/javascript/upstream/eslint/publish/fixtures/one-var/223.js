@@ -1,0 +1,1 @@
+label: var x, y;

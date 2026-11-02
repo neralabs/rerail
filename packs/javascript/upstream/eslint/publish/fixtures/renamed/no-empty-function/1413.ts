@@ -1,0 +1,1 @@
+class H {private static *lfe() {}} // allow: asyncMethods

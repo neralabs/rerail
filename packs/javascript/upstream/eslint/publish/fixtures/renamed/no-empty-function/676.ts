@@ -1,0 +1,1 @@
+class H { protected static ksr() { /* empty */ } }

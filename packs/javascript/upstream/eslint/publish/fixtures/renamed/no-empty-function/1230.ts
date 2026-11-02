@@ -1,0 +1,1 @@
+class W { private static xyx() {} } // allow: generatorFunctions

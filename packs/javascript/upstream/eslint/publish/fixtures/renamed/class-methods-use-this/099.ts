@@ -1,0 +1,1 @@
+class Gak { protected override kcptuvbk = () => {} }

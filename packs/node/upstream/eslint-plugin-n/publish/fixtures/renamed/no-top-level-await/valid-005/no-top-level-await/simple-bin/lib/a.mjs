@@ -1,0 +1,1 @@
+const fg = async () => await import('foo')

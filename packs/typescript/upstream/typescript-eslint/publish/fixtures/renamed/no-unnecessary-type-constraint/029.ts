@@ -1,0 +1,1 @@
+class Klgl<W extends unknown> {}

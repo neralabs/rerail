@@ -1,0 +1,1 @@
+class P { static { let f; { let f; } } }

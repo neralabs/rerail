@@ -1,0 +1,1 @@
+'use strict'; var foo = function() { 'use strict'; return; };

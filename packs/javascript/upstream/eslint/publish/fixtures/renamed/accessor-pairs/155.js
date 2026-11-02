@@ -1,0 +1,1 @@
+var x = { get d() {}, get e() {}, set e(jtc) {} };

@@ -1,0 +1,1 @@
+aaf('', window.setTimeout);

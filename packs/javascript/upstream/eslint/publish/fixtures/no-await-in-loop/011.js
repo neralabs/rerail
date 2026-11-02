@@ -1,0 +1,1 @@
+async function foo() { while (true) { var y = async () => { await foo; } } }

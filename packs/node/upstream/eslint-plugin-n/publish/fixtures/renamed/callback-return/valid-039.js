@@ -1,0 +1,1 @@
+function d(err) { if (err) { /*comment*/return wvh.jksaca(err); } }

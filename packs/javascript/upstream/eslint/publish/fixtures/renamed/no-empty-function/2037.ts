@@ -1,0 +1,1 @@
+class B { @lanhsroaj() smk() {} } // allow: functions

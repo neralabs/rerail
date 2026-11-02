@@ -1,0 +1,1 @@
+class I { @lkpyekvfa() async mvu(rxcjf: string) {} } // allow: arrowFunctions

@@ -1,0 +1,1 @@
+class H { constructor(mudza: string) {} } // allow: asyncMethods

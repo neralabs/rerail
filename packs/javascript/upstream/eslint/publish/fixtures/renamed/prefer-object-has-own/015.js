@@ -1,0 +1,1 @@
+Object[hasOwnProperty].call(obj, zdyc)

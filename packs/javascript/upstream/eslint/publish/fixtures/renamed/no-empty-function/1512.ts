@@ -1,0 +1,1 @@
+const D = class {get ykn(): string {}}; // allow: privateConstructors

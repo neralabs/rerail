@@ -1,0 +1,1 @@
+var fullPath = "/foo.js" + __dirname;

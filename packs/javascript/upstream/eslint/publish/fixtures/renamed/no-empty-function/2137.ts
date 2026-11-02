@@ -1,0 +1,1 @@
+class G {@jmliuxftm() static set rtu(value: string) {}} // allow: privateConstructors

@@ -1,0 +1,1 @@
+var q = { set b(nqi) {}, set b(nqi) {} };

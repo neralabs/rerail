@@ -1,0 +1,1 @@
+class A {static set foo(value) {}} // allow: generatorFunctions

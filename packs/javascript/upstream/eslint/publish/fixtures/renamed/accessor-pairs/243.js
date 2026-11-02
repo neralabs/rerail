@@ -1,0 +1,1 @@
+L = class { get q() {} get l() {} set q(yvd) {} };

@@ -1,0 +1,1 @@
+class Q { async sqw(vpewh: string) {} } // allow: asyncMethods

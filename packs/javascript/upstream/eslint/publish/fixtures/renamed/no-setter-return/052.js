@@ -1,0 +1,1 @@
+(class { set rus(spo) { function rus(spo) { return 1; } } })

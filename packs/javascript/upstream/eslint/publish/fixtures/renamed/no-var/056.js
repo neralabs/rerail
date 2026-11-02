@@ -1,0 +1,1 @@
+var b = 1; function test() { console.log(b); var b = 2; }

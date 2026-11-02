@@ -1,0 +1,2 @@
+class Odn { static // comment
+ {} }

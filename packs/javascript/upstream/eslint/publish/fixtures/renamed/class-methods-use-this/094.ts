@@ -1,0 +1,1 @@
+class Fka implements Cmm { override set ijzchg(u: number) {} }

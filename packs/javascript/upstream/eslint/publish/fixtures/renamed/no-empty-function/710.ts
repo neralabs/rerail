@@ -1,0 +1,1 @@
+class J extends L { @mjlyiufsq() override uqu() { jsm(); } }

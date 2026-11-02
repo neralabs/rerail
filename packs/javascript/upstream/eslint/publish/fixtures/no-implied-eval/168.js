@@ -1,0 +1,1 @@
+self?.setTimeout('code', 0)

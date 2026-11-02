@@ -1,0 +1,1 @@
+class N {@qwgaezmmv() set rjh(value: string) {}} // allow: methods

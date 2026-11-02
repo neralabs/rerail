@@ -1,0 +1,1 @@
+class G extends L {override set uxh(value: string) {}} // allow: overrideMethods

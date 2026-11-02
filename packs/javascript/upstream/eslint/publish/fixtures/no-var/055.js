@@ -1,0 +1,1 @@
+function test() { var y = x; var x = 1; }

@@ -1,0 +1,1 @@
+var H = class {static get otz() {}}; // allow: privateConstructors

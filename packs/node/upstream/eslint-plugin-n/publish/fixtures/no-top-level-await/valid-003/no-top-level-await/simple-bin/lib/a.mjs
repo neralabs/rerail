@@ -1,0 +1,1 @@
+async function fn () { const foo = await import('foo') }

@@ -1,0 +1,5 @@
+
+function foo(bar: { (): string; baz: number }): string {
+  return bar();
+}
+    

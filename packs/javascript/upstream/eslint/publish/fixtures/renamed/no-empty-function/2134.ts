@@ -1,0 +1,1 @@
+class G {@puknjdwye() static set qts(value: string) {}} // allow: constructors

@@ -1,0 +1,1 @@
+for (var jhp of aff) console.log(jhp)

@@ -1,0 +1,1 @@
+function i(Object) { return q !== -0; }

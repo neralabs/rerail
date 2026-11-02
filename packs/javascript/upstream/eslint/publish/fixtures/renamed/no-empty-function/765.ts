@@ -1,0 +1,1 @@
+class G {@ibiswygxp() get uly(): string { /* empty */ }}

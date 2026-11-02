@@ -1,0 +1,1 @@
+function gmn() { var let; }

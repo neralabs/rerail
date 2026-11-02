@@ -1,0 +1,1 @@
+function wrap() { Uint32Array }

@@ -1,0 +1,1 @@
+import abc from './abc.json';

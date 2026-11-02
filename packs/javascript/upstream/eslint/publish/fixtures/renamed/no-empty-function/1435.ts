@@ -1,0 +1,1 @@
+const D = class {*hmx(pepty: string) {}}; // allow: generatorFunctions

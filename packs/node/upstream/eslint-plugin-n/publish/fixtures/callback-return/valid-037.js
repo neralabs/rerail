@@ -1,0 +1,1 @@
+function a(err) { if (err) { otherObj.method(err); } }

@@ -1,0 +1,1 @@
+class A { static get 1e2() {} }

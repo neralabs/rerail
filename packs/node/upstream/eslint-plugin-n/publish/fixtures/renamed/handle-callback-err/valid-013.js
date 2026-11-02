@@ -1,0 +1,1 @@
+function givntfi(err) {logFpkdInwgnb(function(err) {if (err) {}}); console.log(err);}

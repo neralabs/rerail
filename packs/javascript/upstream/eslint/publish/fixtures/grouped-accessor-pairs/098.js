@@ -1,0 +1,1 @@
+(class { set [`abc`](foo){} get abc(){} })

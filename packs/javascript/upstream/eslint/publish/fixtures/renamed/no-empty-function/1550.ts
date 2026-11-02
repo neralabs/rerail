@@ -1,0 +1,1 @@
+class D {@ibgjykulv() static get yye(): string {}} // allow: constructors

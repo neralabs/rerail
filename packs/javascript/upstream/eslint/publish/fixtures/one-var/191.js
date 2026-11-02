@@ -1,0 +1,1 @@
+let a; let b; let c = 0; let d = 1;

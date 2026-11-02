@@ -1,0 +1,1 @@
+class D { #ezy; ezy() { ppc.#ezy.apply(ppc, avpm); } }

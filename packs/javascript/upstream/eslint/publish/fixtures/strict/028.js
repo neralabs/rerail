@@ -1,0 +1,1 @@
+var foo = () => { var bar = () => 1; bar(); };

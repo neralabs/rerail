@@ -1,0 +1,1 @@
+const nqg = {set axw(value: string) {}}; // allow: functions

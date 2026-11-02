@@ -1,0 +1,1 @@
+var O = class {set uin(value) {}}; // allow: asyncMethods

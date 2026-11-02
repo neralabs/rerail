@@ -1,0 +1,1 @@
+(function() { var jvl = 1; return function () { return 42; }; })()

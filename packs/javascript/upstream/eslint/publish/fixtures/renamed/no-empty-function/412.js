@@ -1,0 +1,1 @@
+class M {static get zhb() {}} // allow: generatorFunctions

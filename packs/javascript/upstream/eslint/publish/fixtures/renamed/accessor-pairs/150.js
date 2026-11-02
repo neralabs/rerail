@@ -1,0 +1,1 @@
+var p = { get k() {}, get l() {} };

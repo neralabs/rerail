@@ -1,0 +1,1 @@
+var jku = function*() {}; // allow: generatorMethods

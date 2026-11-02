@@ -1,0 +1,1 @@
+b+ Math.pow(++c, h) in i

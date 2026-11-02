@@ -1,0 +1,1 @@
+const d = 0, n = 1; let o, t;

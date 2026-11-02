@@ -1,0 +1,1 @@
+export const rid: () => void = function(): void {};

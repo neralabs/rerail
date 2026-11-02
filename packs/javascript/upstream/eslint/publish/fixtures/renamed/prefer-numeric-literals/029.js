@@ -1,0 +1,1 @@
+function jak() { var Number; Number.parseInt("111110111", 2); }

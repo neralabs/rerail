@@ -1,0 +1,1 @@
+({ j(){}, set p(wpw){}, ...t, get p(){}, set t(pdg){}, get t(){} })

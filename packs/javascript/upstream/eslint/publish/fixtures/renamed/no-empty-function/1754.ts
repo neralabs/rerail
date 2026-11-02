@@ -1,0 +1,1 @@
+const A = class {@gswqnrygb() static set knm(value: string) {}}; // allow: protectedConstructors

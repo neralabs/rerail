@@ -1,0 +1,1 @@
+for (omr in byl) var v, w;

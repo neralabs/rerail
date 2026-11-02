@@ -1,0 +1,1 @@
+const D = class { private constructor() { ovm(); } };

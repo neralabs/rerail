@@ -1,0 +1,1 @@
+function ln(fnu, fnj) { return fnu; }; ln();

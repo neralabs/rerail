@@ -1,0 +1,1 @@
+function yorm() { var b = 1; eng(); function eng() { console.log(b); } }

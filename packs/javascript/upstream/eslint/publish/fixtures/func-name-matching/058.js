@@ -1,0 +1,1 @@
+Object.create(proto, { bar: { value: function bar() {} } })

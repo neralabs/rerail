@@ -1,0 +1,1 @@
+function x() { return result || (result = a * b); };

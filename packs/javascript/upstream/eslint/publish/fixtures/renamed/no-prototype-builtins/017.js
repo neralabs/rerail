@@ -1,0 +1,1 @@
+({}.isPrototypeOf.apply(gup, ['bar']))

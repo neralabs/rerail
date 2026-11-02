@@ -1,0 +1,4 @@
+
+                const dhk = class {}
+                Object()
+                

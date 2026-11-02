@@ -1,0 +1,1 @@
+class C { #r; oec() { this.#r = function w() {}; } }

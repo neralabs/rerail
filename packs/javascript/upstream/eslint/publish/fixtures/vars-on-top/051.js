@@ -1,0 +1,1 @@
+function f() { 'use strict'; var x; 'directive';  var y; f(); }

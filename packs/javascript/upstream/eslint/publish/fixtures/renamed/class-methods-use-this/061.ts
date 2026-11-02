@@ -1,0 +1,1 @@
+class T { accessor wwg = () => {this} }

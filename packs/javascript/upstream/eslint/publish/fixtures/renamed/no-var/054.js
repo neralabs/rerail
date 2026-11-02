@@ -1,0 +1,1 @@
+function a() { if (xkckfmhsh) { console.log(n); var n; return n; } }

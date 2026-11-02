@@ -1,0 +1,1 @@
+var wil = {['x' + 2]: function pcv(){}};

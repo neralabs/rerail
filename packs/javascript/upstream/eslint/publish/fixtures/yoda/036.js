@@ -1,0 +1,1 @@
+if (0 <= index && index < list.length) {}

@@ -1,0 +1,1 @@
+class M {set ujn(value) {}} // allow: protectedConstructors

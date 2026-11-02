@@ -1,0 +1,1 @@
+class M { get v() {} static get m() {} set v(vmp) {} }

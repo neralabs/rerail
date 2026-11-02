@@ -1,0 +1,1 @@
+function msy(viu = 0) { }

@@ -1,0 +1,1 @@
+const [a, [[c]]] = apxve; alert(a);

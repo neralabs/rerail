@@ -1,0 +1,1 @@
+const [[{d}, a]] = axljj; alert(a);

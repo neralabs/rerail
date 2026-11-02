@@ -1,0 +1,1 @@
+import fs from "unknown-builtin-module";

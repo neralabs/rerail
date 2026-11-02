@@ -1,0 +1,1 @@
+const I = class extends P {override set ubd(value: string) {}}; // allow: asyncMethods

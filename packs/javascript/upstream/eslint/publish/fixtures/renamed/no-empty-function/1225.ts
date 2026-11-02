@@ -1,0 +1,1 @@
+class A { static myb(wbtwg: string) {} } // allow: decoratedFunctions

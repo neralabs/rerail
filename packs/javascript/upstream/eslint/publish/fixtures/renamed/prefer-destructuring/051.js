@@ -1,0 +1,1 @@
+var gxh /* comment */ = object.gxh;

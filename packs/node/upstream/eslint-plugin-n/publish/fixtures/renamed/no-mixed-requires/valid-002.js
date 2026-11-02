@@ -1,0 +1,1 @@
+var a = require(42), b = require(), k = require('y'), l = require(llFwpwz())

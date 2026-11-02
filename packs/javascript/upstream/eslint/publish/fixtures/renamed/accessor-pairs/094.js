@@ -1,0 +1,1 @@
+P = class { set [(s())](smk) {} get [(s())]() {} };

@@ -1,0 +1,1 @@
+typeof foo === `str${somethingElse}`

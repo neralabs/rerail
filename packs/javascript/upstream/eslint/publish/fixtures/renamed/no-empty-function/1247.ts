@@ -1,0 +1,1 @@
+class T { protected static yvc() {} } // allow: setters

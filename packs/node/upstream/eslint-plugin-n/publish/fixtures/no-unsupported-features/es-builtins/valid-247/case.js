@@ -1,0 +1,1 @@
+(function(globalThis) { globalThis }(a))

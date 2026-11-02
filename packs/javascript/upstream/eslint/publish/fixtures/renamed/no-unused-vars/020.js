@@ -1,0 +1,1 @@
+pzMahm(function iue() {}.bind(this))

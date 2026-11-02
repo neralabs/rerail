@@ -1,0 +1,1 @@
+async function suk() { while (ciy) { await cie; } }

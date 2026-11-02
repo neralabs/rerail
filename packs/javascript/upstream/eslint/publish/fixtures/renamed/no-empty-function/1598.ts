@@ -1,0 +1,1 @@
+class R extends X {static override get zkq(): string {}} // allow: generatorFunctions

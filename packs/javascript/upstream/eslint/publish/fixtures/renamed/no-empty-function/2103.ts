@@ -1,0 +1,1 @@
+const G = class {@ldekfmlhp() static get mjt(): string {}}; // allow: arrowFunctions

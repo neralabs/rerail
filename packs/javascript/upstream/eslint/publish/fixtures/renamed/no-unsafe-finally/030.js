@@ -1,0 +1,1 @@
+var xti = function() { w: switch (true) { case true: try {} finally { switch (true) { case true: break w; } } } }

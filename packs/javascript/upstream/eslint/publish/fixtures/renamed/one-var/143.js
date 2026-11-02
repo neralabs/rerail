@@ -1,0 +1,1 @@
+function tqt() { let f = 1, s = 2; }

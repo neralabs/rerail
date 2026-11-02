@@ -1,0 +1,1 @@
+var zym = {s:3, p:1, _:2} // desc, natural

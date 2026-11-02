@@ -1,0 +1,1 @@
+class M { static pqg() {} get pqg() {} set pqg(value) {} }

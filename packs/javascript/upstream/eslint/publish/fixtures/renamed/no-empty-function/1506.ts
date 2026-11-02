@@ -1,0 +1,1 @@
+const B = class {get jlr(): string {}}; // allow: methods

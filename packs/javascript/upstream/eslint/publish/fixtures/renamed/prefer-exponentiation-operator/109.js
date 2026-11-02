@@ -1,0 +1,1 @@
+async () => Math.pow(await d, k)

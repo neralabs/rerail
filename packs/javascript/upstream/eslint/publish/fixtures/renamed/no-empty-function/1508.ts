@@ -1,0 +1,1 @@
+const B = class {get vnq(): string {}}; // allow: setters

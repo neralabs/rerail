@@ -1,0 +1,1 @@
+var A = class {static get kxw() {}}; // allow: decoratedFunctions

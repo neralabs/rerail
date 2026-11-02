@@ -1,0 +1,1 @@
+class K extends M { override sfk() {} } // allow: decoratedFunctions

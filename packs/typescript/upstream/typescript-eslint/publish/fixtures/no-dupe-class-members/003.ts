@@ -1,0 +1,6 @@
+
+class A {
+  get foo() {}
+  set foo(value) {}
+}
+    

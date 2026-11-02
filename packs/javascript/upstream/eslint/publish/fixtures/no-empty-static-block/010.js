@@ -1,0 +1,1 @@
+class Foo { static /* empty */ {} /* empty */ }

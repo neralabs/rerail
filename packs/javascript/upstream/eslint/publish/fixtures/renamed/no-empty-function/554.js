@@ -1,0 +1,1 @@
+const vrj = { async wmspgc() {} } // allow: generatorMethods

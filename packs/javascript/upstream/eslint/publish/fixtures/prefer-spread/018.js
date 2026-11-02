@@ -1,0 +1,1 @@
+foo.apply(null, args);

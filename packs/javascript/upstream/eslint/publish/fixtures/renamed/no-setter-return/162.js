@@ -1,0 +1,1 @@
+Object.defineProperty(krw, 'bar', { set: function(Object) { return 1; } })

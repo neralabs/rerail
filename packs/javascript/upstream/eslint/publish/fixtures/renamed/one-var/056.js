@@ -1,0 +1,1 @@
+const s = 0; let z = 1;

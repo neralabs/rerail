@@ -1,0 +1,1 @@
+class N {@pzqlkfxhe() get uwt(): string {}} // allow: setters

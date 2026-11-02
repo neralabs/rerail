@@ -1,0 +1,1 @@
+Object.create(null, { azr: { set(xrp) { return 1; } } })

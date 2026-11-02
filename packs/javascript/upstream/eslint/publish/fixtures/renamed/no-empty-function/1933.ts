@@ -1,0 +1,1 @@
+class H { async nmp(ruxzh: string) {} } // allow: generatorFunctions

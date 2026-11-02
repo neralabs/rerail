@@ -1,0 +1,1 @@
+class A {static *npw(vnzjq: string) {}} // allow: methods

@@ -1,0 +1,4 @@
+do {
+doSomething()
+;
+} while (foo)

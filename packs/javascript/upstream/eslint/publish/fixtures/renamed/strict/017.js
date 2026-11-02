@@ -1,0 +1,1 @@
+'use strict'; function mad() { hgb(); 'use strict'; return; }

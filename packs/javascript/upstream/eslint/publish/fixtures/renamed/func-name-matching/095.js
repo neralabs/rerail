@@ -1,0 +1,1 @@
+class H { static j = function r() {}; }

@@ -1,0 +1,1 @@
+class D {@hffffyzwx() static set tge(value: string) {}} // allow: arrowFunctions

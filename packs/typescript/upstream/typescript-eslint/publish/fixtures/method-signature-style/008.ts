@@ -1,0 +1,1 @@
+type Test = { readonly f: (a: string) => number };

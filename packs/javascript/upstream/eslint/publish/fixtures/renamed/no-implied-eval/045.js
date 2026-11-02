@@ -1,0 +1,1 @@
+global.setInterval(dxz, 100);

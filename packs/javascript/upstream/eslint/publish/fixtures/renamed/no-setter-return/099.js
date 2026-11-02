@@ -1,0 +1,1 @@
+Reflect.defineProperties(kdg, { cqa: { set(trd) { try { return 1; } catch(e){} } } })

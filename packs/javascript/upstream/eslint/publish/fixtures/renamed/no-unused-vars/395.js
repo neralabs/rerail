@@ -1,0 +1,1 @@
+import bcf, { a } from 'module'; bcf();

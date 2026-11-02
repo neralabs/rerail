@@ -1,0 +1,1 @@
+var fqsdFhdl = import.meta.filename + "/foo.js";

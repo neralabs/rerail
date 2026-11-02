@@ -1,0 +1,1 @@
+/* Filename: src/qux/FooBar.js */

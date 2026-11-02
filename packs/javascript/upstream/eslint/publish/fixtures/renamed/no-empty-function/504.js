@@ -1,0 +1,1 @@
+var D = class {set iiz(value) {}}; // allow: protectedConstructors

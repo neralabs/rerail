@@ -1,0 +1,1 @@
+xxamhwsbeJkj = require('fs')

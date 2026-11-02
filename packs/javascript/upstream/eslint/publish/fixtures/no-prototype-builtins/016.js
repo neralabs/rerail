@@ -1,0 +1,1 @@
+({}.hasOwnProperty.apply(foo, ['bar']))

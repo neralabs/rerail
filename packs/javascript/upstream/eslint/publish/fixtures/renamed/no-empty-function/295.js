@@ -1,0 +1,1 @@
+var I = class {ucm() {}}; // allow: decoratedFunctions

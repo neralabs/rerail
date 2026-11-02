@@ -1,0 +1,1 @@
+(function() { (function() { this.b }.bind(this)) }.bind(c))

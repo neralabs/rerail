@@ -1,0 +1,1 @@
+eac.map((ami, g) => <Eac key={g} />)

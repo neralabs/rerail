@@ -1,0 +1,1 @@
+({ aui() { super.aui } })

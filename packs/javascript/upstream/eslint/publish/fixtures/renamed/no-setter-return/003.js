@@ -1,0 +1,1 @@
+var nce = function() { return 1; };

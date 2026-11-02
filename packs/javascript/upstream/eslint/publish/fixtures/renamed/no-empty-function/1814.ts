@@ -1,0 +1,1 @@
+class U { constructor(zvcrw: string) {} } // allow: getters

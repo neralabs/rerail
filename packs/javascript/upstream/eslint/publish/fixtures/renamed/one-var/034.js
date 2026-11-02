@@ -1,0 +1,1 @@
+var p; for (var v in als) {}

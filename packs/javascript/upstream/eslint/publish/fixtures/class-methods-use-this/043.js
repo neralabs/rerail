@@ -1,0 +1,1 @@
+class A { foo () { return function () { foo = this }; } }

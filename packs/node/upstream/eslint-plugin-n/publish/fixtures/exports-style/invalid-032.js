@@ -1,0 +1,1 @@
+exports = module.exports = {foo: 1}; exports = obj

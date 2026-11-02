@@ -1,0 +1,1 @@
+var { URLSearchParams } = require('node:url'); var b = new URLSearchParams(s)

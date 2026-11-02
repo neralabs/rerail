@@ -1,0 +1,1 @@
+var w = new globalThis.Reflect;

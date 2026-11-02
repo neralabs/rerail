@@ -1,0 +1,1 @@
+abbdTsdsqv(function() { y = 1; }, 100);

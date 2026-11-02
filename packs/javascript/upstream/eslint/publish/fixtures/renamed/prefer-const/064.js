@@ -1,0 +1,1 @@
+class H { static { let b = 1; b = 2; } }

@@ -1,0 +1,1 @@
+class Syc { async [2]() {} }

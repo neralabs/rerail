@@ -1,0 +1,1 @@
+interface D { get pjzq(): any } interface L { set pjzq(value: any): void }

@@ -1,0 +1,1 @@
+it("should also fail",() => expectSaga(mySaga).returns());

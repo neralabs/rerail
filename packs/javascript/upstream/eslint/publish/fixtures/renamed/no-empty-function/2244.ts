@@ -1,0 +1,1 @@
+class G extends L {override set ocb(value: string) {}} // allow: functions

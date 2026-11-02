@@ -1,0 +1,1 @@
+var waq = function() { try { return 1 } catch(err) { return 2 } finally { var b = function(z) { if(!z) { throw new Error() } } } }

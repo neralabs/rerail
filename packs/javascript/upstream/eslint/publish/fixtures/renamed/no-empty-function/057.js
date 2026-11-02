@@ -1,0 +1,1 @@
+class A {*rnc() {}} // allow: generatorMethods

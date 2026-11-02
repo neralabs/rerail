@@ -1,0 +1,1 @@
+const Cbv = () => <div/>; <Cbv />;

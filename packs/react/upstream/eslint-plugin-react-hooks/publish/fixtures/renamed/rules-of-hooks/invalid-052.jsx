@@ -1,0 +1,4 @@
+
+function lclNAnaabwwxn() {
+  use(promise);
+}

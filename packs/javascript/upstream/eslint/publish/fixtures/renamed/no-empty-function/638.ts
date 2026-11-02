@@ -1,0 +1,1 @@
+const fyi = (otued: string) => {}; // allow: arrowFunctions

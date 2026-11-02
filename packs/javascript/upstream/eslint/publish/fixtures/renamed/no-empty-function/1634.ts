@@ -1,0 +1,1 @@
+const tvl = {set jip(value: string) {}};

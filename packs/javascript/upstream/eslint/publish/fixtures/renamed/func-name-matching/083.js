@@ -1,0 +1,1 @@
+class O { ['x'] = function y() {}; }

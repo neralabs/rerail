@@ -1,0 +1,1 @@
+/* Filename: src/FooBar/index.js */

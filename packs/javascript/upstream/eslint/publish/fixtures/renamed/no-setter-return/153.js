@@ -1,0 +1,1 @@
+Object.defineProperties(ete, { aks: { get(){ return null; }, set(yqz) { return null; } } })

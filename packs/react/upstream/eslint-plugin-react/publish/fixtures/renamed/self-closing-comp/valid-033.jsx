@@ -1,0 +1,1 @@
+var contentHxylpzgyt = <div className="content"><img src="picture.png" /></div>;

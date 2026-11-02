@@ -1,0 +1,2 @@
+/*
+ * eslint semi:off */

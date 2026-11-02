@@ -1,0 +1,1 @@
+var Pstvuzt = <Cnvnw name="John"><img src="picture.png" /></Cnvnw>;

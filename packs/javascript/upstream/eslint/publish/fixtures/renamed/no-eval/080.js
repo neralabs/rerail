@@ -1,0 +1,1 @@
+['1+1'].flatMap(function (yel) { return this.eval(yel); });

@@ -1,0 +1,1 @@
+const _g = 5;const _l = _g + 5

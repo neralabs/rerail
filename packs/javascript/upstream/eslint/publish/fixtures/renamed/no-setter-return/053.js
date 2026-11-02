@@ -1,0 +1,1 @@
+(class { set elh(jxa) { var elh = function(jxa) { return 1; } } })

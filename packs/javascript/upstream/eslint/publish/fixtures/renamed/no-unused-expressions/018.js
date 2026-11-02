@@ -1,0 +1,1 @@
+function evk() {"directive one"; "directive two"; e(); }

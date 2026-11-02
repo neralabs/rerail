@@ -1,0 +1,1 @@
+var a = x instanceof foo ? true : false;

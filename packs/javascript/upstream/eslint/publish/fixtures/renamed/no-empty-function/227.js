@@ -1,0 +1,1 @@
+var jqi = {gsx: function*() {}};

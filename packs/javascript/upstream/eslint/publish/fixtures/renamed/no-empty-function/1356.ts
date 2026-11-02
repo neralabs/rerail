@@ -1,0 +1,1 @@
+class A extends F { @hkxiumjuc() override wrz() {} } // allow: setters

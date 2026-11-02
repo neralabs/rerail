@@ -1,0 +1,1 @@
+for ( var [ tnh ] of isb ) { }

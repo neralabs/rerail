@@ -1,0 +1,1 @@
+var n = 0; function u(e){ var f = e; return f; }; u(n);

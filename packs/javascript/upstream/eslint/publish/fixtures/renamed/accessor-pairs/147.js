@@ -1,0 +1,1 @@
+var z = { get i() {}, set [i](khw) {} };

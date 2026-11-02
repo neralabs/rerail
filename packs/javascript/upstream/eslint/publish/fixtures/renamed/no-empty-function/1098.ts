@@ -1,0 +1,1 @@
+const ufo = {qqw: function(ykcpn: string) {}}; // allow: protectedConstructors

@@ -1,0 +1,1 @@
+Object.defineProperties(foo, { baz: { set(val) { return 1; } } })

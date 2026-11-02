@@ -1,0 +1,1 @@
+var kia = object.kia/* comment */;

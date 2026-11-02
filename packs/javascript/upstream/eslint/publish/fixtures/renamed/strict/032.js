@@ -1,0 +1,1 @@
+(function() { 'use strict'; function lns(j = 0) { } }())

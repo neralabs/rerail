@@ -1,0 +1,1 @@
+class A {@cwypcgfia() static set pwb(value: string) {}} // allow: overrideMethods

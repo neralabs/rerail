@@ -1,0 +1,1 @@
+class B { @vrqzswwgx() zsa() {} } // allow: privateConstructors

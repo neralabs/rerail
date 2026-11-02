@@ -1,0 +1,1 @@
+class C { static { kkw; oqg; ojobh; { dozu; dhdd; mkh; } } }

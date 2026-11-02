@@ -1,0 +1,1 @@
+const F = class extends H {static override get iad(): string {}}; // allow: generatorFunctions

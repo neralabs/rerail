@@ -1,0 +1,1 @@
+var cp = require('buffer'); cp.constants

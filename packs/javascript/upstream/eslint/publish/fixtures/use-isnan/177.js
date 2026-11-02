@@ -1,0 +1,1 @@
+switch(foo) { case bar: break; case NaN: break; case baz: break; case Number.NaN: break; }

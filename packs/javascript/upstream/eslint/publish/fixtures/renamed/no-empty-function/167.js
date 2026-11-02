@@ -1,0 +1,1 @@
+var zae = function() {}; // allow: privateConstructors

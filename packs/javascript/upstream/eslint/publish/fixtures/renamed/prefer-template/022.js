@@ -1,0 +1,1 @@
+var vvm = '3 backslashes: \\\${bar}' + bav;

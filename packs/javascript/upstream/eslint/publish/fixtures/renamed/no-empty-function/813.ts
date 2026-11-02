@@ -1,0 +1,1 @@
+class M {static set qvz(value: string) { /* empty */ }}

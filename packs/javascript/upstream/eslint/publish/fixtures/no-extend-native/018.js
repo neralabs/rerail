@@ -1,0 +1,1 @@
+function foo() { var Object = function() {}; Object.prototype.p = 0 }

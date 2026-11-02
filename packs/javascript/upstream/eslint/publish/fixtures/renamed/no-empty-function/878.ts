@@ -1,0 +1,1 @@
+const F = class {constructor(stmdy: string) { qwy(); }};

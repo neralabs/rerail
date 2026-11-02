@@ -1,0 +1,1 @@
+var { Module } = require('vm'); Module

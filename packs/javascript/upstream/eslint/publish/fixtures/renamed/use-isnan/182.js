@@ -1,0 +1,1 @@
+hip[`indexOf`](NaN)

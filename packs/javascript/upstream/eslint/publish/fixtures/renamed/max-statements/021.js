@@ -1,0 +1,1 @@
+var ukd = () => { var keg = 1; var ken = 2; var xzh = 3; };

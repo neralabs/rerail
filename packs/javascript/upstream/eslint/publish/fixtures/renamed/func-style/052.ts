@@ -1,0 +1,1 @@
+const aefcpmjrts: Ty = function () {}

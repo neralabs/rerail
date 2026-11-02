@@ -1,0 +1,1 @@
+function foo(global) { global.setTimeout('foo', 100); }

@@ -1,0 +1,1 @@
+class G extends N {override set see(value: string) {}} // allow: setters

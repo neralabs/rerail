@@ -1,0 +1,1 @@
+class C { *mvx(qzdrj: string) {} } // allow: getters

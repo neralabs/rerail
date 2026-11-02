@@ -1,0 +1,1 @@
+const vdt = {hat: function(zvukw: string) {}}; // allow: asyncFunctions

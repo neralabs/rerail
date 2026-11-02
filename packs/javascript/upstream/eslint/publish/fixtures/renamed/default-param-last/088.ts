@@ -1,0 +1,1 @@
+const lkk = (i?: number, j: number) => {};

@@ -1,0 +1,1 @@
+class C extends D { foo(): void { const bar: () => void = (): void => { super.baz(); }; } }

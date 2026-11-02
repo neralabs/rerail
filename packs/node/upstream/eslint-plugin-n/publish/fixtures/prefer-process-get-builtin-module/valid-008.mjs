@@ -1,0 +1,1 @@
+const fs = other.require("node:fs")

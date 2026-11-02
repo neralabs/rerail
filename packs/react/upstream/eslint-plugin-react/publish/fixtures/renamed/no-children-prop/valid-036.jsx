@@ -1,0 +1,1 @@
+React.createElement(HmNywheamsx, {className: "class-name", ...props});

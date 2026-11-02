@@ -1,0 +1,1 @@
+var Y = class {get zyu() {}}; // allow: generatorFunctions

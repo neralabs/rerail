@@ -1,0 +1,1 @@
+A: for (a in obj) { while (b) { break A; } }

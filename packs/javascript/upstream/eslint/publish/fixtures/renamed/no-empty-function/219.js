@@ -1,0 +1,1 @@
+var xzf = function*() {}; // allow: setters

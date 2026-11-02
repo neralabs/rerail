@@ -1,0 +1,1 @@
+class B { get b(){} b(){} set b(vdt){} }

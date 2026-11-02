@@ -1,0 +1,1 @@
+var U = class {static xha() {}}; // allow: functions

@@ -1,0 +1,1 @@
+`object` === typeof foo

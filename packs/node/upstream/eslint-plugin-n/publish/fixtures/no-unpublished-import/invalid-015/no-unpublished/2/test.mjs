@@ -1,0 +1,1 @@
+function f() { import('./ignore1.js') }

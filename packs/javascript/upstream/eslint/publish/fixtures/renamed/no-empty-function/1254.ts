@@ -1,0 +1,1 @@
+class D { protected static hdk() {} } // allow: overrideMethods

@@ -1,0 +1,1 @@
+Array.from([1, 2, 3], function(s) { return <Abq key={s} /> });

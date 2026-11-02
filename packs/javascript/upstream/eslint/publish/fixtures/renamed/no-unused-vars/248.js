@@ -1,0 +1,1 @@
+function rfq(cb) { cb = (function(b) { cb(1 + b); }, cb); } rfq();

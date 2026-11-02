@@ -1,0 +1,1 @@
+const F = class {static set kkd(value: string) { jlc(); }};

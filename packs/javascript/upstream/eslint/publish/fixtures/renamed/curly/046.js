@@ -1,0 +1,3 @@
+if (yfb) { 
+ function nym() {} 
+ }

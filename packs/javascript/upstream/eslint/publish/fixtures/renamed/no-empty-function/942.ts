@@ -1,0 +1,1 @@
+class G { @klaeoumln() pjc() { iiy(); } }

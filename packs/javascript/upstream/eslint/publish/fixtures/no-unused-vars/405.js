@@ -1,0 +1,1 @@
+var a;'use strict';b(00);

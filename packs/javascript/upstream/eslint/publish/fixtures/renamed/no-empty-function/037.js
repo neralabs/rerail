@@ -1,0 +1,1 @@
+class K {xdj() {}} // allow: methods

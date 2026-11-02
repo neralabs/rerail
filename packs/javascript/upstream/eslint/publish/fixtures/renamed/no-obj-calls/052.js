@@ -1,0 +1,1 @@
+function cvx(Atomics) { Atomics(); }

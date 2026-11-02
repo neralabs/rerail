@@ -1,0 +1,1 @@
+let e; const f = {}; ({ e, j: f.j } = zeeu());

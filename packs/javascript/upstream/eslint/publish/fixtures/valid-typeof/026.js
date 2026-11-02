@@ -1,0 +1,1 @@
+function f(undefined) { typeof x === undefined }

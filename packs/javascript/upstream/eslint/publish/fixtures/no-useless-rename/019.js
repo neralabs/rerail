@@ -1,0 +1,1 @@
+function func({foo: bar, baz: qux}) {}

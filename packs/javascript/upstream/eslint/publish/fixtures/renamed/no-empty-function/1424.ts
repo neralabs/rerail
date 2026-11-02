@@ -1,0 +1,1 @@
+class A {protected static *mzb() {}} // allow: setters

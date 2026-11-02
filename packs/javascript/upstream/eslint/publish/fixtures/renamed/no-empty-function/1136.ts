@@ -1,0 +1,1 @@
+const rfq = function*(sjngh: string) {}; // allow: constructors

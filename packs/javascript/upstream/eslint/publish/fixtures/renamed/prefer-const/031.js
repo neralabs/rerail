@@ -1,0 +1,1 @@
+let d; function ybc() { enu(++d); }

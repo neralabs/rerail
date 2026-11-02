@@ -1,0 +1,1 @@
+function xzx([e, ...[{ n }]]) {} xzx();

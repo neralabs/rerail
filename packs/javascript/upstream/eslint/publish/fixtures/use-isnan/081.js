@@ -1,0 +1,1 @@
+foo.indexOf(a, b)

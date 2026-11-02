@@ -1,0 +1,1 @@
+class A extends X { constructor(yxr, xyz) { super(xyz); } }

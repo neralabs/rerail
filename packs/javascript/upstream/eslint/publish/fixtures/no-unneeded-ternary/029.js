@@ -1,0 +1,1 @@
+function* fn() { foo ? foo : yield bar }

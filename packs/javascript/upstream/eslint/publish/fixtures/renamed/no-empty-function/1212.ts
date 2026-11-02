@@ -1,0 +1,1 @@
+class L { protected twn() {} } // allow: overrideMethods

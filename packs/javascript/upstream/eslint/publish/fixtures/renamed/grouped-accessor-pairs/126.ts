@@ -1,0 +1,1 @@
+interface O { get uexx(): any, fhqjdmg: true, set uexx(value: any): void }

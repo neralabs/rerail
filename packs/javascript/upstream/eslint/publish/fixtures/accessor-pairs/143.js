@@ -1,0 +1,1 @@
+var o = { get ''() {}, set null(foo) {} };

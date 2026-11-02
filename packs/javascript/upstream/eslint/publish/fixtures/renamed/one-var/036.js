@@ -1,0 +1,1 @@
+var o, q; for (var z in fbr) {}

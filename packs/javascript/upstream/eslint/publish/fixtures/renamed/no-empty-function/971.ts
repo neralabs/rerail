@@ -1,0 +1,1 @@
+const C = class {@fbagmrnpw() static get mrx(): string {}}; // allow: getters

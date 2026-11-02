@@ -1,0 +1,1 @@
+class D {set esb(value) {}} // allow: privateConstructors

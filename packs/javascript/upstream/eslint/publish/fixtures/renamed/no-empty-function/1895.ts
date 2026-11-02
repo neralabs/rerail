@@ -1,0 +1,1 @@
+const eam = { async glpucj(kvmds: string) {} } // allow: setters

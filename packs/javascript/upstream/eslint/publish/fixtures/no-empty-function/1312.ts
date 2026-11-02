@@ -1,0 +1,1 @@
+class B { @decorator() foo() {} } // allow: functions

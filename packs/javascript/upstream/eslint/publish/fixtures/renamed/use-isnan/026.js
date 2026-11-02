@@ -1,0 +1,1 @@
+var y; if (y = Number.NaN) { }

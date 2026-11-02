@@ -1,0 +1,1 @@
+class C { #hasOwnProperty; eut() { ({}.#hasOwnProperty.call(ojo, qgcc)) } }

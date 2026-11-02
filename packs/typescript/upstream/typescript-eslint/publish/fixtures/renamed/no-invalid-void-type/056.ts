@@ -1,0 +1,1 @@
+type PtryujqrpefbBqyw = string & number & void;

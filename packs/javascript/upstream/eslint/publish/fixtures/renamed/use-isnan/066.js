@@ -1,0 +1,1 @@
+khi.lastIndexOf(Number.NaN)

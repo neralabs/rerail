@@ -1,0 +1,1 @@
+var obe = function() {}; // allow: methods

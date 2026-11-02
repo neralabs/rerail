@@ -1,0 +1,1 @@
+const fyhm = <G extends number | string>() => {};

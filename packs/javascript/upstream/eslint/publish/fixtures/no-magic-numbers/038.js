@@ -1,0 +1,1 @@
+const func = (param = 123) => {}

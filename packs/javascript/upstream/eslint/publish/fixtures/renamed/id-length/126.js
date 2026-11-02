@@ -1,0 +1,1 @@
+function zpc({ a: { c: { g: j, y } } }) { }

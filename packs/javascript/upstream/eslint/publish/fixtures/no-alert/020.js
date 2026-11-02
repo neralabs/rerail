@@ -1,0 +1,1 @@
+function foo() { var globalThis = foo; globalThis.alert(); }

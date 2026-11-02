@@ -1,0 +1,1 @@
+class K {static set nkt(value) {}} // allow: privateConstructors

@@ -1,0 +1,1 @@
+class I { protected static mnr() {} } // allow: generatorFunctions

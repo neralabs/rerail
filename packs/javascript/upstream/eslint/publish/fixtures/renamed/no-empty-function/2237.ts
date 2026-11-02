@@ -1,0 +1,1 @@
+const A = class extends O {static override get yrf(): string {}}; // allow: constructors

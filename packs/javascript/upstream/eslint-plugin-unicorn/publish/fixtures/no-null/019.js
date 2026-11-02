@@ -1,0 +1,1 @@
+markers[index].setMap(null)

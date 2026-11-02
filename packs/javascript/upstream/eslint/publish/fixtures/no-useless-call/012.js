@@ -1,0 +1,1 @@
+var call; foo[call](null, 1, 2);

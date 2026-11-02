@@ -1,0 +1,1 @@
+class D extends F { @fpbypiccp() override tcs() {} } // allow: overrideMethods

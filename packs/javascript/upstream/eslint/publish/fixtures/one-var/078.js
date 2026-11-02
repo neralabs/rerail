@@ -1,0 +1,1 @@
+var a; var b = 0; var c = 1; var d;

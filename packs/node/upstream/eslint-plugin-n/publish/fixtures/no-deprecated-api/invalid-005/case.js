@@ -1,0 +1,1 @@
+var b = require('buffer'); new b.Buffer()

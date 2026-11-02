@@ -1,0 +1,1 @@
+class A { dummyMethod(){ doSomething(); } }

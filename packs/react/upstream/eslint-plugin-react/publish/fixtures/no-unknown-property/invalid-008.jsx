@@ -1,0 +1,1 @@
+<div http-equiv="bar"></div>;

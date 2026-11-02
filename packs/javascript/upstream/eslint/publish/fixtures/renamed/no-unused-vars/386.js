@@ -1,0 +1,1 @@
+import e, * as faa from 'module'; faa.hello;

@@ -1,0 +1,1 @@
+const A = class {static get foo(): string {}}; // allow: setters

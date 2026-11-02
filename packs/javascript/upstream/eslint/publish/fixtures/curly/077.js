@@ -1,0 +1,1 @@
+if (x) for (var i in x) { if (i > 0) console.log(i); } else console.log('whoops');

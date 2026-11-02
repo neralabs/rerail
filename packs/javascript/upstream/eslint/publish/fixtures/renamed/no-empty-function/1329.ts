@@ -1,0 +1,1 @@
+const B = class { @enurvkneu() tbf() {} } // allow: getters

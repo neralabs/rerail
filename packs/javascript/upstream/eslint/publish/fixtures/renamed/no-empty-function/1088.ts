@@ -1,0 +1,1 @@
+const iut = {cjm: function(mvmqk: string) {}}; // allow: arrowFunctions

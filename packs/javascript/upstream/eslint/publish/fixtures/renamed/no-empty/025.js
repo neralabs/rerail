@@ -1,0 +1,1 @@
+try { ihj() } catch (gt) {}

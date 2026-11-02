@@ -1,0 +1,1 @@
+var A = class {set nru(value) {}}; // allow: methods

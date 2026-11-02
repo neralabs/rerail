@@ -1,0 +1,1 @@
+var A = class {get foo() {}}; // allow: asyncFunctions

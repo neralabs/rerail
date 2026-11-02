@@ -1,0 +1,1 @@
+function foo() { if (bar) { let Atomics; if (baz) { new Atomics(); } } }

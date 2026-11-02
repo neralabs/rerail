@@ -1,0 +1,1 @@
+Object.defineProperty(foo, 'bar', { value(val) { return 1; } })

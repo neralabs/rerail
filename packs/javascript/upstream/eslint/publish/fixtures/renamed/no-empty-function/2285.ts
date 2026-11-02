@@ -1,0 +1,1 @@
+const B = class extends D {static override set urg(value: string) {}}; // allow: generatorFunctions

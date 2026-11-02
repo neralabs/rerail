@@ -1,0 +1,1 @@
+var myq = `${act}javascript:`

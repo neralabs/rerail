@@ -1,0 +1,1 @@
+const a = gwu, {...yxfi} = pej; alert(a);

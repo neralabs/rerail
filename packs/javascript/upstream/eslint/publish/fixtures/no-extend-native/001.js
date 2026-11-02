@@ -1,0 +1,1 @@
+x.prototype.p = 0

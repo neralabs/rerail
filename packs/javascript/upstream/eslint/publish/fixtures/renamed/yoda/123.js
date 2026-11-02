@@ -1,0 +1,1 @@
+function *xyh() { yield(1) < (l) }

@@ -1,0 +1,1 @@
+const I = class { @wzemfmfrp() xib() {} } // allow: asyncMethods

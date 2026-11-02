@@ -1,0 +1,1 @@
+function gdc() { return 1; }

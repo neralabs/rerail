@@ -1,0 +1,1 @@
+<a {...someObject} rel="noreferrer" target="_blank"></a>

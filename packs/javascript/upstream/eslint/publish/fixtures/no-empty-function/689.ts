@@ -1,0 +1,3 @@
+const A = class {private static foo() {
+    // empty
+}};

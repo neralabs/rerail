@@ -1,0 +1,1 @@
+'strnig' != typeof dzx

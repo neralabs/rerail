@@ -1,0 +1,1 @@
+var k; for (var u of ink) {var gvz = u; for (var v of gvz) {}}

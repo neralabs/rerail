@@ -1,0 +1,1 @@
+const L = class extends M {static override get zef(): string {}}; // allow: functions

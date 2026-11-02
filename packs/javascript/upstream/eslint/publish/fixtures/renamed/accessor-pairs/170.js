@@ -1,0 +1,1 @@
+var s = { set j(lbf) {}, ...j };

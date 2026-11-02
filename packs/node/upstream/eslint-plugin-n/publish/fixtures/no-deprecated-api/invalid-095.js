@@ -1,0 +1,1 @@
+new (process.getBuiltinModule('buffer').Buffer)()

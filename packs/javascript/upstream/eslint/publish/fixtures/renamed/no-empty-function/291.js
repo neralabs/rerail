@@ -1,0 +1,1 @@
+var M = class {okx() {}}; // allow: asyncFunctions

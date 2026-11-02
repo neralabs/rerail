@@ -1,0 +1,1 @@
+let a; for (const {b = ++a} in foo());

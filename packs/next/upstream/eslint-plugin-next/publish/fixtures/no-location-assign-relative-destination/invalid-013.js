@@ -1,0 +1,1 @@
+location.assign(`/users/${id}/profile`)

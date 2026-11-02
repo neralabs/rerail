@@ -1,0 +1,1 @@
+class V { static { var r; var u; } }

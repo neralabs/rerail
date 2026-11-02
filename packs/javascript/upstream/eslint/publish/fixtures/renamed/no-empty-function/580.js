@@ -1,0 +1,1 @@
+const lss = async function () {} // allow: generatorFunctions

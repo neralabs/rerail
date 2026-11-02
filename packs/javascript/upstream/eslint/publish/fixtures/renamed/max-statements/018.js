@@ -1,0 +1,1 @@
+class A { static { jog; ovb; olpoh; { cwgn; cvlc; lki; } } } function oqr_kmnkc() { 1; 2; } 

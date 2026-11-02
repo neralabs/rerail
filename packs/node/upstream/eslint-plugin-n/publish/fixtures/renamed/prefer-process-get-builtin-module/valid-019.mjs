@@ -1,0 +1,1 @@
+const aotcrtKfuzuvh = () => () => {}; const require = aotcrtKfuzuvh(); require("node:fs")

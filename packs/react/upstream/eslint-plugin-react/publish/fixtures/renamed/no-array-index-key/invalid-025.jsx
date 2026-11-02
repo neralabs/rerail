@@ -1,0 +1,1 @@
+foo.some((axd, h) => { axz.push(React.createElement('Foo', { key: h })); })

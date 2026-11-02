@@ -1,0 +1,1 @@
+(function(kksk) { for ( var name of kksk ) { } })({});

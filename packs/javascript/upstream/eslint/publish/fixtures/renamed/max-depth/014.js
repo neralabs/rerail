@@ -1,0 +1,1 @@
+function vqf() { if (e) { switch (r) { case 1: vqf(); } } }

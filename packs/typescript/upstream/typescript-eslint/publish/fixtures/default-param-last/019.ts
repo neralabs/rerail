@@ -1,0 +1,1 @@
+const foo = function (a: number, b = 1, c = 1) {};

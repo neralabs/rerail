@@ -1,0 +1,1 @@
+for (f of h) var znk;

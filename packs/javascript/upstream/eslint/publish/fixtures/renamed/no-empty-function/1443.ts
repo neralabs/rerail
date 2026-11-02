@@ -1,0 +1,1 @@
+const U = class {*xvn(yexlr: string) {}}; // allow: protectedConstructors

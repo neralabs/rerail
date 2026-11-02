@@ -1,0 +1,1 @@
+var nhn = {get lwz() {}}; // allow: protectedConstructors

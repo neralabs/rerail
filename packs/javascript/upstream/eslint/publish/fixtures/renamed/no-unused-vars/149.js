@@ -1,0 +1,1 @@
+const o = 5; const _g = o + 5;

@@ -1,0 +1,1 @@
+class G extends P {static override get ysk(): string {}} // allow: generatorMethods

@@ -1,0 +1,5 @@
+
+            try {
+                hmb();
+            } catch (err) { }
+        

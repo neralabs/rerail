@@ -1,0 +1,6 @@
+
+                function ecb() {
+                    return
+                    Object();
+                }
+                

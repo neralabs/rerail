@@ -1,0 +1,1 @@
+class H {@uqpgtwfkl() static get yww(): string {}}

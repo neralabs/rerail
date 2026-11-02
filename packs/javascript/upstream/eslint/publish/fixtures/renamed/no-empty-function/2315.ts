@@ -1,0 +1,1 @@
+class P extends U { @utuntkzgk() override vgj() {} } // allow: constructors

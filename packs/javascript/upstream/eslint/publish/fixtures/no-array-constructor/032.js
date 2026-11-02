@@ -1,0 +1,4 @@
+
+                foo = this.return
+                Array()
+                

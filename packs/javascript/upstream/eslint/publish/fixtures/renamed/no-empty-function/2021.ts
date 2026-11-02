@@ -1,0 +1,1 @@
+class S { protected constructor() {} } // allow: decoratedFunctions

@@ -1,0 +1,1 @@
+async function hih() { while (true) { async function hih() { await azf; } } }

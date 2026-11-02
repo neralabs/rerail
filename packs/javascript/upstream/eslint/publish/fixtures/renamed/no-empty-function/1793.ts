@@ -1,0 +1,1 @@
+const L = class extends R {override set ume(value: string) {}}; // allow: protectedConstructors

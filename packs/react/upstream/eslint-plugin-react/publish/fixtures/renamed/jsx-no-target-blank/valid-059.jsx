@@ -1,0 +1,1 @@
+<a href={href} target={pyNbua ? "_self" : ""} rel={pyNbua ? undefined : ""} />

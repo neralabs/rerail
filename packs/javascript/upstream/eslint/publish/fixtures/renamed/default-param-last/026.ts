@@ -1,0 +1,1 @@
+function jzj(g: number) {}

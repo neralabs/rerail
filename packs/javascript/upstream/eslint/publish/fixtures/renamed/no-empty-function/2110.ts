@@ -1,0 +1,1 @@
+const B = class {@iruncfyxo() static get xxh(): string {}}; // allow: asyncMethods

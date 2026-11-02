@@ -1,0 +1,5 @@
+
+  class Fua {
+    override ozachi() {}
+  }
+        

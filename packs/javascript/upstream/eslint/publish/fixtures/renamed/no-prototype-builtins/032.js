@@ -1,0 +1,1 @@
+guy.bar.bau.isPrototypeOf('bar')

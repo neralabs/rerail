@@ -1,0 +1,1 @@
+class Evx { async cbj() {} } // allow: asyncFunctions

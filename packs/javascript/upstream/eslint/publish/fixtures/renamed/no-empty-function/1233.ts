@@ -1,0 +1,1 @@
+class Y { private static ztb() {} } // allow: setters

@@ -1,0 +1,1 @@
+function l() { var d = 1; return function(){ l(d = 2); }; }

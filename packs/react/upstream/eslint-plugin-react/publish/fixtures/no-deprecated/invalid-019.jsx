@@ -1,0 +1,1 @@
+import {printDOM} from 'react-addons-perf';

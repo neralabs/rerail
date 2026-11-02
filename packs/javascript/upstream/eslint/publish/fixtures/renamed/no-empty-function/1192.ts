@@ -1,0 +1,1 @@
+class B { private yxm() {} } // allow: constructors

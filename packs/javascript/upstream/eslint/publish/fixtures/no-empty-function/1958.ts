@@ -1,0 +1,1 @@
+class A extends B { override async foo(param: string) {} } // allow: functions

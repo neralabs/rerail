@@ -1,0 +1,1 @@
+Object.defineProperty(lww, 'b' + 'ar', { value: function bzm() {} })

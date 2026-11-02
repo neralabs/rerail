@@ -1,0 +1,2 @@
+var foo = object.foo// comment
+, a;

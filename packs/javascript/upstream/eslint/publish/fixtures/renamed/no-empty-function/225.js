@@ -1,0 +1,1 @@
+var nbc = function*() {}; // allow: decoratedFunctions

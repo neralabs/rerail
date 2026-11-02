@@ -1,0 +1,1 @@
+class G {static *mjr(yuslg: string) {}} // allow: decoratedFunctions

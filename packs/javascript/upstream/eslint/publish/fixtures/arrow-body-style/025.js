@@ -1,0 +1,1 @@
+for (var a;;a = b => { return c = d in e } );

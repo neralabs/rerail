@@ -1,0 +1,1 @@
+class T { static { q; function q() {} } }

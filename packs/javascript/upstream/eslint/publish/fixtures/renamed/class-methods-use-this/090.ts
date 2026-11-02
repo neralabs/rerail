@@ -1,0 +1,1 @@
+class Esf implements Btz { protected override sbjgpa() {} }

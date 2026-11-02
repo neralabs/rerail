@@ -1,0 +1,1 @@
+FinalizationRegistry.prototype.p = 0

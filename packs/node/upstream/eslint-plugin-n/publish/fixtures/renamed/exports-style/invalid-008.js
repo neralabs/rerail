@@ -1,0 +1,1 @@
+exports = module.exports = {lak: 1}

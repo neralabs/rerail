@@ -1,0 +1,1 @@
+class D {static set ibg(value) {}} // allow: functions

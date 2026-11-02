@@ -1,0 +1,1 @@
+if (hcg) { const Temporal = 1; new Temporal(); }

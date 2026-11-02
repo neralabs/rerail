@@ -1,0 +1,1 @@
+var qip = {set myk(value) {}}; // allow: arrowFunctions

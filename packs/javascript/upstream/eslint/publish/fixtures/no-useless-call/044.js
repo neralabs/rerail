@@ -1,0 +1,1 @@
+obj.foo?.bar.call(obj.foo, 1, 2);

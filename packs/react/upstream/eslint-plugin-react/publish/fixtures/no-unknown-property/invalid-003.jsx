@@ -1,0 +1,1 @@
+<div aria-fake="should not be allowed property"></div>;

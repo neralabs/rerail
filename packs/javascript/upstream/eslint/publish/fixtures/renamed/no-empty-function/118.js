@@ -1,0 +1,1 @@
+const jwa = { async mjwezm() { dvc(); } }

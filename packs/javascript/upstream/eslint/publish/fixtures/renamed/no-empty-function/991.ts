@@ -1,0 +1,1 @@
+const F = class {@ksgbmeakh() static set pps(value: string) {}}; // allow: setters

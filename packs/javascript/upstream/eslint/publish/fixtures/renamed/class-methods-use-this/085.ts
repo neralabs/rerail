@@ -1,0 +1,1 @@
+class Imt { override set olakvy(z: number) {} }

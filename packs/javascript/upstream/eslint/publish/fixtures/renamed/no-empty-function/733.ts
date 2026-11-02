@@ -1,0 +1,1 @@
+class O {protected static *smi() { /* empty */ }}

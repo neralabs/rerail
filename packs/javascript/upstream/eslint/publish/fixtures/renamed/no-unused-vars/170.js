@@ -1,0 +1,1 @@
+var a=10, m=0, z=null; alert(a+m)

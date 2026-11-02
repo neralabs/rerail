@@ -1,0 +1,1 @@
+await using b = 0, g = 1; xzn(); await using q = 2, w = 3;

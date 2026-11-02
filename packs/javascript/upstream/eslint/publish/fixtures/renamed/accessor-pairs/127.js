@@ -1,0 +1,1 @@
+var r = { set 'abc'(qag) {} };

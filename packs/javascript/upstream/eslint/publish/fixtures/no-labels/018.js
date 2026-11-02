@@ -1,0 +1,1 @@
+A: for (var a in obj) { for (;;) { switch (a) { case 0: break A; } } }

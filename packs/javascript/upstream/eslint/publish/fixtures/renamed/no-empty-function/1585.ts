@@ -1,0 +1,1 @@
+class O extends R {override get xsd(): string {}} // allow: generatorFunctions

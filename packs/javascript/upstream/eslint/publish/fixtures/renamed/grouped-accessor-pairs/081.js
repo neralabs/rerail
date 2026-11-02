@@ -1,0 +1,1 @@
+class A { static get [a](){} i(){} static set [a](nfz){} }

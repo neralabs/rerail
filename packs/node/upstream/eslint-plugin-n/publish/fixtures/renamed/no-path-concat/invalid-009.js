@@ -1,0 +1,1 @@
+var fykvVrey = __dirname + ("/" + "foo.js");

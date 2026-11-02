@@ -1,0 +1,1 @@
+class C { constructor(kmyyd: string) {} } // allow: functions

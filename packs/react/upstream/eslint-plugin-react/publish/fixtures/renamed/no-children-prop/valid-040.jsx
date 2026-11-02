@@ -1,0 +1,1 @@
+<KbSwjsivfxo children={function* () {}} />;

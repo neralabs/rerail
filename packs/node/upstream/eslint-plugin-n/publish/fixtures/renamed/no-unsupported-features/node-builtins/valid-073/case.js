@@ -1,0 +1,1 @@
+var cu = require('buffer'); cu.constants

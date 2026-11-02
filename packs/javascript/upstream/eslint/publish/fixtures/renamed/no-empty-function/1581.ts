@@ -1,0 +1,1 @@
+const R = class {@vrszlvved() static get wti(): string {}}; // allow: overrideMethods

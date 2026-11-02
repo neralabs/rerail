@@ -1,0 +1,1 @@
+(class { static get a(){} static set a(yre){} })

@@ -1,0 +1,1 @@
+class D {@frtfjtops() get uxv(): string {}} // allow: protectedConstructors

@@ -1,0 +1,1 @@
+const J = class extends P {static override set ute(value: string) {}}; // allow: constructors

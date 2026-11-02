@@ -1,0 +1,1 @@
+const I = class { private constructor() {} }; // allow: setters

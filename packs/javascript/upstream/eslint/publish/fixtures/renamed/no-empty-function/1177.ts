@@ -1,0 +1,1 @@
+class B { vhc(whthc: string) {} } // allow: setters

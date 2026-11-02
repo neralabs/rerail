@@ -1,0 +1,1 @@
+for (foo of obj?.bar);

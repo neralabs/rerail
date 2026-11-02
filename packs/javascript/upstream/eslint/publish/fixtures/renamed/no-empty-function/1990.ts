@@ -1,0 +1,1 @@
+class T { private constructor() {} } // allow: getters

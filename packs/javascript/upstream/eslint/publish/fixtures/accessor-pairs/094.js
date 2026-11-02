@@ -1,0 +1,1 @@
+A = class { set [(f())](foo) {} get [(f())]() {} };

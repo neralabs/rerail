@@ -1,0 +1,1 @@
+class H extends V {static override get zqw(): string {}} // allow: constructors

@@ -1,0 +1,1 @@
+import { square, diag } from 'lib'; 'use strict'; var z; function k() { 'use strict'; var v; var z; k(); }

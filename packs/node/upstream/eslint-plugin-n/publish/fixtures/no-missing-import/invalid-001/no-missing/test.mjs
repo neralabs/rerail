@@ -1,0 +1,1 @@
+import abc from 'no-exist-package-0';

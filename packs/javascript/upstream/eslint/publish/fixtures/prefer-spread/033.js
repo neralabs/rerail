@@ -1,0 +1,1 @@
+class C { #foo; foo() { obj.#foo.apply(obj, args); } }

@@ -1,0 +1,5 @@
+
+interface Base {
+  name: string;
+}
+    

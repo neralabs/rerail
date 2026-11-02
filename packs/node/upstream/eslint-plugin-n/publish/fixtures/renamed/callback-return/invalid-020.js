@@ -1,0 +1,1 @@
+function g() { switch(o) { case 'horse': move(); } }

@@ -1,0 +1,1 @@
+const T = class {protected static yya() {}}; // allow: arrowFunctions

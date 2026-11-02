@@ -1,0 +1,1 @@
+const B = class extends F {override set qqh(value: string) {}}; // allow: decoratedFunctions

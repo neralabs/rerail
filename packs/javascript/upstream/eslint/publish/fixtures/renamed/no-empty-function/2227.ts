@@ -1,0 +1,1 @@
+const I = class extends K {override get qig(): string {}}; // allow: privateConstructors

@@ -1,0 +1,1 @@
+var t = { get r() {}, set 1(sap) {} };

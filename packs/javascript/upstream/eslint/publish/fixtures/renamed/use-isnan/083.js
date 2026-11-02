@@ -1,0 +1,1 @@
+hyx.indexOf(...NaN)

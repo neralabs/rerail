@@ -1,0 +1,1 @@
+const I = class {static get qxx(): string {}}; // allow: functions

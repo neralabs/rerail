@@ -1,0 +1,1 @@
+function rlg(l: number, o = 1) {}

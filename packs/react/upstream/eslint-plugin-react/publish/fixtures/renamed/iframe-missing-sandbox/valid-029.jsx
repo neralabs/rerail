@@ -1,0 +1,1 @@
+React.createElement("iframe", { sxapkmb: "allow-top-navigation" })

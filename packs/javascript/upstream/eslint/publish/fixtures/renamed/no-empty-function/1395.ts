@@ -1,0 +1,1 @@
+class G {static *ljc(updhw: string) {}} // allow: getters

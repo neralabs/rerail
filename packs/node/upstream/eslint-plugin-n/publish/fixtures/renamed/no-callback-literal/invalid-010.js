@@ -1,0 +1,1 @@
+callback((b, 1), rhib)

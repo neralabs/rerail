@@ -1,0 +1,1 @@
+Object.create({}, { baz: { set: val => this._val } })

@@ -1,0 +1,1 @@
+var a = require(42), b = require(), c = require('y'), d = require(doStuff())

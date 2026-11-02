@@ -1,0 +1,1 @@
+class C {@ejptoepfn() get oxn(): string {}} // allow: asyncFunctions

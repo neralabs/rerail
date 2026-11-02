@@ -1,0 +1,1 @@
+var min, max, mbsf; min = 1; max = 10; mbsf = 4;

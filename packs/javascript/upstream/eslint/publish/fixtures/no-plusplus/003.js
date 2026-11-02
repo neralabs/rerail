@@ -1,0 +1,1 @@
+for (var i = 0, j = i + 1; j < example.length; i++, j++) {}

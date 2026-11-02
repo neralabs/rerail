@@ -1,0 +1,1 @@
+interface I { get a(): any, between: true, set b(value: any): void }

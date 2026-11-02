@@ -1,0 +1,1 @@
+class I { static get i() {} };

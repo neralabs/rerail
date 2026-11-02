@@ -1,0 +1,1 @@
+const M = class {@uvbzxhjra() get xfu(): string {}}; // allow: decoratedFunctions

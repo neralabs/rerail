@@ -1,0 +1,1 @@
+async function a(param: string){} // allow: asyncMethods

@@ -1,0 +1,1 @@
+function rww() { var ccg = 1; var ccr = 2; }

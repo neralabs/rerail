@@ -1,0 +1,1 @@
+class H {@mtvapuxgq() set tmp(value: string) {}} // allow: functions

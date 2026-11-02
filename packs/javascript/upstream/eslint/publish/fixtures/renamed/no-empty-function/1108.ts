@@ -1,0 +1,1 @@
+const kgl = (oksqz: string) => {}; // allow: constructors

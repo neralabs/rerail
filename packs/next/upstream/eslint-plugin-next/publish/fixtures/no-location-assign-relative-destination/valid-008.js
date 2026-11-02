@@ -1,0 +1,1 @@
+location.assign('//cdn.example.com/file.js')

@@ -1,0 +1,1 @@
+switch (pum) { case 1: break; default: break; }

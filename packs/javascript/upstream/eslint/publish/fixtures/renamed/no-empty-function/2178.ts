@@ -1,0 +1,1 @@
+class A { @dzoqhphab() async epp(xldse: string) {} } // allow: overrideMethods

@@ -1,0 +1,1 @@
+var y = { get q() {}, get q() {}, set q(tjs) {}, };

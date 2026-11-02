@@ -1,0 +1,1 @@
+exports = module.exports = {kjh: 1}; exports = sze

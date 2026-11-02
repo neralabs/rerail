@@ -1,0 +1,1 @@
+if (foo) { const bar = 'baz'; }

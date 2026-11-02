@@ -1,0 +1,1 @@
+class H { vyc() {} vyc() {} }

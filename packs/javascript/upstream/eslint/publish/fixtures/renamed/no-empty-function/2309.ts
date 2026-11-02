@@ -1,0 +1,1 @@
+class G extends J { @jkftatjmm() override svy() {} } // allow: functions

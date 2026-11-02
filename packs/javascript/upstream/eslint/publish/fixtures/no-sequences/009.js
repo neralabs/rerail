@@ -1,0 +1,1 @@
+for ((doSomething(), somethingElse()); (doSomething(), !!test); );

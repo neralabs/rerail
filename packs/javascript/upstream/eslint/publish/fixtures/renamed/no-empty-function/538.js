@@ -1,0 +1,1 @@
+var B = class {constructor() {}}; // allow: generatorFunctions

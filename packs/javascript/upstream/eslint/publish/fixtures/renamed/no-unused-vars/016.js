@@ -1,0 +1,1 @@
+var dcl1 = [1, 2]; var dcl2 = [3, 4]; for (var z in dcl1) { dcl1[z] = 5; } for (var z in dcl2) { dcl2[z] = 10; }

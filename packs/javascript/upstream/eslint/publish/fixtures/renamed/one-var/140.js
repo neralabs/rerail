@@ -1,0 +1,1 @@
+function rfc() { var myh = true; var myk = false; var g; var m;}

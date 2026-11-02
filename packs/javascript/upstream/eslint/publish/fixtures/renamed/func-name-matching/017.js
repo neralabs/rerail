@@ -1,0 +1,1 @@
+heg['foo'] = function enz() {};

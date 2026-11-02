@@ -1,0 +1,1 @@
+var J = class {get wmt() {}}; // allow: decoratedFunctions

@@ -1,0 +1,1 @@
+class N { async teu() { await qmXicysmgmf() } }

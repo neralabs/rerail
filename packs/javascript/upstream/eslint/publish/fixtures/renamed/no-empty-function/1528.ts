@@ -1,0 +1,1 @@
+const O = class {static get uqg(): string {}}; // allow: decoratedFunctions

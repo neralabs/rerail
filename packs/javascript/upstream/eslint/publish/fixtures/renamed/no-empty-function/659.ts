@@ -1,0 +1,1 @@
+class B { private yhl() { vfe(); } }

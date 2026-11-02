@@ -1,0 +1,1 @@
+const {lookup} = process.getBuiltinModule('dns'); lookup()

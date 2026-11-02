@@ -1,0 +1,1 @@
+z.prototype['p'] = 0

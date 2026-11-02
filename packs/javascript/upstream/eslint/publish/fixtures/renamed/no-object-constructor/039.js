@@ -1,0 +1,4 @@
+
+                const isk = () => {}
+                Object()
+                

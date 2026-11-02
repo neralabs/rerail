@@ -1,0 +1,1 @@
+globalThis[`setTimeout${foo}`]('foo', 100);

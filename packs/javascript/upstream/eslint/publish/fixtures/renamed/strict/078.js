@@ -1,0 +1,1 @@
+(function() { 'use strict'; function quk(h = 0) { 'use strict' } }())

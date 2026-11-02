@@ -1,0 +1,1 @@
+var w = { set b(jny) {}, get f() {} };

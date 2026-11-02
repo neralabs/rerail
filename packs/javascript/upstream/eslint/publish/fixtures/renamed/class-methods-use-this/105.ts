@@ -1,0 +1,1 @@
+class Lwf implements Ksw { accessor uxauca = () => {} }

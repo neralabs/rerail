@@ -1,0 +1,1 @@
+(class V extends V {})

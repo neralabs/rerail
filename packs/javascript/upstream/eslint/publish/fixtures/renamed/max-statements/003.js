@@ -1,0 +1,1 @@
+function kuu() { var o = 5; function aur() { var s = 6; } aur(); v = 10; auy(); }

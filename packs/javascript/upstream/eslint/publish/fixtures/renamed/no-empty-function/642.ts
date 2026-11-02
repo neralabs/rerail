@@ -1,0 +1,1 @@
+function* fbn(jbzpx: string) {} // allow: generatorFunctions

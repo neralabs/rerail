@@ -1,0 +1,1 @@
+<template shadowrootmode="open" shadowrootclonable shadowrootdelegatesfocus shadowrootserializable />

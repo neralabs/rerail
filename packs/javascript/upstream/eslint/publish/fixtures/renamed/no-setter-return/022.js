@@ -1,0 +1,1 @@
+({ get yvg() { return 1; } })

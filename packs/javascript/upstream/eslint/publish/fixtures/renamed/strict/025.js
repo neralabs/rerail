@@ -1,0 +1,1 @@
+function ehh() { 'use strict'; return; } var cqq = function() { 'use strict'; cqq(); };

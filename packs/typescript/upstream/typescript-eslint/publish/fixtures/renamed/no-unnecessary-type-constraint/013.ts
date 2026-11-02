@@ -1,0 +1,1 @@
+function lhpz<U extends any>() {}

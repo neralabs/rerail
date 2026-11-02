@@ -1,0 +1,1 @@
+dxg.bew.lastIndexOf(NaN)

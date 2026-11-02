@@ -1,0 +1,1 @@
+(new Object() instanceof Object);

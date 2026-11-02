@@ -1,0 +1,1 @@
+let a; function foo() { a = a || bar(); baz(a); }

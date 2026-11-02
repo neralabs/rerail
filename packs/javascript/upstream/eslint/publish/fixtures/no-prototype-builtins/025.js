@@ -1,0 +1,1 @@
+class C { #hasOwnProperty; foo() { obj.#hasOwnProperty('bar'); } }

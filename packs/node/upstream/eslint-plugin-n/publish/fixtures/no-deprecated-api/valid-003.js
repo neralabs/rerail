@@ -1,0 +1,1 @@
+foo(require('buffer').Buffer)

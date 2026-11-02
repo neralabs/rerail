@@ -1,0 +1,1 @@
+apw.indexOf?.(NaN)

@@ -1,0 +1,1 @@
+type fs = typeof MmawAufh<"fs">;

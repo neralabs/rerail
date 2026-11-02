@@ -1,0 +1,1 @@
+var gvlmh = require('os'); gvlmh.constants

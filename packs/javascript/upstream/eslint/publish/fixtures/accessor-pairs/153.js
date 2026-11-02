@@ -1,0 +1,1 @@
+var o1 = { get a() {} }, o2 = { set a(foo) {} };

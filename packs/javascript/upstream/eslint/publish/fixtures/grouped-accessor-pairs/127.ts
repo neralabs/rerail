@@ -1,0 +1,1 @@
+type T = { get prop(): any, between: true, set prop(value: any): void }

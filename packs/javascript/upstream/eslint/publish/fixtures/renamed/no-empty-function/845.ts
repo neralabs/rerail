@@ -1,0 +1,1 @@
+class A extends I {override set rze(value: string) { /* empty */ }}

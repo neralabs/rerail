@@ -1,0 +1,1 @@
+set = { cqw(xut) { return 1; } };

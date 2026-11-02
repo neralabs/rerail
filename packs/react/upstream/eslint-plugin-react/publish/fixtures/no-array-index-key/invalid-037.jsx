@@ -1,0 +1,1 @@
+foo?.map((child, i) => <Foo key={i} />)

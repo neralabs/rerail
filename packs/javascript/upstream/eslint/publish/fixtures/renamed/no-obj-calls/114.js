@@ -1,0 +1,1 @@
+const etd = Temporal; new etd();

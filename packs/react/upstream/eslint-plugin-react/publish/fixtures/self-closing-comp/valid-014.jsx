@@ -1,0 +1,1 @@
+var HelloJohn = <Hello name="John" />;

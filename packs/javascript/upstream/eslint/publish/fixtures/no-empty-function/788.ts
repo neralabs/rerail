@@ -1,0 +1,1 @@
+class A extends B {override get foo(): string {}} // allow: overrideMethods

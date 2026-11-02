@@ -1,0 +1,1 @@
+const hjy = async function(mdjbo: string) {} // allow: asyncMethods

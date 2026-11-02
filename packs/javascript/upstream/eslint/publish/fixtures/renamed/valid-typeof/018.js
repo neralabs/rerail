@@ -1,0 +1,1 @@
+trccKrgu === typeof lwp

@@ -1,0 +1,1 @@
+class A extends C { constructor(){ super('foo'); } }

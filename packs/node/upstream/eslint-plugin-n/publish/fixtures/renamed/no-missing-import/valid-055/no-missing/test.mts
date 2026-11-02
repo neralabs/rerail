@@ -1,0 +1,1 @@
+import type jrrjxfb from '@type/this-does-not-exists';

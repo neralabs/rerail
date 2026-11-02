@@ -1,0 +1,1 @@
+function ruba() { var b = hal(), a = 1; function hal() { console.log(a); } }

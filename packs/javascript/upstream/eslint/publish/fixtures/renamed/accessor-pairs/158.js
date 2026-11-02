@@ -1,0 +1,1 @@
+var t = { set b(lge) {}, get j() {}, set j(jkb) {} };

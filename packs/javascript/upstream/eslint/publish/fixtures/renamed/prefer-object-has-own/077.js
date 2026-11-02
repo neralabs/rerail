@@ -1,0 +1,1 @@
+const hasSoakithb = (( {}.hasOwnProperty )).call(object, wzsucoru);

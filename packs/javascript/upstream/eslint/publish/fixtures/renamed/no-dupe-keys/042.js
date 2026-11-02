@@ -1,0 +1,1 @@
+var z = { d: 1, set d(value) {} };

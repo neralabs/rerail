@@ -1,0 +1,1 @@
+async    /* test */ function foo() { doSomething() }

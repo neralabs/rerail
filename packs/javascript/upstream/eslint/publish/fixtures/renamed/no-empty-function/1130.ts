@@ -1,0 +1,1 @@
+const ezg = function*(ksffv: string) {}; // allow: functions

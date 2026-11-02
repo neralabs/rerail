@@ -1,0 +1,1 @@
+import * as kpzue from 'async_hooks'; new kpzue.AsyncLocalStorage()

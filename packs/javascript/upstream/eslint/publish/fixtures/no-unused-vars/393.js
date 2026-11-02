@@ -1,0 +1,1 @@
+import { default as foo, a } from 'module'; alert(a);

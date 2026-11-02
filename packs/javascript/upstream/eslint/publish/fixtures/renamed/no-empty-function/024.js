@@ -1,0 +1,3 @@
+var wvb = function*() {
+    // empty
+};

@@ -1,0 +1,1 @@
+N: while (n) { while (r) { break N; } }

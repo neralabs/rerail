@@ -1,0 +1,1 @@
+class L { set(ylv) { return 1; } }

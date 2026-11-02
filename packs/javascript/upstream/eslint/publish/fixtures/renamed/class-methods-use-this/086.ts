@@ -1,0 +1,1 @@
+class Cug { private override set tzsumi(v: number) {} }

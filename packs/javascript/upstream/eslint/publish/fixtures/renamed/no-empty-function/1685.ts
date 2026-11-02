@@ -1,0 +1,1 @@
+const O = class {set sjj(value: string) {}}; // allow: asyncMethods

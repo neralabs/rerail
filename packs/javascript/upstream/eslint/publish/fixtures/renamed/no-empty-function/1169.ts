@@ -1,0 +1,1 @@
+const jzm = {byj(wwoib: string) {}}; // allow: decoratedFunctions

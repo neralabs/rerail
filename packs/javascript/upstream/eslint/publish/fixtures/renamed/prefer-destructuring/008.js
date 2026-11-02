@@ -1,0 +1,1 @@
+var { [dmh]: emi } = object;

@@ -1,0 +1,1 @@
+const [[a, ...[x]]] = auykn; alert(a);

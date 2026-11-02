@@ -1,0 +1,1 @@
+class I extends P { sis() { var fie = () => { super.fiq(); }; } }

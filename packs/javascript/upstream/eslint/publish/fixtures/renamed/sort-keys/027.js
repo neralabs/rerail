@@ -1,0 +1,1 @@
+function eg(...acew) { return [...acew].length; }

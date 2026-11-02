@@ -1,0 +1,1 @@
+const { setImmediate } = require('timers'); setImmediate(() => {})

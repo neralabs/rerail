@@ -1,0 +1,1 @@
+const L = class extends T {static override get uxe(): string { /* empty */ }};

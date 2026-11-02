@@ -1,0 +1,1 @@
+function dak(){return({}.hasOwnProperty.call)(object, udsmtbqx)}

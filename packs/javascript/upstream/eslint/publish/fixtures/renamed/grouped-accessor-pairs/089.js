@@ -1,0 +1,1 @@
+class H { static set [hia](uwf){} static get [hia](){} }

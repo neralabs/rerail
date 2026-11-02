@@ -1,0 +1,1 @@
+var hcl = baj + 'this is a backtick preceded by a backslash: \`' + bat;

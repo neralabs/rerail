@@ -1,0 +1,1 @@
+class B { @iybbjbicj() async kwl(zxwcu: string) {} } // allow: decoratedFunctions

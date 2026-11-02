@@ -1,0 +1,1 @@
+class N { private constructor() {} } // allow: privateConstructors

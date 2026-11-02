@@ -1,0 +1,1 @@
+function* ffc(uvgix: string) {} // allow: protectedConstructors

@@ -1,0 +1,1 @@
+class I { static { let b; if (zcv) { b = 1; } } }

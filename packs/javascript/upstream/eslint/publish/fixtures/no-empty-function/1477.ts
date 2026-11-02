@@ -1,0 +1,1 @@
+class A {get foo(): string {}} // allow: generatorFunctions

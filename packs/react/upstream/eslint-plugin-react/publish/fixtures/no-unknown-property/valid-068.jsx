@@ -1,0 +1,1 @@
+<details onToggle={this.onToggle}>Some details</details>

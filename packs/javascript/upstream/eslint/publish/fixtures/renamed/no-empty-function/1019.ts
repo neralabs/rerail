@@ -1,0 +1,1 @@
+const K = class extends S {static override get zak(): string { /* empty */ }};

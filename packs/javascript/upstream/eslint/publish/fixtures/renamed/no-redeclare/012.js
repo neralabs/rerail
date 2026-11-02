@@ -1,0 +1,1 @@
+class N { static { var a; { let a; } } }

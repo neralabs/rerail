@@ -1,0 +1,1 @@
+var u = { set [d + q](tnn) {} };

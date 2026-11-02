@@ -1,0 +1,1 @@
+class G {static set teg(value) {}} // allow: protectedConstructors

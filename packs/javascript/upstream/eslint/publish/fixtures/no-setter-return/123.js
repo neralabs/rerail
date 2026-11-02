@@ -1,0 +1,1 @@
+(class { set a(val) { while (foo){ if (bar) break; else return 1; } } })

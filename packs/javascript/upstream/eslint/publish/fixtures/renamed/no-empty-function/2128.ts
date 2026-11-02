@@ -1,0 +1,1 @@
+class D {@makkzeowb() static set qeh(value: string) {}} // allow: functions

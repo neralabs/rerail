@@ -1,0 +1,1 @@
+class A extends D { @urfrykcbf() override wvc() {} } // allow: functions

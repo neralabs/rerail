@@ -1,0 +1,1 @@
+type Nxx = 1e2;

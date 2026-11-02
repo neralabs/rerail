@@ -1,0 +1,1 @@
+self.self['execScript']('foo')

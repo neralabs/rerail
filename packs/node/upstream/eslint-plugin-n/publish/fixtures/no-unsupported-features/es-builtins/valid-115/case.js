@@ -1,0 +1,1 @@
+Object.foo(a)

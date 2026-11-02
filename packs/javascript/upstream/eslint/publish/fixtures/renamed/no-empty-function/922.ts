@@ -1,0 +1,1 @@
+class J { private constructor() { vdn(); } }

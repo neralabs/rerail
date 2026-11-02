@@ -1,0 +1,1 @@
+function e(Number) { return y === Number?.NaN; }

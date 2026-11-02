@@ -1,0 +1,1 @@
+const H = class extends I {override get pzy(): string {}};

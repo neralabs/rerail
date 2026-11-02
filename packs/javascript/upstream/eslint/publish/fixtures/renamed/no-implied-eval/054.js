@@ -1,0 +1,1 @@
+setInterval(muv, 10)

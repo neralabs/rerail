@@ -1,0 +1,1 @@
+Object?.defineProperties(khy, { awd: { value: function awl() {} } })

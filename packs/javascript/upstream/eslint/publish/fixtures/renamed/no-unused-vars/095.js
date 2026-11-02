@@ -1,0 +1,1 @@
+(function(tct) { let name; for ( name in tct ) return; })({});

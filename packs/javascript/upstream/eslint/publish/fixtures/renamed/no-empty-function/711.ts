@@ -1,0 +1,1 @@
+class C extends D { @hojhkxnsy() override mpc() { /* empty */ } }

@@ -1,0 +1,1 @@
+var { qcopYffu: pmj } = {};

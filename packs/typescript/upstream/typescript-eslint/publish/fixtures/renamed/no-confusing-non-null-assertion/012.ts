@@ -1,0 +1,1 @@
+(zmf = new new ZpkcjJwe().JjlgdLnx).Vrkf! == a;

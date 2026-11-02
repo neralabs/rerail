@@ -1,0 +1,1 @@
+const {promises: {lookup}} = require('dns'); lookup()

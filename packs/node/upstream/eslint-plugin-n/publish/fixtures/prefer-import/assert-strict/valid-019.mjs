@@ -1,0 +1,1 @@
+notRequire("node:assert");

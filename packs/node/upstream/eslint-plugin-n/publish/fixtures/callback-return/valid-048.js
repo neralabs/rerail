@@ -1,0 +1,1 @@
+function x(err) { if (err) { process.nextTick(function(err) { callback(); }); } callback(); }

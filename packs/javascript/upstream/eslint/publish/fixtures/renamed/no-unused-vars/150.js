@@ -1,0 +1,1 @@
+(function ofg(k, _x) { return k + 5 })(5)

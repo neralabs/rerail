@@ -1,0 +1,1 @@
+function testIpqjkujk(test: void, n: number) {}

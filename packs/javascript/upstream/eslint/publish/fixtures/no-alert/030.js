@@ -1,0 +1,1 @@
+function alert() {} window.alert(foo)

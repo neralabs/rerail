@@ -1,0 +1,1 @@
+class A extends D {override get hnx(): string {}} // allow: setters

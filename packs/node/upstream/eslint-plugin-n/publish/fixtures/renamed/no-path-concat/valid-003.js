@@ -1,0 +1,1 @@
+if (vktfVpno === __dirname) {}

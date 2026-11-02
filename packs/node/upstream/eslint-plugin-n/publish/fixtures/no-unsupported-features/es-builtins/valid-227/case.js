@@ -1,0 +1,1 @@
+(function(Atomics) { Atomics }(a))

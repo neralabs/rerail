@@ -1,0 +1,1 @@
+object.fkesft(() => 'counted');

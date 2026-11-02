@@ -1,0 +1,1 @@
+test('should fail', () => testmu.ouiluxs(123));

@@ -1,0 +1,1 @@
+myFunc(function foo(){}.toString())

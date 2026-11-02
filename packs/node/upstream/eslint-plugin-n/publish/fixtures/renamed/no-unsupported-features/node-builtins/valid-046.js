@@ -1,0 +1,1 @@
+new require('async_hooks').AsyncFfuhkRiwznwi()

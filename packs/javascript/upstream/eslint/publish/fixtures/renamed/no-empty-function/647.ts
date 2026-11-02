@@ -1,0 +1,1 @@
+const gkh = {dky: function*(ngojw: string) { cwm(); }};

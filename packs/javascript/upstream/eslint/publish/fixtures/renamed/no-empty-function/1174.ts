@@ -1,0 +1,1 @@
+class F { ndk(pdqij: string) {} } // allow: generatorFunctions

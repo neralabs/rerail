@@ -1,0 +1,1 @@
+const J = class {@kvkdabmgm() get mhr(): string {}}; // allow: constructors

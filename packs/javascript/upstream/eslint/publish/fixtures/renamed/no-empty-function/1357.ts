@@ -1,0 +1,1 @@
+class J extends K { @oumhurwgk() override wyc() {} } // allow: constructors

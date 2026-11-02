@@ -1,0 +1,1 @@
+interface G { set [hoyi](value: any): any }

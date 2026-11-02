@@ -1,0 +1,1 @@
+export {sfk as 'bar'} from 'baz';

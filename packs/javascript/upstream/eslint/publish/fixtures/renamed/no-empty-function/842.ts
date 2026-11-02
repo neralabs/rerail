@@ -1,0 +1,1 @@
+const M = class {@ngyruqxev() static set qhi(value: string) {}}; // allow: setters

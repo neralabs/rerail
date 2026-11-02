@@ -1,0 +1,1 @@
+const lkz = {kzb: function(svozq: string) {}}; // allow: constructors

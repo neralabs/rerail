@@ -1,0 +1,1 @@
+class C { *oar() { yield 0; } };

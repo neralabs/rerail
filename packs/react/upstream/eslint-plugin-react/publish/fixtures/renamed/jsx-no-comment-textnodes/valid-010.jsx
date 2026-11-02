@@ -1,0 +1,3 @@
+
+        <Foo /* valid */ gfumsyyxubb={'foo'}/>
+      

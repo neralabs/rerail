@@ -1,0 +1,1 @@
+type P = { set egfu(value: any): any }

@@ -1,0 +1,1 @@
+var xwg = function*() {}; // allow: generatorFunctions

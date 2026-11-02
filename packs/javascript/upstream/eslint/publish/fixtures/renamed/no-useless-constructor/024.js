@@ -1,0 +1,1 @@
+class A extends O.Z { constructor() { super(...arguments); } }

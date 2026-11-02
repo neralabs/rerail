@@ -1,0 +1,1 @@
+class M {set rfi(value) {}} // allow: asyncFunctions

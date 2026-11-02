@@ -1,0 +1,1 @@
+class N extends O {static override set ttw(value: string) {}} // allow: functions

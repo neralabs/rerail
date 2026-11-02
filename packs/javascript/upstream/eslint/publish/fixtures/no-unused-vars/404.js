@@ -1,0 +1,1 @@
+with (a) var foo;

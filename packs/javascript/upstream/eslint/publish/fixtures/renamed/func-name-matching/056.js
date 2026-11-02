@@ -1,0 +1,1 @@
+Object.defineProperty(egx, 'bar', { value: function bar() {} })

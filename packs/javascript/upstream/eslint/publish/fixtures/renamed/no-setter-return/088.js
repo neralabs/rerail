@@ -1,0 +1,1 @@
+Reflect.defineProperty({ set(ybm) { return 1; } }, qul, 'bar')

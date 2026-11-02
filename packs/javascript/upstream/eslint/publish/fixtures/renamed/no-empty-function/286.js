@@ -1,0 +1,1 @@
+var H = class {ram() {}}; // allow: generatorFunctions

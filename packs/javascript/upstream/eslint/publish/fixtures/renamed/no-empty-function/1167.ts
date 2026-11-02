@@ -1,0 +1,1 @@
+const nmx = {ccq(vdzdi: string) {}}; // allow: privateConstructors

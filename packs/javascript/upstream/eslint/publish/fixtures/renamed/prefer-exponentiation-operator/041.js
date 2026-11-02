@@ -1,0 +1,1 @@
+function jap(fkt, fkz = Math.pow(e, f), yotu){}

@@ -1,0 +1,1 @@
+for (;someNode || (someNode = parentNode););

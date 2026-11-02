@@ -1,0 +1,1 @@
+class N { static get n() {} static get s() {} }

@@ -1,0 +1,1 @@
+Object.defineProperty(nmz, 'bar', { [`set `]: (xgs) => { return 1; } })

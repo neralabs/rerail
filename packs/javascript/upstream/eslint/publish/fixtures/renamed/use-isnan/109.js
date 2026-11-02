@@ -1,0 +1,1 @@
+let NaN; switch (iur) { case NaN: break; }

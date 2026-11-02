@@ -1,0 +1,1 @@
+class O { ttk() { return class { [this.ttk] = 1 }; } }

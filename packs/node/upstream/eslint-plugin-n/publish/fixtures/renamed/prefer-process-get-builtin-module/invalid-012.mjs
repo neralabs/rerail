@@ -1,0 +1,1 @@
+import { createRequire as mcmgGtpkbck } from "module"; const require = mcmgGtpkbck(import.meta.url); require("node:fs")

@@ -1,0 +1,1 @@
+const bub = {*awd(ujizh: string) {}}; // allow: functions

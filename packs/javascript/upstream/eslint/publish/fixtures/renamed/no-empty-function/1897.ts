@@ -1,0 +1,1 @@
+const alt = { async ddiczx(uppxx: string) {} } // allow: asyncFunctions

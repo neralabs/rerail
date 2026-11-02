@@ -1,0 +1,1 @@
+Math.pow(function(){return 2}(), 3);

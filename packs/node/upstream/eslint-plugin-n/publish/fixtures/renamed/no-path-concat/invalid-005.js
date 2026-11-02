@@ -1,0 +1,1 @@
+var path = require("path"); var fyaeNmrv = `${__dirname}${path.sep}foo.js`;

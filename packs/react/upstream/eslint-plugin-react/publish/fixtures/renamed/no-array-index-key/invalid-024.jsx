@@ -1,0 +1,1 @@
+foo.filter((arf, j) => { arp.push(React.createElement('Foo', { key: j })); })

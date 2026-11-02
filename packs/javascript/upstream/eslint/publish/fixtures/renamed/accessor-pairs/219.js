@@ -1,0 +1,1 @@
+class B { get 1() {} set 2(jli) {} }

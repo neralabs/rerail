@@ -1,0 +1,1 @@
+class B extends F {static override get vsw(): string {}} // allow: setters

@@ -1,0 +1,1 @@
+/* Filename: src/getDOMRangeRect/file.js */

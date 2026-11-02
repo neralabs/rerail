@@ -1,0 +1,1 @@
+class L extends P { @swabtdhtn() override wat() {} } // allow: methods

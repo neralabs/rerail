@@ -1,0 +1,1 @@
+var gux = function () { gux() };

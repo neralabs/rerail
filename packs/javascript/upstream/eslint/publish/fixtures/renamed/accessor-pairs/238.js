@@ -1,0 +1,1 @@
+class D { get d() {} } class S { set d(ziu) {} }

@@ -1,0 +1,1 @@
+var q = function() { while(q) { move(); } }

@@ -1,0 +1,1 @@
+class T {protected static *uwq() {}} // allow: decoratedFunctions

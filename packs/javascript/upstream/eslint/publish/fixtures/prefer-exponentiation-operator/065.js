@@ -1,0 +1,1 @@
+obj[Math.pow(a, b)]

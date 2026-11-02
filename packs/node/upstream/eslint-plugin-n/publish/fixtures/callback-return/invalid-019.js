@@ -1,0 +1,1 @@
+function b() { switch(x) { case 'horse': callback(); } }

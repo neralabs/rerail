@@ -1,0 +1,1 @@
+class F { set f(hwf) { switch(hwf) { case 1: return m; case 2: return p; default: return z } } }

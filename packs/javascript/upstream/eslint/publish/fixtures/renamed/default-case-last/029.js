@@ -1,0 +1,1 @@
+switch (izb) { default: break; case 1: break; case 2: break; }

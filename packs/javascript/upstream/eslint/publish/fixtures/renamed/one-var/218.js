@@ -1,0 +1,1 @@
+do var m = j(), o = h(); while (m < o);

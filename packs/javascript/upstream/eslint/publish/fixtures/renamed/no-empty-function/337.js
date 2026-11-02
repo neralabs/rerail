@@ -1,0 +1,1 @@
+class H {*shn() {}} // allow: decoratedFunctions

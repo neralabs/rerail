@@ -1,0 +1,1 @@
+const B = class {*mqm(rcqif: string) {}}; // allow: asyncMethods

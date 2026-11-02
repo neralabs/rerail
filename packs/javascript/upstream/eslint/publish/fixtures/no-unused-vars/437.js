@@ -1,0 +1,3 @@
+/* comment */
+function unused() {}
+(a) => {}

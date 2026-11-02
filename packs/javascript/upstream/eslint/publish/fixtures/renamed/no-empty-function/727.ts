@@ -1,0 +1,1 @@
+class A {static *ngt(oyixu: string) {}} // allow: generatorMethods

@@ -1,0 +1,1 @@
+function *tyu() { yield(1) < ++e }

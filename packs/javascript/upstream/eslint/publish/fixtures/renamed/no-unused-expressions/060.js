@@ -1,0 +1,1 @@
+var psc = () => { var psc = true; "use strict"; }

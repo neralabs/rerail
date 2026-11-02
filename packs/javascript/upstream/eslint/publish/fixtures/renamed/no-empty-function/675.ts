@@ -1,0 +1,1 @@
+class D { protected static utf() { lhi(); } }

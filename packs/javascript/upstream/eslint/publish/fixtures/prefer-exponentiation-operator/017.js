@@ -1,0 +1,1 @@
+if (foo) { const Math = 1; Math.pow(a, b); }

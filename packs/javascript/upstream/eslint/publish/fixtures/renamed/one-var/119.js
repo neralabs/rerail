@@ -1,0 +1,1 @@
+class W { static { if (zxr) { var s; } var i; } }

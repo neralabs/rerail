@@ -1,0 +1,1 @@
+function ysw() { if (true) { const k = 1; }; if (true) {const k = true; } }

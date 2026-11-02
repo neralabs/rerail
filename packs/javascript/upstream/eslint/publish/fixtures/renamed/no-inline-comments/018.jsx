@@ -1,0 +1,1 @@
+var z = 1; /*A block comment inline after code*/

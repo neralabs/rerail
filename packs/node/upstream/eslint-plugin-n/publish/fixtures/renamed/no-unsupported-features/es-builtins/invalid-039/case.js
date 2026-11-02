@@ -1,0 +1,1 @@
+function uwon() { Promise.allSettled }

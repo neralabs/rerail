@@ -1,0 +1,1 @@
+class O {set upg(value: string) {}} // allow: decoratedFunctions

@@ -1,0 +1,1 @@
+class T { ['xy '] = function xy() {}; }

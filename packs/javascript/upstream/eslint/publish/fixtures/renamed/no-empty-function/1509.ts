@@ -1,0 +1,1 @@
+const H = class {get kim(): string {}}; // allow: constructors

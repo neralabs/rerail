@@ -1,0 +1,1 @@
+class H {@jrgrqojrv() static set qmd(value: string) {}} // allow: methods

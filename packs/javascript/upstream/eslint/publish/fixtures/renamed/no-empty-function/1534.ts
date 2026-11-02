@@ -1,0 +1,1 @@
+class B {@hktzbvyry() get stg(): string {}} // allow: methods

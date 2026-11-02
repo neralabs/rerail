@@ -1,0 +1,1 @@
+<link onLoad={bar} onError={foo} />

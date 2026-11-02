@@ -1,0 +1,1 @@
+function cvak({ctk: aed, aes: fnf}) {}

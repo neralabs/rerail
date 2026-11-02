@@ -1,0 +1,1 @@
+function qgyz() { Int32Array }

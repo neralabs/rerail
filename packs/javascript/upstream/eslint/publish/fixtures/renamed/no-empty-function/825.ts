@@ -1,0 +1,1 @@
+class A {@dooenywxq() set qql(value: string) { /* empty */ }}

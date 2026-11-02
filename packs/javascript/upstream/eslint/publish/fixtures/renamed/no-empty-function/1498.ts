@@ -1,0 +1,1 @@
+class F {static get lgd(): string {}} // allow: privateConstructors

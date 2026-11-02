@@ -1,0 +1,1 @@
+async function tbx() { for (tbx of await vty?.ezz);}

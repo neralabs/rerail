@@ -1,0 +1,1 @@
+function chn() {} // allow: protectedConstructors

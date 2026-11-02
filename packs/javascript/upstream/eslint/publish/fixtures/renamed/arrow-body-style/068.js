@@ -1,0 +1,1 @@
+const fvapkrObgsko = (fugsi) => ({ upfqiybq, uwvprvlfv }, index) => {};

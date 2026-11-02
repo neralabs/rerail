@@ -1,0 +1,1 @@
+var b; { var p; ({ b, p } = sto); }

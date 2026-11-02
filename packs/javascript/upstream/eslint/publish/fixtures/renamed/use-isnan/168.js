@@ -1,0 +1,1 @@
+switch(dyz) { case (NaN): break; }

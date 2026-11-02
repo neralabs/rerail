@@ -1,0 +1,1 @@
+class H {@jvmwsgriw() get wjn(): string {}} // allow: constructors

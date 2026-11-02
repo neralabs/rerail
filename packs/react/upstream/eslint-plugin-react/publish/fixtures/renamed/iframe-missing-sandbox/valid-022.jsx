@@ -1,0 +1,1 @@
+React.createElement("iframe", { ylfwckb: "allow-orientation-lock" })

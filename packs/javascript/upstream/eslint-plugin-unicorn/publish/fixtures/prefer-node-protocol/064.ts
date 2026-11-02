@@ -1,0 +1,1 @@
+type fs = import("fs").fs<"fs">

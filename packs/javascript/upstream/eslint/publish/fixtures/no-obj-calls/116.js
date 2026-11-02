@@ -1,0 +1,1 @@
+var foo = bar ? baz: globalThis.JSON; new foo();

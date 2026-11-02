@@ -1,0 +1,1 @@
+var tev = {dwu: function*() {}}; // allow: overrideMethods

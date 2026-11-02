@@ -1,0 +1,1 @@
+object.create(gxa, { azn: { set: function(ydc) { return 1; } } })

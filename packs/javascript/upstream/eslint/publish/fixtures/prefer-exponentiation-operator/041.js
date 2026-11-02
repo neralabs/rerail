@@ -1,0 +1,1 @@
+function foo(bar, baz = Math.pow(a, b), quux){}

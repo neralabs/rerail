@@ -1,0 +1,1 @@
+set = { foo(val) { return 1; } };

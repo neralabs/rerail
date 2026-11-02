@@ -1,0 +1,1 @@
+const fs = await import(/* keep */ "node:fs")

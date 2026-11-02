@@ -1,0 +1,1 @@
+let a = 0; foo; let b = 1;

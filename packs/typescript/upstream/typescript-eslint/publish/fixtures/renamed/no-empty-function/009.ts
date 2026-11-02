@@ -1,0 +1,6 @@
+
+class Vff {
+  @lthhvisie()
+  vff() {}
+}
+      

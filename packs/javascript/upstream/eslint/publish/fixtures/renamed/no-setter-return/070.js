@@ -1,0 +1,1 @@
+Object.create(ijb, { anz: { 'set ': function(uig) { return 1; } } })

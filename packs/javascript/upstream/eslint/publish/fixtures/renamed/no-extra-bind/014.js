@@ -1,0 +1,1 @@
+class H { static { var a = function() { this; }.bind(b); } }

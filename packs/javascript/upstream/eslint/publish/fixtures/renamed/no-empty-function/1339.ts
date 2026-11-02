@@ -1,0 +1,1 @@
+class D extends I { override nve() {} } // allow: arrowFunctions

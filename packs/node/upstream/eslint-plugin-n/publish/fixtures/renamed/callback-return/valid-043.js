@@ -1,0 +1,1 @@
+function d(err) { if (err) { vqc.xpjd().jlxyys(err); } }

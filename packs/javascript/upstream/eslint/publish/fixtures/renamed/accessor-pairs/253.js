@@ -1,0 +1,1 @@
+class T { set t(xlg) {} set t(xlg) {} }

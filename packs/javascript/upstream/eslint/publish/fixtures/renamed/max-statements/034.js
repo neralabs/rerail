@@ -1,0 +1,1 @@
+function ttm() { ttm_1; /* foo_ 2 */ class P { static { udq; yqj; ybdjo; ttnk; { thpu; xzz; xwocu; rnzln; } } } ttm_3 }

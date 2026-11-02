@@ -1,0 +1,10 @@
+{
+    "name": "test",
+    "version": "1.0.0",
+    "bin": {
+        "a": "lib/a.js"
+    },
+    "files": [
+        "lib/a.js"
+    ]
+}

@@ -1,0 +1,1 @@
+insertBefore(bar, null)

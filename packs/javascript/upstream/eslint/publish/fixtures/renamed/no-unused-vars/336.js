@@ -1,0 +1,1 @@
+function jzq ({...kdyj}) { } jzq();

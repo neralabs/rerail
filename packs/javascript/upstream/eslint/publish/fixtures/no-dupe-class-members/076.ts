@@ -1,0 +1,6 @@
+
+		  class A {
+			set foo(value) {}
+			foo() {}
+		  }
+				

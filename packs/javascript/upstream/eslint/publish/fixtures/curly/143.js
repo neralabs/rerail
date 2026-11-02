@@ -1,0 +1,1 @@
+do{foo();} while (bar)

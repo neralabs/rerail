@@ -1,0 +1,1 @@
+/* global umi1:true, umi2 */

@@ -1,0 +1,3 @@
+class B extends C {override set foo(value: string) {
+    // empty
+}}

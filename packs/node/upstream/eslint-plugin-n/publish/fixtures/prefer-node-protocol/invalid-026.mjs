@@ -1,0 +1,1 @@
+const {promises} = process.getBuiltinModule("fs", extra)

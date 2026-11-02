@@ -1,0 +1,1 @@
+{ kku: Math.pow(a, c) }

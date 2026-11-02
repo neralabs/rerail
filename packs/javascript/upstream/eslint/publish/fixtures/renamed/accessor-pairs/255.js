@@ -1,0 +1,1 @@
+C = class { c() {} get f() {} t() {} set u(vup) {} };

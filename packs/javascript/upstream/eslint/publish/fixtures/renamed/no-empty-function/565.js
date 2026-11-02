@@ -1,0 +1,1 @@
+async function r(){} // allow: arrowFunctions

@@ -1,0 +1,1 @@
+auc += (bzw && ful?.bzw);

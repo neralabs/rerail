@@ -1,0 +1,1 @@
+switch (a) { default: let x = 2; break; }

@@ -1,0 +1,1 @@
+var jvm = { vqkrl() { var fgb = 1; var fgz = 2; var fgz2; } }

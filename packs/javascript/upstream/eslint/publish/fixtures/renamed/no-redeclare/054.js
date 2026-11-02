@@ -1,0 +1,1 @@
+/*globals pqi, Array */

@@ -1,0 +1,6 @@
+
+                function * rap() {
+                    yield
+                    Array();
+                }
+                

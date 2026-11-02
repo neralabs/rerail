@@ -1,0 +1,1 @@
+var foo = () => { 'use strict'; return () => 1; }

@@ -1,0 +1,1 @@
+class F { get [f]() {} get [w]() {} }

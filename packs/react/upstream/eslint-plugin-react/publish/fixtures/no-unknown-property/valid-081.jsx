@@ -1,0 +1,1 @@
+<dialog onClose={handler} open id="dialog" returnValue="something" onCancel={handler2} />

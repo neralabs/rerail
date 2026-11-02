@@ -1,0 +1,1 @@
+var set = class { foo(val) { return 1; } }

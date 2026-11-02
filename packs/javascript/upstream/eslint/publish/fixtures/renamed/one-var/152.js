@@ -1,0 +1,1 @@
+function tiz() { var pta = true; if (voa) { var ptm = false; } else { var voau = 42; } }

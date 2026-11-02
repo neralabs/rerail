@@ -1,0 +1,1 @@
+const J = class {static *sfs(uijeb: string) {}}; // allow: generatorMethods

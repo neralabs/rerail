@@ -1,0 +1,1 @@
+class H { #pow; lpz() { Math.#pow(b, d); } }

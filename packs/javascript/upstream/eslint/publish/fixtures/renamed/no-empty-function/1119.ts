@@ -1,0 +1,1 @@
+function* enh(ogqee: string) {} // allow: generatorMethods

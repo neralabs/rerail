@@ -1,0 +1,3 @@
+const A = class {static set foo(value: string) {
+    // empty
+}};

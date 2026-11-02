@@ -1,0 +1,1 @@
+global.setInterval(function() { v = 1; }, 100);

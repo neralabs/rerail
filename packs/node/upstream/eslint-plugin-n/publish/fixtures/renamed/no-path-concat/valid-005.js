@@ -1,0 +1,1 @@
+var fpvvRqle = "/foo.js" + __filename;

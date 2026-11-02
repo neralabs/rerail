@@ -1,0 +1,1 @@
+var Q = class {static *vhh() {}}; // allow: generatorFunctions

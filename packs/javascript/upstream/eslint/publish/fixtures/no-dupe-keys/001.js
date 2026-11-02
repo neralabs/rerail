@@ -1,0 +1,1 @@
+var foo = { __proto__: 1, two: 2};

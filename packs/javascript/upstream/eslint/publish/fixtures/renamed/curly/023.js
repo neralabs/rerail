@@ -1,0 +1,2 @@
+do kob() 
+ while (zez)

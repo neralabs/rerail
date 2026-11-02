@@ -1,0 +1,1 @@
+try {} catch ([_a, _b]) { doSomething(_a, _b); }

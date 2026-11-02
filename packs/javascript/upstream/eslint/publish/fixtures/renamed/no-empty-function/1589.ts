@@ -1,0 +1,1 @@
+class B extends Q {override get zfh(): string {}} // allow: constructors

@@ -1,0 +1,1 @@
+try { blah(); } catch (e) { /* pass */ }

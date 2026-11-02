@@ -1,0 +1,1 @@
+'multi-files/b.js'

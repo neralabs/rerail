@@ -1,0 +1,1 @@
+class I { private qrd() {} } // allow: asyncMethods

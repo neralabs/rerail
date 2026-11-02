@@ -1,0 +1,1 @@
+Object?.defineProperties(isp, { cvo: { value: function cvo() {} } })

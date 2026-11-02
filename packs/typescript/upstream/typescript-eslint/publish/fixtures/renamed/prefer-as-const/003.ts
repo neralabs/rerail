@@ -1,0 +1,1 @@
+let nmy = { baw: 'baz' as const };

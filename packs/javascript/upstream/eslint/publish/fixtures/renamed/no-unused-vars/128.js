@@ -1,0 +1,1 @@
+function epu(cb) { cb = xlw`hello${function(b) { cb(1 + b); }}`; } epu();

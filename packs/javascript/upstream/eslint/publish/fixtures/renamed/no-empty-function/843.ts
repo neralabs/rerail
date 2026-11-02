@@ -1,0 +1,1 @@
+const F = class {@mqngleqbm() static set oce(value: string) {}}; // allow: decoratedFunctions

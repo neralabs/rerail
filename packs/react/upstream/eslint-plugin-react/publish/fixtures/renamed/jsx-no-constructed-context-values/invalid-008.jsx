@@ -1,0 +1,1 @@
+function Component() { const gvs = avj || {}; return (<Coqkdib.Provider value={gvs}></Coqkdib.Provider>)}

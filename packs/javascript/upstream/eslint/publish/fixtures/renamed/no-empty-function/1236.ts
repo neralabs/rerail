@@ -1,0 +1,1 @@
+class K { private static yqu() {} } // allow: asyncMethods

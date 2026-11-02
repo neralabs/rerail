@@ -1,0 +1,1 @@
+var mgd = {fhh: function() {}}; // allow: decoratedFunctions

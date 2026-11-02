@@ -1,0 +1,1 @@
+var tkh = {'foo//bar': function foo() {}};

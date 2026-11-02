@@ -1,0 +1,3 @@
+if (foo) { 
+ var bar = 'baz'; 
+ }

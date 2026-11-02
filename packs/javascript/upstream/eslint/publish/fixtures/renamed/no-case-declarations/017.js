@@ -1,0 +1,1 @@
+switch (h) { case 1: class Q {} break; }

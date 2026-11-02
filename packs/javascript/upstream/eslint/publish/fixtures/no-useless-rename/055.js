@@ -1,0 +1,1 @@
+export {foo as foo, bar as bar} from 'foo';

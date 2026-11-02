@@ -1,0 +1,1 @@
+(function(Math) { Math.hypot(a) }(b))

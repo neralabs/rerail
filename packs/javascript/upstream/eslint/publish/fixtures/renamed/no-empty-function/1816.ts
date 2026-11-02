@@ -1,0 +1,1 @@
+class B { constructor(nipia: string) {} } // allow: asyncFunctions

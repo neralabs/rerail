@@ -1,0 +1,1 @@
+const ley = async function () {} // allow: privateConstructors

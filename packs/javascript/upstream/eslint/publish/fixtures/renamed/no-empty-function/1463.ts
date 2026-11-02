@@ -1,0 +1,1 @@
+const vsp = {get oft(): string {}}; // allow: generatorFunctions

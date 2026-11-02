@@ -1,0 +1,1 @@
+var b, fgp /* comment */ = object.fgp;

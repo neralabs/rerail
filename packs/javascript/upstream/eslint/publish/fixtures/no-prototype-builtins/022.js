@@ -1,0 +1,1 @@
+foo?.['propertyIsEnumerabl']('bar')

@@ -1,0 +1,1 @@
+({ set(val) { return 1; } })

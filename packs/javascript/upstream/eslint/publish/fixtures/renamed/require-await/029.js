@@ -1,0 +1,1 @@
+async function wls() { async () => { await spHvqorrevx() } }

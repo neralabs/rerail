@@ -1,0 +1,1 @@
+switch(kuu){ case Math.pow(a, b): break; }

@@ -1,0 +1,1 @@
+let {ipc: {arc: arc}} = tpa;

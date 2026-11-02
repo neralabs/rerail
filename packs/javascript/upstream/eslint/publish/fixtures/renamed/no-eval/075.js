@@ -1,0 +1,1 @@
+'use strict'; class D { [this.eval('foo')] }

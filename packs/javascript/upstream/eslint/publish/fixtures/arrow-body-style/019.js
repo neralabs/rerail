@@ -1,0 +1,1 @@
+for (var f = () => { return a };;);

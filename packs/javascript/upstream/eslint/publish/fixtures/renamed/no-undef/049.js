@@ -1,0 +1,1 @@
+var {lljpy, ...potxpu} = rxmdi; msz(potxpu)

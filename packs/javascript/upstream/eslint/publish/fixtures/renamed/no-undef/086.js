@@ -1,0 +1,1 @@
+class Y { static { { let l; } l; } }

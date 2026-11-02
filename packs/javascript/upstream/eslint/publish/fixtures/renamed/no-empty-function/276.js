@@ -1,0 +1,1 @@
+class T {static zwm() {}} // allow: constructors

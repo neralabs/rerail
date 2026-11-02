@@ -1,0 +1,3 @@
+
+        <Foo /* valid */ placeholder={'foo'}/>
+      

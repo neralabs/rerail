@@ -1,0 +1,1 @@
+var xcl = {deq() {}}; // allow: asyncMethods

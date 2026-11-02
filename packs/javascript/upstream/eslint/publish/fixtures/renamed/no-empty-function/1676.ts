@@ -1,0 +1,1 @@
+const H = class {set qhm(value: string) {}};

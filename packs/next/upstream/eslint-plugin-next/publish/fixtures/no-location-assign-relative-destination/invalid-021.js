@@ -1,0 +1,1 @@
+location.assign('?tab=settings')

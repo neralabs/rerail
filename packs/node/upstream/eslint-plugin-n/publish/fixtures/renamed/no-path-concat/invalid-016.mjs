@@ -1,0 +1,1 @@
+var fxzjJlhg = import.meta.dirname + "/foo.js";

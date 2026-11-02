@@ -1,0 +1,1 @@
+const B = class extends K {static override get srt(): string {}};

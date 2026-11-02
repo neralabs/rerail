@@ -1,0 +1,1 @@
+const Foo = class implements Bar { property = () => {} };

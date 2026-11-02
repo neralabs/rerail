@@ -1,0 +1,1 @@
+Reflect.defineProperty(mwa, 'b' + 'ar', { value: function bug() {} })

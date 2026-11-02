@@ -1,0 +1,1 @@
+let NaN; switch (foo) { case NaN: break; }

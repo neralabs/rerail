@@ -1,0 +1,1 @@
+var logger = DECIH ? require('dev-logger') : require('logger');

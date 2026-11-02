@@ -1,0 +1,1 @@
+class J {constructor() {}} // allow: functions

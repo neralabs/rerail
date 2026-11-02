@@ -1,0 +1,1 @@
+gmd.lastIndexOf((1, NaN))

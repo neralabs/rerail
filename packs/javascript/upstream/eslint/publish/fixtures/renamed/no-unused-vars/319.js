@@ -1,0 +1,1 @@
+const { a: a1, c: c1 } = mpr; alert(c1);

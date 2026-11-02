@@ -1,0 +1,1 @@
+function s(){var w;function a(){w=42;}function m(){alert(w);}}

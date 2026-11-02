@@ -1,0 +1,1 @@
+function a([{d}, w]) { alert(w); } a();

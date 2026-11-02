@@ -1,0 +1,1 @@
+const D = class {@guodjqlnd() static set jst(value: string) {}}; // allow: constructors

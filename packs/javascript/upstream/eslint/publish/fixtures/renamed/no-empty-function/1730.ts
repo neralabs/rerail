@@ -1,0 +1,1 @@
+const D = class {@mleqzguqq() set ols(value: string) {}};

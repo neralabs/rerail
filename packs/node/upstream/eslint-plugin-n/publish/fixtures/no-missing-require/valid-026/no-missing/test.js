@@ -1,0 +1,1 @@
+require('no-exist-package-0');

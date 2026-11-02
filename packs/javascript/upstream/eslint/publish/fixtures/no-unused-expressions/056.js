@@ -1,0 +1,1 @@
+"directive one"; f(); "directive two";

@@ -1,0 +1,1 @@
+class A { foo() {that.this = 'this';} }

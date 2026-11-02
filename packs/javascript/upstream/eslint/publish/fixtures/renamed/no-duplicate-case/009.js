@@ -1,0 +1,1 @@
+var g = 1, m1 = function() { return { n1: 1 } }, m2 = function() { return { n1: 2 } }; switch (g) {case m1().n1: break; case m2().n1: break; default: break;}

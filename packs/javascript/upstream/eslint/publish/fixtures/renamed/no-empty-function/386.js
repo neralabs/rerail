@@ -1,0 +1,1 @@
+var qeb = {get hqw() {}}; // allow: generatorMethods

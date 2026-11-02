@@ -1,0 +1,1 @@
+var element = React.createElement('p', {}, null);

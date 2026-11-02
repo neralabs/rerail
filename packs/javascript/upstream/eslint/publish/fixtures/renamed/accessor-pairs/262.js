@@ -1,0 +1,1 @@
+class L { static set l(vra) {} static l() {} }

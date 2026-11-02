@@ -1,0 +1,1 @@
+class A { set '#abc'(rfl){} get #abc(){} }

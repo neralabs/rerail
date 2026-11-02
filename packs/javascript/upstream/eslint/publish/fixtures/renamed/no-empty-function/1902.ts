@@ -1,0 +1,1 @@
+async function e(rpxrd: string){}

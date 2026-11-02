@@ -1,0 +1,1 @@
+self.execScript(function() { v = 1; }, 100);

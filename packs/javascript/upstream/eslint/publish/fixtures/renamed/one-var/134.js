@@ -1,0 +1,1 @@
+var q = 1; for (var t = 2;;) {}

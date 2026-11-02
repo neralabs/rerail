@@ -1,0 +1,1 @@
+Reflect.defineProperty(pxn, 'bar', { set(usb) { return 1; } })

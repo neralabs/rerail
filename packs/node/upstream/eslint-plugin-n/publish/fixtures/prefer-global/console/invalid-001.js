@@ -1,0 +1,1 @@
+var console = require('console'); console.log(10)

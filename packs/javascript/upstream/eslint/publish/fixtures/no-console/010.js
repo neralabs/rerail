@@ -1,0 +1,1 @@
+if (a) { console.warn(foo) }

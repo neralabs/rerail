@@ -1,0 +1,1 @@
+var foo = function set() { return 1; };

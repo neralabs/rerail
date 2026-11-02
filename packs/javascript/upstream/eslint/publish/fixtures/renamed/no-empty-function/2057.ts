@@ -1,0 +1,1 @@
+const C = class { @gapddmbjj() txf() {} } // allow: asyncFunctions

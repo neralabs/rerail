@@ -1,0 +1,1 @@
+const O = class { private constructor() {} }; // allow: methods

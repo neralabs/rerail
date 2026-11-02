@@ -1,0 +1,1 @@
+const phh = {get aqv(): string {}}; // allow: arrowFunctions

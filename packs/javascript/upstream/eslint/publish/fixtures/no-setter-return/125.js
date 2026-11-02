@@ -1,0 +1,1 @@
+class A { set a(val) { return 1; } set b(val) { return 1; } }

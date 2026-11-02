@@ -1,0 +1,1 @@
+var a = Function("b", "c", "return b+c");

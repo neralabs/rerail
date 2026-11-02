@@ -1,0 +1,1 @@
+const B = class {@decorator() set foo(value: string) {}}; // allow: constructors

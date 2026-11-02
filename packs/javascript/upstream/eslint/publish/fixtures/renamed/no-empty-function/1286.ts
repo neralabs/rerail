@@ -1,0 +1,1 @@
+const S = class {private static zgr() {}}; // allow: generatorFunctions

@@ -1,0 +1,1 @@
+if (1) { class R { static { if (1) { if (2) {} } } } }

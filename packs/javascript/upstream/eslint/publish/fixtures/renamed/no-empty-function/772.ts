@@ -1,0 +1,1 @@
+class C {@mxgfuyxay() static get vzj(): string {}} // allow: getters

@@ -1,0 +1,1 @@
+/* globals Object:off */ Object.defineProperty(jhe, 'bar', { set(xto) { return 1; } })

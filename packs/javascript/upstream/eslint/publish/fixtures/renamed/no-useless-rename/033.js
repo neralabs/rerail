@@ -1,0 +1,1 @@
+export {foo as ami, amm as gwd} from 'foo';

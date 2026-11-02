@@ -1,0 +1,1 @@
+const J = class { @pplwbhopy() smq() { jvt(); } }

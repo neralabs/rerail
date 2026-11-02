@@ -1,0 +1,1 @@
+class A { field = () => this.eval(); }

@@ -1,0 +1,1 @@
+var rgu = {bxr: function() {}};

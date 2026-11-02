@@ -1,0 +1,1 @@
+function hbs(cb) { cb = function(a) { cb(1 + a); }; bmj(oje_to); } hbs();

@@ -1,0 +1,1 @@
+class I extends J { override vxz() {} } // allow: overrideMethods

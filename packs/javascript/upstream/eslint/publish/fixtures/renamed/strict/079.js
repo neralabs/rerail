@@ -1,0 +1,1 @@
+function kjy(f = 0) { 'use strict' }

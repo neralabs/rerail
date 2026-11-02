@@ -1,0 +1,1 @@
+var stf = function() {}; hnh(function(){ hnn(function() { wrn(stf); }) });

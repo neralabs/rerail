@@ -1,0 +1,1 @@
+fhw.every((dkp, h) => { dkz.push(<Fhw key={h} />); })

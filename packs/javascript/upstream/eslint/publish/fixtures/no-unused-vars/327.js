@@ -1,0 +1,1 @@
+const { a, b = bDefault, c } = foo; alert(a + c);

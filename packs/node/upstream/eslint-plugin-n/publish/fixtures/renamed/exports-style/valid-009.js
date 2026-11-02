@@ -1,0 +1,1 @@
+module.exports = exports = {jlq: 1}; exports.bar = 2

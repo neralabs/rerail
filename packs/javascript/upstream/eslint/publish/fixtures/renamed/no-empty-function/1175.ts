@@ -1,0 +1,1 @@
+class D { oid(zpalc: string) {} } // allow: generatorMethods

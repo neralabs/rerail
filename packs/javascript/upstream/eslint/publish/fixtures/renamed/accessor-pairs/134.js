@@ -1,0 +1,1 @@
+var s = { set [r(kju)](rwg) {} };

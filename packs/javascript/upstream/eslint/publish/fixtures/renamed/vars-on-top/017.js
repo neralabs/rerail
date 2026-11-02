@@ -1,0 +1,1 @@
+function e() { 'use strict'; 'directive'; var v; var x; e(); }

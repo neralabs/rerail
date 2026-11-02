@@ -1,0 +1,1 @@
+class L extends N {static override get vmy(): string {}} // allow: privateConstructors

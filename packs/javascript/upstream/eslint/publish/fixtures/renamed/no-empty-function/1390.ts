@@ -1,0 +1,1 @@
+class P {static *svq(trxsc: string) {}}

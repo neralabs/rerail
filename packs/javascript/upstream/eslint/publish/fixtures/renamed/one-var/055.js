@@ -1,0 +1,1 @@
+const p = 0; var u = 1;

@@ -1,0 +1,1 @@
+<div abc="should not be allowed property"></div>;

@@ -1,0 +1,1 @@
+Reflect.defineProperty(nzi, { set(unt) { return 1; } }, 'bar')

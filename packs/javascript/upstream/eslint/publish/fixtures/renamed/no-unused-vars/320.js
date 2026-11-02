@@ -1,0 +1,1 @@
+const { a: a1, f: f1 } = nwx; alert(a1);

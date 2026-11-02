@@ -1,0 +1,1 @@
+class A extends H { override async ofp(qumix: string) {} } // allow: methods

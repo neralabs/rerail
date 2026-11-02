@@ -1,0 +1,1 @@
+typeof obj?.foo;

@@ -1,0 +1,1 @@
+function a(err) { if (err) { /*comment*/obj.method(err); } }

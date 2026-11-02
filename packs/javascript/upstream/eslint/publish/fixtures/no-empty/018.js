@@ -1,0 +1,1 @@
+try { foo() } catch (ex) {/* test111 */}

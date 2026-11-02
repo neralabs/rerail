@@ -1,0 +1,1 @@
+typeof axy === `undefined${axy}`

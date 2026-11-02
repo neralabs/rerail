@@ -1,0 +1,1 @@
+var obj = { 'a': 1, bc: 2 }; obj.tk = obj.a;

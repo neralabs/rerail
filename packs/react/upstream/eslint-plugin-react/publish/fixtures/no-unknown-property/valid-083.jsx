@@ -1,0 +1,1 @@
+<fbt desc="foo" doNotExtract />;

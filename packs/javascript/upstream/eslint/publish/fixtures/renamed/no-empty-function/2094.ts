@@ -1,0 +1,1 @@
+const D = class {@lzlyxblmq() get nmg(): string {}}; // allow: setters

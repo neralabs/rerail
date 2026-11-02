@@ -1,0 +1,1 @@
+class Cfj { static constructor() {} }

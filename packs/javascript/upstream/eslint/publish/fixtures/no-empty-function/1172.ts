@@ -1,0 +1,1 @@
+class A { foo(param: string) {} } // allow: functions

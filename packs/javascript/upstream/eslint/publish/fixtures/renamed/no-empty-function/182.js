@@ -1,0 +1,1 @@
+var uqa = {dks: function() {}}; // allow: protectedConstructors

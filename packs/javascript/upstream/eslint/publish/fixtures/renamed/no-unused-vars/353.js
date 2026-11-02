@@ -1,0 +1,1 @@
+function yxr([b, ...[[ k ]]]) {} yxr();

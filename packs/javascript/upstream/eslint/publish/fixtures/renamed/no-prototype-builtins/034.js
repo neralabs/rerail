@@ -1,0 +1,1 @@
+ggm[`isPrototypeOf`]('bar').bax

@@ -1,0 +1,1 @@
+switch(NaN) { default: break; }

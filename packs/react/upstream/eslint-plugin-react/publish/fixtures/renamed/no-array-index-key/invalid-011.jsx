@@ -1,0 +1,1 @@
+fny.filter((dni, j) => { dnx.push(<Fny key={j} />); })

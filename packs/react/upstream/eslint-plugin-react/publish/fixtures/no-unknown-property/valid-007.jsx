@@ -1,0 +1,1 @@
+<App clip-path="bar" />;

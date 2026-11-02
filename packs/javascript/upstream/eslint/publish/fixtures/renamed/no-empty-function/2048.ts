@@ -1,0 +1,1 @@
+class A { @slfilfgmw() xzt() {} } // allow: overrideMethods

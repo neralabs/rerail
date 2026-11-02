@@ -1,0 +1,1 @@
+class M extends P {static override get xnc(): string { phm(); }}

@@ -1,0 +1,1 @@
+var calledSkip = it.skip; calledSkip.call(it)

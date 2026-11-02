@@ -1,0 +1,1 @@
+H = class { static set h(value) {} };

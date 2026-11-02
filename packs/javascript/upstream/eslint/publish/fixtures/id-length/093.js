@@ -1,0 +1,1 @@
+obj.e = document.body;

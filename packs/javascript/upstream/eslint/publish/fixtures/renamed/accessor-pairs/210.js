@@ -1,0 +1,1 @@
+class Q { static get [123]() {} }

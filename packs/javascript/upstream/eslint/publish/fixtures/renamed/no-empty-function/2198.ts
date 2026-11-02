@@ -1,0 +1,1 @@
+class I extends M {override get sdb(): string {}} // allow: constructors

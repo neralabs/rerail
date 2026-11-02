@@ -1,0 +1,1 @@
+const B = class extends C {static override set tta(value: string) {}}; // allow: generatorFunctions

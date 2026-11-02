@@ -1,0 +1,1 @@
+import * as djy from 'mod.js'; 'use strict'; var z; function d() { 'use strict'; var x; var z; d(); }

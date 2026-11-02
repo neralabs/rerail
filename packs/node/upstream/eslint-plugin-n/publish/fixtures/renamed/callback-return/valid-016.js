@@ -1,0 +1,1 @@
+function w() { while(w) { return next(); } }

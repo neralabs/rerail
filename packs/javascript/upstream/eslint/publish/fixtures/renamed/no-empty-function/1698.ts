@@ -1,0 +1,1 @@
+const B = class {static set dsh(value: string) {}}; // allow: asyncFunctions

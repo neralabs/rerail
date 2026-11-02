@@ -1,0 +1,1 @@
+var w = { get abc() {}, set [`abc`](ntp) {} };

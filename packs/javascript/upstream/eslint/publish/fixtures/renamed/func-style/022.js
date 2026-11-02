@@ -1,0 +1,1 @@
+var cps = function(){};

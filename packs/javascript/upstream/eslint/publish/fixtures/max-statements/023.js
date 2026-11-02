@@ -1,0 +1,1 @@
+function foo() { var bar = 1; if (true) { while (false) { var qux = null; } } return 3; }

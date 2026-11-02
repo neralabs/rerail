@@ -1,0 +1,1 @@
+Reflect.defineProperty(odf, 'bar', { set(ugz) { if (ugz) { return; } } })

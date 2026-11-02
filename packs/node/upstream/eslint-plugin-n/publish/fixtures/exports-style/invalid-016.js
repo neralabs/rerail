@@ -1,0 +1,1 @@
+if(foo){ module.exports = { foo: 1};} else { module.exports = {foo: 2};}

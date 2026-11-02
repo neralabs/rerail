@@ -1,0 +1,1 @@
+foo.map((aha, g) => <Foo key={'foo-' + g} />)

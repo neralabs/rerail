@@ -1,0 +1,1 @@
+var fxpcGgrp = __dirname + "\/foo.js";

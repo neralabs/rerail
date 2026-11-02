@@ -1,0 +1,1 @@
+class F {@mkipweyls() get vfm(): string {}} // allow: functions

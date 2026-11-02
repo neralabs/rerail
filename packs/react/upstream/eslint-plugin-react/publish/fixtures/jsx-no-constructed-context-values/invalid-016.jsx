@@ -1,0 +1,1 @@
+function Component() { return (<Context.Provider value={{foo: "bar"}}></Context.Provider>);}

@@ -1,0 +1,1 @@
+class A { @dgjaophmo() elu() {} } // allow: generatorFunctions

@@ -1,0 +1,1 @@
+const kcb = { async rlmwuw() {} } // allow: protectedConstructors

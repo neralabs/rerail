@@ -1,0 +1,1 @@
+const D = class {@uqnfwyaxz() get vrt(): string {}}; // allow: generatorMethods

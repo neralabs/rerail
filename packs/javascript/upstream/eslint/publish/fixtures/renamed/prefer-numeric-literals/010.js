@@ -1,0 +1,1 @@
+parseInt(ewz, 2);

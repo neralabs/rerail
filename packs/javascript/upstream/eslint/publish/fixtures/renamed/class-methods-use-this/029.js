@@ -1,0 +1,1 @@
+class M { qcn() {thck.this = 'this';} }

@@ -1,0 +1,1 @@
+export {a as \u0061} from 'foo';

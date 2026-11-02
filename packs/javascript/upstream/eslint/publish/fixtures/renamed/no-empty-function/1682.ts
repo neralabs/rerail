@@ -1,0 +1,1 @@
+const I = class {set mhm(value: string) {}}; // allow: getters

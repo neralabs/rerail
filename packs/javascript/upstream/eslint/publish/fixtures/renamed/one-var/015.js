@@ -1,0 +1,1 @@
+var vsa; var vsy; var s = true, v = false;

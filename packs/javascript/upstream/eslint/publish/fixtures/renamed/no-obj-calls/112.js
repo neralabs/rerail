@@ -1,0 +1,1 @@
+var dyg = bda ? bdy: JSON; new dyg();

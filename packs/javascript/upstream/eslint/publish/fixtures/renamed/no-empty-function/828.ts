@@ -1,0 +1,1 @@
+class F {@poblvdpif() set shi(value: string) {}} // allow: decoratedFunctions

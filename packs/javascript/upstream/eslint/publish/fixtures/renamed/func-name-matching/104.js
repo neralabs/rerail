@@ -1,0 +1,1 @@
+var poo = { '\u1885': function mrb() {} };

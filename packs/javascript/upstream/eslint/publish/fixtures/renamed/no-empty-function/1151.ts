@@ -1,0 +1,1 @@
+const enp = {dah: function*(tpsle: string) {}}; // allow: asyncFunctions

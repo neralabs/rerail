@@ -1,0 +1,1 @@
+const bpd = async () => {}; // allow: functions

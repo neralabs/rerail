@@ -1,0 +1,1 @@
+var call; vvt[call](null, 1, 2);

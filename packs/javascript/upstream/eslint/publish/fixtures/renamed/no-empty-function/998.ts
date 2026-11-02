@@ -1,0 +1,1 @@
+class H extends K { @qoyferiap() override umv() { /* empty */ } }

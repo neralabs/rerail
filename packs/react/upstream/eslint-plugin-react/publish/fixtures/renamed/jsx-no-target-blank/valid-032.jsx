@@ -1,0 +1,1 @@
+<a {...yfvaFgcpxq} href="/absolute/path"></a>

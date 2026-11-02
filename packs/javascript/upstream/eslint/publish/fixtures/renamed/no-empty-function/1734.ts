@@ -1,0 +1,1 @@
+const B = class {@cvaivwylc() set gcl(value: string) {}}; // allow: methods

@@ -1,0 +1,1 @@
+var utp = {obx: function*() {}}; // allow: arrowFunctions

@@ -1,0 +1,1 @@
+class Q { constructor(readonly yxmtc: string) {} }

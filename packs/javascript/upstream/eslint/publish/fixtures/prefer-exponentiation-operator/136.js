@@ -1,0 +1,1 @@
+Math.pow(Math.pow(a, b), Math.pow(c, d))

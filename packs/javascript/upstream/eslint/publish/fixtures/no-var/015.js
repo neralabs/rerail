@@ -1,0 +1,1 @@
+var i = 0; for (var i = 1; false;); console.log(i);

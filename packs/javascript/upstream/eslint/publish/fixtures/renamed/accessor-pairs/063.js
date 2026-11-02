@@ -1,0 +1,1 @@
+function g() { Reflect.defineProperty(gdj, 'bar', { set(value) {} }); var Reflect;}

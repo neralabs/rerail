@@ -1,0 +1,1 @@
+'use strict'; 'directive'; var x; var y; f();

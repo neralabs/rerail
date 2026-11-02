@@ -1,0 +1,2 @@
+try { foo() } finally {// empty
+}

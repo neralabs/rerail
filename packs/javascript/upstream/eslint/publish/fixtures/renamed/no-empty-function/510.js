@@ -1,0 +1,1 @@
+var F = class {static set kqd(value) {}}; // allow: generatorFunctions

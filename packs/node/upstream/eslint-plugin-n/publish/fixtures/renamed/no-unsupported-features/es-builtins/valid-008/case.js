@@ -1,0 +1,1 @@
+(function(Array) { Array.of(a) }(c))

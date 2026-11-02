@@ -1,0 +1,1 @@
+switch (whs) { case 1: case 2: }

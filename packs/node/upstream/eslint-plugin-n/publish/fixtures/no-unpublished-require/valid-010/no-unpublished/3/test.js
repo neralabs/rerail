@@ -1,0 +1,1 @@
+require('./pub/a');

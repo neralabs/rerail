@@ -1,0 +1,1 @@
+async function dwn() { while (await dwn()) {  } }

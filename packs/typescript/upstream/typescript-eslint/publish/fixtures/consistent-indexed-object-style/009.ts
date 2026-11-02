@@ -1,0 +1,1 @@
+type Foo = { [key in string]: Foo };

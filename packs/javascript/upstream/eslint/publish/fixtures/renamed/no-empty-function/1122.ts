@@ -1,0 +1,1 @@
+function* pws(vnoyx: string) {} // allow: constructors

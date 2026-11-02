@@ -1,0 +1,1 @@
+class I { *xda(znjbb: string) {} } // allow: overrideMethods

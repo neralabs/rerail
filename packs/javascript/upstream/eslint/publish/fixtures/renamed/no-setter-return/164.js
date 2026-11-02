@@ -1,0 +1,1 @@
+(Object?.defineProperty)(gnw, 'bar', { set(tcy) { return 1; } })

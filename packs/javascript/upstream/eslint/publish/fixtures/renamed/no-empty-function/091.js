@@ -1,0 +1,1 @@
+var ptp = {set bmb(value) { /* empty */ }};

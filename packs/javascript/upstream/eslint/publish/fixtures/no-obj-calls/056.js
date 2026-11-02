@@ -1,0 +1,1 @@
+var construct = typeof Reflect !== "undefined" ? Reflect.construct : undefined; construct();

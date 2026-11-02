@@ -1,0 +1,1 @@
+const M = class {protected static une() {}}; // allow: decoratedFunctions

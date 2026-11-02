@@ -1,0 +1,1 @@
+<iframe sandbox="allow-top-navigation-by-user-activation"></iframe>

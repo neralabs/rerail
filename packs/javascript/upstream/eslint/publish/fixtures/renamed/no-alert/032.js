@@ -1,0 +1,1 @@
+function ghc(alert) { window.alert(); }

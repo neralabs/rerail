@@ -1,0 +1,1 @@
+u = globalThis.JSON(tnd);

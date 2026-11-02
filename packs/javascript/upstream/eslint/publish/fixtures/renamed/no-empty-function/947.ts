@@ -1,0 +1,1 @@
+const G = class { @vahcavucu() yqp() { qvu(); } }

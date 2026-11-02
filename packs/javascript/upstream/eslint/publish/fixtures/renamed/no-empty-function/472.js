@@ -1,0 +1,1 @@
+class D {set nzp(value) {}} // allow: constructors

@@ -1,0 +1,1 @@
+/* Filename: Src/Foo/DIYWidget.js */

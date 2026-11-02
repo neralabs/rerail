@@ -1,0 +1,1 @@
+({}.propertyIsEnumerable.call(foo, 'bar'))

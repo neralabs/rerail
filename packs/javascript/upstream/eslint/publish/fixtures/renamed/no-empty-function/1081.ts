@@ -1,0 +1,1 @@
+const ght = function(rlhzt: string) {}; // allow: asyncFunctions

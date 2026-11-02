@@ -1,0 +1,1 @@
+var a = new _function("b", "c", "return b+c");

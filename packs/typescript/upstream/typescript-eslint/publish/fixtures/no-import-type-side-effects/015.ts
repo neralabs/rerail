@@ -1,0 +1,1 @@
+import { type A as AA, type B as BB } from 'mod';

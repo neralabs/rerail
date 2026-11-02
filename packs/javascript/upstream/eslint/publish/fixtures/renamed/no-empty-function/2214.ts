@@ -1,0 +1,1 @@
+class H extends O {static override get pfc(): string {}} // allow: privateConstructors

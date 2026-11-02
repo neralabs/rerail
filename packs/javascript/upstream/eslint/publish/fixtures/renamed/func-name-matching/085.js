@@ -1,0 +1,1 @@
+class B { 'xy ' = function xy() {}; }

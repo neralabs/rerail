@@ -1,0 +1,1 @@
+var d = 0; var n, t; var z = 1;

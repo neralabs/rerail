@@ -1,0 +1,1 @@
+const B = class {get run(): string { kkt(); }};

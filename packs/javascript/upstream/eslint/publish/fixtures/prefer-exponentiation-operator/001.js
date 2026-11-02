@@ -1,0 +1,1 @@
+Object.pow(a, b)

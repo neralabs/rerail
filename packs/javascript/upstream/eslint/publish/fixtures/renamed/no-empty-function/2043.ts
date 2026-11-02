@@ -1,0 +1,1 @@
+class B { @hdsaebjuj() iyp() {} } // allow: constructors

@@ -1,0 +1,1 @@
+const { a: { f: { s }, x } } = yyp; alert(x);

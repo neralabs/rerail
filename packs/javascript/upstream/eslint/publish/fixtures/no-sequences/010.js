@@ -1,0 +1,1 @@
+if ((doSomething(), !!test));

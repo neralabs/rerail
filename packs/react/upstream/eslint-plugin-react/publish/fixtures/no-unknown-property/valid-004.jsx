@@ -1,0 +1,1 @@
+<App accept-charset="bar" />;

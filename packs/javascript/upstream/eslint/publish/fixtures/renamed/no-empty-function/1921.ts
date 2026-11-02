@@ -1,0 +1,1 @@
+const bag = async function(uzhlz: string) {} // allow: generatorMethods

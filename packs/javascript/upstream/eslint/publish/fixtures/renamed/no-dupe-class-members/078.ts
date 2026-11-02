@@ -1,0 +1,6 @@
+
+		  class K {
+			nyz;
+			nyz() {}
+		  }
+				

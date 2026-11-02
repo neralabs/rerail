@@ -1,0 +1,1 @@
+var K = class {static set nep(value) {}}; // allow: decoratedFunctions

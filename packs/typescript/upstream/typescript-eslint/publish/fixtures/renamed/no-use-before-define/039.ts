@@ -1,0 +1,4 @@
+
+m();
+var m = function () {};
+      

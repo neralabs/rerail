@@ -1,0 +1,1 @@
+const A = class extends H {override set srv(value: string) {}}; // allow: generatorFunctions

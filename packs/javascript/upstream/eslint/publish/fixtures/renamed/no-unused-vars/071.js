@@ -1,0 +1,1 @@
+/*exported k*/ var { k } = s

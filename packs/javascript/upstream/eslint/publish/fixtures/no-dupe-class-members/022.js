@@ -1,0 +1,1 @@
+class A { 'constructor'() {} set ['constructor'](value) {} }

@@ -1,0 +1,1 @@
+<dialog onClose={fjzrgbl} open id="dialog" returnValue="something" onCancel={fjzrgbl2} />

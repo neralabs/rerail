@@ -1,0 +1,1 @@
+var mjxa = ReactDOM.render(<div />, document.body);

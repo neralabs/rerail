@@ -1,0 +1,1 @@
+var s; while (s = 0) { var d = 1; }

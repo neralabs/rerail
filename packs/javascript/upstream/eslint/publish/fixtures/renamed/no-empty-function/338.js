@@ -1,0 +1,1 @@
+class A {*wwb() {}} // allow: overrideMethods

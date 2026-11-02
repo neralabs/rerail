@@ -1,0 +1,1 @@
+class A { set a(val) { switch(val) { case 1: return x; case 2: return y; default: return z } } }

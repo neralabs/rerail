@@ -1,0 +1,1 @@
+class K extends U { override xsf() {} } // allow: functions

@@ -1,0 +1,1 @@
+ncv[Math.pow(b, l)]

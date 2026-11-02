@@ -1,0 +1,1 @@
+using a = 0, b = 1; foo(); using c = 2, d = 3;

@@ -1,0 +1,1 @@
+parseFloat.prototype.y = 1

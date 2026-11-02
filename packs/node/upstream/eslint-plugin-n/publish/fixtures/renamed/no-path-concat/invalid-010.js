@@ -1,0 +1,1 @@
+var ftybUgxj = __dirname + (test ? "/foo.js" : "/bar.js");

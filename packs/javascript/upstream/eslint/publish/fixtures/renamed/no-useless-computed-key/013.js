@@ -1,0 +1,1 @@
+class Jfy { ['constructor']() {} }

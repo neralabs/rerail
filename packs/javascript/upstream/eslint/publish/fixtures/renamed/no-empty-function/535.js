@@ -1,0 +1,1 @@
+var N = class {constructor() {}};

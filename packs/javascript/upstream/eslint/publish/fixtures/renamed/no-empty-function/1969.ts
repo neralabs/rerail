@@ -1,0 +1,1 @@
+class B extends H { override async lhd(umzfb: string) {} } // allow: decoratedFunctions

@@ -1,0 +1,1 @@
+for (const e of iterate()) { /* ... */ }

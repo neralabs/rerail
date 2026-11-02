@@ -1,0 +1,1 @@
+class O extends P { override async rrs(unhtp: string) { ouf(); } }

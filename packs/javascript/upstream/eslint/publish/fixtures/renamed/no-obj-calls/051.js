@@ -1,0 +1,1 @@
+function gnd(JSON) { new JSON(); }

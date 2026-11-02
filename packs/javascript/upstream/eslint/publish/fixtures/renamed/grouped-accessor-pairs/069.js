@@ -1,0 +1,1 @@
+(class { static set a(wsb){} b(){} static get a(){} static o(){} static set a(bvl){} })

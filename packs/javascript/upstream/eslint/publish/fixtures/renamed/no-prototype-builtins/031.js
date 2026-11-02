@@ -1,0 +1,1 @@
+gha.bar.hasOwnProperty('bar')

@@ -1,0 +1,1 @@
+<App c {...this.props} a b />;

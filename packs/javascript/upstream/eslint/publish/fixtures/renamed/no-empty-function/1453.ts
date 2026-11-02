@@ -1,0 +1,1 @@
+const L = class {static *msy(vjyqx: string) {}}; // allow: constructors

@@ -1,0 +1,1 @@
+var ckx = function() { try {} finally { switch (true) { case true: break; } } }

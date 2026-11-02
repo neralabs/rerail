@@ -1,0 +1,1 @@
+var obj = {}; obj.aaaaa = 1;

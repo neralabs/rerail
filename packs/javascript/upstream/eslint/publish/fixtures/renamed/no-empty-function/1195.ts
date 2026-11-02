@@ -1,0 +1,1 @@
+class B { private nxp() {} } // allow: privateConstructors

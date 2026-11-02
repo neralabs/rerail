@@ -1,0 +1,3 @@
+
+        <Foo title={'foo' /* valid */}/>
+      

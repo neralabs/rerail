@@ -1,0 +1,1 @@
+I: while(true) { continue /**/ I; }

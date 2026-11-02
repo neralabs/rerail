@@ -1,0 +1,1 @@
+class B { #k; cur(a) { u = a.#k; } }

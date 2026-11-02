@@ -1,0 +1,1 @@
+let foo: 'baz' = 'baz' as const;

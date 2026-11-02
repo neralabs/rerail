@@ -1,0 +1,1 @@
+function fn(a: number, b: boolean, c: string) {}

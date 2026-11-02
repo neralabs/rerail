@@ -1,0 +1,1 @@
+let NaN; if (t === NaN) {}

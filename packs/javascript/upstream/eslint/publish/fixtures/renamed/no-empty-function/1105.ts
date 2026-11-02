@@ -1,0 +1,1 @@
+const ntu = (risdp: string) => {}; // allow: generatorMethods

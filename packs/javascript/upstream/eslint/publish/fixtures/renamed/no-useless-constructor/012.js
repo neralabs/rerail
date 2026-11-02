@@ -1,0 +1,1 @@
+class G extends K { constructor(g, k, u) { super(g, k); } }

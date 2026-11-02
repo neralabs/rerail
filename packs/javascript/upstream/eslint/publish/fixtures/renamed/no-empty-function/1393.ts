@@ -1,0 +1,1 @@
+class L {static *obj(ubiih: string) {}} // allow: generatorFunctions

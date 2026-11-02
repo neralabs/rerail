@@ -1,0 +1,1 @@
+J: for (var v = 0; v < 10; ++v) { ujl(); if (j) break J; mco(); }

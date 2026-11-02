@@ -1,0 +1,1 @@
+(Object?.create)(null, {gzd: {set: function(value) {}}});

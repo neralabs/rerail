@@ -1,0 +1,1 @@
+(parseInt('A', 16))in foo

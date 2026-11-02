@@ -1,0 +1,1 @@
+let Number; if (w === Number.NaN) {}

@@ -1,0 +1,4 @@
+
+async function notAHook() {
+  useId();
+}

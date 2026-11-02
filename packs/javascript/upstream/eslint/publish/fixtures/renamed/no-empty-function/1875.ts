@@ -1,0 +1,1 @@
+const R = class { protected constructor() {} }

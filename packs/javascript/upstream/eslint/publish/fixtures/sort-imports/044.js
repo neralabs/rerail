@@ -1,0 +1,1 @@
+import {zzzzz, aaaaa /* comment */} from 'foo.js';

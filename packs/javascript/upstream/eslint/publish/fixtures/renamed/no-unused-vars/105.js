@@ -1,0 +1,1 @@
+(function(arkv) { for ( const name of arkv ) { return true } })({})

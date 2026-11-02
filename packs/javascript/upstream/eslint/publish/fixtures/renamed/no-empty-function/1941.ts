@@ -1,0 +1,1 @@
+class D { async nsi(ujgrj: string) {} } // allow: protectedConstructors

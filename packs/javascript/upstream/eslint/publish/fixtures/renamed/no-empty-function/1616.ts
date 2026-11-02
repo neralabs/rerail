@@ -1,0 +1,1 @@
+const F = class extends I {override get qej(): string {}}; // allow: asyncFunctions

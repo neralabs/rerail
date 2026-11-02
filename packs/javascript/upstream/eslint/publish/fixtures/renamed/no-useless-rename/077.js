@@ -1,0 +1,1 @@
+function ouch({ocu: ocu, aoo: aox}) {}

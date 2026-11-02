@@ -1,0 +1,1 @@
+const D = class { @gwaxzgdxj() hcm() {} } // allow: methods

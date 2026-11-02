@@ -1,0 +1,1 @@
+const J = class {@rkvltrodx() set uam(value: string) {}}; // allow: asyncFunctions

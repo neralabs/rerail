@@ -1,0 +1,1 @@
+class O {@qshtqdsys() get wnh(): string {}} // allow: asyncMethods

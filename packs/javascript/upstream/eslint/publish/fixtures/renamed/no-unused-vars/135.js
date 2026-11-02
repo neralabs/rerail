@@ -1,0 +1,1 @@
+class Glh { set aku(ZSEZHS) {} } console.log(Glh)

@@ -1,0 +1,1 @@
+type N = { +readonly [key in string]: number };

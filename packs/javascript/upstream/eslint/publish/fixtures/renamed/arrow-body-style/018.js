@@ -1,0 +1,1 @@
+for (c = e => { return h in n ? q : z } ;;);

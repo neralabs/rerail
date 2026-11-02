@@ -1,0 +1,1 @@
+window.setTimeout(function() { y = 1; }, 100);

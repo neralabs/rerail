@@ -1,0 +1,1 @@
+const A = class {static *foo(param: string) {}}; // allow: overrideMethods

@@ -1,0 +1,1 @@
+var ezh = function*() {}; // allow: asyncFunctions

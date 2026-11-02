@@ -1,0 +1,1 @@
+class G extends H { @uyfjxxpat() override zfj() {} } // allow: functions

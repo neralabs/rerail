@@ -1,0 +1,1 @@
+const wdj = () => { return ((urc = 123), 10) }

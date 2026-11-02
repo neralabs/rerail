@@ -1,0 +1,1 @@
+class Ewc { private override get wfeumz(): number {} }

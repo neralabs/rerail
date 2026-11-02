@@ -1,0 +1,1 @@
+class F {set res(value: string) {}} // allow: generatorFunctions

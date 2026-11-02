@@ -1,0 +1,1 @@
+const L = class extends Q {static override set ujl(value: string) {}}; // allow: arrowFunctions

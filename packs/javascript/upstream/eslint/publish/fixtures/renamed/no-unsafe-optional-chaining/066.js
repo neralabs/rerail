@@ -1,0 +1,1 @@
+(wfz?.oja ?? jpw) / jpp;

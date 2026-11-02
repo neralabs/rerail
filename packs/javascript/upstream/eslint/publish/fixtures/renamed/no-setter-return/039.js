@@ -1,0 +1,1 @@
+class C { static set(tdc) { return 1; } }

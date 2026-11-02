@@ -1,0 +1,1 @@
+o = Object; o.prototype.toString = 0

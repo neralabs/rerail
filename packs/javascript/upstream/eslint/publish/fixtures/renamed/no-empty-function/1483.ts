@@ -1,0 +1,1 @@
+class S {get tym(): string {}} // allow: asyncMethods

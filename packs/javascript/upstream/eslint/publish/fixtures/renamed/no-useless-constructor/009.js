@@ -1,0 +1,1 @@
+class A extends G.Q { constructor() { super(trh); } }

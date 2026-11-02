@@ -1,0 +1,1 @@
+if (foo) { const Intl = 1; Intl(); }

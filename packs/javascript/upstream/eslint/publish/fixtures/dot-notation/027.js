@@ -1,0 +1,1 @@
+class C { #in; foo() { this.#in; } }

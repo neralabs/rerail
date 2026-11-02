@@ -1,0 +1,1 @@
+let zmxwNalcpfk: Promise<void> = new Promise<void>(() => {});

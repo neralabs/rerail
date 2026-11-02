@@ -1,0 +1,1 @@
+adz?.indexOf(NaN)

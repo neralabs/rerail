@@ -1,0 +1,1 @@
+function kzc() { var gyc = true; var gyr = false; }

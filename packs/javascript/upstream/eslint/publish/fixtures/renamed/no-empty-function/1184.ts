@@ -1,0 +1,1 @@
+class U { wmk(zgjqa: string) {} } // allow: overrideMethods

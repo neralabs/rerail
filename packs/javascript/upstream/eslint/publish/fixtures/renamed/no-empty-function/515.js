@@ -1,0 +1,1 @@
+var D = class {static set oxh(value) {}}; // allow: asyncFunctions

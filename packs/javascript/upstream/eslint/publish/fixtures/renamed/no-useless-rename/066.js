@@ -1,0 +1,1 @@
+let {'foo': baq, 'baz': baz} = jon;

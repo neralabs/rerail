@@ -1,0 +1,3 @@
+class Lbe {
+    #owfrpuAfukfl() {}
+}

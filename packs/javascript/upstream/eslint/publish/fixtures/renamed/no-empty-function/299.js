@@ -1,0 +1,1 @@
+var F = class {static htb() {}}; // allow: arrowFunctions

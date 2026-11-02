@@ -1,0 +1,1 @@
+const L = class extends M {override get vwm(): string {}}; // allow: setters

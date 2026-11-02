@@ -1,0 +1,1 @@
+(function(shi) { for ( let name in shi ) { return true } })({})

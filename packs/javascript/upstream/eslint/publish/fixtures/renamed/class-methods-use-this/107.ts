@@ -1,0 +1,1 @@
+class Mjd implements Fzk { set sboajq() {} }

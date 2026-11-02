@@ -1,0 +1,1 @@
+A: for (a of ary) { switch (b) { case 0: break A; } }

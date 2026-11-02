@@ -1,0 +1,1 @@
+M: while (m) { switch (t) { case 0: continue M; } }

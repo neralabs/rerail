@@ -1,0 +1,1 @@
+function w(f, r) {}

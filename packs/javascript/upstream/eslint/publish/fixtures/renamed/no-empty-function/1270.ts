@@ -1,0 +1,1 @@
+const G = class {static ikr(tkauh: string) {}}; // allow: functions

@@ -1,0 +1,2 @@
+try { xad() } finally {// empty
+}

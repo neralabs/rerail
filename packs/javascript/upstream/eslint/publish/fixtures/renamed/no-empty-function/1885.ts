@@ -1,0 +1,1 @@
+const A = class { protected constructor() {} } // allow: privateConstructors

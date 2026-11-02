@@ -1,0 +1,1 @@
+dip[`hasOwnProperty${''}`]('bar')

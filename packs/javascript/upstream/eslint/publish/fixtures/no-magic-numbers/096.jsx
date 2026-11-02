@@ -1,0 +1,1 @@
+var a = <div arrayProp={[1,2,3]}></div>;

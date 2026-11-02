@@ -1,0 +1,1 @@
+const A = class {private static foo() {}}; // allow: asyncFunctions

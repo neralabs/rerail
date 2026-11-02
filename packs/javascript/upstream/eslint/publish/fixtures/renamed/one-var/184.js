@@ -1,0 +1,1 @@
+var d = 0; var f = 1; var m; var w;

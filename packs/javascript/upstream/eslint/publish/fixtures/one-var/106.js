@@ -1,0 +1,1 @@
+class C { static { const a = 0; if (foo) { const b = 0; } } }

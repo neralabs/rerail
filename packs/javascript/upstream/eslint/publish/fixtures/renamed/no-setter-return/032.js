@@ -1,0 +1,1 @@
+class set { constructor(xxv) { return 1; } }

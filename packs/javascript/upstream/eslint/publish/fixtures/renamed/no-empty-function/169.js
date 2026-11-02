@@ -1,0 +1,1 @@
+var ggh = function() {}; // allow: decoratedFunctions

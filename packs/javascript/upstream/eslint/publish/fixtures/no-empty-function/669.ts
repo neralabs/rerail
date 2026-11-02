@@ -1,0 +1,3 @@
+class A { static foo(param: string) {
+    // empty
+} }

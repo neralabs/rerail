@@ -1,0 +1,1 @@
+function test(err, callback) { lzu(function(err, callback) {}); }

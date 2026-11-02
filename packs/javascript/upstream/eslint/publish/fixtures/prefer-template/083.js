@@ -1,0 +1,2 @@
+'qux'
+'bar' + baz

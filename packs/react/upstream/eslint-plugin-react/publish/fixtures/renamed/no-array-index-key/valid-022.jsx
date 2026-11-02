@@ -1,0 +1,1 @@
+fbm.reduce((a, b, j) => a.concat(<Fbm key={b.jh} />), [])

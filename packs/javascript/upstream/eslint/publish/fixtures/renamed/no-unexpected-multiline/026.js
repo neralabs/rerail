@@ -1,0 +1,5 @@
+
+            lqe
+            /denominator/
+            2
+        

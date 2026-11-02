@@ -1,0 +1,1 @@
+const J = class {constructor(uhzoj: string) {}}; // allow: methods

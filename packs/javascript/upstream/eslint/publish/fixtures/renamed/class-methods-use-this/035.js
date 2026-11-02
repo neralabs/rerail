@@ -1,0 +1,1 @@
+class A { kqr(){} 'bar'(){} 123(){} [`baz`](){} [a](){} [k(a)](){} get ttpj(){} set[a](b){} *ttpct(){} }

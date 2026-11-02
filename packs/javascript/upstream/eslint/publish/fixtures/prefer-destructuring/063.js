@@ -1,0 +1,1 @@
+var foo = bar/* comment */.baz/* comment */.foo;

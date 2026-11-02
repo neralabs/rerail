@@ -1,0 +1,1 @@
+const I = class { protected constructor() {} } // allow: decoratedFunctions

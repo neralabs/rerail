@@ -1,0 +1,1 @@
+<form action="https://example.com" target="_blank" rel="noopener noreferrer"></form>

@@ -1,0 +1,1 @@
+interface I { set a(value: any): void, get a(): any }

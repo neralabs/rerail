@@ -1,0 +1,1 @@
+var k, n; for (var t of ibj) {}

@@ -1,0 +1,1 @@
+(class { set a(val) { return 1; } static set b(val) { return 1; } })

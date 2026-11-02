@@ -1,0 +1,1 @@
+it("should fail", myTest); function myTest() {}

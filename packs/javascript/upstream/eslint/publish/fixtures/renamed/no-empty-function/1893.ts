@@ -1,0 +1,1 @@
+const auu = { async qjvwie(uhvsz: string) {} } // allow: generatorMethods

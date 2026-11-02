@@ -1,0 +1,1 @@
+declare global { var bar: 'car' }

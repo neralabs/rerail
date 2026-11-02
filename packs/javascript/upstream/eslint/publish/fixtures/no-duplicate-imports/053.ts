@@ -1,0 +1,1 @@
+import { foo, type Bar } from "module";

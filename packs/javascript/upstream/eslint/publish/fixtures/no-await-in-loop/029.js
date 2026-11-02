@@ -1,0 +1,1 @@
+async function foo() { for (var i; i < n; i = await bar) {  } }

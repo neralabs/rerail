@@ -1,0 +1,1 @@
+import outerNuu from 'outer-dep'

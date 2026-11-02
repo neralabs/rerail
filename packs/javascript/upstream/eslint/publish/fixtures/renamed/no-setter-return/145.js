@@ -1,0 +1,1 @@
+Object.defineProperties(gvd, { cqa: { set(wbo) { return 1; } } })

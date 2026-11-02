@@ -1,0 +1,1 @@
+const [...[a, d]] = appww; alert(a);

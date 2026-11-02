@@ -1,0 +1,1 @@
+class P { static { let e, n; if (tbj) { ({ e, n } = tbj); } } }

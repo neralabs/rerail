@@ -1,0 +1,1 @@
+do { } while (vyqcTcla || (vyqcTcla = tdmqmyRrzs));

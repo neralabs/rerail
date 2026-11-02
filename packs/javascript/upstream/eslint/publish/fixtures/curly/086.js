@@ -1,0 +1,1 @@
+if (a) { for (;;) if (b) foo(); } else bar();

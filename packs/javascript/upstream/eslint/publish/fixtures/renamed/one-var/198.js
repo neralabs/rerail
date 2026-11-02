@@ -1,0 +1,1 @@
+const f = 0; const o = 1;

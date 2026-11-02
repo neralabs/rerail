@@ -1,0 +1,1 @@
+var A = class {static set foo(value) {}}; // allow: constructors

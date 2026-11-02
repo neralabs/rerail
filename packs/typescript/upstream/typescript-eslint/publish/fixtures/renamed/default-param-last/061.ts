@@ -1,0 +1,1 @@
+const uhk = function (d?: number, e: number) {};

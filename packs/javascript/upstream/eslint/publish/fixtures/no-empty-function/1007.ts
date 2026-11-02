@@ -1,0 +1,1 @@
+class B extends C {override get foo(): string {}} // allow: getters

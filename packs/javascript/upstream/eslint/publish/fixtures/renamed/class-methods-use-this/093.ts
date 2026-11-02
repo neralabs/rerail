@@ -1,0 +1,1 @@
+class Qmc implements Iow { protected override get wcqrns(): number {} }

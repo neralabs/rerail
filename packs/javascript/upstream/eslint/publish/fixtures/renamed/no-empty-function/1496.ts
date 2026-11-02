@@ -1,0 +1,1 @@
+class O {static get ywa(): string {}} // allow: asyncFunctions

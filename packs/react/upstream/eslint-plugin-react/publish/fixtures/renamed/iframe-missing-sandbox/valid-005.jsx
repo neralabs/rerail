@@ -1,0 +1,1 @@
+React.createElement("iframe", { xzv: "foo.htm", xwcwtmd: true })

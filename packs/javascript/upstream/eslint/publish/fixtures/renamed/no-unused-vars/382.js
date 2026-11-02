@@ -1,0 +1,1 @@
+let bmw = 'hello', { a } = cne; alert(bmw);

@@ -1,0 +1,1 @@
+switch (usa) { default: ssa(); break; case 1: ssp(); break; }

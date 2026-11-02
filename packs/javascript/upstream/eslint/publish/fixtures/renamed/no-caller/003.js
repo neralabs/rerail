@@ -1,0 +1,1 @@
+var w = arguments[0]

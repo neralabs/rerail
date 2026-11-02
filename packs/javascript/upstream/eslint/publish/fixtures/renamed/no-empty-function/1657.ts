@@ -1,0 +1,1 @@
+class G {set osf(value: string) {}} // allow: asyncMethods

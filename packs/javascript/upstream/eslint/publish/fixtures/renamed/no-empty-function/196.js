@@ -1,0 +1,1 @@
+var tku = () => {}; // allow: protectedConstructors

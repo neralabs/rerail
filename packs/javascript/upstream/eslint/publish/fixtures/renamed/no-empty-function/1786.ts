@@ -1,0 +1,1 @@
+const G = class extends J {override set tru(value: string) {}}; // allow: methods

@@ -1,0 +1,1 @@
+async function nqn() { await pja?.nqn + fdc; }

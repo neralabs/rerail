@@ -1,0 +1,1 @@
+var u = { get b() {}, n, set b(ohi) {} };

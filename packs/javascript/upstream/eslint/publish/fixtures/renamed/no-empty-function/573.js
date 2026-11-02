@@ -1,0 +1,1 @@
+async function g(){} // allow: privateConstructors

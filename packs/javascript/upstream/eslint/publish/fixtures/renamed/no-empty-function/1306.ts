@@ -1,0 +1,1 @@
+const F = class {protected static opn() {}}; // allow: asyncMethods

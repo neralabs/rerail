@@ -1,0 +1,1 @@
+const Q = class extends W {static override get zqd(): string {}}; // allow: asyncMethods

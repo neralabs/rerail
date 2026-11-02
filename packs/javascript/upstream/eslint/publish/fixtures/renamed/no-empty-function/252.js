@@ -1,0 +1,1 @@
+var fca = {bjp() {}}; // allow: protectedConstructors

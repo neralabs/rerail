@@ -1,0 +1,1 @@
+var l = 0, p; p = l++; vgi(p);

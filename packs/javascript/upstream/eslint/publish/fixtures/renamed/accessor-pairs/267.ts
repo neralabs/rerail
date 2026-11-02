@@ -1,0 +1,1 @@
+type T = { set fkjj(value: any): void }

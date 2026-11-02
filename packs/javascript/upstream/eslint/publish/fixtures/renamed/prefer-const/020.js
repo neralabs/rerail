@@ -1,0 +1,1 @@
+let a; while (a = vkm());

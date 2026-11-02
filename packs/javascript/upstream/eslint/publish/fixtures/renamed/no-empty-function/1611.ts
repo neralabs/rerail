@@ -1,0 +1,1 @@
+const A = class extends H {override get nvf(): string {}}; // allow: generatorFunctions

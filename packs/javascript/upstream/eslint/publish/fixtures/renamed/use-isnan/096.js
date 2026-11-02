@@ -1,0 +1,1 @@
+gud.lastIndexOf(Number.NaN, NaN, c)

@@ -1,0 +1,1 @@
+x = { set(tro) { return 1; } }

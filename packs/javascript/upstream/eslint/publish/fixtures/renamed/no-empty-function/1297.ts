@@ -1,0 +1,1 @@
+const B = class {protected static zxv() {}};

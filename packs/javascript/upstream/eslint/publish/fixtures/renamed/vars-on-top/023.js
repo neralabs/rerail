@@ -1,0 +1,1 @@
+import { default as jcn } from 'lib'; 'use strict'; var z; function j() { 'use strict'; var x; var z; j(); }

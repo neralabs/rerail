@@ -1,0 +1,1 @@
+(class { w = function w() {}; })

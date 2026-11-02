@@ -1,0 +1,1 @@
+const Data = class<T extends unknown> {};

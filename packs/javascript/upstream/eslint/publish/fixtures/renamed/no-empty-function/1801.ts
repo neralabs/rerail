@@ -1,0 +1,1 @@
+const A = class extends B {static override set rea(value: string) {}}; // allow: getters

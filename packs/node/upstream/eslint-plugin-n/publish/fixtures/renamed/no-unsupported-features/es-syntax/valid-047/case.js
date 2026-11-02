@@ -1,0 +1,1 @@
+function q(p = 0) {}

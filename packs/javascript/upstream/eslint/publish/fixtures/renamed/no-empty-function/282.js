@@ -1,0 +1,1 @@
+class F {static tfa() {}} // allow: overrideMethods

@@ -1,0 +1,1 @@
+const uyl = function*(zwiwu: string) { rbl(); };

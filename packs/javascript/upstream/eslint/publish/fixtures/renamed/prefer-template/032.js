@@ -1,0 +1,1 @@
+hxj + 'unescapes an escaped single quote in a single-quoted string: \''

@@ -1,0 +1,1 @@
+class C {@qhzibbcmj() static get wwf(): string {}} // allow: getters

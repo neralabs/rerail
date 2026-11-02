@@ -1,0 +1,1 @@
+var obj = {}; obj.foo = function() { this.eval('foo'); }

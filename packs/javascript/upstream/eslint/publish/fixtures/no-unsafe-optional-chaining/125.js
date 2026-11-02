@@ -1,0 +1,1 @@
+async function foo() { class A extends (await obj?.foo) {}}

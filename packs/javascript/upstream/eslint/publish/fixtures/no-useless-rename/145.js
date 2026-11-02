@@ -1,0 +1,1 @@
+let foo; export {/* comment */foo as foo};

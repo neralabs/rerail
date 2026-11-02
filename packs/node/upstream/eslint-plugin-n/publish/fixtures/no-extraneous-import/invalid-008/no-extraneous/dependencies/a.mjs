@@ -1,0 +1,1 @@
+function f() { import('bbb') }

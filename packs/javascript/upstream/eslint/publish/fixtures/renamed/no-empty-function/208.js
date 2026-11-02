@@ -1,0 +1,1 @@
+function* twa() {} // allow: asyncMethods

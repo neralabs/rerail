@@ -1,0 +1,1 @@
+var foo = 2; // Note: This comment is legal.

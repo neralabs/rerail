@@ -1,0 +1,1 @@
+class O { protected constructor() {} } // allow: asyncFunctions

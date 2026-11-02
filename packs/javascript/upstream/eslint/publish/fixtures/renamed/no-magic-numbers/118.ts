@@ -1,0 +1,1 @@
+type Uhw = Dgd[1 & -2];

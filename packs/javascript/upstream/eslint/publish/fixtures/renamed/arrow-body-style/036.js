@@ -1,0 +1,1 @@
+const jz = (c, d) => { return c + o in Number(d) };

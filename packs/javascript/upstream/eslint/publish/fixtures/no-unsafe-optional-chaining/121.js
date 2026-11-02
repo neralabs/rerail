@@ -1,0 +1,1 @@
+async function foo() { const {foo} = await obj?.bar(); }

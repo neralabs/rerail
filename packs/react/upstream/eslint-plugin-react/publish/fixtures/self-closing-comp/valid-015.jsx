@@ -1,0 +1,1 @@
+var HelloJohn = <Hello.Compound name="John" />;

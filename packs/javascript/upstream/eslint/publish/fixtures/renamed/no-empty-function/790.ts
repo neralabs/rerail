@@ -1,0 +1,1 @@
+class V extends W {static override get zez(): string { /* empty */ }}

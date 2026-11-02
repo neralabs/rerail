@@ -1,0 +1,1 @@
+const A = class {@qnqhfbjek() static get sgl(): string { /* empty */ }};

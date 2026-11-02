@@ -1,0 +1,1 @@
+const jlm = {*awi(oeuva: string) {}}; // allow: decoratedFunctions

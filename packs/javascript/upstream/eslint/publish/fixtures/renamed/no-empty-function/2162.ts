@@ -1,0 +1,1 @@
+const A = class {@ejihxbrgd() static set kth(value: string) {}}; // allow: asyncMethods

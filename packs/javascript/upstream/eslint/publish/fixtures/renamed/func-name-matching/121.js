@@ -1,0 +1,1 @@
+Object.create(tbwdf, { azb: { value: function azr() {} } })

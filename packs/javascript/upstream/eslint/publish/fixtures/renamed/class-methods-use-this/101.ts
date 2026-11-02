@@ -1,0 +1,1 @@
+class Lsb implements Kmv { private override mjfnoyad = () => {} }

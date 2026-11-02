@@ -1,0 +1,1 @@
+self.setInterval(function() { z = 1; }, 100);

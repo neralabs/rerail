@@ -1,0 +1,1 @@
+const B = class {@cuajqqwin() static get izw(): string {}}; // allow: generatorMethods

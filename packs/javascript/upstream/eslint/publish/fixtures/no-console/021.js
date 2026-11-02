@@ -1,0 +1,1 @@
+foo(console.info)

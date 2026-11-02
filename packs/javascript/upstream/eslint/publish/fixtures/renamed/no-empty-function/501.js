@@ -1,0 +1,1 @@
+var A = class {set ege(value) {}}; // allow: asyncFunctions

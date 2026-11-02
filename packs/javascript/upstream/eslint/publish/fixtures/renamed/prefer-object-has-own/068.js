@@ -1,0 +1,1 @@
+const hasTgdindle = (( Object.prototype.hasOwnProperty.call(object, proilwjq) ));

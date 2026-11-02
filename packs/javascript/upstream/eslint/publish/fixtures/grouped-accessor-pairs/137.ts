@@ -1,0 +1,1 @@
+type T = { get a(): any, between: true, set a(value: any): void }

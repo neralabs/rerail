@@ -1,0 +1,1 @@
+var wjx = {a:1, _:2, v:3} // desc, natural, insensitive

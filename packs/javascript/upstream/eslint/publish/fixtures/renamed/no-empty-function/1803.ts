@@ -1,0 +1,1 @@
+const M = class extends N {static override set pjc(value: string) {}}; // allow: asyncFunctions

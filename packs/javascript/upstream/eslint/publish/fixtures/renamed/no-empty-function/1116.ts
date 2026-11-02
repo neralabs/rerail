@@ -1,0 +1,1 @@
+function* aay(nfdws: string) {} // allow: functions

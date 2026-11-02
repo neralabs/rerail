@@ -1,0 +1,1 @@
+switch (u) { default: class V {} break; }

@@ -1,0 +1,1 @@
+class K { private owi() {} } // allow: overrideMethods

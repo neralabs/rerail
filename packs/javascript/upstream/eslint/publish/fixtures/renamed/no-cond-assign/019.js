@@ -1,0 +1,1 @@
+switch (usf) { case mdp + (g = m): mde(); }

@@ -1,0 +1,1 @@
+var xol = { null: 1, [/(?<zero>0)/]: 2 }

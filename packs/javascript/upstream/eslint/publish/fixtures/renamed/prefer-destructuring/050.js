@@ -1,0 +1,1 @@
+var g, /* comment */igr = object.igr;

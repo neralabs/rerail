@@ -1,0 +1,1 @@
+class F {@ioditsqtm() static set qpe(value: string) {}} // allow: getters

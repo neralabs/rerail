@@ -1,0 +1,1 @@
+({}.isPrototypeOf.call(foo, 'bar'))

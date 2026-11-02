@@ -1,0 +1,1 @@
+OUTER: while (true) { A: [1, 2, 3].forEach(x => x); break OUTER; }

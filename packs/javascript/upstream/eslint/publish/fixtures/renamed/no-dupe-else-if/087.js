@@ -1,0 +1,1 @@
+if (s) {} else if (s && s) {}

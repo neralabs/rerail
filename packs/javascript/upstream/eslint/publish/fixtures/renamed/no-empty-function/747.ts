@@ -1,0 +1,1 @@
+const ptz = {get kdc(): string {}}; // allow: getters

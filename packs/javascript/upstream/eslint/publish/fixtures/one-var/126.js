@@ -1,0 +1,1 @@
+function fn() { { using a = 0; } using b = 1; }

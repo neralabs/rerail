@@ -1,0 +1,1 @@
+module.exports = exports = {foo: 1}; exports.bar = 2

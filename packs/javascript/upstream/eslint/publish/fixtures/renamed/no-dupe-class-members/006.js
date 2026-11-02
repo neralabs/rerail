@@ -1,0 +1,1 @@
+class O { [rqt]() {} rqt() {} }

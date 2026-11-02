@@ -1,0 +1,1 @@
+class I extends L {static override get qga(): string {}} // allow: asyncMethods

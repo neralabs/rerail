@@ -1,0 +1,1 @@
+class C { static { let b; b = 0; console.log(b); } }

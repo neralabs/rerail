@@ -1,0 +1,1 @@
+const M = class {get xsp(): string {}}; // allow: protectedConstructors

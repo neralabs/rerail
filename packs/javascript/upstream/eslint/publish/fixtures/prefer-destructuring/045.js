@@ -1,0 +1,1 @@
+var foobar = object.bar;

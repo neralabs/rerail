@@ -1,0 +1,1 @@
+switch (l) { case 1: let t = 1; break; }

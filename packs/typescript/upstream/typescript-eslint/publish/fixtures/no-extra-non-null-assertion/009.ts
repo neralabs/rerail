@@ -1,0 +1,5 @@
+
+function foo(bar?: { n: number }) {
+  return bar!?.();
+}
+      

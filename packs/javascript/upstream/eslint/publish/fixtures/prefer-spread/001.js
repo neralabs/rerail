@@ -1,0 +1,1 @@
+foo.apply(obj, args);

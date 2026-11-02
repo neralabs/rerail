@@ -1,0 +1,1 @@
+class N {@rwrexfxum() static set sqj(value: string) {}} // allow: constructors

@@ -1,0 +1,1 @@
+class I { static { function f() {} f; } }

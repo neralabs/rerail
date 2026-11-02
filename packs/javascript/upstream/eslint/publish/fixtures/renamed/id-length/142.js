@@ -1,0 +1,1 @@
+var {degb: r} = aje;

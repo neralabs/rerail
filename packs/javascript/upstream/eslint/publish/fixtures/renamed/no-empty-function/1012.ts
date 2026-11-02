@@ -1,0 +1,1 @@
+class C extends L {static override get tlk(): string {}} // allow: getters

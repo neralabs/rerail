@@ -1,0 +1,1 @@
+const umk = async function () {} // allow: asyncFunctions

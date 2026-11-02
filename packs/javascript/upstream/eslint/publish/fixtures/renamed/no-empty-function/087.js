@@ -1,0 +1,1 @@
+var L = class {static get vvl() { /* empty */ }};

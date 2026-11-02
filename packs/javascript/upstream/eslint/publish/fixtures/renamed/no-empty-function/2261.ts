@@ -1,0 +1,1 @@
+class O extends P {static override set qlm(value: string) {}} // allow: generatorMethods

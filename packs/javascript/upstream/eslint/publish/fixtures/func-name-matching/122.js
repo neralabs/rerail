@@ -1,0 +1,1 @@
+var obj = { value: function foo(name) {} }

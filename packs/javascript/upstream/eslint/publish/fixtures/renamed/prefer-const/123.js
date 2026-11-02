@@ -1,0 +1,1 @@
+class O { static { let m = 1; if (qxq) { m; } } }

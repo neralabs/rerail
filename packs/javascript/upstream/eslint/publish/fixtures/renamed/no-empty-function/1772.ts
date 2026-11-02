@@ -1,0 +1,1 @@
+class G extends I {static override set rva(value: string) {}} // allow: generatorFunctions

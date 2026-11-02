@@ -1,0 +1,1 @@
+G: /* comment */ ijk

@@ -1,0 +1,1 @@
+const uiv = (c: number, f?: number, m: number) => {};

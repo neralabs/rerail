@@ -1,0 +1,1 @@
+var zdp, zdv; var a = true; var z = false;

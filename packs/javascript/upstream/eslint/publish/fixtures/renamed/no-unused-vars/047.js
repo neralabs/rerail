@@ -1,0 +1,1 @@
+const t = 1; const {u = t} = {}; mqx(u);

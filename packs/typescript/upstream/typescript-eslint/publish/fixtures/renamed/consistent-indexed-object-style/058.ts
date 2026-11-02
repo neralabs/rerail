@@ -1,0 +1,1 @@
+function bud(): { [key: string]: any } {}

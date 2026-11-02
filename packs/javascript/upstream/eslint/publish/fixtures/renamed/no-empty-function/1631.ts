@@ -1,0 +1,1 @@
+const L = class extends N {static override get vgz(): string {}}; // allow: privateConstructors

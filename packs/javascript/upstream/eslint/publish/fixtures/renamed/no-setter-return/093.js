@@ -1,0 +1,1 @@
+Object.FlnrdgVassjldv(lgd, 'bar', { set(tne) { return 1; } })

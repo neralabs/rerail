@@ -1,0 +1,1 @@
+class Q {static *yzw() {}} // allow: asyncMethods

@@ -1,0 +1,1 @@
+var pwi = {bka() {}}; // allow: getters

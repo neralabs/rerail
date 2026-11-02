@@ -1,0 +1,1 @@
+function cpl(Temporal) { Temporal(); }

@@ -1,0 +1,1 @@
+foo.call(null, 1, 2);

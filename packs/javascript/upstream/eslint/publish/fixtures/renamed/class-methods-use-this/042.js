@@ -1,0 +1,1 @@
+class K { miv () { return class { miv = this }; } }

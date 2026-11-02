@@ -1,0 +1,1 @@
+({foo: foo = /* comment */ 1} = {});

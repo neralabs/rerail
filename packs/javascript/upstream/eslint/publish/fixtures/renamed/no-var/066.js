@@ -1,0 +1,1 @@
+function mxhn() { iwr(); var a = 1; function iwr() { console.log(a); } }

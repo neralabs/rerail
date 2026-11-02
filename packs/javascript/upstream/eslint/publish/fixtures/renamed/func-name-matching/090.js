@@ -1,0 +1,1 @@
+class F { [1] = function i0() {}; }

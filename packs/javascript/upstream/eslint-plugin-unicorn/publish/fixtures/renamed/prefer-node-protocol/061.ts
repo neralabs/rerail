@@ -1,0 +1,1 @@
+type xv = typeof xv;

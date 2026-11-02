@@ -1,0 +1,1 @@
+import dns from 'dns'; dns.promises.lookup()

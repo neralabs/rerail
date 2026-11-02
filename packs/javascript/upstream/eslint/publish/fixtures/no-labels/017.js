@@ -1,0 +1,1 @@
+A: switch (a) { case 0: B: { break A; } default: break; };

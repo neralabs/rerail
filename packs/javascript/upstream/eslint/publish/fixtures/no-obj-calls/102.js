@@ -1,0 +1,1 @@
+x = globalThis.JSON(str);

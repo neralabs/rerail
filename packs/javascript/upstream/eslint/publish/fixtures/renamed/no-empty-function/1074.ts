@@ -1,0 +1,1 @@
+const cun = function(epoog: string) {}; // allow: arrowFunctions

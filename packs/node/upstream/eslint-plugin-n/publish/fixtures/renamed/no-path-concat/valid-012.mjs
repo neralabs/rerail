@@ -1,0 +1,1 @@
+var fvetAdjv = import.meta.filename + ".map";

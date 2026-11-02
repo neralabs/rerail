@@ -1,0 +1,1 @@
+class C { #hasOwnProperty; drv() { pgi.#hasOwnProperty('bar'); } }

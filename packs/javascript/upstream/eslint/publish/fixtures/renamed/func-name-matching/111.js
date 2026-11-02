@@ -1,0 +1,1 @@
+xgk.lzs.wzs = function lzs() {};

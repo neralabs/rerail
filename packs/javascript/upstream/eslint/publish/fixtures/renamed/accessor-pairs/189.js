@@ -1,0 +1,1 @@
+class S { static set s(value) {} }

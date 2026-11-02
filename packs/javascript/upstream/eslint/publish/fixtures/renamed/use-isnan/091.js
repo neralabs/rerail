@@ -1,0 +1,1 @@
+cuw[lastIndexOf](Number.NaN)

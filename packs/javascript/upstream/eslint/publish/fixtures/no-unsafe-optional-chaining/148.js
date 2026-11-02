@@ -1,0 +1,1 @@
+async function foo() { (await (a ? b : obj?.foo)).bar; }

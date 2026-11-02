@@ -1,0 +1,1 @@
+const C = class extends D {static override get epg(): string {}};

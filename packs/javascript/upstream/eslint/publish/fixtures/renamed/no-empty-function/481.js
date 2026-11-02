@@ -1,0 +1,1 @@
+class R {static set tay(value) {}} // allow: arrowFunctions

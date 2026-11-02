@@ -1,0 +1,1 @@
+var elgm = ['foo', 'bar', 'baz']; var oibiu = elgm[3];

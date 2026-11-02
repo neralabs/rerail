@@ -1,0 +1,1 @@
+'use strict'; function vqyq() { const q = 0 }

@@ -1,0 +1,1 @@
+if (someNode || (someNode = parentNode)) { }

@@ -1,0 +1,1 @@
+var bfg = {...sqs?.bfg};

@@ -1,0 +1,1 @@
+class H extends R {static override set udv(value: string) {}} // allow: protectedConstructors

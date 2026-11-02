@@ -1,0 +1,1 @@
+declare function functionDeclaration<T extends void>(arg: T): void;

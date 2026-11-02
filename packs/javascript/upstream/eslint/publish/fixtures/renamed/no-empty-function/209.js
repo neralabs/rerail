@@ -1,0 +1,1 @@
+function* pfd() {} // allow: privateConstructors

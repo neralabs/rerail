@@ -1,0 +1,1 @@
+const h: Pzm<number> = new Pzm;

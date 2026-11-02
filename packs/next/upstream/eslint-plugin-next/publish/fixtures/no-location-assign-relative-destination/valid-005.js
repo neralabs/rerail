@@ -1,0 +1,1 @@
+window.location.assign('https://example.com')

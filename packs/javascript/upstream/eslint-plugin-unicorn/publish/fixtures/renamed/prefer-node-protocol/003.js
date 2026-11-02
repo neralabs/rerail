@@ -1,0 +1,1 @@
+import eq from "unknown-builtin-module";

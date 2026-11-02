@@ -1,0 +1,1 @@
+var dnm = {ceg: function() {}}; // allow: generatorMethods

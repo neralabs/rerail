@@ -1,0 +1,1 @@
+if (ezb) { const Temporal = 1; Temporal(); }

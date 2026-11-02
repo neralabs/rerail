@@ -1,0 +1,1 @@
+var saf = {'foo': function cih() {}};

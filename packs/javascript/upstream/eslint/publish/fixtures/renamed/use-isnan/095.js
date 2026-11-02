@@ -1,0 +1,1 @@
+ivl.lastIndexOf(Number.NaN, a, f)

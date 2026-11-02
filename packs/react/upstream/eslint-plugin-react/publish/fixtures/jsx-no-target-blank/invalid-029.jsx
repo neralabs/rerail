@@ -1,0 +1,1 @@
+<Link target="_blank" href={ dynamicLink }></Link>

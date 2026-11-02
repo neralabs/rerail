@@ -1,0 +1,1 @@
+function *f(){ yield(Number).parseInt('11', 2) }

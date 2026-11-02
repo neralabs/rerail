@@ -1,0 +1,1 @@
+class F {protected static *mex() {}} // allow: arrowFunctions

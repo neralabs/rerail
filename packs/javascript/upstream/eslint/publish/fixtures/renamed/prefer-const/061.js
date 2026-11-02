@@ -1,0 +1,1 @@
+let f; function dgu() { bdp(f); } f = 0;

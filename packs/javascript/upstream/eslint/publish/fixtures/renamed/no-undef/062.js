@@ -1,0 +1,1 @@
+class U { static { let s; s; } }

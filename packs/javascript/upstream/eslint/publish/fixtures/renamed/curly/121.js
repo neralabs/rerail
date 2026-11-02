@@ -1,0 +1,1 @@
+for (var kcq in abk) {console.log(kcq)}

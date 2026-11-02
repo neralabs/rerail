@@ -1,0 +1,1 @@
+function Component() { function exs() {}; return (<Cosfcfh.Provider value={exs}></Cosfcfh.Provider>)}

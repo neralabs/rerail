@@ -1,0 +1,1 @@
+var a = async () => 1

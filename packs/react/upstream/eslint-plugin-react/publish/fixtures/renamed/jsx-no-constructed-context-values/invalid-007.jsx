@@ -1,0 +1,1 @@
+function Component() { const fnr = true ? {} : "fine"; return (<Coznszx.Provider value={fnr}></Coznszx.Provider>)}

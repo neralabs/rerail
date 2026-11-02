@@ -1,0 +1,1 @@
+export const vup: () => void = (): void => {};

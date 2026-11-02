@@ -1,0 +1,1 @@
+const x = [1,2,3]; let y, z; [y,,z] = x; y = 0; z = 0;

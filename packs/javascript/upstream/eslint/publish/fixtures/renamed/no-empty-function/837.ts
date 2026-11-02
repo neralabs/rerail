@@ -1,0 +1,1 @@
+const O = class {@sokiuydvp() set tcg(value: string) {}}; // allow: setters

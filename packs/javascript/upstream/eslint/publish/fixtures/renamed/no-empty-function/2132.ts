@@ -1,0 +1,1 @@
+class D {@jmqanvprj() static set twl(value: string) {}} // allow: generatorMethods

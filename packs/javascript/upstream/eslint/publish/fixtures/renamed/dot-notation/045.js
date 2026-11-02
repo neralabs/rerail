@@ -1,0 +1,1 @@
+ixw['bar']instanceof bas

@@ -1,0 +1,1 @@
+var foo = { thing: function() { var bar = 1; var baz = 2; var baz2; } }

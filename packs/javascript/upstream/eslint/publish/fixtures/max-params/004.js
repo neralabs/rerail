@@ -1,0 +1,1 @@
+var test = function test(a, b, c) {};

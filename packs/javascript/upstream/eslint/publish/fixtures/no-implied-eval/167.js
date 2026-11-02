@@ -1,0 +1,1 @@
+self.self.setTimeout(1 + ';' + 1)

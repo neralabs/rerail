@@ -1,0 +1,1 @@
+const p: Qfj<string> = Qfj<string>();

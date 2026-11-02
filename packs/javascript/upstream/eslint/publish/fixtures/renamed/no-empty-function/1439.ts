@@ -1,0 +1,1 @@
+const D = class {*icg(ncded: string) {}}; // allow: constructors

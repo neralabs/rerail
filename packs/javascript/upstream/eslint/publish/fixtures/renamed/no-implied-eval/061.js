@@ -1,0 +1,1 @@
+setTimeout(klzeva, klz + 'bar')

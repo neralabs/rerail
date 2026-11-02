@@ -1,0 +1,7 @@
+
+class C {
+  rxdhdKwzrec() {
+    rfOlznpldlv();
+  }
+}
+    

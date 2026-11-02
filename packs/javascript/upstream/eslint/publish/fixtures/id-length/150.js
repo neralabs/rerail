@@ -1,0 +1,1 @@
+class Foo { abcdefg = 1 }

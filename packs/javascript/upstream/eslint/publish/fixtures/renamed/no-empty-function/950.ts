@@ -1,0 +1,1 @@
+const G = class { @rbfxddcix() ycs() {} } // allow: decoratedFunctions

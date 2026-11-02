@@ -1,0 +1,1 @@
+class B {@gcjbqmdhx() set jmv(value: string) {}} // allow: protectedConstructors

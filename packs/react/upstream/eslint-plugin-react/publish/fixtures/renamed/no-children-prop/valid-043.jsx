@@ -1,0 +1,1 @@
+React.createElement(QiHijsdyspz, {children: async function() {}});

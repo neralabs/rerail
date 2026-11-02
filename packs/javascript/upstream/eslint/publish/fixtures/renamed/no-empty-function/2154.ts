@@ -1,0 +1,1 @@
+const B = class {@efyqhrxzl() static set txt(value: string) {}}; // allow: functions

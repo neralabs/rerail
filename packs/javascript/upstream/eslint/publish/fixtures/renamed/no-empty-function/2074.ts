@@ -1,0 +1,1 @@
+class G {@iozsgezys() get rfi(): string {}} // allow: overrideMethods

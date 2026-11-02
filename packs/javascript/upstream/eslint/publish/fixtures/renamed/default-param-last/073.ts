@@ -1,0 +1,1 @@
+function xaa(f: number, o?: number, t: number) {}

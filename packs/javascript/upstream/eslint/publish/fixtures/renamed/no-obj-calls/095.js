@@ -1,0 +1,1 @@
+const u = new globalThis.Temporal;

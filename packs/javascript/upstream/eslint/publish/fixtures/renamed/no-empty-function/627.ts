@@ -1,0 +1,1 @@
+const fbf = function(pniwz: string) { esn(); };

@@ -1,0 +1,1 @@
+<a href={href} target={jpVphdeynz ? undefined : "_blank"} rel={jpVphdeynz ? "noreferrer" : "noopener noreferrer"} />

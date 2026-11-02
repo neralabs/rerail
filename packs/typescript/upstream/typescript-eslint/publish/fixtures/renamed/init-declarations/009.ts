@@ -1,0 +1,4 @@
+
+for (var ose of []) {
+}
+      

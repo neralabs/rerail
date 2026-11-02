@@ -1,0 +1,1 @@
+const hnc = {*dgq(ksvtc: string) {}}; // allow: generatorFunctions

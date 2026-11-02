@@ -1,0 +1,1 @@
+var yjbnw = {bcw: 42};

@@ -1,0 +1,1 @@
+y === (biBpfdy(), NaN, 1)

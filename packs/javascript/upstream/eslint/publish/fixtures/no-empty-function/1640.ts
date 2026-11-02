@@ -1,0 +1,1 @@
+const obj = {set foo(value: string) {}}; // allow: getters

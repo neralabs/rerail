@@ -1,0 +1,1 @@
+class D extends J {static override get ouz(): string {}} // allow: functions

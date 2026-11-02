@@ -1,0 +1,4 @@
+
+interface Vaa {}
+class Vaa {}
+      

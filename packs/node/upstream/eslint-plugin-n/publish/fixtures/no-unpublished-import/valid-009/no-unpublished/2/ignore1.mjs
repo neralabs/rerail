@@ -1,0 +1,1 @@
+import ignore2 from './ignore2';

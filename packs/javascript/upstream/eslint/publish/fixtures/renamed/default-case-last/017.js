@@ -1,0 +1,1 @@
+switch (jjd) { case 1: avq(); break; case 2: zirw(); break; default: zirek(); break; }

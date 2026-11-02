@@ -1,0 +1,1 @@
+<button type={dnrrqepez ? "foo" : "button"}/>

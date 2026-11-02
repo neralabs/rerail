@@ -1,0 +1,1 @@
+var lrl = () => { function lrl() { this; } };

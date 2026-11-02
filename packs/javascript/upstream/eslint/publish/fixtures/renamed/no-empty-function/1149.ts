@@ -1,0 +1,1 @@
+const myd = {gue: function*(qpqho: string) {}}; // allow: setters

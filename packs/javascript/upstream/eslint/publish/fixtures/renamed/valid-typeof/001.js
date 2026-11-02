@@ -1,0 +1,1 @@
+typeof jvx === 'string'

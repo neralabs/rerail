@@ -1,0 +1,1 @@
+gsu.indexOf(NaN, f)

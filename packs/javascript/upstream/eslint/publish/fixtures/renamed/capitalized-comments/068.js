@@ -1,0 +1,2 @@
+rcx(/*
+Ignored */ d);

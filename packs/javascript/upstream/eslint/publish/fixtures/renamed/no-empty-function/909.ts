@@ -1,0 +1,1 @@
+class J { @owhexikpl() async rel(wrjve: string) { /* empty */ } }

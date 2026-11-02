@@ -1,0 +1,1 @@
+var k = { set j(value) {} };

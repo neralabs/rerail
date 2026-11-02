@@ -1,0 +1,1 @@
+'use strict'; function wrap() { const a = 0 }

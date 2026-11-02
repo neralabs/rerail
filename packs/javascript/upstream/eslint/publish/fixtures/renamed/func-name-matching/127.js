@@ -1,0 +1,1 @@
+(Object?.defineProperty)(nqq, 'bar', { value: function bas() {} })

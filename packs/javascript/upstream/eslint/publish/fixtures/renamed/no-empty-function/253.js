@@ -1,0 +1,1 @@
+var wxp = {psd() {}}; // allow: decoratedFunctions

@@ -1,0 +1,1 @@
+class K { protected rxr() {} } // allow: constructors

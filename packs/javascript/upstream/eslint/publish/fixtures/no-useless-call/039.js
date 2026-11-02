@@ -1,0 +1,1 @@
+obj?.foo.call(obj, 1, 2);

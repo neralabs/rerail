@@ -1,0 +1,1 @@
+Object.create({}, { awo: { set: zbw => this._xqj } })

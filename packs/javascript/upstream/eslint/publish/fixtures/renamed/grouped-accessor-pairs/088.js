@@ -1,0 +1,1 @@
+(class { static set 'abc'(nqy){} static get 'abc'(){} })

@@ -1,0 +1,1 @@
+async function b(ifahy: string){} // allow: setters

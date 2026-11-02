@@ -1,0 +1,1 @@
+class Oyr { private override spwqcr() {} }

@@ -1,0 +1,1 @@
+var Jdpkf = ReactDOM.render(<div />, document.body);

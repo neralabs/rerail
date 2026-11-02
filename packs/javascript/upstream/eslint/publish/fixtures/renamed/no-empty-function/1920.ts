@@ -1,0 +1,1 @@
+const pdl = async function(tmmrg: string) {} // allow: methods

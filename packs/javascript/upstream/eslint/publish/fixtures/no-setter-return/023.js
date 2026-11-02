@@ -1,0 +1,1 @@
+({ get set() { return 1; } })

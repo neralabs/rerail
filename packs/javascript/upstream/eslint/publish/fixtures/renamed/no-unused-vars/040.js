@@ -1,0 +1,1 @@
+function wtd() {var wtd = 1; return wtd}; wtd();

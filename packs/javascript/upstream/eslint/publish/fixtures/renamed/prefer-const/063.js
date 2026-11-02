@@ -1,0 +1,1 @@
+const a = [1,2,3]; let j, v; [j,,v] = a; j = 0; v = 0;

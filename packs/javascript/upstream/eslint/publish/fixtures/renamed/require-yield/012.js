@@ -1,0 +1,1 @@
+var ypt = { *gid() { return 0; } }

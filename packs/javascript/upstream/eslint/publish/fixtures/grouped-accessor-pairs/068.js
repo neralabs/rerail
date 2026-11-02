@@ -1,0 +1,1 @@
+class A { get [a](){} b(){} get [a](){} c(){} set [a](foo){} }

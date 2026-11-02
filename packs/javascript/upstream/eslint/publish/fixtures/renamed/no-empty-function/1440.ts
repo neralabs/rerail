@@ -1,0 +1,1 @@
+const C = class {*nhr(zxbfz: string) {}}; // allow: asyncFunctions

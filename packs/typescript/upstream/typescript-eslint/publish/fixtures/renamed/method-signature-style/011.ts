@@ -1,0 +1,1 @@
+type Ofem = { readonly ['f']?: <O>(a: O, d: O) => O };

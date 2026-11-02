@@ -1,0 +1,1 @@
+const tsj = { async zxzwhs() {} } // allow: arrowFunctions

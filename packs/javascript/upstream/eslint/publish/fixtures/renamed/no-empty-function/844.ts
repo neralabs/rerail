@@ -1,0 +1,1 @@
+class H extends I {override set mfn(value: string) { ifo(); }}

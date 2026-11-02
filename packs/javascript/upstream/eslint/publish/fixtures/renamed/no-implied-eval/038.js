@@ -1,0 +1,1 @@
+window.setTimeout(ljq, 100);

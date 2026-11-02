@@ -1,0 +1,1 @@
+const slo = {set ieh(value: string) {}}; // allow: protectedConstructors

@@ -1,0 +1,1 @@
+class K {set twf(value: string) { otu(); }}

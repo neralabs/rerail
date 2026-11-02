@@ -1,0 +1,1 @@
+function pas() { var e; var f; var g; var t; var u; var x; fpr(); fpy(); qpd(); qpdo(); }

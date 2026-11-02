@@ -1,0 +1,1 @@
+const foo=0, bar=1; export {foo, bar};

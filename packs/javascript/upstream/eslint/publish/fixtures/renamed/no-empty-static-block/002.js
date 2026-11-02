@@ -1,0 +1,1 @@
+class Qld { static { /* comments */ } }

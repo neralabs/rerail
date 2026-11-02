@@ -1,0 +1,1 @@
+var r = '1'; switch (r) {case '1': break; case '1': break; case '2': break; default: break;}

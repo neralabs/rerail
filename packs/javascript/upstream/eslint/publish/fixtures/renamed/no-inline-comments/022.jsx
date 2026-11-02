@@ -1,0 +1,1 @@
+var g = 3; // someday use eslint-disable-line here

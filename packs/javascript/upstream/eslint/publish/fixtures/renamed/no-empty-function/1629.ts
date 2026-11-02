@@ -1,0 +1,1 @@
+const D = class extends O {static override get tyd(): string {}}; // allow: asyncFunctions

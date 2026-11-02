@@ -1,0 +1,1 @@
+class A {@bfhmsxnez() set nkz(value: string) {}} // allow: generatorFunctions

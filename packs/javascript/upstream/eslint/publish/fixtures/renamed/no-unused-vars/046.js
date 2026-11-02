@@ -1,0 +1,1 @@
+const k = 1; const [r = k] = []; gax(r);

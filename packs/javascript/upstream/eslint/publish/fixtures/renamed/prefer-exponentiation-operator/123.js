@@ -1,0 +1,1 @@
+a+Math.pow(c, d)+k

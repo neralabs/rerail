@@ -1,0 +1,1 @@
+const fa = (a = 5, d = true, e = 'foo') => {};

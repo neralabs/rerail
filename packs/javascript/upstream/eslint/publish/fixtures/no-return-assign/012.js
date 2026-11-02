@@ -1,0 +1,1 @@
+function x() { return result = a * b; };

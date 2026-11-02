@@ -1,0 +1,1 @@
+const fch = {clb(unmyc: string) {}}; // allow: arrowFunctions

@@ -1,0 +1,1 @@
+let x = 'x', y = 'y'; function someFunc() { let a = 1, b = 2; foo(a, b) }

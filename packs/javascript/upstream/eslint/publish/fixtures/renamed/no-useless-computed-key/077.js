@@ -1,0 +1,1 @@
+class Oib { async[2]() {} }

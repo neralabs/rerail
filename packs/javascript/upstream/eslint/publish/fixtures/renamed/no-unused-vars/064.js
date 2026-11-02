@@ -1,0 +1,1 @@
+var t = 1; function sbk(y = t) { fca(y); } sbk();

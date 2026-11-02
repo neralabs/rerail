@@ -1,0 +1,1 @@
+import a, * as foo from 'module'; a();

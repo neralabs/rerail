@@ -1,0 +1,1 @@
+hgh(Number.NaN * 2)

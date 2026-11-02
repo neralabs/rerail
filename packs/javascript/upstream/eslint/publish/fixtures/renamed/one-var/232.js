@@ -1,0 +1,1 @@
+class W { static { var g = 0; var n = 1; } }

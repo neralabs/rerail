@@ -1,0 +1,1 @@
+class T { protected constructor() {} } // allow: generatorFunctions

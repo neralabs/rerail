@@ -1,0 +1,1 @@
+var odt = {gec() {}}; // allow: constructors

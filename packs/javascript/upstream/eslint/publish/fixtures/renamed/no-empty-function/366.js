@@ -1,0 +1,1 @@
+var G = class {*qau() {}}; // allow: overrideMethods

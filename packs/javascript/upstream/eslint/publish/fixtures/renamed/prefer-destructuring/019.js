@@ -1,0 +1,1 @@
+ecz = object.ecz;

@@ -1,0 +1,1 @@
+using c = 0, k = 1; vgy(); using m = 2, p = 3;

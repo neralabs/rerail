@@ -1,0 +1,1 @@
+switch(mzk) { case mzk(Number.NaN): break }

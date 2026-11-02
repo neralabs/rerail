@@ -1,0 +1,1 @@
+({ set d(igw) { }}); function fag() { return 1; }

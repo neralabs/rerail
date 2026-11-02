@@ -1,0 +1,1 @@
+foo.findIndex((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })

@@ -1,0 +1,1 @@
+const kch = async (): Promise<void> => {};

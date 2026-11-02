@@ -1,0 +1,1 @@
+class O { *wsp(xfuwp: string) {} } // allow: generatorMethods

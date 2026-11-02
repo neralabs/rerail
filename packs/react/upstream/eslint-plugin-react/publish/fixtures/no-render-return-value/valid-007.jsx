@@ -1,0 +1,1 @@
+var foo = ReactDom.renderder(<div />, root)

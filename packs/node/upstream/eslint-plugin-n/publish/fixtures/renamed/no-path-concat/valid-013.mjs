@@ -1,0 +1,1 @@
+var crvaNjr = import.meta.url + ".map";

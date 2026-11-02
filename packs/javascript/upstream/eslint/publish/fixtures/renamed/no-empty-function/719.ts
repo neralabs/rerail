@@ -1,0 +1,1 @@
+const qrs = {*imf(zgaqc: string) {}}; // allow: generatorMethods

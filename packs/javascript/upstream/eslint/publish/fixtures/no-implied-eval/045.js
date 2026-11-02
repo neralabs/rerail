@@ -1,0 +1,1 @@
+global.setInterval(foo, 100);

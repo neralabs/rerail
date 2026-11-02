@@ -1,0 +1,1 @@
+function s() { var pdjyhk = a * h; return pdjyhk; }

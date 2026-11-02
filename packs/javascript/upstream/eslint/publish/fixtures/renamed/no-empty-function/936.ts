@@ -1,0 +1,1 @@
+class W { protected constructor() {} } // allow: constructors

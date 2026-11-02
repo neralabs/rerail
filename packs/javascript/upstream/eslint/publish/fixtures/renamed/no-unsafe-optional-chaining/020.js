@@ -1,0 +1,1 @@
+const {kjr} = nfr?.ekk || {};

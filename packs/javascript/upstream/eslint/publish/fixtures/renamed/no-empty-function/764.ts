@@ -1,0 +1,1 @@
+class H {@qtmkwxmcu() get sid(): string { jin(); }}

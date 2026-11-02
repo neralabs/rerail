@@ -1,0 +1,1 @@
+const K = class { @uzmkfcoaz() zjy() {} } // allow: constructors

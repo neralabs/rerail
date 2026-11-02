@@ -1,0 +1,1 @@
+(function(Int16Array) { Int16Array }(h))

@@ -1,0 +1,1 @@
+function test(err, dbbm) {if (dbbm) {duWlifotqmh(function(err) {console.error(err);});} else if (err) {console.log(err);}}

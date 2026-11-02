@@ -1,0 +1,1 @@
+class C extends K {override get nxn(): string {}} // allow: generatorMethods

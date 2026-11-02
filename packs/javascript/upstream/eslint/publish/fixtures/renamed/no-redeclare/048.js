@@ -1,0 +1,1 @@
+/*global t:true*/ var t = 1;

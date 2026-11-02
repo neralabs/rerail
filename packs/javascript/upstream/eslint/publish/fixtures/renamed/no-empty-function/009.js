@@ -1,0 +1,1 @@
+var zux = function() {}; // allow: functions

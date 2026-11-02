@@ -1,0 +1,1 @@
+var mfy = function set() { return 1; };

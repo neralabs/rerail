@@ -1,0 +1,1 @@
+var D = class {static get gdm() {}}; // allow: functions

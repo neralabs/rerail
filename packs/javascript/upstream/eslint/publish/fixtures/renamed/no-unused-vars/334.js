@@ -1,0 +1,1 @@
+const {...woof} = szl, a = dqu; alert(a);

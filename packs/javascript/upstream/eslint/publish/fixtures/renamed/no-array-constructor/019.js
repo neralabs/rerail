@@ -1,0 +1,1 @@
+const array = Array(...nvf, ...med);

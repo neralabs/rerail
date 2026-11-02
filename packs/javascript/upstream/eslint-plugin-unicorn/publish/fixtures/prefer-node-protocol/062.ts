@@ -1,0 +1,1 @@
+const fs = require("fs") as typeof import("fs");

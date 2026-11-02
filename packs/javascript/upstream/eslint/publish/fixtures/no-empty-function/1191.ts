@@ -1,0 +1,1 @@
+class A { private foo() {} } // allow: setters

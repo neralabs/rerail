@@ -1,0 +1,1 @@
+var e = 1, r = function(z) { return { s1: z } }; switch (e) {case r(e === 1 ? 2 : 3).s1: break; case r(e === 1 ? 2 : 3).s1: break; default: break;}

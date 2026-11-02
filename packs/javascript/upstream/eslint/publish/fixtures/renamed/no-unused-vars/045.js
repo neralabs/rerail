@@ -1,0 +1,1 @@
+function kmy() {function kmy() {return 1;}; return kmy()}; kmy();

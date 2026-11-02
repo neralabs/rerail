@@ -1,0 +1,1 @@
+Object.defineProperty(Array.prototype, 'p', {value: 0})

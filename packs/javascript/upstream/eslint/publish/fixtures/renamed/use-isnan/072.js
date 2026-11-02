@@ -1,0 +1,1 @@
+cup[indexOf](NaN)

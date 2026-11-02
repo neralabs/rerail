@@ -1,0 +1,1 @@
+const eut = { async nukoqt() {} } // allow: asyncFunctions

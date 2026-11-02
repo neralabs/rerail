@@ -1,0 +1,1 @@
+var O = class {static get pnm() {}};

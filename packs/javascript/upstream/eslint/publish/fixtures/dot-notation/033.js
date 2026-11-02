@@ -1,0 +1,1 @@
+a['SHOUT_CASE'];

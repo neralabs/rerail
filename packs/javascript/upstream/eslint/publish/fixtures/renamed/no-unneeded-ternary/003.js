@@ -1,0 +1,1 @@
+var i = p === 2 ? true : 'No';

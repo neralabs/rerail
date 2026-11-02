@@ -1,0 +1,1 @@
+<Foo href="javascript:"></Foo>

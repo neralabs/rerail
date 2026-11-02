@@ -1,0 +1,1 @@
+var gwx = function*() {}; // allow: getters

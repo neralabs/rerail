@@ -1,0 +1,1 @@
+const a = 0, b = 1; const c = 2;

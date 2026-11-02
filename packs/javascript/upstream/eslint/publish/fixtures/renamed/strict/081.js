@@ -1,0 +1,1 @@
+'use strict'; function qpa(o = 0) { 'use strict' }

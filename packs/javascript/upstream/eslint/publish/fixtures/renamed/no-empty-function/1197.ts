@@ -1,0 +1,1 @@
+class A { private ccr() {} } // allow: decoratedFunctions

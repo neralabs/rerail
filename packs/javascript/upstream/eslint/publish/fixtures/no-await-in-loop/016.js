@@ -1,0 +1,1 @@
+while (true) { var value = 0; }

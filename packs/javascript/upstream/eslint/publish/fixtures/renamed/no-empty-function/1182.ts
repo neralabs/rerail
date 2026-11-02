@@ -1,0 +1,1 @@
+class K { uwj(zhtzn: string) {} } // allow: protectedConstructors

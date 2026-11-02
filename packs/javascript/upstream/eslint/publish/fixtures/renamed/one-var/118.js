@@ -1,0 +1,1 @@
+class Q { static { if (zqe) var e; var c; } }

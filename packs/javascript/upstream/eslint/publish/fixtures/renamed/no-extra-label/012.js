@@ -1,0 +1,1 @@
+L: for (;;) { while (u) { break L; } }

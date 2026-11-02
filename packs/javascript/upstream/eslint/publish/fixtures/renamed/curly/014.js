@@ -1,0 +1,1 @@
+for (var emq of akx) { console.log(1); console.log(2) }

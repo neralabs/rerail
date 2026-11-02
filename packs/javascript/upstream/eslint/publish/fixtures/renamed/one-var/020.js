@@ -1,0 +1,1 @@
+function rew() { let o = 1; let p = true; }

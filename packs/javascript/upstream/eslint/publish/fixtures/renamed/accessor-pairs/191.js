@@ -1,0 +1,1 @@
+(class O { static set o(value) {} });

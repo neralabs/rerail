@@ -1,0 +1,1 @@
+if (hqr) var m = 1, p = 1;

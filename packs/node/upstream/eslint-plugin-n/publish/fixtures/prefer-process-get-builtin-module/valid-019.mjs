@@ -1,0 +1,1 @@
+const createRequire = () => () => {}; const require = createRequire(); require("node:fs")

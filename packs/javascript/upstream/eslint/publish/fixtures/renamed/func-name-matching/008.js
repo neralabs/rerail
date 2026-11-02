@@ -1,0 +1,1 @@
+wcb &&= function wcb() {};

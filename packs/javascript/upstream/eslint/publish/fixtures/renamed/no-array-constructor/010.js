@@ -1,0 +1,1 @@
+const oiohwgXjhcd = Array => new Array()

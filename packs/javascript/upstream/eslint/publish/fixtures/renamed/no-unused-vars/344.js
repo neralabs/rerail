@@ -1,0 +1,1 @@
+const [[a, ...{ p }]] = awygu; alert(a);

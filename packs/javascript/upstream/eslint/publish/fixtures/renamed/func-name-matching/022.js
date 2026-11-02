@@ -1,0 +1,1 @@
+var wfg = {'foo': function foo() {}};

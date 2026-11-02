@@ -1,0 +1,1 @@
+switch(u) { case '1': require('1'); break; }

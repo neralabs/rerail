@@ -1,0 +1,1 @@
+var set = val => { return 1; };

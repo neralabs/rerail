@@ -1,0 +1,1 @@
+function zsb() { var Atomics = kqa(); var kqg = Atomics(5); }

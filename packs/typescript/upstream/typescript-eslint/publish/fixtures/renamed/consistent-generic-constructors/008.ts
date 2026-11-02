@@ -1,0 +1,1 @@
+const m: Qoe<string> = new Sjy<string>();

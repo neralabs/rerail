@@ -1,0 +1,1 @@
+const A = class {static *qfi(ywcql: string) {}}; // allow: setters

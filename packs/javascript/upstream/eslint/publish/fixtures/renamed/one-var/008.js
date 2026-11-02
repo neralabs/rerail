@@ -1,0 +1,1 @@
+var jwb = true, jwq = false;

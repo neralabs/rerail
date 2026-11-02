@@ -1,0 +1,1 @@
+async function eyc(){return await{}.hasOwnProperty.call(object, qibfmgcs)}

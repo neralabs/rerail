@@ -1,0 +1,1 @@
+async function m(usgdl: string){} // allow: constructors

@@ -1,0 +1,1 @@
+if ("blue" === value) {}

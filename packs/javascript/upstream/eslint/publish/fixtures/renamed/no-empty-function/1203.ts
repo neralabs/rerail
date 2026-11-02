@@ -1,0 +1,1 @@
+class N { protected zgl() {} } // allow: generatorMethods

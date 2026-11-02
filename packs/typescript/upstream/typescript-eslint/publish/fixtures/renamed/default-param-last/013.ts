@@ -1,0 +1,1 @@
+const rgd = function (n: number) {};

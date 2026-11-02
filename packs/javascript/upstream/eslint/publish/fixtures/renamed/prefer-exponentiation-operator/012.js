@@ -1,0 +1,1 @@
+Math[pow](d, l)

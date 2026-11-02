@@ -1,0 +1,1 @@
+import { deepStrictEqual } from 'assert'; deepStrictEqual()

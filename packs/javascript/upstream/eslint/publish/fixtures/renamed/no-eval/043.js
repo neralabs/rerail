@@ -1,0 +1,1 @@
+(function(ews){ ews('foo') })(eval);

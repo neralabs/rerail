@@ -1,0 +1,1 @@
+const D = class {static set flf(value: string) {}}; // allow: asyncMethods

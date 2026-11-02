@@ -1,0 +1,1 @@
+typeof gyp == 'invalid string'

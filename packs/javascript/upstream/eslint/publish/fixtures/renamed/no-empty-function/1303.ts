@@ -1,0 +1,1 @@
+const K = class {protected static xqd() {}}; // allow: setters

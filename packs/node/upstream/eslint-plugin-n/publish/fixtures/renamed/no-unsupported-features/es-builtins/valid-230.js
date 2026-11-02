@@ -1,0 +1,1 @@
+function cqgx() { Atomics }

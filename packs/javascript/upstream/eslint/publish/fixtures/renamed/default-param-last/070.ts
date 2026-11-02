@@ -1,0 +1,1 @@
+function qnn(i = 1, k: number, n = 2) {}

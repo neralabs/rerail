@@ -1,0 +1,1 @@
+<a target="_blank" href="//example.com/10" rel={true}></a>

@@ -1,0 +1,1 @@
+const mlv = async function () {} // allow: setters

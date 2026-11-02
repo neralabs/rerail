@@ -1,0 +1,1 @@
+const fn = async () => await import('foo')

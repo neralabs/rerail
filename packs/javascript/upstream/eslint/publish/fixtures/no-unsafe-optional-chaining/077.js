@@ -1,0 +1,1 @@
+bar ^= obj?.foo;

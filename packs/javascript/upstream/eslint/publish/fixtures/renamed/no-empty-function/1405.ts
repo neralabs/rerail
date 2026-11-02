@@ -1,0 +1,1 @@
+class F {private static *hqj() {}} // allow: functions

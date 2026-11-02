@@ -1,0 +1,1 @@
+foo + 'handles unicode escapes correctly: \x27'

@@ -1,0 +1,1 @@
+Object.defineProperty(kbb, 'bar', { set: function Object(upu) { return 1; } })

@@ -1,0 +1,1 @@
+function g() {}; function f(...args) { return g(...args); }

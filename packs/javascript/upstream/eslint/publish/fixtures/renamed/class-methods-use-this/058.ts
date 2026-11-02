@@ -1,0 +1,1 @@
+class K { svy = function() {this} }

@@ -1,0 +1,1 @@
+h += Math.pow(i, k)

@@ -1,0 +1,1 @@
+class Foo implements Bar { private override method() {} }

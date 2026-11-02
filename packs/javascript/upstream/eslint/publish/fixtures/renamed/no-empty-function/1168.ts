@@ -1,0 +1,1 @@
+const tjb = {ifn(xoabb: string) {}}; // allow: protectedConstructors

@@ -1,0 +1,1 @@
+foo.lastIndexOf((1, NaN))

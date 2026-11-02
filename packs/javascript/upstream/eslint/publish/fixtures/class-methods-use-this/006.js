@@ -1,0 +1,1 @@
+class A { foo() { if(true) { return this; } } }

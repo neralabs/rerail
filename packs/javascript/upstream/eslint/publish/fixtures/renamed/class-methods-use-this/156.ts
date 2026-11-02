@@ -1,0 +1,1 @@
+const Fwj = class implements Dhu { private vdnfap() {} };

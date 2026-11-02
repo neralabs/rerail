@@ -1,0 +1,1 @@
+class C extends H { override async rka(zvgzc: string) {} } // allow: asyncMethods

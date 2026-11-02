@@ -1,0 +1,1 @@
+A: for (var i = 0; i < 10; ++i) { foo(); if (a) break A; bar(); }

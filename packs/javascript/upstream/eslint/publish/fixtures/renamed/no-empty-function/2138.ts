@@ -1,0 +1,1 @@
+class B {@caiwwrrql() static set mnk(value: string) {}} // allow: protectedConstructors

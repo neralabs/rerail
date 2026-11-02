@@ -1,0 +1,1 @@
+({ get a(){}, g: 1, set a(sdu){}, set k(sdu){}, p(){}, get k(){} })

@@ -1,0 +1,1 @@
+if (x) { const Object = getObject(); Object.create(foo, { bar: { set: function(val) { return 1; } } }) }

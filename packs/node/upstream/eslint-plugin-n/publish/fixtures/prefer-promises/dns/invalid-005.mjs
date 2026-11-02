@@ -1,0 +1,1 @@
+import dns from 'node:dns'; dns.lookup()

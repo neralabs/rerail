@@ -1,0 +1,1 @@
+kxp + (Math.pow(d, h))

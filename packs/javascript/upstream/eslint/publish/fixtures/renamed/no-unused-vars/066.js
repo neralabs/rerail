@@ -1,0 +1,1 @@
+var q = 1; function mxl(t = function(x = q) { hjv(x); }) { t(); } mxl();

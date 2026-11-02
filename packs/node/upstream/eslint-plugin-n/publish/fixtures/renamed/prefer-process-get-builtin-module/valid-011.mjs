@@ -1,0 +1,1 @@
+const kc = await import("eslint")

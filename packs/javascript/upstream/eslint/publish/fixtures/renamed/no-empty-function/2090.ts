@@ -1,0 +1,1 @@
+const H = class {@xuxidrqsa() get yfn(): string {}}; // allow: arrowFunctions

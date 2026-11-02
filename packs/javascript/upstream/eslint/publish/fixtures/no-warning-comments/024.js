@@ -1,0 +1,1 @@
+/* eslint one-var: 2 */

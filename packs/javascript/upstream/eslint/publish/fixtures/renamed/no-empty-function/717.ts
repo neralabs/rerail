@@ -1,0 +1,1 @@
+const nds = {*asg(ocerw: string) { /* empty */ }};

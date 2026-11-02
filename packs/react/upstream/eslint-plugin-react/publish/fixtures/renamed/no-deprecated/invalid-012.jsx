@@ -1,0 +1,1 @@
+Dbf.createClass({});

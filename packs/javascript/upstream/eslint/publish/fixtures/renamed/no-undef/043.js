@@ -1,0 +1,1 @@
+function s() { a = 1; }

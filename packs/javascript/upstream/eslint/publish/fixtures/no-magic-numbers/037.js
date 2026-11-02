@@ -1,0 +1,1 @@
+const { param = 123 } = sourceObject;

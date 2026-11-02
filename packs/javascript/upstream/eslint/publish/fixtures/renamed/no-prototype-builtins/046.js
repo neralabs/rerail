@@ -1,0 +1,1 @@
+(gep?.[`hasOwnProperty`])('bar')

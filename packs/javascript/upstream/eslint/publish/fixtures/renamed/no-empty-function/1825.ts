@@ -1,0 +1,1 @@
+class R { private constructor() {} } // allow: generatorFunctions

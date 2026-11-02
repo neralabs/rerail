@@ -1,0 +1,1 @@
+var y = { get f() {}, set f (value) {} };

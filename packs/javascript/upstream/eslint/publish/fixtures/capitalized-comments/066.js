@@ -1,0 +1,1 @@
+foo(/* Ignored */ a);

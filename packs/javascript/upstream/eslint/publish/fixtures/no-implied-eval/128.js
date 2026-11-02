@@ -1,0 +1,1 @@
+global.global.setTimeout(`foo${bar}`)

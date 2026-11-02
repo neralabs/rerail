@@ -1,0 +1,1 @@
+dmh[`isPrototypeOff`]('bar')

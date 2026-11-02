@@ -1,0 +1,1 @@
+/*globals Reflect: true*/ Reflect();

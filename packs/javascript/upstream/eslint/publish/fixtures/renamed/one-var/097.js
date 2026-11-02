@@ -1,0 +1,1 @@
+class Y { static { var g; let l; const y = 0; } }

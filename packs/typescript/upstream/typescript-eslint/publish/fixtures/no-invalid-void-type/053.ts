@@ -1,0 +1,1 @@
+type UnionType3 = string | ((number & any) | (string | void));

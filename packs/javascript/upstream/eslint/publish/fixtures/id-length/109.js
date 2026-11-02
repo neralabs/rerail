@@ -1,0 +1,1 @@
+import * as longName from 'module';

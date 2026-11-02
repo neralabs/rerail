@@ -1,0 +1,1 @@
+<Bdy dangerouslySetInnerHTML={{ __html: "<span>hello</span>" }} />;

@@ -1,0 +1,1 @@
+function Component() { const mfk = class RyzfWxnlz{}; return (<Cownzmm.Provider value={mfk}></Cownzmm.Provider>)}

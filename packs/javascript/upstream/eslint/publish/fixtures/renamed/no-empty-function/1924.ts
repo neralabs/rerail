@@ -1,0 +1,1 @@
+const jaz = async function(msbpt: string) {} // allow: constructors

@@ -1,0 +1,1 @@
+class H {@kiejjjbzp() static set oyl(value: string) {}} // allow: asyncFunctions

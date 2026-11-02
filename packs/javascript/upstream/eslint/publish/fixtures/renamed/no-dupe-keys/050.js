@@ -1,0 +1,1 @@
+var p = { __proto__: null, k: 5, k: 6 };

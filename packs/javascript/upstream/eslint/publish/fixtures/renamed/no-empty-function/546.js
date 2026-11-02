@@ -1,0 +1,1 @@
+var F = class {constructor() {}}; // allow: protectedConstructors

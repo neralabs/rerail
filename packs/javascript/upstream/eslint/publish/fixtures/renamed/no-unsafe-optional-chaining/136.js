@@ -1,0 +1,1 @@
+async function lxg() { (await (lxg, xpz?.lxg))(); }

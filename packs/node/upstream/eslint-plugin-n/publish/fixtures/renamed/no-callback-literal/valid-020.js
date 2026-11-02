@@ -1,0 +1,1 @@
+callback(a ? b : 1, qnbx)

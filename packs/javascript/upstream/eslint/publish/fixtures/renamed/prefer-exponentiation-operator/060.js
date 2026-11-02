@@ -1,0 +1,1 @@
+g(gur, Math.pow(d, f), fmu)

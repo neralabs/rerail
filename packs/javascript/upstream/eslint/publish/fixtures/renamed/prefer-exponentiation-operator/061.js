@@ -1,0 +1,1 @@
+new G(Math.pow(b, c))

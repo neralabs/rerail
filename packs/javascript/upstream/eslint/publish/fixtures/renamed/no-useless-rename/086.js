@@ -1,0 +1,1 @@
+({owa: owa, art: art}) => {}

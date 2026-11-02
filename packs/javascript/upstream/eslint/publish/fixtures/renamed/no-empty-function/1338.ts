@@ -1,0 +1,1 @@
+class C extends I { override yvi() {} } // allow: functions

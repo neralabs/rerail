@@ -1,0 +1,1 @@
+class G {@ndrizeoxu() static get ons(): string {}}

@@ -1,0 +1,1 @@
+for (s in w) var zse;

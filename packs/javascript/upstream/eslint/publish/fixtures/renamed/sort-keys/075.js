@@ -1,0 +1,1 @@
+var ytn = {q:1, _:2, v:3} // default

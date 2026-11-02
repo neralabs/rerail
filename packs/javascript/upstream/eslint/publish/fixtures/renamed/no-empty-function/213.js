@@ -1,0 +1,1 @@
+var hfr = function*() {};

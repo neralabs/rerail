@@ -1,0 +1,1 @@
+Object.prototype.e = 0

@@ -1,0 +1,1 @@
+const J = class {set lqp(value: string) {}}; // allow: overrideMethods

@@ -1,0 +1,1 @@
+type KeyofVoid = keyof void;

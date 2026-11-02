@@ -1,0 +1,1 @@
+function tei(...[[ a ]]) {} tei();

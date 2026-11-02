@@ -1,0 +1,1 @@
+djs.prototype.hasOwnProperty.call(meu, proi)

@@ -1,0 +1,1 @@
+var u; if (v) { u = require('debug').baz; }

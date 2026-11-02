@@ -1,0 +1,1 @@
+class C extends J {static override set rhb(value: string) { /* empty */ }}

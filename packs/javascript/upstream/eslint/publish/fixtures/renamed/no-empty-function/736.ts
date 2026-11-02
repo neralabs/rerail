@@ -1,0 +1,1 @@
+const A = class {*lja(pbyqb: string) { dof(); }};

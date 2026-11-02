@@ -1,0 +1,1 @@
+class B {set fvd(value) {}} // allow: asyncMethods

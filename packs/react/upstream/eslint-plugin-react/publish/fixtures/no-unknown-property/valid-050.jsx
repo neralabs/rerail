@@ -1,0 +1,1 @@
+<div class="foo" is="my-elem"></div>;

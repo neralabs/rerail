@@ -1,0 +1,1 @@
+global[`SetTimeOut`]('foo', 100);

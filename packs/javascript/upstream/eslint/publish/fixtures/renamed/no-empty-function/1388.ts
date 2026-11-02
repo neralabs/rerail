@@ -1,0 +1,1 @@
+class O { *prl(zbksl: string) {} } // allow: decoratedFunctions

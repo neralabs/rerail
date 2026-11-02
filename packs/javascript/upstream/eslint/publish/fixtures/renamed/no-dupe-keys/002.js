@@ -1,0 +1,1 @@
+var u = { tgx: 1, cwj: 2 };

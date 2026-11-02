@@ -1,0 +1,1 @@
+zaw.mpa = function() {};

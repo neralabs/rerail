@@ -1,0 +1,1 @@
+import hooks from 'node:async_hooks'; new hooks.AsyncLocalStorage()

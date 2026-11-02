@@ -1,0 +1,1 @@
+const [a, ...{ r }] = axdzh; alert(a);

@@ -1,0 +1,1 @@
+let a; function foo() { if (a) {} a = bar(); }

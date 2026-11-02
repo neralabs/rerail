@@ -1,0 +1,1 @@
+type N = { get k(): any, set k(value: any): void }

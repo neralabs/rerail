@@ -1,0 +1,1 @@
+class C extends L {static override set shc(value: string) {}} // allow: protectedConstructors

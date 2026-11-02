@@ -1,0 +1,1 @@
+type Allowed<T> = [T];

@@ -1,0 +1,1 @@
+var c = ths ? ths : src;

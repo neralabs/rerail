@@ -1,0 +1,1 @@
+'string' != typeof d

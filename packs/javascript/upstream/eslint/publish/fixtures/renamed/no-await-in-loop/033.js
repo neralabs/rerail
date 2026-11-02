@@ -1,0 +1,1 @@
+async function bsb() { while (hge || 5 > await h) {  } }

@@ -1,0 +1,1 @@
+<g fill="#7B82A0" fillRule="evenodd"></g>

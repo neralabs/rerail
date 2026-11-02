@@ -1,0 +1,5 @@
+
+enum ValidPlain {
+  A,
+}
+    

@@ -1,0 +1,1 @@
+var { a: { c: { m: n, u: yujdKraq } } } = {};

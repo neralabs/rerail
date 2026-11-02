@@ -1,0 +1,1 @@
+class I { static get i(){} static set i(uhn){} set i(rnd){} static get i(){} }

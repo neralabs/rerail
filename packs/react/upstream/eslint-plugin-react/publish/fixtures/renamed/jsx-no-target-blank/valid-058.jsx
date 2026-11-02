@@ -1,0 +1,1 @@
+<a href={href} target={lcKgec ? "_self" : "_blank"} rel={lcKgec ? undefined : "noreferrer"} />

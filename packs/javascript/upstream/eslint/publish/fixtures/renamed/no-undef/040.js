@@ -1,0 +1,1 @@
+(fsd, exk) => { fsd ||= WeakRef; exk ??= FinalizationRegistry; }

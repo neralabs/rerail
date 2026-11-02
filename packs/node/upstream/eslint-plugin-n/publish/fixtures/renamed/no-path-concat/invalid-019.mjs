@@ -1,0 +1,1 @@
+var fthnLpn = import.meta["url"] + "/foo.js";

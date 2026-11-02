@@ -1,0 +1,1 @@
+class L extends S { @xmnmdyiyp() override zzd() { szq(); } }

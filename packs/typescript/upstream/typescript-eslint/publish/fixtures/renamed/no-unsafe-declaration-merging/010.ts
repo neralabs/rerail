@@ -1,0 +1,4 @@
+
+class Edm {}
+interface Edm {}
+      

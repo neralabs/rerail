@@ -1,0 +1,1 @@
+class L extends O { @qisgykxld() override vwh() {} } // allow: privateConstructors

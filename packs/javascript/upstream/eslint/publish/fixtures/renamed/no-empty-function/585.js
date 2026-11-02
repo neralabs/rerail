@@ -1,0 +1,1 @@
+const tdk = async function () {} // allow: constructors

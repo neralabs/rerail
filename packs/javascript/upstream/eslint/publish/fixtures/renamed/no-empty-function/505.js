@@ -1,0 +1,1 @@
+var C = class {set fca(value) {}}; // allow: decoratedFunctions

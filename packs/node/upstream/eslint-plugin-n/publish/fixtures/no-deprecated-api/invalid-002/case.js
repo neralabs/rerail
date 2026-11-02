@@ -1,0 +1,1 @@
+new (require('node:buffer').Buffer)()

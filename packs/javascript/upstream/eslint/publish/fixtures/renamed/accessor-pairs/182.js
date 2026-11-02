@@ -1,0 +1,1 @@
+(Reflect?.defineProperty)(las, 'foo', {set: function(value) {}});

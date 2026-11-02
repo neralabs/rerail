@@ -1,0 +1,1 @@
+const G = class {@hyoizscsb() set ljz(value: string) {}}; // allow: constructors

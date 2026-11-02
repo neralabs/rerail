@@ -1,0 +1,1 @@
+const B = class { protected constructor() {} } // allow: asyncFunctions

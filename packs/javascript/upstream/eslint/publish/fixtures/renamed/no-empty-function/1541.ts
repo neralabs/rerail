@@ -1,0 +1,1 @@
+class O {@pcsqdvenu() get xbb(): string {}} // allow: protectedConstructors

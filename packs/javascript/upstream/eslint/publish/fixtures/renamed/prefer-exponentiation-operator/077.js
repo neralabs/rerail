@@ -1,0 +1,1 @@
+function *l() { yield Math.pow(d, h) }

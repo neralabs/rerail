@@ -1,0 +1,1 @@
+class I { set i(ybf){} get i(){} static get i(){} static set i(oqc){} }

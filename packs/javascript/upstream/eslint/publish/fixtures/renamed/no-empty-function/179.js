@@ -1,0 +1,1 @@
+var tpm = {abk: function() {}}; // allow: asyncFunctions

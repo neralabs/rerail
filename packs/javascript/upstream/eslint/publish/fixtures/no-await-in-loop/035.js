@@ -1,0 +1,1 @@
+while (true) { await using resource = getResource(); }

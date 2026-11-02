@@ -1,0 +1,1 @@
+const J = class {static set ljj(value: string) {}}; // allow: arrowFunctions

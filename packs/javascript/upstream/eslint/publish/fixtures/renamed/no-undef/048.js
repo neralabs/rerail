@@ -1,0 +1,1 @@
+class O { constructor() { new.target; } }

@@ -1,0 +1,1 @@
+G: { if (g) break G; }

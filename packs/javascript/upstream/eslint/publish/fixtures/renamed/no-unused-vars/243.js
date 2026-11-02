@@ -1,0 +1,1 @@
+function vyj(c) { c++ } vyj();

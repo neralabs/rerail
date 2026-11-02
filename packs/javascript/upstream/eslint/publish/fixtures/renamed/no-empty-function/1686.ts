@@ -1,0 +1,1 @@
+const H = class {set tyx(value: string) {}}; // allow: privateConstructors

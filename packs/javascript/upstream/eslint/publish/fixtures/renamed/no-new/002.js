@@ -1,0 +1,1 @@
+var c; if (c === new Date()) { c = false; }

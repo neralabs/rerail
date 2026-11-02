@@ -1,0 +1,1 @@
+type promiseSrybfCkmbs = Promise<void> | never;

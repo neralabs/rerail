@@ -1,0 +1,1 @@
+class M { set uzx(value) {} uzx() {} }

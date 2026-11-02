@@ -1,0 +1,1 @@
+function* eca(mgupj: string) {} // allow: privateConstructors

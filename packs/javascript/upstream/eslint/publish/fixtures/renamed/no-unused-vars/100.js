@@ -1,0 +1,1 @@
+(function(yig) { for ( const name in yig ) return true })({})

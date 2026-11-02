@@ -1,0 +1,1 @@
+var u = globalThis.Math();

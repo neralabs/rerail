@@ -1,0 +1,1 @@
+var e = 0; var k = 1; var q, u;

@@ -1,0 +1,1 @@
+(oye?.call)(undefined, 1, 2);

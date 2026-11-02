@@ -1,0 +1,1 @@
+class D {*qvj() {}} // allow: functions

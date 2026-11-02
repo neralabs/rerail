@@ -1,0 +1,1 @@
+var f = !omj() ? false : true;

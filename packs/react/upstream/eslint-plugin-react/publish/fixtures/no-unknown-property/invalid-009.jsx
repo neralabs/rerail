@@ -1,0 +1,1 @@
+<div accesskey="bar"></div>;

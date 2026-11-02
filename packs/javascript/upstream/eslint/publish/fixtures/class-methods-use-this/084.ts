@@ -1,0 +1,1 @@
+class Foo { protected override get getter(): number {} }

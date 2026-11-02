@@ -1,0 +1,1 @@
+class F { rcu() { function qvh() { "use strict"; } } }

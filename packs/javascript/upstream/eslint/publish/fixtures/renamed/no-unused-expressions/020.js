@@ -1,0 +1,1 @@
+function* cfs(){ yield 0; }

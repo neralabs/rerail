@@ -1,0 +1,1 @@
+var jmk = object['bar'];

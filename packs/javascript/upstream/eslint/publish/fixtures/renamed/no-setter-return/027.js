@@ -1,0 +1,1 @@
+({ set: function set(zmb) { return 1; } })

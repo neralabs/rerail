@@ -1,0 +1,1 @@
+class B { @hqxraphyi() oli() {} } // allow: protectedConstructors

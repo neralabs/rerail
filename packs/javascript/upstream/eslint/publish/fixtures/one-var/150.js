@@ -1,0 +1,1 @@
+for (var x in foo) {}; for (var y in foo) {}

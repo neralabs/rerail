@@ -1,0 +1,1 @@
+const A = class extends B {override get foo(): string {}}; // allow: getters

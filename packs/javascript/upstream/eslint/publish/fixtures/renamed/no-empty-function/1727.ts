@@ -1,0 +1,1 @@
+class A {@ntddedpsc() static set tqv(value: string) {}} // allow: privateConstructors

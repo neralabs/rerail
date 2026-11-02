@@ -1,0 +1,1 @@
+var w = z != 1 ? false : true;

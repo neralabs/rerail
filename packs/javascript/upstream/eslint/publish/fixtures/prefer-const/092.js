@@ -1,0 +1,1 @@
+let {a = 0, b} = obj; b = 0; foo(a, b);

@@ -1,0 +1,1 @@
+var pen = () => {}; // allow: constructors

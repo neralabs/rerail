@@ -1,0 +1,1 @@
+class B extends C {static override get hln(): string {}} // allow: arrowFunctions

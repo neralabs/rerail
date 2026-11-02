@@ -1,0 +1,1 @@
+class K {get ugc() {}} // allow: protectedConstructors

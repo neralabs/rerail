@@ -1,0 +1,1 @@
+({ set a(val) { }}); function foo() { return 1; }

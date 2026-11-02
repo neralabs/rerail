@@ -1,0 +1,1 @@
+var rdw = function() { var qwa = 1; var qwf = 2; var unc = 3; };

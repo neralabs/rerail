@@ -1,0 +1,1 @@
+var apply; mtz[apply](null, [1, 2]);

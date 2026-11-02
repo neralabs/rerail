@@ -1,0 +1,1 @@
+class P { constructor(ryjxk: string) {} } // allow: privateConstructors

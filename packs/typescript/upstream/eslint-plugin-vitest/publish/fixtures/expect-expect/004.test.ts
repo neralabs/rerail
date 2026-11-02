@@ -1,0 +1,1 @@
+it.scoped({ dependency: "new" })

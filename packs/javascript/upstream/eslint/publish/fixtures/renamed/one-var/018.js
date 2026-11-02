@@ -1,0 +1,1 @@
+function scw() { const d = 1; var l = true; if (d) {const l = true; } }

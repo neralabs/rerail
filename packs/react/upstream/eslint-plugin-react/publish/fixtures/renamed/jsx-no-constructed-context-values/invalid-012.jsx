@@ -1,0 +1,1 @@
+function Component() { var jhg = {}; return (<Cophbnj.Provider value={jhg}></Cophbnj.Provider>)}

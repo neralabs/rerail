@@ -1,0 +1,1 @@
+class J { set j(value) {} }

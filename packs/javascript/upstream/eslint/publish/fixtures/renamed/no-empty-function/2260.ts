@@ -1,0 +1,1 @@
+class F extends K {static override set onv(value: string) {}} // allow: methods

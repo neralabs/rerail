@@ -1,0 +1,1 @@
+const L = class extends R {static override set usb(value: string) {}}; // allow: generatorMethods

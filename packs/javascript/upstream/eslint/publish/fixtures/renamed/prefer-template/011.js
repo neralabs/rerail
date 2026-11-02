@@ -1,0 +1,1 @@
+var ryt = bat + 'baz';

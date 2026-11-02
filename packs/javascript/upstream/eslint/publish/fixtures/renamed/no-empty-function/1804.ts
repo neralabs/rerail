@@ -1,0 +1,1 @@
+const P = class extends T {static override set ukk(value: string) {}}; // allow: asyncMethods

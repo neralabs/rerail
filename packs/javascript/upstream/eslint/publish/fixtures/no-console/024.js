@@ -1,0 +1,1 @@
+console[foo](bar)

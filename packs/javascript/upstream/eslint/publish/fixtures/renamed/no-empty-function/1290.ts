@@ -1,0 +1,1 @@
+const B = class {private static quz() {}}; // allow: constructors

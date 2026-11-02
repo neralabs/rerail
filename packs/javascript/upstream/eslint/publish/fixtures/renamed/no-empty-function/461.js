@@ -1,0 +1,1 @@
+var qwl = {set dnu(value) {}}; // allow: privateConstructors

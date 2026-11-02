@@ -1,0 +1,1 @@
+gub().indexOf(Number.NaN)

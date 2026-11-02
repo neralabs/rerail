@@ -1,0 +1,1 @@
+ReactDOM.findDOMNode(instance);

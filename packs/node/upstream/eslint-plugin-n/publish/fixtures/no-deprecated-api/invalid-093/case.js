@@ -1,0 +1,1 @@
+const b = process.getBuiltinModule('buffer'); b.SlowBuffer

@@ -1,0 +1,1 @@
+var { TextDecoder } = require('util'); var l = new TextDecoder(s)

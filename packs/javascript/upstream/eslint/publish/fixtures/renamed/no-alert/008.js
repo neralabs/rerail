@@ -1,0 +1,1 @@
+function vrs(alert) { alert(); }

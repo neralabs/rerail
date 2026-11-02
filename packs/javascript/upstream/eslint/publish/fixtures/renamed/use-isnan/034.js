@@ -1,0 +1,1 @@
+switch(krg) { case crm: break; case NaN: break; default: break; }

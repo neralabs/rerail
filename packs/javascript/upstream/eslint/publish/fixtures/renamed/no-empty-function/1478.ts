@@ -1,0 +1,1 @@
+class R {get zlp(): string {}} // allow: methods

@@ -1,0 +1,1 @@
+class I { i() {} get j() {} k() {} set j(qki) {} o() {} }

@@ -1,0 +1,1 @@
+function foo() { globalThis.eval('foo') }

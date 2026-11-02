@@ -1,0 +1,1 @@
+function* cug(ylmww: string) {}

@@ -1,0 +1,1 @@
+const C = class extends F {override set snd(value: string) {}}; // allow: privateConstructors

@@ -1,0 +1,1 @@
+var a = Function.apply(null, ["b", "c", "return b+c"]);

@@ -1,0 +1,1 @@
+"use strict"; lmq: "bar"
