@@ -179,7 +179,13 @@ function copiesStore(home: string, ranges: Record<string, string>): PackStore & 
   };
 }
 
-describe("installPackVersions", () => {
+/**
+ * Each test copies the repository's typescript pack and loads the rule catalog over it several times, compiling every
+ * document; a loaded full-suite run needs more than the default 5 s.
+ */
+const INSTALL_TIMEOUT_MS = 30_000;
+
+describe("installPackVersions", { timeout: INSTALL_TIMEOUT_MS }, () => {
   it("puts the installed version back as npm recorded it when the one named installs but its core range leaves it out, and says why", async () => {
     const home = temporaryHome();
     const store = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "9.0.0": ">=9.0.0" });
