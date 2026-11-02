@@ -53,16 +53,6 @@ impl Variant {
         }
         ModulePath::names(&names).expect("symbolic module")
     }
-    /// The variant a real module path selects.
-    pub fn of(real: &ModulePath) -> Variant {
-        if !real.in_package() {
-            Variant::Unpackaged
-        } else if real.last() == "__init__" && real.segments.len() > 1 {
-            Variant::Init
-        } else {
-            Variant::Module
-        }
-    }
 }
 
 /// A summary's relations rendered as text rows, names spelled out (SCHEMA § 3.4).
