@@ -7,6 +7,7 @@
  */
 import { h, setAttr, setClass, setContent, setText, icon } from "../dom.js";
 import { fmt } from "../format.js";
+import { isWorktreePack } from "../derive.js";
 import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../state.js";
 import { writes } from "../shell.js";
 import { pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
@@ -57,9 +58,10 @@ function renderHead(all, shown, pack) {
   setAttr(page.share, "hidden", total === 0);
   setText(page.share, `${fmt(n)} of ${fmt(total)} violations logged`);
   setAttr(page.share, "title", `Violations logged by these rules, of all violations ${rangeLabel()}`);
-  // Remove pack sits at the title's right; once clicked, its question takes the counts line and the button goes.
+  // Remove pack sits at the title's right; once clicked, its question takes the counts line and the button goes. The
+  // worktree's own rules are no attachment to remove: the files in its `.rerail/rules` decide them.
   const asking = pack ? ui.removeAsk === pack.id : false;
-  setContent(page.removeButton, JSON.stringify([pack?.id, asking]), () => (pack && !asking
+  setContent(page.removeButton, JSON.stringify([pack?.id, asking]), () => (pack && !asking && !isWorktreePack(pack)
     ? h("button.btn.sm.danger.outline", { "data-act": "removepack", "data-i": pack.id, title: "Its rules go off and the pack returns to Rule packs" }, "Remove pack")
     : null));
   setContent(page.ask, JSON.stringify([pack?.id, asking, repoName()]), () => (asking ? removePackControl(pack) : null));
