@@ -45,7 +45,7 @@ use serde_json::json;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
 const INLINE_TIME_BUDGET: Duration = Duration::from_millis(5);
@@ -139,8 +139,11 @@ impl CodeRuleDslWorkspace {
         let guard = match self.state.try_lock() {
             Ok(guard) => guard,
             Err(TryLockError::Poisoned(error)) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                return Err(invalid("policy workspace is evaluating"));
+                return Err(close_poisoned(
+                    error.into_inner(),
+                    &self.state,
+                    &self.closed,
+                ));
             }
             Err(TryLockError::WouldBlock) => return Err(invalid("policy workspace is evaluating")),
         };
@@ -267,7 +270,7 @@ impl CodeRuleDslWorkspace {
         Ok(())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn accepts_path(&self, path: String) -> bool {
         !self.closed.load(Ordering::Acquire)
             && self
@@ -296,13 +299,18 @@ impl CodeRuleDslWorkspace {
         if self.closed.load(Ordering::Acquire) || request_json.len() > 8192 {
             return Ok(None);
         }
-        let Ok(_slot) = cpu_slot().try_lock() else {
+        let Some(_slot) = cpu_slot().try_lock() else {
             return Ok(None);
         };
         let guard = match self.state.try_lock() {
             Ok(guard) => guard,
             Err(TryLockError::Poisoned(error)) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
+                // Closed now, so it answers as a closed workspace does: the async apply fails.
+                drop(close_poisoned(
+                    error.into_inner(),
+                    &self.state,
+                    &self.closed,
+                ));
                 return Ok(None);
             }
             Err(TryLockError::WouldBlock) => return Ok(None),
@@ -455,24 +463,30 @@ impl CodeRuleDslWorkspace {
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn memory_profile(&self) -> Result<String> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| invalid("policy workspace is unavailable"))?;
+        let state = match self.state.lock() {
+            Ok(guard) => StateLease {
+                guard: Some(guard),
+                mutex: &self.state,
+                closed: &self.closed,
+            },
+            Err(error) => {
+                return Err(close_poisoned(
+                    error.into_inner(),
+                    &self.state,
+                    &self.closed,
+                ));
+            }
+        };
         serde_json::to_string(&workspace_memory_profile(&state)).map_err(json_error)
     }
 
     /// Bound the bytes of documents the storage contract keeps resident; loads beyond it evict the
     /// least recently used documents, which later loads bring back from the store or a reparse.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_document_residency_limit(&self, bytes: u32) -> Result<()> {
-        self.state
-            .try_lock()
-            .map_err(|_| invalid("policy workspace is evaluating"))?
-            .documents
-            .set_limit(bytes as usize);
+        self.state_now()?.documents.set_limit(bytes as usize);
         Ok(())
     }
 
@@ -480,16 +494,13 @@ impl CodeRuleDslWorkspace {
     /// resolution reads the files below it the workspace does not hold, and nothing above it.
     /// Without one, targets resolve among the held files alone. A changed root makes the next
     /// apply that defers nothing evaluate again the files whose clauses read import targets.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_root(&self, root: String) -> Result<()> {
         let root = PathBuf::from(root);
         if !root.is_absolute() {
             return Err(invalid("workspace root must be an absolute path"));
         }
-        let mut state = self
-            .state
-            .try_lock()
-            .map_err(|_| invalid("policy workspace is evaluating"))?;
+        let mut state = self.state_now()?;
         if state.import_root.as_ref() != Some(&root) {
             state.import_root = Some(root);
             state.import_generation += 1;
@@ -497,12 +508,9 @@ impl CodeRuleDslWorkspace {
         Ok(())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn evict_inactive(&self) -> Result<bool> {
-        let mut state = self
-            .state
-            .try_lock()
-            .map_err(|_| invalid("policy workspace is evaluating"))?;
+        let mut state = self.state_now()?;
         // Cross-file clauses read the evidence index and the call graph, which eviction keeps: they
         // are summaries of the files, and an edit after eviction updates the graph in place.
         // A file without stored results stays only when a busy store left it unpublished, or the
@@ -555,10 +563,7 @@ impl CodeRuleDslWorkspace {
         start_byte: u32,
         end_byte: u32,
     ) -> Result<Option<String>> {
-        let mut state = self
-            .state
-            .try_lock()
-            .map_err(|_| invalid("policy workspace is evaluating"))?;
+        let mut state = self.state_now()?;
         documents::reference(&mut state, &path, start_byte as usize, end_byte as usize)?
             .map(|reference| serde_json::to_string(&reference).map_err(json_error))
             .transpose()
@@ -570,20 +575,35 @@ impl CodeRuleDslWorkspace {
     pub fn resolve_node_reference(&self, reference: String) -> Result<String> {
         let reference: documents::NodeReference =
             serde_json::from_str(&reference).map_err(json_error)?;
-        let mut state = self
-            .state
-            .try_lock()
-            .map_err(|_| invalid("policy workspace is evaluating"))?;
+        let mut state = self.state_now()?;
         serde_json::to_string(&documents::resolve(&mut state, &reference)?).map_err(json_error)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
         clear_if_unlocked(&self.state);
         match self.scopes.lock() {
             Ok(mut scopes) => *scopes = Vec::new(),
             Err(error) => *error.into_inner() = Vec::new(),
+        }
+    }
+
+    /// The state without waiting: an evaluation holding it answers "evaluating", which the host
+    /// may retry; a state a panic poisoned closes the workspace (`close_poisoned`).
+    fn state_now(&self) -> Result<StateLease<'_>> {
+        match self.state.try_lock() {
+            Ok(guard) => Ok(StateLease {
+                guard: Some(guard),
+                mutex: &self.state,
+                closed: &self.closed,
+            }),
+            Err(TryLockError::Poisoned(error)) => Err(close_poisoned(
+                error.into_inner(),
+                &self.state,
+                &self.closed,
+            )),
+            Err(TryLockError::WouldBlock) => Err(invalid("policy workspace is evaluating")),
         }
     }
 }
@@ -649,18 +669,22 @@ fn clear_if_unlocked(mutex: &Mutex<WorkspaceState>) {
     }
 }
 
-// Poisoned state cannot be evaluated, but its guard still owns the close
-// handoff: release it, then retry cleanup if close lost the lock race.
-fn discard_poisoned_guard(
+/// A panic poisoned the state, so nothing proves it consistent: the workspace closes, and this
+/// call and every later one fail as on a closed workspace, which no host retries, rather than
+/// answer busy. The guard still owns the close handoff: dropped as a lease, it clears the state,
+/// or leaves that to whichever lease holds the lock by then.
+pub(super) fn close_poisoned(
     guard: MutexGuard<'_, WorkspaceState>,
     mutex: &Mutex<WorkspaceState>,
     closed: &AtomicBool,
-) {
+) -> napi::Error {
+    closed.store(true, Ordering::Release);
     drop(StateLease {
         guard: Some(guard),
         mutex,
         closed,
     });
+    invalid("policy workspace is closed")
 }
 
 pub(super) struct StateLease<'a> {
@@ -782,8 +806,11 @@ impl Task for WorkspaceStorageTask {
             let guard = match self.state.lock() {
                 Ok(guard) => guard,
                 Err(error) => {
-                    discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                    return Err(invalid("policy workspace is unavailable"));
+                    return Err(close_poisoned(
+                        error.into_inner(),
+                        &self.state,
+                        &self.closed,
+                    ));
                 }
             };
             // A close that lands while this holds the lock cannot clear the state; the lease does on drop.
@@ -824,8 +851,10 @@ pub struct WorkspaceApplyTask {
     pub(super) request_buffer: Option<Vec<u8>>,
     pub(super) request_direct: Option<Request>,
 }
-pub(super) fn cpu_slot() -> &'static Mutex<()> {
-    static SLOT: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+/// One apply at a time across the process's workspaces. It guards no data, so it is a mutex a
+/// panic does not poison: an apply that panics while holding it frees it for the next one.
+pub(super) fn cpu_slot() -> &'static parking_lot::Mutex<()> {
+    static SLOT: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
     &SLOT
 }
 impl Task for WorkspaceApplyTask {
@@ -833,9 +862,9 @@ impl Task for WorkspaceApplyTask {
     type JsValue = ResultText;
     fn compute(&mut self) -> Result<ResultText> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
-            let _slot = cpu_slot()
-                .try_lock()
-                .map_err(|_| invalid("WORKSPACE_BUSY"))?;
+            let Some(_slot) = cpu_slot().try_lock() else {
+                return Err(invalid("WORKSPACE_BUSY"));
+            };
             self.apply_with_slot()
         })
     }
@@ -881,8 +910,11 @@ impl WorkspaceApplyTask {
         let guard = match self.state.lock() {
             Ok(guard) => guard,
             Err(error) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                return Err(invalid("policy workspace is unavailable"));
+                return Err(close_poisoned(
+                    error.into_inner(),
+                    &self.state,
+                    &self.closed,
+                ));
             }
         };
         let mut state = StateLease {
@@ -1252,8 +1284,11 @@ impl Task for WorkspaceResultPageTask {
             let guard = match self.state.lock() {
                 Ok(guard) => guard,
                 Err(error) => {
-                    discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                    return Err(invalid("policy workspace is unavailable"));
+                    return Err(close_poisoned(
+                        error.into_inner(),
+                        &self.state,
+                        &self.closed,
+                    ));
                 }
             };
             let mut state = StateLease {
@@ -1290,8 +1325,11 @@ impl WorkspaceCompletionTask {
         let guard = match self.state.lock() {
             Ok(guard) => guard,
             Err(error) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                return Err(invalid("policy workspace is unavailable"));
+                return Err(close_poisoned(
+                    error.into_inner(),
+                    &self.state,
+                    &self.closed,
+                ));
             }
         };
         let state = StateLease {

@@ -8,8 +8,10 @@
 //! work through [`contain_panic`].
 //!
 //! A caught panic does not prove the workspace consistent. Workspace state sits behind
-//! `std::sync::Mutex`, which a panic poisons; the next call that meets the poisoned lock closes the
-//! workspace (`discard_poisoned_guard`), so the session's checks fail rather than run on it.
+//! `std::sync::Mutex`, which a panic poisons; the call that meets the poisoned lock closes the
+//! workspace (`close_poisoned`), so it and every later call fail as on a closed workspace, which
+//! no host retries, and the session's checks fail rather than run on it. The CPU slot applies
+//! share guards no data and does not poison, so a panic in one apply never blocks the next.
 
 use napi::{Error, Result, Status};
 use std::panic::{AssertUnwindSafe, catch_unwind};

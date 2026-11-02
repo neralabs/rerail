@@ -10,7 +10,7 @@
 //! `max_file_bytes`). Its apply publishes the batch and releases every source and tape before the
 //! chunk returns, so between chunks the workspace retains per-file results only.
 
-use super::api::{WorkspaceApplyTask, cpu_slot};
+use super::api::{WorkspaceApplyTask, close_poisoned, cpu_slot};
 use super::crossfile::CrossFileScheduler;
 use super::global::record_evidence;
 use super::ingest::{Request, WireFile, make_file};
@@ -287,7 +287,7 @@ impl WorkspaceIndexTask {
     fn lock(&self) -> Result<MutexGuard<'_, WorkspaceState>> {
         self.state
             .lock()
-            .map_err(|_| invalid("policy workspace is unavailable"))
+            .map_err(|error| close_poisoned(error.into_inner(), &self.state, &self.closed))
     }
 
     /// The host's file label for `path`: its whole name where the host lists it (`.npmignore`),
@@ -690,7 +690,7 @@ impl Task for WorkspaceIndexTask {
                 Some(index) => index,
                 None => self.plan(&storage, &repository)?,
             };
-            let Ok(_slot) = cpu_slot().try_lock() else {
+            let Some(_slot) = cpu_slot().try_lock() else {
                 self.lock()?.repository_index = Some(index);
                 return Err(invalid("WORKSPACE_BUSY"));
             };

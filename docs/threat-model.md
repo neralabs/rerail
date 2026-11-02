@@ -562,11 +562,13 @@ items therefore mostly match the host's own trust model rather than going beyond
 - **Health covers the model.** `/healthz`, `rerail status` and the dashboard header check `model/` against
   `manifest.json` and name the file that fails. `rerail status` exits 5 when the model is not ok.
 - **Rust panics.** A panic that unwinds out of a Node-API callback aborts the process. Every native export that works
-  on repository content, rules or the model is marked `#[napi(catch_unwind)]`, and every `AsyncTask::compute`, which
-  runs on a libuv worker inside napi-rs's own `extern "C"` callback the attribute does not reach, runs through
-  `contain_panic`. The panic becomes a rejected call. Workspace state sits behind a `std::sync::Mutex` that the panic
-  poisons, and the next call that meets it closes the workspace (`discard_poisoned_guard`), so that session's checks
-  fail rather than run on half-updated state.
+  on repository content, workspace state, rules or the model is marked `#[napi(catch_unwind)]`, and every
+  `AsyncTask::compute`, which runs on a libuv worker inside napi-rs's own `extern "C"` callback the attribute does not
+  reach, runs through `contain_panic`. The panic becomes a rejected call. Workspace state sits behind a
+  `std::sync::Mutex` that the panic poisons; the next call that meets it closes the workspace (`close_poisoned`), so
+  it and every later call fail as on a closed workspace, which the host does not retry, and that session's checks fail
+  rather than run on half-updated state. The CPU slot that serializes applies guards no data and cannot be poisoned,
+  so a panic in one apply does not block the next one in any session.
 
 **What remains:**
 

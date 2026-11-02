@@ -127,7 +127,7 @@ pub struct ModelCheck {
 
 /// Checks the model directory at `model_path` against its `manifest.json` (every file's SHA-256),
 /// as a session's attach does, without loading the model.
-#[napi]
+#[napi(catch_unwind)]
 pub fn verify_model_files(model_path: String) -> ModelCheck {
     match verify_model(Path::new(&model_path)) {
         Ok(()) => ModelCheck {
@@ -418,7 +418,7 @@ impl ConversationEngine {
         self.rules.upsert(&self.encoder, rules)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn remove_rules(&mut self, ids: Vec<String>) -> u32 {
         self.rules.remove(ids)
     }

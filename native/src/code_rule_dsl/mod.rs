@@ -332,7 +332,7 @@ impl CompiledCodeRuleDsl {
     /// Whether a repository-relative path is inside this code rule's scope: the same
     /// matcher evaluation uses, so a host can hand the code rule only the files it will
     /// read and be sure the two never disagree.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn in_scope(&self, path: String) -> bool {
         self.inner.scope.matches(&path)
     }
@@ -361,7 +361,7 @@ impl CompiledCodeRuleDsl {
         serde_json::to_string(&evaluation_json(evaluation, None, &[], &[])).map_err(json_error)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn open_editor(&self, snapshot_json: String) -> Result<CodeRuleDslEditor> {
         let (snapshot, derived) = parse_snapshot(&snapshot_json, self.inner.reads_server_graph())?;
         Ok(CodeRuleDslEditor {
@@ -408,7 +408,7 @@ impl CodeRuleDslEditor {
         .map_err(json_error)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn apply_edit(&mut self, edit_json: String, mode: String) -> Result<String> {
         let edit: Value = serde_json::from_str(&edit_json).map_err(json_error)?;
         let revision = required_u64(&edit, "revision", "edit")? as u32;
