@@ -194,8 +194,8 @@ A rule the person wrote by hand into `.rerail/rules/` can be checked as it is: `
      person's. Change its file in place; the change applies at the next edit.
    - A `local:` rule, or any rule in `rerail rules export`, is the person's. Change it here.
    - Any other rule ships with Rerail. You cannot change it. Offer to set it to Log or turn it off in this repo from the dashboard
-     (`rerail manage --print` gives the link). If the person wants it changed for everyone, offer a line they can send to the Rerail
-     team: what fired, the code, and why following it is wrong.
+     (`rerail manage --print` gives the link). If the person wants it changed for everyone, `/rerail-bug-report` reports it to the
+     Rerail team in an issue.
 3. **Fix it** with the most targeted step on the fix ladder in
    [references/rule-quality.md](references/rule-quality.md#the-fix-ladder). Add the misfire as a `passed` case, and show it was
    wrong before: run it against the current rule and see it caught. Keep every earlier case: from the draft file, or, without it,
