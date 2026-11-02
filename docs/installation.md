@@ -517,7 +517,7 @@ rerail install --remove --delete-data  # the same, deleting the database, backup
 
 Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
 `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`,
-`/rerail-uninstall`, `/rerail-help`, `/rerail-show-me` and `/rerail-support-bundle` (`$rerail`,
+`/rerail-uninstall`, `/rerail-help`, `/rerail-show-me` and `/rerail-bug-report` (`$rerail`,
 `$rerail-manage`, and so on in Codex). `rerail install` also removes the
 `rerail-ui` and `rerail-rage-quit` files an earlier build wrote. `rerail update`
 then runs `rerail install --refresh` from the version it activated: every coding

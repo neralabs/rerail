@@ -122,8 +122,10 @@ it. The daemon's capabilities, home folders, the paths and names of your recorde
 computer's name are replaced, and what looks like a secret or an email address is taken out; other absolute paths stay,
 patterns cannot catch everything, and steer text can quote your code, so read the file before you attach it
 ([what it holds](troubleshooting.md#reporting-a-problem)). Issues are public.
-`/rerail-support-bundle` has your coding agent read the file with you, so it goes to the agent's provider like the
+`/rerail-bug-report` has your coding agent read the file with you, so it goes to the agent's provider like the
 rest of your session ([above](#your-coding-agents-provider)).
+To look for an existing issue, it searches GitHub with a shipped rule's id or the words of an error, never your own
+rule's id, a path or a project's name. Its report reaches GitHub only when you submit the form or ask it to file the issue.
 
 ## Deleting your data
 

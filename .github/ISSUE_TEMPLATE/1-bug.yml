@@ -89,7 +89,7 @@ body:
     id: support-bundle
     attributes:
       label: Support bundle
-      description: Run `/rerail-support-bundle` in your coding agent, or `rerail support-bundle` in a terminal, read the file it writes, and drag it here. It holds Rerail's diagnostics, with no prompts, replies or code ([what it holds](https://github.com/neralabs/rerail/blob/main/docs/troubleshooting.md#reporting-a-problem)). A dashboard link only opens on your computer, so please don't paste one.
+      description: Run `/rerail-bug-report` in your coding agent, which also fills in this form, or `rerail support-bundle` in a terminal, read the file it writes, and drag it here. It holds Rerail's diagnostics, with no prompts, replies or code ([what it holds](https://github.com/neralabs/rerail/blob/main/docs/troubleshooting.md#reporting-a-problem)). A dashboard link only opens on your computer, so please don't paste one.
   - type: input
     id: fork
     attributes:
