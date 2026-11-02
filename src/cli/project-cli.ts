@@ -2,8 +2,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, r
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { approveRule, pendingRules, RuleApprovalError, type PendingRule } from "../engine/catalog/rule-approval.js";
-import { pendingRuleRecord } from "../api/repository-operations.js";
+import { approveRule, pendingRuleRecord, pendingRules, RuleApprovalError, type PendingRule } from "../engine/catalog/rule-approval.js";
 import type { UpdateResult } from "../setup/updater.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
@@ -140,14 +139,15 @@ export function runRulesCommand(args: readonly string[], usage: () => string, io
   if (action === "import") {
     const file = args[1];
     if (file === undefined || file.startsWith("--")) throw new Error(`rules import needs a dump file\n\n${usage()}`);
-    parseArguments(args.slice(2), { flags: [], options: [] }, argument => `Unknown rules import option: ${argument}\n\n${usage()}`);
+    const { flags } = parseArguments(args.slice(2), { flags: ["--approve"], options: [] }, argument => `Unknown rules import option: ${argument}\n\n${usage()}`);
     const source = resolve(file);
     const value = parseJsonWithoutDuplicateKeys(readFileSync(source, "utf8"), source);
     const db = openRerailDatabase(database);
     try {
       const ruleCatalog = loadRuleCatalog();
-      const report = importRulesDump(db, ruleCatalog, value);
+      const report = importRulesDump(db, ruleCatalog, value, { approve: flags.has("--approve") });
       stdout.write(`Imported ${report.library} rules created by you and ${report.repositories} repositories from ${source} into ${database}\n`);
+      for (const id of report.approved) stdout.write(`● Approved ${id}. It runs with the content imported from now on.\n`);
       const waiting = pendingRules(db, ruleCatalog).filter(pending => pending.owner === "library").length;
       if (waiting > 0) stdout.write(`${waiting} ${plural(waiting, "rule")} created by you ${waiting === 1 ? "waits" : "wait"} for your approval: rerail rules list\n`);
     } finally {

@@ -155,7 +155,7 @@ describe("rules dump", () => {
     addRepository(target, REPOSITORY);
     target.update(repositories).set({ started: true }).run();
     addAttachment(target, { repositoryKey: REPOSITORY, folder: "", sourceKind: "rerail_rule", sourceId: "loose" });
-    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 1, repositories: 1 });
+    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 1, repositories: 1, approved: [] });
 
     expect(exportRulesDump(target, new Date(0)).repositories).toEqual(exportRulesDump(source, new Date(0)).repositories);
     expect(getLibraryRule(target, "mine")?.document).toEqual(getLibraryRule(source, "mine")?.document);
@@ -192,9 +192,9 @@ describe("rules dump", () => {
     expect(upsertLibraryRule(source, withShared, codeRule("shared", { mode: "steer" }), "code").document.rule.mode).toBe("steer");
     const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
 
-    expect(importRulesDump(source, withShared, dump)).toEqual({ library: 1, repositories: 0 });
+    expect(importRulesDump(source, withShared, dump)).toEqual({ library: 1, repositories: 0, approved: [] });
     const target = await temporaryDatabase();
-    expect(importRulesDump(target, withShared, dump)).toEqual({ library: 1, repositories: 0 });
+    expect(importRulesDump(target, withShared, dump)).toEqual({ library: 1, repositories: 0, approved: [] });
     expect(getLibraryRule(target, "shared")?.document.rule.mode).toBe("steer");
   });
 
@@ -205,11 +205,28 @@ describe("rules dump", () => {
     addRepository(target, "remote:github.com/acme/app-renamed");
     target.update(repositories).set({ aliases: [REPOSITORY] }).run();
 
-    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 0, repositories: 1 });
+    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 0, repositories: 1, approved: [] });
     expect(target.select({ key: repositories.repositoryKey, aliases: repositories.aliases }).from(repositories).all())
       .toEqual([{ key: "remote:github.com/acme/app-renamed", aliases: [REPOSITORY] }]);
     expect(target.select({ key: ruleAttachments.repositoryKey, folder: ruleAttachments.folder }).from(ruleAttachments).all())
       .toEqual([{ key: "remote:github.com/acme/app-renamed", folder: "web" }]);
+  });
+
+  it("approves on request after the repositories, so an imported edited copy switches its original off where the dump adds it", async () => {
+    const source = await repositoryWithLintPack(["web"]);
+    copyRerailRuleToLibrary(source, ruleCatalog, REPOSITORY, "no-console", codeRule("x", { message: "edited" }));
+    const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
+
+    const target = await temporaryDatabase();
+    expect(importRulesDump(target, ruleCatalog, dump, { approve: true })).toEqual({ library: 1, repositories: 1, approved: ["no-console-copy"] });
+    const rules = loadCheckoutRuleSet(target, ruleCatalog, checkout(CHECKOUT), RUNNING, []).rulesFor("web/a.ts");
+    expect(rules.map(rule => [rule.document.rule.id, rule.source.kind, rule.on])).toEqual([
+      ["no-console", "pack", false],
+      ["no-console-copy", "library_rule", true],
+      ["no-var", "pack", false],
+    ]);
+    // Content approved already is not approved again.
+    expect(importRulesDump(target, ruleCatalog, dump, { approve: true }).approved).toEqual([]);
   });
 
   it("imports nothing when a code rule does not compile", async () => {

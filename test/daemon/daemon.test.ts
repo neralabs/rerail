@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +18,7 @@ import {
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import {
   type DaemonHealth,
+  type DaemonState,
   ingestEngineEvent,
   SqliteSessionStore,
   SESSION_EVENT_PAGE_LIMIT,
@@ -790,6 +791,52 @@ describe("Rerail daemon", () => {
     // Review of #49 (N5): the failed close is on record.
     expect(stderr).toHaveBeenCalledWith("rerail daemon: could not close the native session server after a failed start: close failed\n");
     stderr.mockRestore();
+  });
+
+  describe.runIf(process.platform !== "win32")("engine socket directory another user took first", () => {
+    const originalTmpdir = process.env.TMPDIR;
+
+    /** A short root (a socket path must fit 104 bytes on macOS) whose temp directory already holds `rerail-<uid>`, open to all. */
+    async function squattedTemp(): Promise<string> {
+      root = await realpath(await mkdtemp("/tmp/rerail-daemon-"));
+      process.env.TMPDIR = join(root, "tmp");
+      const squatted = join(root, "tmp", `rerail-${process.getuid!()}`);
+      await mkdir(squatted, { recursive: true });
+      await chmod(squatted, 0o777);
+      return squatted;
+    }
+
+    afterEach(() => {
+      if (originalTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = originalTmpdir;
+    });
+
+    it("listens in a run folder beside its database, which its state file names for hooks", async () => {
+      const squatted = await squattedTemp();
+      const stateFile = join(root, "daemon.json");
+      startTestRepository(root, join(root, "rerail.sqlite"));
+      await start({ stateFile });
+      // Test boundary: the state file a hook reads, parsed and asserted right after.
+      const state = JSON.parse(await readFile(stateFile, "utf8")) as DaemonState;
+      expect(dirname(state.kernelSocketPath)).toBe(join(root, "run"));
+      expect((await lstat(state.kernelSocketPath)).isSocket()).toBe(true);
+      expect(await readdir(squatted)).toEqual([]);
+      await ingestEngineEvent(state.kernelSocketPath, {
+        kind: "session-start", eventId: "start-fallback",
+        session: { host: "claude-code", sessionId: "fallback-session", cwd: root },
+      });
+      const response = await fetch(new URL("/api/sessions", state.url));
+      expect(await response.json()).toMatchObject({ sessions: [{ sessionId: "fallback-session" }] });
+    });
+
+    it("refuses to start when the run folder is refused too, naming each directory and what to do", async () => {
+      const squatted = await squattedTemp();
+      await mkdir(join(root, "run"), { mode: 0o700 });
+      await chmod(join(root, "run"), 0o755);
+      const started = start();
+      await expect(started).rejects.toThrow(`${squatted}: it has mode 777, not 700. Remove ${squatted}`);
+      await expect(started).rejects.toThrow(`${join(root, "run")}: it has mode 755, not 700. Remove ${join(root, "run")}`);
+    });
   });
 
   it("publishes every operation in the OpenAPI document", async () => {

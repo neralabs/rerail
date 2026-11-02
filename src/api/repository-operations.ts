@@ -37,10 +37,10 @@ import {
   approvalStatus,
   approveRule,
   catalogApprovalStatus,
+  pendingRuleRecord,
   pendingRules,
   readApprovals,
   RuleApprovalError,
-  type PendingRule,
   type RuleApproval,
 } from "../engine/catalog/rule-approval.js";
 import {
@@ -335,23 +335,6 @@ function libraryRecord(rule: LibraryRule, approvals: ReadonlyMap<string, RuleApp
   return rule.document.kind === "code"
     ? { kind: "code", rule: rule.document.rule, approvedRule: approved?.kind === "code" ? approved.rule : null, ...shared, ...inactiveOf("code", rule.document.rule) }
     : { kind: "conversation", rule: rule.document.rule, approvedRule: approved?.kind === "conversation" ? approved.rule : null, ...shared };
-}
-
-/** A rule waiting for approval as `rule_approvals_list` (and `rerail rules list --json`) report it. */
-export function pendingRuleRecord(pending: PendingRule): z.infer<typeof pendingRuleSchema> {
-  const shared = {
-    owner: pending.owner,
-    id: pending.document.rule.id,
-    packId: pending.packId,
-    revision: pending.revision,
-    contentHash: pending.contentHash,
-    copiedFromRuleId: pending.copiedFromRuleId,
-  };
-  const approved = pending.approved?.document;
-  const approvedAt = pending.approved?.approvedAt ?? 0;
-  return pending.document.kind === "code"
-    ? { kind: "code", rule: pending.document.rule, approved: approved?.kind === "code" ? { rule: approved.rule, approvedAt } : null, ...shared }
-    : { kind: "conversation", rule: pending.document.rule, approved: approved?.kind === "conversation" ? { rule: approved.rule, approvedAt } : null, ...shared };
 }
 
 interface SettingChange {

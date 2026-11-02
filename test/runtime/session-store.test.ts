@@ -21,6 +21,8 @@ import {
   setRuleSetting,
   listLibraryRules,
   upsertLibraryRule,
+  approveRule,
+  pendingRules,
 } from "../../src/engine/index.js";
 import { SqlitePresentationPreferenceStore } from "../../src/runtime/presentation-preference-store.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
@@ -189,6 +191,36 @@ describe("SQLite session persistence", () => {
     expect(payload("env-result")).toMatchObject({ toolCallId: "env", output: { withheld: "tool output", bytes: secret.length } });
     // A hidden path that is not secret-like keeps its output.
     expect(payload("ci-result")).toMatchObject({ output: "on: push" });
+    const stored = database.prepare("SELECT payload_json AS payloadJson FROM events").pluck().all() as string[];
+    database.close();
+    expect(stored.join("\n")).not.toContain(secret);
+    const sessionFolder = createHash("sha256").update(session.sessionId).digest("hex");
+    expect(await readFile(join(storageRoot, sessionFolder, "events.jsonl"), "utf8")).not.toContain(secret);
+  });
+
+  it("stores no output of a secret call's result that arrives after the daemon restarted", async () => {
+    const root = await temporaryDirectory();
+    const databasePath = defaultRerailDatabasePath();
+    const storageRoot = join(root, "sessions");
+    const session = { host: "claude-code" as const, sessionId: "restarted-session", cwd: root };
+    const secret = "API_TOKEN=sk-live-0123456789";
+    const before = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: root, embedder: testEmbedder });
+    await before.ingest({ kind: "session-start", eventId: "start", session });
+    await before.ingest({ kind: "call", eventId: "env-call", toolCallId: "env", sessionId: session.sessionId, toolName: "Bash", input: { command: "cat .env" } });
+    await before.ingest({ kind: "call", eventId: "src-call", toolCallId: "src", sessionId: session.sessionId, toolName: "Read", input: { file_path: "src/a.ts" } });
+    await before.dispose();
+
+    const after = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: root, embedder: testEmbedder });
+    await after.ingest({ kind: "session-start", eventId: "start-again", session });
+    await after.ingest({ kind: "result", eventId: "env-result", toolCallId: "env", sessionId: session.sessionId, toolName: "Bash", output: secret });
+    await after.ingest({ kind: "result", eventId: "src-result", toolCallId: "src", sessionId: session.sessionId, toolName: "Read", output: "export {};" });
+    await after.dispose();
+
+    const database = new Database(databasePath, { readonly: true });
+    const read = database.prepare("SELECT payload_json FROM events WHERE event_id = ?").pluck();
+    const payload = (eventId: string): unknown => JSON.parse(String(read.get(eventId)));
+    expect(payload("env-result")).toMatchObject({ toolCallId: "env", output: { withheld: "tool output", bytes: secret.length } });
+    expect(payload("src-result")).toMatchObject({ output: "export {};" });
     const stored = database.prepare("SELECT payload_json AS payloadJson FROM events").pluck().all() as string[];
     database.close();
     expect(stored.join("\n")).not.toContain(secret);
@@ -575,6 +607,35 @@ describe("SQLite session persistence", () => {
     expect(reader.hud(session.sessionId).activeRuleCount).toBe(2);
     removeAttachment(database, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: MOCK_CONVERSATION_RULES[0]!.id });
     expect(reader.hud(session.sessionId).activeRuleCount).toBeNull();
+  });
+
+  it("counts the repository's rules awaiting approval afresh on every read after an approval or an edit", async () => {
+    const { root, store, reader, session } = await hudFixture("awaiting");
+    const repositoryKey = setUpTestRepository(root, { library: [{ kind: "conversation", rule: MOCK_CONVERSATION_RULES[0]! }] });
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    closeAfterTest({ close: () => database.$client.close() });
+    const ownerCheckoutPaths = [realpathSync(root)];
+    store.openSession(session);
+    store.recordRuleCoverage(session, {
+      repositoryId: repositoryKey, ownerCheckoutPaths, activeRuleCount: 1,
+      ruleSignature: ruleConfigurationSignature(database, loadRuleCatalog(), repositoryKey, ownerCheckoutPaths),
+    });
+    const rule = { ...MOCK_CONVERSATION_RULES[0]!, id: "awaiting" };
+    const awaiting = () => reader.hud(session.sessionId).awaitingApproval;
+    expect(awaiting()).toBe(0);
+
+    upsertLibraryRule(database, loadRuleCatalog(), rule, "conversation");
+    expect(awaiting()).toBe(0);
+    addAttachment(database, { repositoryKey, folder: "web", sourceKind: "library_rule", sourceId: rule.id });
+    expect(awaiting()).toBe(1);
+    const pending = pendingRules(database, loadRuleCatalog()).find(entry => entry.document.rule.id === rule.id)!;
+    approveRule(database, loadRuleCatalog(), "library", rule.id, pending.contentHash);
+    expect(awaiting()).toBe(0);
+    // An edit waits while the approved content runs.
+    upsertLibraryRule(database, loadRuleCatalog(), { ...rule, action: { content: "Edited" } }, "conversation");
+    expect(awaiting()).toBe(1);
+    removeAttachment(database, { repositoryKey, folder: "web", sourceKind: "library_rule", sourceId: rule.id });
+    expect(awaiting()).toBe(0);
   });
 
   it("preserves a runtime's complete baseline across reopen but not across a database reset", async () => {

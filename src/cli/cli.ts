@@ -152,7 +152,7 @@ function usage(): string {
     "  rerail packs remove <id>...",
     "  rerail packs recommend [--repo <dir>]",
     "  rerail rules export [--output <rules.json>]",
-    "  rerail rules import <rules.json>",
+    "  rerail rules import <rules.json> [--approve]",
     "  rerail rules list [--json]",
     "  rerail rules approve <id>",
     "  rerail rules test <draft.json> [--repo <dir>] [--json]",

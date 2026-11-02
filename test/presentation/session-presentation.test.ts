@@ -103,6 +103,15 @@ describe("installed session presentation", () => {
     expect(rendered.split("\u001b]8;;http")).toHaveLength(4);
   });
 
+  it("links rules awaiting approval to the dashboard's Waiting for approval page in the session's repository", async () => {
+    response.context!.session!.hud = { ...response.context!.session!.hud, awaitingApproval: 2 };
+    response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
+    const awaiting = (await read()).parts.find(part => part.text === "2 awaiting approval");
+    const page = new URL(awaiting!.url!);
+    expect(page.hash).toBe("#approvals");
+    expect(Object.fromEntries(page.searchParams)).toEqual({ repository: "remote:github.com/acme/app", checkout: cwd });
+  });
+
   it("shows the steered count only once Rerail has steered, and names Engine and audit trouble", async () => {
     response.context!.session!.hud.steeringCount = 0;
     expect((await read()).text).toBe("R E R A I L ● 3 rules");

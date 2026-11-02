@@ -1,5 +1,6 @@
 import { rerailCommandList, type CommandSigil } from "./rerail-commands.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
+import { approvalsPageUrl } from "../engine/code-rule/rerail-steer.js";
 import type { SessionPresentation } from "../presentation/session-presentation.js";
 
 export interface RerailSummaryInput {
@@ -29,10 +30,10 @@ const notSetUpLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] 
 
 const onLine = ({ repositoryName }: RerailSummaryInput): string => `● Rerail is on in this repo · ${repositoryName}`;
 
-/** `N rules waiting for your approval`, linked to where the person approves them; nothing when none wait. */
+/** `N rules waiting for your approval`, linked to the dashboard page where the person approves them; nothing when none wait. */
 function awaitingLines(awaiting: number | null, rulesUrl: string | null): string[] {
   if (awaiting === null || awaiting === 0) return [];
-  const where = rulesUrl === null ? "rerail rules list" : rulesUrl;
+  const where = rulesUrl === null ? "rerail rules list" : approvalsPageUrl(rulesUrl);
   return [`  ${plural(awaiting, "rule")} waiting for your approval → ${where}`];
 }
 
