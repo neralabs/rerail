@@ -407,7 +407,7 @@ pub fn level_update<F: Rows, B: Rows>(fwd: &F, rev: &B, seed: &[u64], lvl: &mut 
                 let mut ok = false;
                 for &p in rev.row(v) {
                     c.support_edges += 1;
-                    if lvl[p as usize] == l - 1 && (crate::mutant::on(75) || !tst(&sc.inv, p)) {
+                    if lvl[p as usize] == l - 1 && (super::mutant::on(75) || !tst(&sc.inv, p)) {
                         ok = true;
                         break;
                     }
@@ -596,7 +596,7 @@ pub fn set_update<F: Rows, B: Rows>(fwd: &F, rev: &B, seed: &[u64], set: &mut [u
         }
     }
     let mut next: Vec<u32> = Vec::new();
-    while !front.is_empty() && !crate::mutant::on(77) {
+    while !front.is_empty() && !super::mutant::on(77) {
         c.over_rounds += 1;
         for &v in &front {
             let r = fwd.row(v);
@@ -744,7 +744,7 @@ pub fn set_update_bf<F: Rows, B: Rows>(fwd: &F, rev: &B, seed: &[u64], set: &mut
                     if tst(&sc.mark, p) || tst(&sc.inv, p) {
                         continue;
                     }
-                    if tst(seed, p) || tst(&sc.aux, p) || (crate::mutant::on(79) && tst(set, p)) {
+                    if tst(seed, p) || tst(&sc.aux, p) || (super::mutant::on(79) && tst(set, p)) {
                         found = true;
                         break 'search;
                     }
@@ -835,7 +835,7 @@ pub fn set_update_bf<F: Rows, B: Rows>(fwd: &F, rev: &B, seed: &[u64], set: &mut
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lattice::round::{csr_columns, naive, transpose, Lattice, Values};
+    use super::super::round::{csr_columns, naive, transpose, Lattice, Values};
 
     /// A small deterministic generator (xorshift).
     struct Rng(u64);
@@ -1019,7 +1019,7 @@ mod tests {
     #[test]
     fn random_edits_equal_the_naive_fixpoint() {
         for seed in 1..=40u64 {
-            let mut r = Rng(seed * 0x9E37_79B9_7F4A_7C15);
+            let mut r = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
             let n = 2 + r.below(200) as usize;
             let m = r.below(4 * n as u64) as usize;
             let edges: Vec<(u32, u32)> = (0..m).map(|_| (r.below(n as u64) as u32, r.below(n as u64) as u32)).collect();

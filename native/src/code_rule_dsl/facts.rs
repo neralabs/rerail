@@ -35,6 +35,10 @@ pub(crate) mod vtab;
 /// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19).
 #[allow(dead_code, unused_imports, clippy::all)]
 pub(crate) mod ygraph;
+/// M's lattice operator (E1) and its maintenance (E3) as copied; the dead-code producer's
+/// reachability (`deadcode`).
+#[allow(dead_code, unused_imports, unused_mut, clippy::all)]
+pub(crate) mod lattice;
 
 /// The derivation graph as the push path reads and writes it: the store itself (every write a
 /// transaction) or the overlay over it (writes in memory, written back in the background).
