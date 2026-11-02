@@ -1,5 +1,0 @@
-
-type yjy = {
-  message: any;
-};
-      

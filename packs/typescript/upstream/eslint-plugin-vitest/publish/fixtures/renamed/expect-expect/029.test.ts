@@ -1,1 +1,0 @@
-test('should fail', () => htaxarm(123));

@@ -1,1 +1,0 @@
-function mwotn(): Array<string[]> {}

@@ -1,6 +1,0 @@
-
-enum Krskrnxqa {
-  Mj,
-  Kymb,
-}
-      

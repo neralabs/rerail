@@ -1,1 +1,0 @@
-abstract class Foo<t = any> implements Bar<any>, Baz<any> {}

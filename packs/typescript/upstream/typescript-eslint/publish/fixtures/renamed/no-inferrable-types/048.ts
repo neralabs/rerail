@@ -1,1 +1,0 @@
-const fd = function (a: any = 5, b: any = true, e: any = 'foo') {};

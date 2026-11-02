@@ -1,1 +1,0 @@
-function quuz5(): (...args: any) => void {}

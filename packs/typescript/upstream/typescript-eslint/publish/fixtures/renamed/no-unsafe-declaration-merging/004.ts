@@ -1,4 +1,0 @@
-
-namespace Sfjp {}
-function Sfj() {}
-    

@@ -1,5 +1,0 @@
-
-class Zjn {
-  constructor(d) {}
-}
-    

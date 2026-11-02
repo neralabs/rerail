@@ -1,5 +1,0 @@
-
-type wax = {
-  message: string[];
-};
-    

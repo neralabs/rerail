@@ -1,1 +1,0 @@
-import ptp = require('./package.json');

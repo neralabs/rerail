@@ -1,5 +1,0 @@
-
-enum CscfxblNhsnpp {
-  B = {},
-}
-      

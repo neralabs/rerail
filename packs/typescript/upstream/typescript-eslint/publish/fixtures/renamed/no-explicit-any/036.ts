@@ -1,1 +1,0 @@
-function klonjua(mfjxp: any[]): number {}

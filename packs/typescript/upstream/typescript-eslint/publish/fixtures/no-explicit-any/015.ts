@@ -1,5 +1,0 @@
-
-interface Greeter {
-  message: string[];
-}
-    

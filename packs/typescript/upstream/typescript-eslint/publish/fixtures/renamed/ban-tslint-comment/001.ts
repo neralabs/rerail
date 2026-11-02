@@ -1,1 +1,0 @@
-let f: readonly any[] = [];

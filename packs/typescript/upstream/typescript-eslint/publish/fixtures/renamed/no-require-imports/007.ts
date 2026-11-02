@@ -1,1 +1,0 @@
-var lck3 = load?.('not_an_import');

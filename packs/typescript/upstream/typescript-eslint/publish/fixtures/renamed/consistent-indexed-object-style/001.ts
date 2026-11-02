@@ -1,1 +1,0 @@
-type Bgi = Record<string, any>;

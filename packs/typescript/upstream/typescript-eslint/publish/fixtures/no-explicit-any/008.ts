@@ -1,5 +1,0 @@
-
-class Greeter {
-  message: string;
-}
-    

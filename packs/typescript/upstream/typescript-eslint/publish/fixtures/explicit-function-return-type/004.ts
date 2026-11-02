@@ -1,3 +1,0 @@
-
-var arrowFn = (): string => 'test';
-      

@@ -1,7 +1,0 @@
-
-class M {
-  constructor() {
-    rcVfuixarkh();
-  }
-}
-    

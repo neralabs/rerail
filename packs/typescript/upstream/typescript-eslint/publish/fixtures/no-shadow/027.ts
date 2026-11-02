@@ -1,1 +1,0 @@
-const [x = y => y] = [].map(y => y);

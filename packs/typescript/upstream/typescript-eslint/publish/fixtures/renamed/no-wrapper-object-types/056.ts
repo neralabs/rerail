@@ -1,1 +1,0 @@
-class BuMpoty implements Number {}

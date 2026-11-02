@@ -1,1 +1,0 @@
-abstract class Mls<q = any> extends Jvg<any> {}

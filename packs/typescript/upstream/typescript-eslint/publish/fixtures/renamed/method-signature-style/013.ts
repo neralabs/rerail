@@ -1,1 +1,0 @@
-type Iapc = { set c(value: number): void };

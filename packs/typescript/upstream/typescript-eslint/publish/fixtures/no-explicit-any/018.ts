@@ -1,5 +1,0 @@
-
-type obj = {
-  message: string;
-};
-    

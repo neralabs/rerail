@@ -1,1 +1,0 @@
-let vde: 'bar' = 'bar' as 'bar';

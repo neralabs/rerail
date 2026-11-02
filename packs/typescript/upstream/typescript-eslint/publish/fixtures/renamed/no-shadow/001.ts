@@ -1,1 +1,0 @@
-function tkd<V = (ojp: any) => any>(ojp: V) {}

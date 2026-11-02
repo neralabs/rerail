@@ -1,1 +1,0 @@
-abstract class Gyr<n = any> implements Cqc<any>, Cqi<any> {}

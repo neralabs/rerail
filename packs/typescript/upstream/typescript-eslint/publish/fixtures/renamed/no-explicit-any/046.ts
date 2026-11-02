@@ -1,5 +1,0 @@
-
-interface Dtbwsrb {
-  message: any;
-}
-      

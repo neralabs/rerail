@@ -1,1 +1,0 @@
-type Gymxofa<Q> = [Q];

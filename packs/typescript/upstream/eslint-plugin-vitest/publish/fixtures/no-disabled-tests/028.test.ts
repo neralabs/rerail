@@ -1,1 +1,0 @@
-xit.each``("foo", function () {})

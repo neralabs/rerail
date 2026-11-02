@@ -1,1 +1,0 @@
-var pcc = (izd = 2);

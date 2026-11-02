@@ -1,1 +1,0 @@
-declare function test(): number | void;

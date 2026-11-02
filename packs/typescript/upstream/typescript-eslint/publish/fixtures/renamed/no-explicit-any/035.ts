@@ -1,1 +1,0 @@
-function msszczy(pzxzr: Array<any>): number {}

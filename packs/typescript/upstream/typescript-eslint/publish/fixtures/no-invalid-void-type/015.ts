@@ -1,1 +1,0 @@
-type promiseNeverUnion = Promise<void> | never;

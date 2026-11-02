@@ -1,1 +1,0 @@
-function wge(s = s) {}

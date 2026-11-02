@@ -1,5 +1,0 @@
-
-var djd = function () {
-  djd();
-};
-    

@@ -1,1 +1,0 @@
-function generic(): Array<any> {}

@@ -1,8 +1,0 @@
-
-interface Foo {
-  bar: string;
-}
-interface Bar extends Foo {
-  (): void;
-}
-    

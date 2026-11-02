@@ -1,1 +1,0 @@
-type Aki = Edjfgzt<{ [key: string]: any }>;

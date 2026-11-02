@@ -1,5 +1,0 @@
-
-interface Elkgiva {
-  message: string[];
-}
-    

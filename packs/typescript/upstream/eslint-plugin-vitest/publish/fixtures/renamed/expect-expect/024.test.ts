@@ -1,1 +1,0 @@
-test("should fail", () => { fnj(true).tuGa(true); })

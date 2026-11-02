@@ -1,1 +1,0 @@
-function bbajb(): string[] {}

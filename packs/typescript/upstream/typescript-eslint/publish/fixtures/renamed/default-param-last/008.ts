@@ -1,1 +1,0 @@
-function vzg(j: number, l = 1, m = 1) {}

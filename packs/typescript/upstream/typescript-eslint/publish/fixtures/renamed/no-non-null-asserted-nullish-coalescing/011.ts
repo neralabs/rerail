@@ -1,4 +1,0 @@
-
-let a: string;
-a ?? '';
-    

@@ -1,1 +1,0 @@
-const k = +NaN;

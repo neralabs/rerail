@@ -1,1 +1,0 @@
-function generic(param: any[]): number {}

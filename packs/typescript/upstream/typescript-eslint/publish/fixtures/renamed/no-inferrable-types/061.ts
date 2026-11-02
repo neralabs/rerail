@@ -1,1 +1,0 @@
-const c: boolean = !0;

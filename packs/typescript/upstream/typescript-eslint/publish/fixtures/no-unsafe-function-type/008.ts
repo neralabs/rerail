@@ -1,5 +1,0 @@
-
-interface Weird extends Function {
-  // ...
-}
-      

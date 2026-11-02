@@ -1,1 +1,0 @@
-class Gfv<n = any> extends Bki<any> {}

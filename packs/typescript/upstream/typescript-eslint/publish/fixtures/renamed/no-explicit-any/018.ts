@@ -1,5 +1,0 @@
-
-type njh = {
-  message: string;
-};
-    

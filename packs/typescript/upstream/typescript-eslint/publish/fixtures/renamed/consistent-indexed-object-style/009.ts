@@ -1,1 +1,0 @@
-type Gsz = { [key in string]: Gsz };

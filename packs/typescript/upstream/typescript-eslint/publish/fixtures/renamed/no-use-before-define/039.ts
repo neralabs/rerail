@@ -1,4 +1,0 @@
-
-m();
-var m = function () {};
-      

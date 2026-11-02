@@ -1,1 +1,0 @@
-import type { T, U } from 'mod';

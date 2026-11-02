@@ -1,1 +1,0 @@
-function locr<Z extends number | string>() {}

@@ -1,1 +1,0 @@
-function vivn5(): (...slqt: any) => void {}

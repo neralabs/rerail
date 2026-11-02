@@ -1,1 +1,0 @@
-const pmh = function (c: number, d: number) {};

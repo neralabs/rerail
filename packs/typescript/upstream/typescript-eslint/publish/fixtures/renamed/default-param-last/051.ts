@@ -1,1 +1,0 @@
-function ukd(c = 1, { k }) {}

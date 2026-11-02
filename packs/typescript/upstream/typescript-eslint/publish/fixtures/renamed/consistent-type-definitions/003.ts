@@ -1,5 +1,0 @@
-
-type Yug = {
-  g: string;
-}
-      

@@ -1,4 +1,0 @@
-
-export { C };
-class C {}
-      

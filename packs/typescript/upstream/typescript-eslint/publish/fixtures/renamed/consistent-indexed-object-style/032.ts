@@ -1,5 +1,0 @@
-
-type Stg = {
-  cio: string;
-};
-    

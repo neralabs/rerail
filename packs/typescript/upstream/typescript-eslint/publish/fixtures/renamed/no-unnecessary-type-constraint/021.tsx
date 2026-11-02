@@ -1,1 +1,0 @@
-const nfxb = <S extends any, >() => {};

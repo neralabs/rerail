@@ -1,5 +1,0 @@
-
-class Kvmdplf {
-  message: any;
-}
-      

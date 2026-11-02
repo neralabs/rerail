@@ -1,1 +1,0 @@
-function wwr({ h } = {}, l) {}

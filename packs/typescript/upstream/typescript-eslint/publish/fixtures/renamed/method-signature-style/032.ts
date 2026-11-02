@@ -1,5 +1,0 @@
-
-interface WxSifmxnhfo {
-  wsqfihCyncsgskeVstzfghxOhm();
-}
-      

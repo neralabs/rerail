@@ -1,1 +1,0 @@
-declare function robdjkruFcbucjfkqer1<T = void>(nvj: T): void;

@@ -1,5 +1,0 @@
-
-class G {
-  private constructor() {}
-}
-    

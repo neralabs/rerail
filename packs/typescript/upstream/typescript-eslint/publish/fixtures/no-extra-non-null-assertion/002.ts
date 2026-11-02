@@ -1,5 +1,0 @@
-
-function foo(bar: number | undefined) {
-  const bar: number = bar!;
-}
-      

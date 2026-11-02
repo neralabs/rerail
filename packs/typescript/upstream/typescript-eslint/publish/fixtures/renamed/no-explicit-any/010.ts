@@ -1,5 +1,0 @@
-
-class Caikxtt {
-  message: string[];
-}
-    

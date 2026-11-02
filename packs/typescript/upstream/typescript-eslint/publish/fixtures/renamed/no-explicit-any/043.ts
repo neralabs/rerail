@@ -1,5 +1,0 @@
-
-class Klkhxig {
-  message: any[];
-}
-      
