@@ -6,6 +6,15 @@ import { TICKET } from "../check/check-internal-refs.mjs";
 /** The most words a release note (a changelog entry, a changeset summary) may run to. */
 export const RELEASE_NOTE_WORDS = 60;
 
+/**
+ * A commit hash: 7 to 40 hex digits with a digit and a letter among them, so a byte count (`10485760`) or a CVE id's
+ * digits are not read as one; a short hash with no letter is rare enough to miss.
+ */
+export const COMMIT_HASH = /\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/u;
+
+/** A pull request number: `#` and two or more digits, ending the note or followed by punctuation or a space. */
+const PULL_REQUEST = /(?:^|[\s(])#(\d{2,})(?=[\s).,;:]|$)/u;
+
 const wordCount = (text) => text.split(/\s+/u).filter((word) => word !== "").length;
 
 /**
@@ -20,9 +29,9 @@ export function releaseNoteRefusal(note, words = RELEASE_NOTE_WORDS) {
   if (words !== null && count > words) return `runs to ${count} words; a release note says what changed in a sentence or two (at most ${words} words)`;
   const ticket = TICKET.exec(text);
   if (ticket !== null) return `names the ticket ${ticket[0]}, which says nothing to the person upgrading`;
-  const pullRequest = /(?:^|[\s(])#(\d+)\b/u.exec(text);
+  const pullRequest = PULL_REQUEST.exec(text);
   if (pullRequest !== null) return `names pull request #${pullRequest[1]}, which says nothing to the person upgrading`;
-  const commit = /\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/u.exec(text);
+  const commit = COMMIT_HASH.exec(text);
   if (commit !== null) return `names the commit ${commit[0]}, which says nothing to the person upgrading`;
   return null;
 }

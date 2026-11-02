@@ -6,13 +6,11 @@
 //
 // Resolved from .changeset/ (`../scripts/release/changeset-changelog.mjs`), as changesets resolves a relative path.
 
-/** The changelog entry of `changeset`: `- <first line>`, its later lines indented under it. */
-export function releaseLine(changeset) {
-  const [first, ...rest] = changeset.summary.trim().split("\n");
-  return [`- ${first}`, ...rest.map((line) => (line.trim() === "" ? "" : `  ${line}`))].join("\n");
-}
-
 export default {
-  getReleaseLine: async (changeset) => releaseLine(changeset),
+  /** The changelog entry of `changeset`: `- <first line>`, its later lines indented under it. */
+  getReleaseLine: async (changeset) => {
+    const [first, ...rest] = changeset.summary.trim().split("\n");
+    return [`- ${first}`, ...rest.map((line) => (line.trim() === "" ? "" : `  ${line}`))].join("\n");
+  },
   getDependencyReleaseLine: async () => "",
 };

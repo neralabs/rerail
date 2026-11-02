@@ -4,7 +4,7 @@
 // published files it changes, and the changelog entry a changeset becomes (changeset-changelog.mjs).
 
 import { describe, expect, it } from "vitest";
-import changelog, { releaseLine } from "../../scripts/release/changeset-changelog.mjs";
+import changelog from "../../scripts/release/changeset-changelog.mjs";
 import {
   changesetBumpFailures,
   changesetSummary,
@@ -35,9 +35,7 @@ describe("changesetSummary and the changelog generator", () => {
 
   it("writes the summary as one entry, its later paragraphs under the bullet, with no commit hash", async () => {
     const changeset = { id: "blade-pack", summary: changesetSummary(text), commit: "7392aea", releases: [] };
-    expect(releaseLine(changeset)).toBe("- Blade pack: ships 7 rules.\n\n  Three go back to candidates.");
-    await expect(changelog.getReleaseLine(changeset, "patch", null)).resolves.toBe(releaseLine(changeset));
-    await expect(changelog.getDependencyReleaseLine([], [], null)).resolves.toBe("");
+    await expect(changelog.getReleaseLine(changeset, "patch", null)).resolves.toBe("- Blade pack: ships 7 rules.\n\n  Three go back to candidates.");
   });
 });
 

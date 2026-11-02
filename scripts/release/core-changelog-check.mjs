@@ -4,11 +4,11 @@
 // ticket, pull request or commit; on the Release pull request, whose first section is dated, the section leads with a
 // paragraph for the people who upgrade, written under `## Unreleased` on main. ci.yml's lint job runs it.
 //
-//   node scripts/release/core-changelog-check.mjs BASE   (BASE: the pull request's base commit, fetched)
+//   node scripts/release/core-changelog-check.mjs BASE   (BASE: the base branch's tip, `origin/main`, fetched)
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { changelogEntries, changelogLead, firstChangelogSection, newChangelogEntries, NO_CHANGELOG_ENTRIES } from "./core.mjs";
+import { changelogLead, changelogLeadRefusal, firstChangelogSection, newChangelogEntries } from "./core.mjs";
 import { releaseNoteRefusal } from "./release-notes.mjs";
 import { ROOT } from "./packs.mjs";
 
@@ -28,13 +28,8 @@ const failures = [];
 const section = firstChangelogSection(after);
 if (section !== null) {
   const lead = changelogLead(section.body);
-  const entries = changelogEntries(section.body);
-  if (section.released && lead === "" && entries.length > 0 && section.body !== NO_CHANGELOG_ENTRIES) {
-    failures.push({
-      title: "Release notes need a lead",
-      text: `CHANGELOG.md's ${section.heading} section opens with an entry: lead it with a paragraph saying what this release gives the people who upgrade, written under \`## Unreleased\` on main (docs/release.md, "Release notes")`,
-    });
-  }
+  const missingLead = changelogLeadRefusal(section);
+  if (missingLead !== null) failures.push({ title: "Release notes need a lead", text: missingLead });
   const leadRefusal = lead === "" ? null : releaseNoteRefusal(lead, null);
   if (leadRefusal !== null) failures.push({ title: "Release notes lead", text: `CHANGELOG.md's ${section.heading} lead ${leadRefusal}` });
   for (const entry of newChangelogEntries(before, after)) {

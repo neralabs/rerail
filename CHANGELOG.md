@@ -26,7 +26,7 @@ Rerail and its rule packs are public on npm, so installing Rerail, and adding a 
 
 ## 0.1.0 (2026-10-27)
 
-First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
+First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0. Rerail keeps coding agents on your rules, with checks that live outside the agent: code rules, run by a native engine on this computer, audit what Claude Code, Codex, Cursor, OMP or Pi writes in Python, JavaScript, TypeScript, PHP, Blade, SQL, Rust and Vue, and steer the agent in the same session, and the dashboard shows every session, rule and violation. Run `npx @neralabs/rerail setup` in a repository to start; set-up picks the rule packs that fit it, and reads on this computer only. Block is not in this release.
 
 ### Internal testing
 

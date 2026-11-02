@@ -28,10 +28,13 @@ import semver from "semver";
 import { changelogSection, CORE_NAME, coreTag, NO_CHANGELOG_ENTRIES } from "./core.mjs";
 import { parseExpectation } from "./dist-tags.mjs";
 import { releaseTag, ROOT } from "./packs.mjs";
+import { COMMIT_HASH } from "./release-notes.mjs";
 
 const PACK_PREFIX = "@neralabs/rerail-pack-";
 const CORE_RELEASE_TAG = /^v(\d+\.\d+\.\d+(?:-(beta|next)\.\d+)?)$/u;
 const PACK_RELEASE_TAG = /^(@neralabs\/rerail-pack-[a-z0-9-]+)@(\d+\.\d+\.\d+\S*)$/u;
+/** The commit hash the default changeset generator led an entry with: `- <hash>: `. */
+const HASH_LED_ENTRY = new RegExp(`^(\\s*- )(?:${COMMIT_HASH.source}): `, "u");
 /** The remote the backfill takes the release tags from. */
 const REMOTE = "origin";
 
@@ -48,7 +51,7 @@ export function changelogPath(name) {
  * the default generator led each entry with before changeset-changelog.mjs (the backfilled sections keep it).
  */
 export function packReleaseNotes(section) {
-  const lines = section.split("\n").map((line) => line.replace(/^(\s*- )(?=[0-9a-f]*\d)[0-9a-f]{7,40}: /u, "$1"));
+  const lines = section.split("\n").map((line) => line.replace(HASH_LED_ENTRY, "$1"));
   const headings = lines.filter((line) => /^### \w+ Changes$/u.test(line));
   if (headings.length !== 1) return lines.join("\n").trim();
   const at = lines.indexOf(headings[0]);

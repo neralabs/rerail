@@ -88,14 +88,38 @@ export function changelogLead(section) {
   return lines.slice(0, end === -1 ? undefined : end).join("\n").trim();
 }
 
-/** A changelog section's entries: each `- ` line with the indented lines under it, as one string each. */
+/**
+ * A changelog section's entries: each `- ` line with the indented lines under it, as one string each, blank lines
+ * between an entry's paragraphs kept, so an entry reads as it is written and is found again in an earlier text.
+ */
 export function changelogEntries(section) {
   const entries = [];
-  for (const line of section.split("\n")) {
-    if (line.startsWith("- ")) entries.push(line);
-    else if (entries.length > 0 && /^\s+\S/u.test(line)) entries[entries.length - 1] += `\n${line}`;
+  const lines = section.split("\n");
+  let blanks = 0;
+  for (const line of lines) {
+    if (line.startsWith("- ")) {
+      entries.push(line);
+      blanks = 0;
+    } else if (line.trim() === "") {
+      blanks += 1;
+    } else if (entries.length > 0 && /^\s+\S/u.test(line)) {
+      entries[entries.length - 1] += `${"\n".repeat(blanks + 1)}${line}`;
+      blanks = 0;
+    } else {
+      blanks = 0;
+    }
   }
   return entries;
+}
+
+/**
+ * Why a release's changelog section, as firstChangelogSection reads it, has no lead for the people who upgrade, or
+ * null: a released (dated) section that opens with an entry. An unreleased section is not asked for one yet, and a
+ * section with no entries (the release had no notes) is not asked for one at all.
+ */
+export function changelogLeadRefusal(section) {
+  if (!section.released || changelogLead(section.body) !== "" || changelogEntries(section.body).length === 0) return null;
+  return `CHANGELOG.md's ${section.heading} section opens with an entry: lead it with a paragraph saying what this release gives the people who upgrade, written under \`## Unreleased\` on main (docs/release.md, "Release notes")`;
 }
 
 /** The entries of `after`'s first section that `before` (a changelog's earlier text, or null) does not hold. */

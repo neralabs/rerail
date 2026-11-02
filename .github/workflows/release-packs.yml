@@ -83,9 +83,11 @@ jobs:
         with:
           node-version: "24"
 
+      # The base branch's tip, not the event's base.sha: that is the base as it was when the pull request was last
+      # updated, so after a push to main a merge-commit checkout would read main's own changesets as the pull request's.
       - name: Every pack whose published files changed has a changeset
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: origin/${{ github.event.pull_request.base.ref }}
         run: node scripts/release/packs-changesets.mjs "$BASE"
 
   plan:
