@@ -177,9 +177,9 @@ pub(crate) fn exports(p: &Producer, scope: &Scope, path: &str, x: &Produced) -> 
     // 26 ef__raw_execution_calls: name, owner.
     let (n, o) = (col("ef__raw_execution_calls", "name"), col("ef__raw_execution_calls", "owner"));
     out.insert(26, rows_of("ef__raw_execution_calls").iter().map(|(_, _, v)| vec![pj.clone(), j(&v[n]), j(&v[o])]).collect());
-    // The cuts of the annotation and decorator inputs are distinct (as the stages read them through
-    // `UNION` and `EXISTS`): first occurrence kept.
-    for id in [16, 17, 20] {
+    // The cuts of the annotation, decorator, `__all__` name and dynamic-import inputs are distinct
+    // (the stages read them through `UNION`, `EXISTS` and `DISTINCT`): first occurrence kept.
+    for id in [16, 17, 20, 22, 25] {
         let mut seen = BTreeSet::new();
         out.get_mut(&id).unwrap().retain(|r| seen.insert(Json::Array(r.clone()).to_string()));
     }
