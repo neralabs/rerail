@@ -1,14 +1,41 @@
 // Shared by the core release scripts in this directory (docs/distribution-model.md, "Release channels"). The core
 // package @neralabs/rerail is versioned by the Release pull request, not by changesets: when anything core ships has
-// changed since its last release (core-paths.mjs), the pull request bumps its patch version and dates the root
-// CHANGELOG.md's unreleased section. Each released core version is marked by the git tag `v<version>`, which
-// release.yml publishes.
+// changed since its last release (core-paths.mjs), the pull request bumps its patch version and writes the root
+// CHANGELOG.md's section for it from the entries pending in .changelog/, below the lead written under the unreleased
+// heading. Each released core version is marked by the git tag `v<version>`, which release.yml publishes.
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import semver from "semver";
+import { releaseNoteEntry } from "./release-notes.mjs";
 
 export const CORE_NAME = "@neralabs/rerail";
 
 /** The git tag that releases core's `version`: release.yml publishes on it. */
 export const coreTag = (version) => `v${version}`;
+
+/**
+ * Where core's changelog entries wait for the Release pull request, one file each, so pull requests that add one never
+ * edit the same lines (.changelog/README.md).
+ */
+export const CHANGELOG_ENTRIES = ".changelog";
+
+/**
+ * Core's pending changelog entries in the checkout at `root`: every `.md` file in CHANGELOG_ENTRIES but its README, in
+ * file-name order, as `{ path, text, entry }`, `text` the file as written and `entry` the CHANGELOG.md entry it
+ * becomes (releaseNoteEntry).
+ */
+export function readChangelogEntries(root) {
+  const directory = join(root, CHANGELOG_ENTRIES);
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory)
+    .filter((file) => file.endsWith(".md") && file !== "README.md")
+    .sort()
+    .map((file) => `${CHANGELOG_ENTRIES}/${file}`)
+    .map((path) => {
+      const text = readFileSync(join(root, path), "utf8");
+      return { path, text, entry: releaseNoteEntry(text) };
+    });
+}
 
 /** The first `## ` heading of a changelog and where it is, or null. */
 function firstSection(text) {
@@ -42,19 +69,22 @@ export function nextCoreVersion(current, changelog) {
 export const NO_CHANGELOG_ENTRIES = "No changelog entries were written for this release.";
 
 /**
- * The root CHANGELOG.md released as `version` on `date` (YYYY-MM-DD): its unreleased section's heading becomes
- * `## <version> (<date>)`. Without an unreleased section, a dated section saying so is added above the last release.
- * `notes` is whether the release had notes of its own.
+ * The root CHANGELOG.md released as `version` on `date` (YYYY-MM-DD), with `entries` (CHANGELOG.md entries, in order)
+ * the pending ones from CHANGELOG_ENTRIES: the unreleased section, if any, becomes `## <version> (<date>)`, its lead
+ * (and any entry written under it) followed by `entries`. Without an unreleased section the dated section is added
+ * above the last release; with neither a lead nor an entry it says so. `notes` is whether the release had notes.
  */
-export function releaseChangelog(text, version, date) {
-  const heading = `## ${version} (${date})`;
+export function releaseChangelog(text, version, date, entries) {
   const section = firstSection(text);
-  if (section !== null && unreleasedVersion(section.heading) !== null) {
-    return { text: `${text.slice(0, section.index)}${heading}${text.slice(section.index + section.length)}`, notes: true };
-  }
-  const added = `${heading}\n\n${NO_CHANGELOG_ENTRIES}\n`;
-  if (section === null) return { text: `${text.replace(/\n*$/u, "")}\n\n${added}`, notes: false };
-  return { text: `${text.slice(0, section.index)}${added}\n${text.slice(section.index)}`, notes: false };
+  const unreleased = section !== null && unreleasedVersion(section.heading) !== null;
+  const before = section === null ? `${text.replace(/\n*$/u, "")}\n\n` : text.slice(0, section.index);
+  const rest = section === null ? "" : text.slice(section.index + (unreleased ? section.length : 0));
+  const next = unreleased ? /^## /mu.exec(rest) : null;
+  const written = unreleased ? (next === null ? rest : rest.slice(0, next.index)).trim() : "";
+  const after = unreleased ? (next === null ? "" : rest.slice(next.index)) : rest;
+  const parts = [written, entries.join("\n")].filter((part) => part !== "");
+  const body = parts.length === 0 ? NO_CHANGELOG_ENTRIES : parts.join("\n\n");
+  return { text: `${before}## ${version} (${date})\n\n${body}\n${after === "" ? "" : `\n${after}`}`, notes: parts.length > 0 };
 }
 
 /** The body of the changelog section headed `## <version>` (to the next `## `), trimmed; `""` when there is none. */

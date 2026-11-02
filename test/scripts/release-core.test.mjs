@@ -3,13 +3,14 @@
 // `next` kept from trailing `latest`, the refusal of a preview older than `latest`, and the check of a release's
 // dist-tags.
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
 import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, newChangelogEntries, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
+import { NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, newChangelogEntries, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 
@@ -20,7 +21,7 @@ describe("shipsWithCore", () => {
     for (const path of ["src/cli/cli.ts", "native/src/lib.rs", "languages/python.json", "ui/src/App.tsx", "package.json", "Cargo.lock", "scripts/build/copy-ui.mjs", "skills/rerail/SKILL.md", "README.md"]) {
       expect(shipsWithCore(path), path).toBe(true);
     }
-    for (const path of ["packs/python/rules/x.json", "docs/pack-format.md", ".github/workflows/ci.yml", ".changeset/a.md", "test/scripts/x.test.mjs", "integration/x.test.ts", "scripts/release/core.mjs", "scripts/dev/rerail-dev.mjs", "CHANGELOG.md", "CONTRIBUTING.md"]) {
+    for (const path of ["packs/python/rules/x.json", "docs/pack-format.md", ".github/workflows/ci.yml", ".changeset/a.md", ".changelog/a.md", "test/scripts/x.test.mjs", "integration/x.test.ts", "scripts/release/core.mjs", "scripts/dev/rerail-dev.mjs", "CHANGELOG.md", "CONTRIBUTING.md"]) {
       expect(shipsWithCore(path), path).toBe(false);
     }
   });
@@ -76,22 +77,54 @@ describe("nextCoreVersion", () => {
 
   it("reads a Keep a Changelog `[Unreleased]` heading as unreleased", () => {
     expect(nextCoreVersion("0.1.0", "# Changelog\n\n## [Unreleased]\n\n- a\n")).toBe("0.1.1");
-    expect(releaseChangelog("## [Unreleased]\n\n- a\n", "0.1.1", "2026-10-23")).toEqual({ text: "## 0.1.1 (2026-10-23)\n\n- a\n", notes: true });
+    expect(releaseChangelog("## [Unreleased]\n\n- a\n", "0.1.1", "2026-10-23", [])).toEqual({ text: "## 0.1.1 (2026-10-23)\n\n- a\n", notes: true });
   });
 });
 
 describe("releaseChangelog and changelogSection", () => {
   it("dates the unreleased section as the release, whatever its heading", () => {
-    const named = releaseChangelog("# Changelog\n\n## 0.1.0 (unreleased)\n\n- a\n", "0.1.0", "2026-10-22");
+    const named = releaseChangelog("# Changelog\n\n## 0.1.0 (unreleased)\n\n- a\n", "0.1.0", "2026-10-22", []);
     expect(named).toEqual({ text: "# Changelog\n\n## 0.1.0 (2026-10-22)\n\n- a\n", notes: true });
-    const plain = releaseChangelog("# Changelog\n\n## Unreleased\n\n- b\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23");
+    const plain = releaseChangelog("# Changelog\n\n## Unreleased\n\n- b\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23", []);
     expect(plain.text).toBe("# Changelog\n\n## 0.1.1 (2026-10-23)\n\n- b\n\n## 0.1.0 (2026-10-22)\n\n- a\n");
   });
 
-  it("adds a section saying there are no notes when nobody wrote an unreleased one", () => {
-    const released = releaseChangelog("# Changelog\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23");
+  it("puts the pending entries under the unreleased lead, in their order, above the last release", () => {
+    const text = "# Changelog\n\n## Unreleased\n\nA lead.\n\n## 0.1.0 (2026-10-22)\n\n- a\n";
+    const released = releaseChangelog(text, "0.1.1", "2026-10-23", ["- b", "- c\n\n  More on c."]);
+    expect(released).toEqual({ text: "# Changelog\n\n## 0.1.1 (2026-10-23)\n\nA lead.\n\n- b\n- c\n\n  More on c.\n\n## 0.1.0 (2026-10-22)\n\n- a\n", notes: true });
+    expect(changelogEntries(changelogSection(released.text, "0.1.1"))).toEqual(["- b", "- c\n\n  More on c."]);
+  });
+
+  it("dates pending entries with no unreleased heading as a section with no lead, which CI then asks for", () => {
+    const released = releaseChangelog("# Changelog\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23", ["- b"]);
+    expect(released).toEqual({ text: "# Changelog\n\n## 0.1.1 (2026-10-23)\n\n- b\n\n## 0.1.0 (2026-10-22)\n\n- a\n", notes: true });
+    expect(changelogLeadRefusal(firstChangelogSection(released.text))).toContain("opens with an entry");
+  });
+
+  it("adds a section saying there are no notes when nobody wrote a lead or an entry", () => {
+    const released = releaseChangelog("# Changelog\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23", []);
     expect(released).toEqual({ text: "# Changelog\n\n## 0.1.1 (2026-10-23)\n\nNo changelog entries were written for this release.\n\n## 0.1.0 (2026-10-22)\n\n- a\n", notes: false });
     expect(changelogSection(released.text, "0.1.1")).toBe("No changelog entries were written for this release.");
+    expect(releaseChangelog("# Changelog\n\n## Unreleased\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23", [])).toEqual(released);
+  });
+
+  it("reads the pending entries in file-name order, each as the bullet it becomes, and nothing else in the directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "rerail-changelog-"));
+    try {
+      expect(readChangelogEntries(root)).toEqual([]);
+      mkdirSync(join(root, ".changelog"));
+      writeFileSync(join(root, ".changelog", "dashboard-b.md"), "The dashboard says less.\n\nIt says it by rule.\n");
+      writeFileSync(join(root, ".changelog", "cli-a.md"), "`rerail version` prints the version.\n");
+      writeFileSync(join(root, ".changelog", "README.md"), "# Changelog entries\n");
+      writeFileSync(join(root, ".changelog", "notes.txt"), "not an entry\n");
+      expect(readChangelogEntries(root).map(({ path, entry }) => [path, entry])).toEqual([
+        [".changelog/cli-a.md", "- `rerail version` prints the version."],
+        [".changelog/dashboard-b.md", "- The dashboard says less.\n\n  It says it by rule."],
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("reads one version's section, dated as core's or bare as a pack's, and nothing for a version it lacks", () => {

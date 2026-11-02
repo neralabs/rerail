@@ -1,0 +1,1 @@
+The dashboard's What the agent sees block says less and says it by rule. A rule on Log reads "Not sent while this rule is on Log.", under its message and under its draft. The hint under the draft replaces the prompt preview with what saving does: "Reaches open sessions once your agent saves it.", and for a By Rerail rule "Saved as your copy. This one turns off." first.
