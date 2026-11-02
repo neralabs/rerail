@@ -24,7 +24,7 @@
 //! after. The same holds for a finding, plus its reads of the reached set, which `finish` adds
 //! from the states whose reached status toggled.
 use super::facts::{at, get, note, string, with, Change, Def, Facts, Kind, Tab, Val};
-use crate::lmap::LMap;
+use super::super::lmap::LMap;
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::Reverse;
@@ -378,7 +378,7 @@ impl Dc {
 
     fn count_import(&mut self, target: u32, module_kind: bool, d: i32) {
         for m in import_chain(target, module_kind) {
-            let k = crate::y2::facts::sym(&m);
+            let k = super::facts::sym(&m);
             let c = (self.imported.get(&k).copied().unwrap_or(0) as i32 + d) as u32;
             if c == 0 {
                 self.imported.remove(&k);
@@ -666,7 +666,7 @@ impl Dc {
                     self.dirty_node(m | MOD, &mut d);
                     self.readers_class_target(f, m, n, &mut d);
                     for c in import_chain(target, module_kind) {
-                        rc.insert(crate::y2::facts::sym(&c) | MOD);
+                        rc.insert(super::facts::sym(&c) | MOD);
                     }
                     hc.extend(at(&f.by_fqname, &target).iter().copied());
                     imports.push((target, module_kind, ch.added));
@@ -928,7 +928,7 @@ impl Dc {
 
     /// `dc__findings` rows as the dump prints them.
     pub fn finding_rows(&self) -> Vec<Vec<Val>> {
-        let mut v: Vec<Vec<Val>> = self.findings.values().flatten().map(|(p, s, e, id, c)| vec![Val::S(*p), Val::Int(*s), Val::Int(*e), Val::S(*id), Val::S(crate::y2::facts::sym(c))]).collect();
+        let mut v: Vec<Vec<Val>> = self.findings.values().flatten().map(|(p, s, e, id, c)| vec![Val::S(*p), Val::Int(*s), Val::Int(*e), Val::S(*id), Val::S(super::facts::sym(c))]).collect();
         v.sort();
         v
     }
@@ -1162,9 +1162,9 @@ mod tests {
 
     #[test]
     fn import_chain_is_imported_modules() {
-        assert_eq!(import_chain(crate::y2::facts::sym("p.q.r"), true), ["p.q.r", "p.q", "p"]);
-        assert_eq!(import_chain(crate::y2::facts::sym("p.q.Name"), false), ["p.q", "p"]);
-        assert!(import_chain(crate::y2::facts::sym("Name"), false).is_empty());
+        assert_eq!(import_chain(super::super::facts::sym("p.q.r"), true), ["p.q.r", "p.q", "p"]);
+        assert_eq!(import_chain(super::super::facts::sym("p.q.Name"), false), ["p.q", "p"]);
+        assert!(import_chain(super::super::facts::sym("Name"), false).is_empty());
     }
 
     #[test]

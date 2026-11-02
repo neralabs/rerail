@@ -39,6 +39,10 @@ pub(crate) mod ygraph;
 /// reachability (`deadcode`).
 #[allow(dead_code, unused_imports, unused_mut, clippy::all)]
 pub(crate) mod lattice;
+/// M's Y2 dead code (local queries over the reference graph and the symbol table) as copied,
+/// less `exported-families`.
+#[allow(dead_code, unused_imports, unused_mut, clippy::all)]
+pub(crate) mod y2;
 
 /// The derivation graph as the push path reads and writes it: the store itself (every write a
 /// transaction) or the overlay over it (writes in memory, written back in the background).

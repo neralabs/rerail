@@ -7,7 +7,7 @@
 //! Every table is a multiset of rows (the dump's counts); indexes hold the rows that are present
 //! (count > 0). `classify` turns a delta into presence changes before it is applied, so a rule can
 //! read the old state for its scoping; `apply` then updates the tables.
-use crate::lmap::{Heap, LMap};
+use super::super::lmap::{Heap, LMap};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 
