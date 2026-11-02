@@ -278,6 +278,24 @@ describe("Merge Assist scan", { timeout: 30_000 }, () => {
     expect(takeNotes(service, "session-2", ws.repo)).toHaveLength(1);
   });
 
+  it("moves an absorbed decision to Talk once this branch decides the opposite, and stops applying it", async () => {
+    const ws = await workspace();
+    const judge = new FakeJudge(task => compareAnswer(task, {
+      [RESULTS.id]: { relation: "contradicts", mineId: THROWN.id, explanation: "One throws, the other returns.", message: "Let's pick one." },
+    }));
+    const service = ws.service({ judge });
+    await service.setEnabled(ws.repo, true);
+    commit(ws.worktree("jbarnes-errors"), candidateFiles(RESULTS));
+    // No decision of this branch's yet: nothing to compare, so the trusted decision is absorbed.
+    expect((await service.scan(ws.repo)).findings).toMatchObject([{ tier: "absorb", status: "applied" }]);
+
+    writeFiles(ws.repo, candidateFiles(THROWN));
+    const status = await service.scan(ws.repo);
+
+    expect(status.findings).toMatchObject([{ tier: "talk", status: "open", evidence: { mine: { id: THROWN.id } } }]);
+    expect(ws.rulesOn(ws.repo)).toEqual([]);
+  });
+
   it("holds an untrusted author's contradiction for review and gives the agent only a count", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     writeFiles(ws.repo, candidateFiles(THROWN));

@@ -46,7 +46,7 @@ import { gitText } from "../../engine/git.js";
 import { stableJsonText } from "../../engine/stable-json.js";
 import type { AgentJudge } from "./agent-judge.js";
 import type { AuthorPermission, GithubClient, GithubRepository, PullRequestSummary } from "./github.js";
-import { compareJsonSchema, comparePrompt, compareVerdictSchema, newJudgeNonce, type CompareInput, type CompareVerdict } from "./judge-prompts.js";
+import { compareJsonSchemaFor, comparePrompt, compareVerdictSchema, newJudgeNonce, type CompareInput, type CompareVerdict } from "./judge-prompts.js";
 import { STATE_KEYS, isoSeconds, itemId, writeState } from "./state.js";
 
 /** How many places in this branch's changes a peer's rule lists as broken. */
@@ -168,7 +168,7 @@ async function compare(
     kind: "compare",
     repositoryKey: context.checkout.repositoryKey,
     prompt: comparePrompt(input, newJudgeNonce()),
-    jsonSchema: compareJsonSchema,
+    jsonSchema: compareJsonSchemaFor(input),
     parse: value => compareVerdictSchema.parse(value),
     cacheKey: createHash("sha256").update(`compare\0${stableJsonText(input) ?? ""}`).digest("hex"),
   });
@@ -454,7 +454,6 @@ export async function scanPeers(context: ScanContext): Promise<LastScan> {
   const versions = new Set<string>();
   for (const peer of [...local, ...pulls.peers]) {
     const fresh: Array<{ candidate: Candidate; hash: string; prior: MergeAssistItemRow | undefined }> = [];
-    const absorbed: Array<{ candidate: Candidate; prior: MergeAssistItemRow }> = [];
     const peerFields = { peerCommit: peer.commit, peerTitle: peer.title, peerUrl: peer.url, peerAuthor: peer.author, trusted: peer.distrust === null };
     for (const candidate of peer.candidates) {
       if (ownIds.has(candidate.id) || candidate.state !== "active") continue;
@@ -464,30 +463,15 @@ export async function scanPeers(context: ScanContext): Promise<LastScan> {
       versions.add(`${candidate.id}\0${hash}`);
       const key = itemKey(peer.ref, candidate.id);
       const prior = existing.get(key);
-      if (prior !== undefined && prior.candidateHash === hash) {
-        if (prior.status === "dismissed" || adoptedByPerson(prior)) {
-          // The person's dismissal, adoption or undo holds until the candidate changes.
-          kept.add(key);
-          writes.push({ ...prior, ...peerFields });
-          continue;
-        }
-        if (prior.status === "applied") {
-          absorbed.push({ candidate, prior });
-          continue;
-        }
+      if (prior !== undefined && prior.candidateHash === hash && (prior.status === "dismissed" || adoptedByPerson(prior))) {
+        // The person's dismissal, adoption or undo holds until the candidate changes.
+        kept.add(key);
+        writes.push({ ...prior, ...peerFields });
+        continue;
       }
+      // Everything else is judged again: an absorption holds only while trust, this branch's changes, its rule and
+      // this branch's own decisions (a new one may contradict it) all still allow it. The comparison is cached.
       fresh.push({ candidate, hash, prior });
-    }
-    const now = context.now();
-    // An absorption holds only while its exact checks still pass: trust, this branch's changes, its rule.
-    for (const { candidate, prior } of absorbed) {
-      const check = await checkPeerRule(candidate, root, changes, followGitignore);
-      const held = exactReview(peer, candidate, check, changes);
-      const evidence: ItemEvidence = { ...(prior.evidence as unknown as ItemEvidence), violations: check.violations, ruleProblem: check.problem, branch: peer.branch };
-      kept.add(itemKey(peer.ref, candidate.id));
-      writes.push(held === null
-        ? { ...prior, ...peerFields, evidence: { ...evidence } }
-        : { ...prior, ...peerFields, tier: "review", status: "open", reason: held, evidence: { ...evidence }, updatedAt: now });
     }
     if (fresh.length === 0) continue;
     const conflicts = commitExists(root, peer.commit) ? mergeTreeConflicts(root, head, peer.commit) ?? [] : [];

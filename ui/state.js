@@ -247,13 +247,20 @@ export function matches(stored) {
 export const filtering = () => ui.filter !== "all" || ui.query !== "";
 
 /**
+ * A Merge Assist decision's rule (`<candidate id>~<8-hex tag>`): stored as a library rule so it can steer one
+ * checkout, but it is a decision on a branch, listed on the Merge Assist page, not a rule the person created here.
+ */
+export const isMergeAssistRule = stored => /^candidate:[a-z0-9-]+~[0-9a-f]{8}$/u.test(stored.rule.id);
+
+/**
  * The rule list's sections, in order: Created rules, one per rule pack added here, then every other
  * rule by Rerail (added on its own, not through a pack). Each section holds its groups; a group holds
- * every rule (`all`).
+ * every rule (`all`). Merge Assist decisions are in none of them.
  */
 export function ruleSections() {
   const mine = [], byPack = new Map(), other = new Map();
   for (const r of data.rules.values()) {
+    if (isMergeAssistRule(r)) continue;
     if (!isByRerail(r)) { mine.push(r); continue; }
     const pack = attachedPackOf(r);
     if (pack === undefined) {

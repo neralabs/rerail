@@ -237,7 +237,7 @@ generality:
 duplicateOf: the id of a decision already made on this branch that the correction restates, else null.
 decision: one sentence of at most ${MAX_DECISION_LENGTH} characters, imperative or declarative, with no code fences, links, names of people or file contents.
 scope: 1 to ${MAX_VERDICT_SCOPE} repository-relative globs, the narrowest that cover the files the correction touched ("src/api/**", "src/api/client.ts"). Never start with / and never use "..".
-check: a check Rerail runs on code text, or null when code text alone cannot show the decision is broken. Prefer null to a check that would also catch correct code.
+check: a check Rerail runs on code text. Draft one whenever the decision forbids a construct you can see in the code before the correction: Rerail tests it against the cases and the repository and asks you once to fix it if it fails, so a careful attempt beats null. Answer null only when code text alone cannot show the decision is broken (a naming scheme, an architecture across files, runtime behaviour).
 - {"kind":"regex","pattern":"..."} is matched against each file's whole content. Rust regex dialect: no look-around, no backreferences. Anchor it to identifiers with \\b on both ends; use (?m) for ^ and $ at each line. It also matches inside strings and comments, so keep it narrow.
 - {"kind":"ast","language":"...","rule":{"pattern":...,"nodeKind":...,"has":...,"inside":...}} is an ast-grep rule over the tree-sitter syntax tree of code in ${CHECK_AST_LANGUAGES.join(", ")}. The rule and its "has" and "inside" nodes each set exactly one of "pattern" and "nodeKind" and the other null.
   - pattern: a complete code snippet that parses on its own in that language, with metavariables: $NAME matches one node, $$$NAME a list of nodes. Examples: console.log($$$ARGS), request($$$ARGS), requests.get($URL, $$$REST). A partial statement such as "for ($INIT; $COND; $UPDATE) { $$$BODY }" matches nothing; name a statement by its nodeKind.
@@ -325,29 +325,39 @@ export const compareVerdictSchema: z.ZodType<CompareVerdict> = z.object({
   })).max(MAX_COMPARE_ITEMS),
 }).strict();
 
-export const compareJsonSchema: Record<string, unknown> = {
-  type: "object",
-  additionalProperties: false,
-  required: ["items"],
-  properties: {
-    items: {
-      type: "array",
-      maxItems: MAX_COMPARE_ITEMS,
+/**
+ * The comparison answer as a JSON schema for the agent CLI, closed as Codex's `--output-schema` requires. With an input,
+ * `candidateId` and `mineId` may only name the ids it carries, so the CLI cannot answer with an id it made up.
+ */
+export function compareJsonSchemaFor(input?: CompareInput): Record<string, unknown> {
+  const theirs = input === undefined ? { type: "string" } : { type: "string", enum: input.theirs.map(peer => peer.id) };
+  const mine = input === undefined ? { type: ["string", "null"] } : { type: ["string", "null"], enum: [...input.mine.map(own => own.id), null] };
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["items"],
+    properties: {
       items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["candidateId", "relation", "mineId", "explanation", "message"],
-        properties: {
-          candidateId: { type: "string" },
-          relation: { type: "string", enum: [...COMPARE_RELATIONS] },
-          mineId: { type: ["string", "null"] },
-          explanation: { type: "string", maxLength: MAX_COMPARE_EXPLANATION },
-          message: { type: ["string", "null"], maxLength: MAX_COMPARE_MESSAGE },
+        type: "array",
+        maxItems: MAX_COMPARE_ITEMS,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["candidateId", "relation", "mineId", "explanation", "message"],
+          properties: {
+            candidateId: theirs,
+            relation: { type: "string", enum: [...COMPARE_RELATIONS] },
+            mineId: mine,
+            explanation: { type: "string", maxLength: MAX_COMPARE_EXPLANATION },
+            message: { type: ["string", "null"], maxLength: MAX_COMPARE_MESSAGE },
+          },
         },
       },
     },
-  },
-};
+  };
+}
+
+export const compareJsonSchema: Record<string, unknown> = compareJsonSchemaFor();
 
 const COMPARE_INSTRUCTIONS = `Another branch of this repository carries decisions ("theirs"). Say how each of theirs relates to the decisions on this branch ("mine"):
 - "compatible": both can hold at once.

@@ -161,7 +161,10 @@ class DatabaseAgentJudge implements AgentJudge {
       value = task.parse(outcome.value);
     } catch (error) {
       const invalid: Failure = { ok: false, reason: "invalid", detail: `${RUNNER_NAMES[runner]}'s answer did not match the schema: ${problemText(error)}` };
-      this.#record(`failed:${randomUUID()}`, task.repositoryKey, `${task.kind}:failed`, runner, { reason: invalid.reason, detail: invalid.detail });
+      // The rejected answer stays in the local judgment record only, so a person can see what the CLI said.
+      this.#record(`failed:${randomUUID()}`, task.repositoryKey, `${task.kind}:failed`, runner, {
+        reason: invalid.reason, detail: invalid.detail, answer: sanitizeTail(JSON.stringify(outcome.value) ?? ""),
+      });
       return invalid;
     }
     this.#record(task.cacheKey, task.repositoryKey, task.kind, runner, outcome.value);

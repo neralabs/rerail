@@ -5,6 +5,7 @@ import {
   captureRepairPrompt,
   captureVerdictSchema,
   compareJsonSchema,
+  compareJsonSchemaFor,
   comparePrompt,
   compareVerdictSchema,
   fenceData,
@@ -256,5 +257,17 @@ describe("JSON schemas", () => {
   it("are closed with every property required", () => {
     expect(strictObjects(captureJsonSchema)).toEqual([]);
     expect(strictObjects(compareJsonSchema)).toEqual([]);
+  });
+
+  it("let the comparing CLI name only the decisions it was given", () => {
+    const schema = compareJsonSchemaFor({
+      mine: [{ id: "candidate:errors-are-thrown-7a8b9c", decision: "Throw.", scope: ["src/api/**"] }],
+      theirs: [{ id: "candidate:errors-as-results-4d5e6f", decision: "Return results.", scope: ["src/api/**"], author: "jbarnes" }],
+      conflicts: [],
+    }) as { properties: { items: { items: { properties: Record<string, { enum?: unknown[] }> } } } };
+    const { candidateId, mineId } = schema.properties.items.items.properties;
+    expect(candidateId!.enum).toEqual(["candidate:errors-as-results-4d5e6f"]);
+    expect(mineId!.enum).toEqual(["candidate:errors-are-thrown-7a8b9c", null]);
+    expect(strictObjects(schema)).toEqual([]);
   });
 });

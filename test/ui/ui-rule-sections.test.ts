@@ -94,6 +94,14 @@ describe("Rules sections", () => {
     expect(sections.map(s => s.key)).toEqual(["mine", "pack:tslint", "legacy"]);
     expect(sections[2]!.groups.map(g => [g.name, ids(g.all)])).toEqual([["acme", ["acme-sql:hand-rolled-sql"]]]);
   });
+
+  it("lists no Merge Assist decision under Created by you: those live on the Merge Assist page", () => {
+    load([fileRule("mine:todo", "library_rule"), fileRule("candidate:keep-retries-in-transport-063bff~d73f0e91", "library_rule")]);
+
+    const [mine] = ruleSections();
+
+    expect(ids(mine!.groups[0]!.all)).toEqual(["mine:todo"]);
+  });
 });
 
 describe("Packs added here", () => {
