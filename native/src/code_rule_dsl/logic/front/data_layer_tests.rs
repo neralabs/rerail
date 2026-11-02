@@ -18,8 +18,8 @@ fn error_name(e: &Error) -> &'static str {
 }
 
 /// Each program, after `prelude.rdl`, parses and stratifies; or, if its first line is `// expect: <Error>`, fails with
-/// that named error. Every relation is declared with its arity, every matcher atom holds JSON, and every program's
-/// failure is reported.
+/// that named error. Every relation, in rules and facts, is declared with its arity, every matcher atom holds JSON,
+/// and every program's failure is reported.
 #[test]
 fn data_layer_programs_parse() {
     let prelude = std::fs::read_to_string(programs().join("prelude.rdl")).unwrap();
@@ -37,6 +37,8 @@ fn data_layer_programs_parse() {
             (None, Ok(p)) => {
                 let atoms = p.rules.iter().flat_map(|r| std::iter::once(&r.head).chain(r.body.iter().filter_map(Literal::atom)));
                 let undeclared = atoms.into_iter().find(|a| p.decls.get(&a.rel).is_none_or(|c| c.len() != a.args.len()));
+                let fact = p.facts.iter().find(|(rel, rows)| rows.iter().any(|row| p.decls.get(*rel).is_none_or(|c| c.len() != row.len())));
+                let undeclared = undeclared.map(|a| a.to_string()).or_else(|| fact.map(|(rel, _)| format!("a fact of {rel}")));
                 undeclared.map(|a| format!("{a}: undeclared, or not the declared arity")).or_else(|| {
                     p.rules.iter().flat_map(|r| &r.body).find_map(|l| match l {
                         Literal::Ast { matcher, .. } => serde_json::from_str::<serde_json::Value>(matcher).err().map(|e| format!("matcher {matcher}: {e}")),
