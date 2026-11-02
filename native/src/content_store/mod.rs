@@ -43,6 +43,8 @@ mod tree_result_segments;
 mod tests;
 mod workspaces;
 pub(crate) mod working_set;
+#[allow(dead_code)]
+pub(crate) mod xinputs;
 
 pub(crate) use compression::compress;
 pub(crate) use connection::BusyRetries;
