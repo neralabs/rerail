@@ -91,6 +91,10 @@ rerail rules add draft.json             # store it in your library and add it, o
 rerail rules export --output rules.json # your rules, to read or edit one
 ```
 
+The repo pass never reads hidden files and folders, files whose names usually hold secrets (`*.pem`, `id_rsa*`, `.ssh/`,
+…), or files Git ignores unless you turned the repository's Follow .gitignore setting off. It counts how many it left
+out, without names. See [Reference](reference.md#scan-and-settings-controls) for the full list.
+
 **Before adding a draft, check:**
 - **Cases.** Every case comes out right, including a near miss: code that looks like a violation but is not.
 - **Repo matches.** Each match in the repo is a real violation.

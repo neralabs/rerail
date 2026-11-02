@@ -4,16 +4,15 @@ import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
 import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, outputText, describeInput } from "../sessions-model.js";
 
-const EF = () => (ui.showAll ? ui.evFilter : "corrections");
-/** Folded away as noise, unless a correction hangs off it: that one must show, whatever its level. */
-const QUIET = ev => (ev.level === "observe" || ev.level === "coordinate") && ev.correction === null;
+/** Every event with "Show all events", else only those that carry a shown violation. */
+const EF = () => (ui.showAll ? "all" : "corrections");
+/** A violation's card shows unless the timeline is filtered to another rule (`ui.sessRule`). */
+const cardShown = c => ui.sessRule === null || c.finding.ruleId === ui.sessRule;
+const hasShownCard = ev => ev.correction !== null && cardShown(ev.correction);
+/** Folded away as noise, unless a shown correction hangs off it: that one must show, whatever its level. */
+const QUIET = ev => (ev.level === "observe" || ev.level === "coordinate") && !hasShownCard(ev);
 
-const evMatches = ev => {
-  const f = EF();
-  return f === "all" || (f === "changes" && ev.level === "change") || (f === "commands" && ev.level === "execute")
-    || (f === "outside" && (ev.level === "outside" || ev.level === "ask" || ev.level === "delegate"))
-    || (f === "failures" && ev.failed) || (f === "corrections" && ev.correction !== null);
-};
+const evMatches = ev => EF() === "all" || hasShownCard(ev);
 
 let t = null;
 
@@ -205,17 +204,13 @@ function updateTurn(node, turn, sessionId) {
   for (const ev of loud) {
     if (!evMatches(ev)) continue;
     items.push({ key: `e:${ev.key}`, ev });
-    if (ev.correction) items.push({ key: `c:${ev.correction.key}`, c: ev.correction });
+    if (hasShownCard(ev)) items.push({ key: `c:${ev.correction.key}`, c: ev.correction });
   }
-  for (const c of turn.orphans) items.push({ key: `c:${c.key}`, c });
+  for (const c of turn.orphans) if (cardShown(c)) items.push({ key: `c:${c.key}`, c });
   syncChildren(body, items, i => i.key, i => (i.ev ? createEvent(i.ev) : createCorr(i)), (n, i) => (i.ev ? updateEvent(n, i.ev) : updateCorr(n, i)));
 }
 
-const turnVisible = turn => {
-  const f = EF();
-  if (f === "all") return true;
-  return turn.tools.some(evMatches) || (f === "corrections" && turn.orphans.length > 0);
-};
+const turnVisible = turn => EF() === "all" || turn.tools.some(evMatches) || turn.orphans.some(cardShown);
 
 function endLabel(st, sess) {
   if (st === null) return "Session ended";

@@ -4,7 +4,7 @@
 // pack (`packs/<family>/`), or is a declared shared family; and every `packs/<id>/` holds at least one
 // rule document in `rules/`, or in `candidates/rules/` while it ships none because all its ports are candidates.
 // Declared shared families (`SHARED_FAMILIES`), each with its reason:
-//   - `ecma`: ECMAScript recordings shared by the javascript and typescript languages and the
+//   - `ecma`: ECMAScript expected findings shared by the javascript and typescript languages and the
 //     typescript, react, next and node packs;
 //   - `host`: host-adapter inputs, not tied to a language;
 //   - `packs`: pack-validator inputs (#1), not tied to a language.

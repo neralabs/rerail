@@ -289,8 +289,7 @@ const REPOSITORY_START_STATES: ReadonlySet<string> = new Set(["started", "stoppe
 /**
  * Starts Rerail in the health-check repository; any failure is the staged package's and is thrown. The repository
  * is not set up, so start runs set-up, which asks first: "I'll pick rule packs myself" turns it on reading no code,
- * and the scratch `HOME` gives it no coding agent to connect. A release from before the set-up (rollback validates
- * the previous release) takes no `--answer` and starts at once.
+ * and the scratch `HOME` gives it no coding agent to connect.
  */
 async function startHealthRepository(cli: string, workspace: string, env: NodeJS.ProcessEnv): Promise<void> {
   const run = (args: readonly string[]) => promisify(execFile)(
@@ -298,13 +297,7 @@ async function startHealthRepository(cli: string, workspace: string, env: NodeJS
   );
   const state = (await run(["state", "--repo", workspace])).stdout.trim();
   if (!REPOSITORY_START_STATES.has(state)) throw new Error(`rerail state answered ${JSON.stringify(state)}`);
-  try {
-    await run(["start", "--repo", workspace, "--answer", "pick-myself"]);
-  } catch (error) {
-    const stderr = error instanceof Error && "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
-    if (!stderr.includes("Unknown start option: --answer")) throw error;
-    await run(["start", "--repo", workspace]);
-  }
+  await run(["start", "--repo", workspace, "--answer", "pick-myself"]);
 }
 
 export async function validateManagedInstallation(installation: Installation): Promise<void> {
@@ -749,9 +742,10 @@ export class ManagedUpdater {
 
   /**
    * Record `next` as the active installation, re-point `current`, and refresh
-   * the launcher. A previous managed version is kept for rollback; an unmanaged
-   * one (npx cache, checkout) is not, since it may vanish at any time. Callers
-   * hold the update lock.
+   * the launcher. A previous managed version is recorded (`update status`, and
+   * what an update names as newly left out); an unmanaged one (npx cache,
+   * checkout) is not, since it may vanish at any time. Callers hold the update
+   * lock.
    */
   private async adopt(next: Installation): Promise<UpdateResult> {
     const state = await this.readState();
@@ -795,7 +789,7 @@ export class ManagedUpdater {
    * a checkout, as `rerail install --root` uses. Recording it as the current
    * installation keeps `status`, the daemon, and the symlink telling the same
    * story; `isManaged` still reports it as unmanaged, so `update` replaces it
-   * rather than offering it as a rollback target.
+   * rather than recording it as the previous version.
    */
   async activateRoot(packageRoot: string): Promise<UpdateResult> {
     const root = resolve(packageRoot);
@@ -807,21 +801,4 @@ export class ManagedUpdater {
     return await this.withLock(async () => await this.adopt({ version, packageRoot: root }));
   }
 
-  async rollback(): Promise<UpdateResult> {
-    return await this.withLock(async () => {
-      const state = await this.readState();
-      if (state.previous === undefined) throw new Error("No previous Rerail version is available for rollback");
-      if (!existsSync(state.previous.packageRoot)) {
-        throw new Error(`Previous Rerail installation is missing: ${state.previous.packageRoot}`);
-      }
-      await this.validate(state.previous);
-      const rolledBack: UpdateState = {
-        ...state,
-        current: state.previous,
-        previous: state.current,
-      };
-      await this.writeState(rolledBack);
-      return { ...(await this.status()), changed: true };
-    });
-  }
 }

@@ -282,19 +282,6 @@ describe("the baseline schema", () => {
     expectRefused(path, unreadable(path, "schema v1 in a shape this build does not know, such as 0.1.0-next.0's"));
     expect(readFileSync(path)).toEqual(before);
   });
-
-  // Self-review round 5: while `rerail update rollback` writes a copy into the file, a session that opened it would
-  // commit between the saved file and the copy, and its change would be in neither.
-  it("refuses every open while a rollback puts a copy back, and opens again once it is done", async () => {
-    const path = await temporaryDatabase();
-    openRerailDatabase(path).$client.close();
-    await writeFile(`${path}.restoring`, "");
-    expectRefused(path, `Rerail is putting back a copy of ${path} for a rollback; try again in a moment (if no rerail update `
-      + `rollback is running, one was interrupted: delete ${path}.restoring)`);
-    await rm(`${path}.restoring`);
-    openRerailDatabase(path).$client.close();
-    openRerailDatabase(path, { readonly: true }).$client.close();
-  });
 });
 
 /** The ids `schema_migrations` records, and whether `rule_settings` has a `note` column. */

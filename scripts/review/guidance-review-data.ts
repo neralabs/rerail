@@ -29,13 +29,13 @@ import {
   coversFixture,
   documentPath,
   fixturesDirectory,
-  fixturesRecordingPath,
+  fixturesExpectedPath,
   isCandidate,
   loadPack,
-  loadRecording,
+  loadExpectedFindings,
   PACKS_ROOT,
   RERAIL_ROOT,
-  type FixtureRecording,
+  type FixtureExpectedFindings,
   type LoadedPack,
   type PackRule,
 } from "../../conformance/languages/pack.js";
@@ -328,18 +328,18 @@ async function packData(directory: string): Promise<ReviewPack | undefined> {
   if (loaded !== undefined) {
     const tools = [...new Set(entries.flatMap(entry => (entry.rule === undefined ? [] : [entry.rule.upstream.tool])))].sort(compareDeterministicStrings);
     for (const tool of tools) {
-      const recordingPath = fixturesRecordingPath(loaded, tool);
-      if (!existsSync(recordingPath)) continue;
-      const recording = loadRecording(recordingPath) as FixtureRecording;
-      if (recording.source.kind !== "fixtures") continue;
+      const expectedPath = fixturesExpectedPath(loaded, tool);
+      if (!existsSync(expectedPath)) continue;
+      const toolExpected = loadExpectedFindings(expectedPath) as FixtureExpectedFindings;
+      if (toolExpected.source.kind !== "fixtures") continue;
       const toolEntries = entries.filter(entry => entry.rule?.upstream.tool === tool && entry.compiled !== undefined);
       const expected = new Map<string, Map<string, number[]>>();
-      for (const finding of recording.findings) {
+      for (const finding of toolExpected.findings) {
         const perPath = expected.get(finding.rule) ?? new Map<string, number[]>();
         perPath.set(finding.path, [...(perPath.get(finding.path) ?? []), finding.line]);
         expected.set(finding.rule, perPath);
       }
-      for (const unit of recording.source.files) {
+      for (const unit of toolExpected.source.files) {
         const paths = typeof unit === "string" ? [unit] : unit;
         const unitEntries = toolEntries.filter(entry => entry.rule !== undefined && paths.some(path => coversFixture(entry.rule as PackRule, path)));
         for (const entry of unitEntries) {

@@ -212,7 +212,11 @@ export interface CodeRulePlacementEntry {
 }
 export type CodeRulePlacement = readonly CodeRulePlacementEntry[];
 
-/** Who is calling the API: `/api` callers are people, `/mcp` callers are coding agents. Advisory, not a security boundary. */
+/**
+ * Who is calling the API: `/api` callers are people, `/mcp` callers are coding agents. An agent's checkout scopes the
+ * history its tools return to its own repository and keeps the person's choices (Follow .gitignore off, set-up
+ * repositories' rules) out of its reach; it is not authentication, since any local process can call `/api`.
+ */
 export type ApiCaller =
   | { readonly kind: "person" }
   | { readonly kind: "agent"; readonly checkout: string | undefined; readonly folder: string };

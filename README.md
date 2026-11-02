@@ -68,7 +68,7 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 - **Rules belong to the repository.** Every clone and worktree of a remote shares its rules. Turn a rule or pack on, off or to log-only per repository, folder or checkout, and choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence it; changes apply on the next tool call. See [Rule scoping](docs/rule-scoping.md).
 - **Rules in your own words.** `/rerail-create` has your coding agent draft a rule, test it with `rerail rules test`, and add it with `rerail rules add` after you confirm. `rerail rules evidence` shows what recent sessions suggest a rule for.
 - **Local and multi-agent.** One daemon serves Claude Code, Codex, Cursor, OMP and Pi, with a dashboard on your own machine.
-- **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it; `rerail update rollback` goes back.
+- **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it.
 
 ## Rule packs
 
@@ -86,24 +86,28 @@ rerail manage                 # Rule packs page: add it to this repository
 
 | Pack | Ported from |
 | --- | --- |
-| `python` | Ruff 0.16.9, Bandit 1.9.4 |
-| `javascript` | ESLint 10.11.0, eslint-plugin-unicorn 76.0.0 |
-| `typescript` | typescript-eslint 8.70.1, eslint-plugin-vitest 1.6.27 |
-| `next` | @next/eslint-plugin-next 16.3.8 |
-| `sql` | SQLFluff 4.4.0 |
-| `vue` | eslint-plugin-vue 10.11.1 |
-| `rust` | Clippy (Rust 1.99.0) |
-| `blade` | Bladestan, tlint, stillat/blade-parser |
-| `php` | PHP_CodeSniffer 4.0.4, PHPStan 2.2.16, Psalm 6.19.1 |
-| `complexity` | lizard 1.24.0: cyclomatic complexity above 6, for Python, TypeScript and JavaScript |
+| `python` | Ruff v0.16, Bandit v1 |
+| `javascript` | ESLint v10, eslint-plugin-unicorn v76 |
+| `typescript` | typescript-eslint v8, eslint-plugin-vitest v1 |
+| `next` | @next/eslint-plugin-next v16 |
+| `react` | eslint-plugin-react v7, eslint-plugin-react-hooks v7 |
+| `node` | eslint-plugin-n v18 |
+| `sql` | SQLFluff v4 |
+| `vue` | eslint-plugin-vue v10 |
+| `rust` | Clippy (Rust 1.99) |
+| `blade` | Bladestan v0.11, tlint v9, stillat/blade-parser v2 |
+| `php` | PHP_CodeSniffer v4, PHPStan v2, Psalm v6 |
+| `complexity` | lizard v1: cyclomatic complexity above 6, for Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue |
 
-Every shipped ported rule is scored against the original tool's recorded findings before it ships. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md) and the [pack format](docs/pack-format.md).
+A ported rule ships only once it passes the conformance check: it is scored against the original tool's own findings on the tool's tests, at the exact release the pack pins, and on real-code samples. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md), the [pack format](docs/pack-format.md) and [the conformance check](conformance/README.md#the-gate).
 
 Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex clauses work on any file. Move your own rules between machines with `rerail rules export` and `rerail rules import`.
 
 ## Supported coding agents
 
 Rerail works with five coding agents: Claude Code, Codex, Cursor, OMP (Oh My Pi) and Pi. Set-up connects the ones it finds, or the ones you name (`--agents claude-code,codex,cursor,omp,pi`). It backs up each config before changing it, and `rerail install --remove` takes everything out again.
+
+Pi's [package gallery](https://pi.dev/packages) installs Rerail too, with `pi install npm:@neralabs/rerail`; `/rerail-start` in a Pi session then finishes set-up and swaps that entry for the managed install, so `rerail update` governs the version. See [Installing Rerail](docs/installation.md#from-pis-package-gallery).
 
 | Agent | Integration | In-session commands | Status line |
 | --- | --- | --- | --- |
@@ -124,7 +128,7 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 | `/rerail-update` | Update Rerail to the newest version |
 | `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
 
-Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail update rollback`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
+Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 
 When the agent decides not to follow a steer, it records its one-line reason with `rerail feedback`. Rerail keeps the note on your machine and sends it to Nera only if you say yes; see [Steer feedback](docs/reference.md#steer-feedback).
 
@@ -160,10 +164,9 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 ├── skills/           # agent skills shipped with Rerail (rerail-create)
 ├── .claude-plugin/ .codex-plugin/ .cursor-plugin/  # agent plugin manifests
 ├── ui/               # dashboard: plain HTML, CSS and ES modules, no build step
-├── conformance/      # scores ported rules against upstream tools' recorded output
+├── conformance/      # the conformance check: scores ported rules against upstream tools' findings
 ├── fixtures/         # upstream test fixtures and corpora per language
 ├── benchmark/        # query parity and steer benchmarks
-├── playground/       # tool for developing rules; never published
 ├── test/             # unit tests (Vitest), mirroring src/
 ├── integration/      # end-to-end tests against real agent hosts
 ├── e2e/              # dashboard tests (Playwright)
@@ -181,11 +184,10 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 - [docs/rule-packs.md](docs/rule-packs.md) and [docs/pack-format.md](docs/pack-format.md): how packs work and what each must prove.
 - [packs/complexity/rules/](packs/complexity/rules/): real rules to copy when writing your own.
 - [src/README.md](src/README.md): the layers and which may import which.
-- [docs/vision.md](docs/vision.md): where Rerail is going beyond code rules, and the principles behind it.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to start work and what a pull request needs. Contributions are licensed under Apache-2.0, with no CLA. Third-party material must use a permissive licence, and where it came from and under which licence must be recorded with it. How core is released is in [docs/release.md](docs/release.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to start work and what a pull request needs, and [docs/GOVERNANCE.md](docs/GOVERNANCE.md) for who the maintainers are and how decisions are made. Contributions are licensed under Apache-2.0, with no CLA. Third-party material must use a permissive licence, and where it came from and under which licence must be recorded with it. How core is released is in [docs/release.md](docs/release.md).
 
 To build from a checkout you need Node.js 24+, npm, Rust (pinned in `rust-toolchain.toml`), [`just`](https://github.com/casey/just) and [Git LFS](https://git-lfs.com). The model weights and an engine data table are stored in LFS, so install it before you clone.
 

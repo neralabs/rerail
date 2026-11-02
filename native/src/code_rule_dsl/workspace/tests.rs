@@ -3534,3 +3534,128 @@ fn reads_package_manifests_only_with_an_ast_clause_in_a_manifest_family() {
         .unwrap();
     assert!(python.reads_package_manifests());
 }
+
+/// A clause reporting each JavaScript string that names an import target resolution fails for.
+fn missing_import_targets() -> CompiledCodeRuleDsl {
+    compile_clauses(vec![json!({
+        "id": "missing",
+        "forbid": { "ast": { "language": "javascript", "rule": {
+            "kind": "string", "importTarget": { "via": "import", "failed": true } } } },
+        "violation": { "anchor": "witness.span", "code": "MISSING", "message": "missing" },
+    })])
+}
+
+/// Applies `files` and `removed` as revision `revision`, deferring global clauses where asked;
+/// returns the paths of every current violation.
+fn apply_import_files(
+    workspace: &CodeRuleDslWorkspace,
+    revision: u32,
+    files: Value,
+    removed: &[&str],
+    defer: bool,
+) -> Vec<String> {
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": revision, "files": files, "removed": removed,
+            "deferGlobal": defer })
+        .to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    task.compute().expect("workspace applies");
+    let (violations, _) = all_result_pages(workspace, 1 << 20);
+    violations
+        .iter()
+        .map(|violation| violation["path"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn import_targets_read_the_held_files_and_go_stale_when_they_change() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace
+        .add_code_rule(&missing_import_targets(), None)
+        .unwrap();
+    let file = |path: &str, source: &str| json!({ "path": path, "language": "javascript", "source": source });
+    let importer = file("a.js", "import './b.js';\n");
+    assert_eq!(
+        apply_import_files(&workspace, 1, json!([importer]), &[], false),
+        ["a.js"]
+    );
+    // A target the importer's result read is never stored: it depends on other files.
+    assert!(
+        !workspace.state.lock().unwrap().files["a.js"]
+            .unstored
+            .is_empty()
+    );
+    // The target arriving in a batch of a scan leaves the importer to the closing apply.
+    assert_eq!(
+        apply_import_files(&workspace, 2, json!([file("b.js", "")]), &[], true),
+        ["a.js"]
+    );
+    assert!(apply_import_files(&workspace, 3, json!([]), &[], false).is_empty());
+    // Its removal makes the importer's target missing again.
+    assert_eq!(
+        apply_import_files(&workspace, 4, json!([]), &["b.js"], false),
+        ["a.js"]
+    );
+    workspace.close();
+    // A snapshot of the same files resolves among them alike.
+    let snapshot = json!({ "format": "rerail.repository-snapshot/v1", "revision": 0, "facts": [],
+        "files": [file("a.js", "import './b.js';\n"), file("b.js", "")] });
+    let evaluation: Value = serde_json::from_str(
+        &missing_import_targets()
+            .evaluate(snapshot.to_string(), "report".to_owned())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(evaluation["violations"], json!([]));
+}
+
+#[test]
+fn import_targets_read_disk_below_the_root_the_host_sets() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let root = std::env::temp_dir().join(format!(
+        "rerail-workspace-import-root-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let write = |path: &str, text: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write(
+        "node_modules/dep/package.json",
+        r#"{ "name": "dep", "main": "main.js" }"#,
+    );
+    write("node_modules/dep/main.js", "");
+    write("src/local.js", "");
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace
+        .add_code_rule(&missing_import_targets(), None)
+        .unwrap();
+    assert!(workspace.set_root("relative".to_owned()).is_err());
+    let source = "import 'dep';\nimport './local.js';\nimport 'absent';\n";
+    let files = json!([{ "path": "src/index.js", "language": "javascript", "source": source }]);
+    // Without a root only the held files exist: every target is missing.
+    assert_eq!(
+        apply_import_files(&workspace, 1, files, &[], false),
+        ["src/index.js", "src/index.js", "src/index.js"]
+    );
+    // The root on disk supplies the package and the local file; a new root re-reads the importer.
+    workspace
+        .set_root(root.to_str().unwrap().to_owned())
+        .unwrap();
+    assert_eq!(
+        apply_import_files(&workspace, 2, json!([]), &[], false),
+        ["src/index.js"]
+    );
+    workspace.close();
+    std::fs::remove_dir_all(&root).unwrap();
+}

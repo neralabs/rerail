@@ -78,7 +78,7 @@ export function headerGenerator(repo, path) {
   return header(repo, path)?.generator ?? null;
 }
 
-/** Where a generator lives: under `scripts/generate/`, or beside the recordings it writes in a data root. */
+/** Where a generator lives: under `scripts/generate/`, or beside the expected findings it writes in a data root. */
 export function isGeneratorLocation(path) {
   return path.startsWith("scripts/generate/") || isDataPath(path);
 }

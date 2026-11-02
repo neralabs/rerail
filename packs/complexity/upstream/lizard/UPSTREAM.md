@@ -7,6 +7,10 @@ source, so it is Rerail's too. Paths are relative to the pack directory.
 
 | File | Origin |
 |---|---|
+| `upstream/lizard/fixtures/blade/blocks.blade.php` | written by Rerail |
+| `upstream/lizard/fixtures/blade/functions.blade.php` | written by Rerail |
+| `upstream/lizard/fixtures/blade/simple.blade.php` | written by Rerail |
+| `upstream/lizard/fixtures/blade/tests/excluded.blade.php` | written by Rerail |
 | `upstream/lizard/fixtures/javascript/__tests__/excluded.js` | written by Rerail |
 | `upstream/lizard/fixtures/javascript/branches.js` | written by Rerail |
 | `upstream/lizard/fixtures/javascript/common.cjs` | written by Rerail |
@@ -16,6 +20,13 @@ source, so it is Rerail's too. Paths are relative to the pack directory.
 | `upstream/lizard/fixtures/javascript/simple.js` | written by Rerail |
 | `upstream/lizard/fixtures/javascript/tokens.js` | written by Rerail |
 | `upstream/lizard/fixtures/javascript/view.jsx` | written by Rerail |
+| `upstream/lizard/fixtures/php/GradeTest.php` | written by Rerail |
+| `upstream/lizard/fixtures/php/branches.php` | written by Rerail |
+| `upstream/lizard/fixtures/php/nesting.php` | written by Rerail |
+| `upstream/lizard/fixtures/php/nullish.php` | written by Rerail |
+| `upstream/lizard/fixtures/php/simple.php` | written by Rerail |
+| `upstream/lizard/fixtures/php/tests/helpers.php` | written by Rerail |
+| `upstream/lizard/fixtures/php/tokens.php` | written by Rerail |
 | `upstream/lizard/fixtures/python/branches.py` | written by Rerail |
 | `upstream/lizard/fixtures/python/conftest.py` | written by Rerail |
 | `upstream/lizard/fixtures/python/expressions.py` | written by Rerail |
@@ -27,6 +38,12 @@ source, so it is Rerail's too. Paths are relative to the pack directory.
 | `upstream/lizard/fixtures/python/test_prefixed.py` | written by Rerail |
 | `upstream/lizard/fixtures/python/tests/helpers.py` | written by Rerail |
 | `upstream/lizard/fixtures/python/tests/test_excluded.py` | written by Rerail |
+| `upstream/lizard/fixtures/rust/branches.rs` | written by Rerail |
+| `upstream/lizard/fixtures/rust/nesting.rs` | written by Rerail |
+| `upstream/lizard/fixtures/rust/parser_tests.rs` | written by Rerail |
+| `upstream/lizard/fixtures/rust/simple.rs` | written by Rerail |
+| `upstream/lizard/fixtures/rust/tests/excluded.rs` | written by Rerail |
+| `upstream/lizard/fixtures/rust/tokens.rs` | written by Rerail |
 | `upstream/lizard/fixtures/typescript/__tests__/excluded.ts` | written by Rerail |
 | `upstream/lizard/fixtures/typescript/branches.ts` | written by Rerail |
 | `upstream/lizard/fixtures/typescript/nesting.ts` | written by Rerail |
@@ -35,3 +52,7 @@ source, so it is Rerail's too. Paths are relative to the pack directory.
 | `upstream/lizard/fixtures/typescript/simple.ts` | written by Rerail |
 | `upstream/lizard/fixtures/typescript/tokens.ts` | written by Rerail |
 | `upstream/lizard/fixtures/typescript/view.tsx` | written by Rerail |
+| `upstream/lizard/fixtures/vue/__tests__/excluded.vue` | written by Rerail |
+| `upstream/lizard/fixtures/vue/options.vue` | written by Rerail |
+| `upstream/lizard/fixtures/vue/setup.vue` | written by Rerail |
+| `upstream/lizard/fixtures/vue/tokens.vue` | written by Rerail |

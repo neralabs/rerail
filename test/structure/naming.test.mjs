@@ -66,16 +66,14 @@ describe("#18 case convention", () => {
     ]);
   });
 
-  it("exempts data roots, fixture trees and React component files in the playground UI", () => {
+  it("exempts data roots and fixture trees, not React component names elsewhere", () => {
     const result = caseConvention(
       memoryRepo({
         "fixtures/ecma/scope/generate_eslint.mjs": "",
         "packs/next/candidates/probes/labels/fixtures/pages/_app.tsx": "",
-        "playground/ui/src/RerailPlayground.tsx": "",
-        "playground/ui/src/useRerailPlayground.ts": "",
-        "playground/ui/src/rulesApi.ts": "",
+        "ui/src/RulesView.tsx": "",
       }),
     );
-    expect(paths(result)).toEqual(["playground/ui/src/rulesApi.ts"]);
+    expect(paths(result)).toEqual(["ui/src/RulesView.tsx"]);
   });
 });

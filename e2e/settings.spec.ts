@@ -1,9 +1,9 @@
-import type { APIRequestContext, Page } from "@playwright/test";
-import { expect, test } from "./dashboard-test.js";
+import type { Page } from "@playwright/test";
+import { expect, test, type RerailScenarios } from "./dashboard-test.js";
 
 /** One repository's rules as `GET /api/repository/rules` reads them: distinct ids, and those on in every folder that run. */
-async function ruleCounts(request: APIRequestContext, origin: string, key: string): Promise<{ total: number; on: number }> {
-  const response = await request.get(`${origin}/api/repository/rules?repository=${encodeURIComponent(key)}`);
+async function ruleCounts(rerail: RerailScenarios, origin: string, key: string): Promise<{ total: number; on: number }> {
+  const response = await rerail.get(`${origin}/api/repository/rules?repository=${encodeURIComponent(key)}`);
   expect(response.ok()).toBe(true);
   const { rules } = await response.json() as { rules: Array<{ rule: { id: string }; on: boolean; configError: string | null }> };
   const on = new Map<string, boolean>();
@@ -11,8 +11,8 @@ async function ruleCounts(request: APIRequestContext, origin: string, key: strin
   return { total: on.size, on: [...on.values()].filter(Boolean).length };
 }
 
-async function started(request: APIRequestContext, origin: string, key: string): Promise<boolean> {
-  const { repositories } = await (await request.get(`${origin}/api/repositories`)).json() as { repositories: Array<{ repositoryKey: string; started: boolean }> };
+async function started(rerail: RerailScenarios, origin: string, key: string): Promise<boolean> {
+  const { repositories } = await (await rerail.get(`${origin}/api/repositories`)).json() as { repositories: Array<{ repositoryKey: string; started: boolean }> };
   return repositories.find(repository => repository.repositoryKey === key)!.started;
 }
 
@@ -21,7 +21,7 @@ const repoRow = (page: Page, key: string) => page.locator(`#content [data-repo="
 test.describe("Settings over a repo with history", () => {
   test("shows the day Rerail was installed, with its year", async ({ page, rerail }) => {
     const { origin } = await rerail.scenario("mature");
-    const { installedAt } = await (await page.request.get(`${origin}/healthz`)).json() as { installedAt: number };
+    const { installedAt } = await (await rerail.get(`${origin}/healthz`)).json() as { installedAt: number };
     await page.goto(await rerail.dashboard("mature", { hash: "settings" }));
 
     const expected = await page.evaluate(ms => new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }), installedAt);
@@ -41,7 +41,7 @@ test.describe("Settings over a repo with history", () => {
 
     await expect(hide).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator('#content [data-act="presence"][data-i="compact"]')).toHaveAttribute("aria-pressed", "false");
-    const { preferences } = await (await page.request.get(`${origin}/api/presentation-preferences`)).json() as { preferences: Array<{ repository: string; host: string; presence: string }> };
+    const { preferences } = await (await rerail.get(`${origin}/api/presentation-preferences`)).json() as { preferences: Array<{ repository: string; host: string; presence: string }> };
     expect(preferences.find(p => p.repository === "" && p.host === "")?.presence).toBe("silent");
 
     // Leave the shared daemon as the scenario seeded it.
@@ -53,7 +53,7 @@ test.describe("Settings over a repo with history", () => {
   test("clearing history asks first, then leaves the repo's history empty", async ({ page, rerail }) => {
     const { origin, manifest } = await rerail.scenario("mature");
     const key = manifest.primary.repositoryKey;
-    const violations = async () => (await (await page.request.get(`${origin}/api/violations?since=0&repository=${encodeURIComponent(key)}`)).json() as { total: number }).total;
+    const violations = async () => (await (await rerail.get(`${origin}/api/violations?since=0&repository=${encodeURIComponent(key)}`)).json() as { total: number }).total;
     expect(await violations()).toBeGreaterThan(0);
     await page.goto(await rerail.dashboard("mature", { hash: "settings" }));
 
@@ -77,7 +77,7 @@ test.describe("Settings over a repo with history", () => {
     await page.goto(await rerail.dashboard("mature", { hash: "history" }));
     await page.reload();
     expect(await violations()).toBe(0);
-    const { sessions: left } = await (await page.request.get(`${origin}/api/sessions?repository=${encodeURIComponent(key)}`)).json() as { sessions: Array<{ violationCount: number }> };
+    const { sessions: left } = await (await rerail.get(`${origin}/api/sessions?repository=${encodeURIComponent(key)}`)).json() as { sessions: Array<{ violationCount: number }> };
     expect(left).toHaveLength(manifest.primary.openSessionIds.length);
     expect(left.every(session => session.violationCount === 0)).toBe(true);
   });
@@ -92,7 +92,7 @@ test.describe("Settings over several repos", () => {
     await expect(page.locator("#content [data-repo]")).toHaveCount(manifest.repositories.length);
     expect(manifest.repositories).toHaveLength(3);
     for (const repository of manifest.repositories) {
-      const counts = await ruleCounts(page.request, origin, repository.repositoryKey);
+      const counts = await ruleCounts(rerail, origin, repository.repositoryKey);
       const row = repoRow(page, repository.repositoryKey);
       await expect(row.locator(".n")).toHaveText(counts.total === 0 ? "No rules added" : `${counts.on} ${counts.on === 1 ? "rule" : "rules"} on`);
       await expect(row.locator('[role="switch"]')).toHaveCount(counts.total === 0 ? 0 : 1);
@@ -112,7 +112,7 @@ test.describe("Settings over several repos", () => {
     await expect(toggle).toHaveAttribute("aria-checked", "false");
     await page.reload();
     await expect(toggle).toHaveAttribute("aria-checked", "false");
-    expect(await started(page.request, origin, other.repositoryKey)).toBe(false);
+    expect(await started(rerail, origin, other.repositoryKey)).toBe(false);
     // Switching it off leaves its rules: the tag still counts them.
     await expect(repoRow(page, other.repositoryKey).locator(".n")).not.toHaveText("No rules added");
 
@@ -120,6 +120,6 @@ test.describe("Settings over several repos", () => {
     await expect(toggle).toHaveAttribute("aria-checked", "true");
     await page.reload();
     await expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(await started(page.request, origin, other.repositoryKey)).toBe(true);
+    expect(await started(rerail, origin, other.repositoryKey)).toBe(true);
   });
 });

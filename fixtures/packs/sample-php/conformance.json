@@ -5,19 +5,6 @@
     "syntax",
     "scope"
   ],
-  "corpora": [
-    {
-      "name": "mini",
-      "repository": "fixtures/packs/sample-php/corpora/mini",
-      "commit": "fixture",
-      "paths": [
-        "src"
-      ],
-      "exclude": [
-        "**/*.blade.php"
-      ]
-    }
-  ],
   "tools": [
     {
       "name": "phpcs",

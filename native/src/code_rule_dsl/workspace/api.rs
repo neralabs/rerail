@@ -26,6 +26,7 @@ use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
+use crate::code_rule_dsl::import_target::fs::View;
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::{self, adapter::package_manifests};
 use crate::code_rule_dsl::model::{
@@ -238,6 +239,13 @@ impl CodeRuleDslWorkspace {
             }
         }
         CrossFileScheduler::register(&mut state, index, Arc::make_mut(&mut resident))?;
+        // Global clauses read import targets through their synthetic file-local leaves.
+        for (clause_index, clause) in resident.clauses.iter().enumerate() {
+            if matches!(&clause.kind, ClauseKind::Forbid(query) if is_file_local(clause) && query.reads_import_targets())
+            {
+                state.import_clauses.insert((index, clause_index));
+            }
+        }
         state.code_rules.push(resident);
         if let Err(error) = check_closed(&self.closed) {
             *self
@@ -455,6 +463,27 @@ impl CodeRuleDslWorkspace {
             .map_err(|_| invalid("policy workspace is evaluating"))?
             .documents
             .set_limit(bytes as usize);
+        Ok(())
+    }
+
+    /// The absolute folder on disk the workspace's paths are relative to: import target
+    /// resolution reads the files below it the workspace does not hold, and nothing above it.
+    /// Without one, targets resolve among the held files alone. A changed root makes the next
+    /// apply that defers nothing evaluate again the files whose clauses read import targets.
+    #[napi]
+    pub fn set_root(&self, root: String) -> Result<()> {
+        let root = PathBuf::from(root);
+        if !root.is_absolute() {
+            return Err(invalid("workspace root must be an absolute path"));
+        }
+        let mut state = self
+            .state
+            .try_lock()
+            .map_err(|_| invalid("policy workspace is evaluating"))?;
+        if state.import_root.as_ref() != Some(&root) {
+            state.import_root = Some(root);
+            state.import_generation += 1;
+        }
         Ok(())
     }
 
@@ -874,11 +903,23 @@ impl WorkspaceApplyTask {
         let storage = state.storage.clone();
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &code_rules, deferred);
+        // Every job reads the import targets of the files the workspace holds now, over disk
+        // below its root as this apply finds it.
+        let import_clauses = state.import_clauses.clone();
+        let import_generation = state.import_generation;
+        let import_view = (!import_clauses.is_empty()).then(|| {
+            Arc::new(View::new(
+                Arc::clone(&state.import_files),
+                state.import_root.as_deref(),
+            ))
+        });
         let context = JobContext {
             code_rules: &code_rules,
             storage: storage.as_ref(),
             closed: &self.closed,
             summarize: CrossFileScheduler::summarizes(&producer_batch),
+            import_view: import_view.as_ref(),
+            import_clauses: &import_clauses,
         };
         let mut evaluation_error = None;
         let phase_a = match run_jobs(&mut jobs, &context) {
@@ -891,12 +932,13 @@ impl WorkspaceApplyTask {
                 return Err(error);
             }
         };
-        for (path, file, work) in phase_a {
+        for (path, mut file, work) in phase_a {
             match work {
                 Ok(work) => metrics.merge(work),
                 Err(error) if evaluation_error.is_none() => evaluation_error = Some(error),
                 Err(_) => {}
             }
+            file.import_generation = import_generation;
             CrossFileScheduler::record(&mut state, &producer_batch, &path, &file);
             state.insert_file(path, file);
         }

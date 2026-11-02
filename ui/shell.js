@@ -5,6 +5,7 @@
  * pass and the views (`connectShell`) and starts it (`startRouting`).
  */
 import { h } from "./dom.js";
+import { failed } from "./format.js";
 import { settingWrites } from "./settings-writes.js";
 import { attachmentWrites } from "./attachments.js";
 import { data, ui, panelRuleId, readScope, setScope, repoName } from "./state.js";
@@ -72,12 +73,12 @@ export function hideToast() {
 
 /** Copy `text`; where the clipboard is blocked, select it in `field` (when given) and copy that. */
 export function copyText(text, field, message) {
-  const ok = () => toast(message ?? "Copied. Paste it into a coding agent session.");
+  const ok = () => toast(message ?? "Copied. Paste it into your coding agent.");
   const manual = () => {
     if (field) { field.focus(); field.select(); }
     let done = false;
     try { done = document.execCommand("copy"); } catch { /* clipboard blocked; the field is selected */ }
-    done ? ok() : toast("Select the text and copy it.");
+    done ? ok() : toast(field ? "Couldn’t copy. The text is selected; copy it yourself." : `Couldn’t copy. Copy ${text} yourself.`);
   };
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(ok, manual); else manual();
 }
@@ -97,9 +98,9 @@ export function applyTheme(theme) {
   invalidate();
 }
 
-/** A Load more button: run its load, then show what it brought; a failure is a toast, the button stays. */
-export async function loadMore(load) {
-  try { await load(); } catch (error) { toast(`Could not load more: ${error.message}`); }
+/** A Load more button: run its load, then show what it brought; a failure is a toast naming `what`, the button stays. */
+export async function loadMore(load, what) {
+  try { await load(); } catch (error) { toast(failed(`Couldn’t load more ${what}`, error)); }
   invalidate();
 }
 
@@ -145,19 +146,22 @@ export function closePanel() {
 /* ---------- navigation ---------- */
 
 /**
- * Show `route` (`routes.js`; `view` set): another view closes the sheet and polls for the new view's data now. The
- * view's `enter(route)` runs when it is entered, and again when the route carries a History rule or a session.
+ * Show `route` (`routes.js`; `view` set): another view closes the sheet and polls for the new view's data now; leaving
+ * the catalog forgets the packs it removed. The view's `enter(route)` runs when it is entered, and again when the
+ * route carries a History rule or chip, or a session.
  */
 export function go(route) {
   const moved = route.view !== ui.view || (route.view === "pack" && route.pack !== ui.pack);
   if (moved) {
     closePanel();
+    if (ui.view === "packs") ui.removedPacks.clear();
     ui.view = route.view;
     ui.pack = route.view === "pack" ? route.pack : null;
     ui.removeAsk = null;
     window.scrollTo(0, 0);
   }
-  if (moved || route.filterRule !== undefined || route.session !== undefined) hooks.enter(route);
+  const carries = route.filterRule !== undefined || route.outcome !== undefined || route.session !== undefined || route.sessionFilter !== undefined;
+  if (moved || carries) hooks.enter(route);
   invalidate();
   if (moved) refreshNow();
 }
@@ -167,10 +171,10 @@ let pendingSession = null;
 /** A `#rule/<id>` link, checked once the first rules list is in. */
 let pendingRule = null;
 
-/** Mirror the page into the URL (`replaceState`): the view, its pack or rule, the open rule sheet and the selected session. */
+/** Mirror the page into the URL (`replaceState`): the view, its pack, rule or chip, the open rule sheet and the selected session. */
 export function syncUrl() {
   if (pendingSession !== null) return; // the deep link is still to be applied; a render must not overwrite it
-  const route = { view: ui.view, pack: ui.pack ?? undefined, filterRule: ui.actRule ?? undefined, rule: panelRuleId() ?? undefined };
+  const route = { view: ui.view, pack: ui.pack ?? undefined, filterRule: ui.actRule ?? undefined, outcome: ui.histOutcome, sessionFilter: ui.sessFilter, rule: panelRuleId() ?? undefined };
   const href = urlFor(location.href, route, ui.view === "sessions" ? ui.selectedSession : null);
   if (href !== location.href) history.replaceState(null, "", href);
 }
@@ -179,6 +183,7 @@ export function syncUrl() {
 function resetRepositoryView() {
   ui.welcomeDismissed = false;
   ui.actRule = null;
+  ui.histOutcome = "all";
   pendingRule = null;
   closePanel();
 }
@@ -198,7 +203,7 @@ export function showRepository(key) {
 function checkRule(id) {
   if (data.rules.has(id)) return;
   if (panelRuleId() === id) closePanel();
-  toast(`The rule ${id} is not in ${repoName() || "this repo"}`);
+  toast(`${id} isn’t a rule in ${repoName() || "this repo"}.`);
 }
 
 /** A route's rule link: its sheet, checked against the rules once they are in; a route without one closes a rule sheet. */

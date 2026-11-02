@@ -287,6 +287,13 @@ export function checkoutStatus(db: Reader, checkout: CheckoutContext | undefined
   return { started: repository?.started === true, setUp, startedBy: "repository" };
 }
 
+/** Whether audits of `checkout`'s repository leave out files Git ignores: its setting, on for a checkout not recorded. */
+export function followsGitignore(db: Reader, checkout: Pick<CheckoutContext, "repositoryKey"> | undefined): boolean {
+  if (checkout === undefined) return true;
+  return db.select({ followGitignore: repositories.followGitignore }).from(repositories)
+    .where(eq(repositories.repositoryKey, checkout.repositoryKey)).get()?.followGitignore ?? true;
+}
+
 /** The recorded checkouts of the same repository inside `checkout`'s folder; never itself. */
 export function nestedCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): CheckoutRecord[] {
   return db.select().from(checkouts)

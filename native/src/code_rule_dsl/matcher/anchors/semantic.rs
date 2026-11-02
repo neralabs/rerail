@@ -19,6 +19,12 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
             }
         }
         Semantic::Value(_) => AnchorPlan::unrestricted(),
+        // A target is a node with a known string value.
+        Semantic::ImportTarget(test) => AnchorPlan {
+            root_kinds: Some(super::value_kinds(&test.reading)),
+            condition: Condition::Always,
+            exact: false,
+        },
         // Only a string literal parses.
         Semantic::Parse(test) => AnchorPlan {
             root_kinds: Some(test.host_kinds.as_ref().clone()),

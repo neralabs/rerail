@@ -1,6 +1,6 @@
 /**
- * A pack page's rule table (`#pack/<id>`, `#created`): the column labels Rule · Violations logged · On/off, then one
- * row per rule, reconciled in place on every poll. A row opens the rule's sheet; its switch turns the rule on or off.
+ * A pack page's rule table (`#pack/<id>`, `#created`): the column labels Rule · Violations · On/off, then one row per
+ * rule, reconciled in place on every poll. A row opens the rule's sheet; its switch turns the rule on or off.
  */
 import { h, setAttr, setText, setClass, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
@@ -69,9 +69,7 @@ let table = null;
 function build() {
   const list = h("div.list");
   const noMatch = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No matches"), h("p", null, "Try a different search or filter.")));
-  // The column labels: the long one where there is room, "Violations" where it is crowded.
-  const head = h("div.colhead", { "aria-hidden": "true" },
-    h("span", null, "Rule"), h("span", null, h("span.long", null, "Violations logged"), h("span.short", null, "Violations")), h("span", null, "On/off"));
+  const head = h("div.colhead", { "aria-hidden": "true" }, h("span", null, "Rule"), h("span", null, "Violations"), h("span", null, "On/off"));
   table = { root: h("div.rtable", null, head, list, noMatch), head, list, noMatch };
 }
 

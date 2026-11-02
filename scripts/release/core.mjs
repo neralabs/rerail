@@ -77,6 +77,22 @@ export function setLockVersion(lock, version) {
 }
 
 /**
+ * The files of the installer plugins that coding agents' plugin directories list (`plugins/<agent>`) that pin core's
+ * version: each manifest's `version`, and the `npx @neralabs/rerail@<version>` each `install` skill runs and each
+ * README shows.
+ */
+export const PLUGIN_PINS = ["claude", "codex", "cursor"].flatMap((agent) => [
+  { claude: "plugins/claude/.claude-plugin/plugin.json", codex: "plugins/codex/plugin.json", cursor: "plugins/cursor/.cursor-plugin/plugin.json" }[agent],
+  `plugins/${agent}/skills/install/SKILL.md`,
+  `plugins/${agent}/README.md`,
+]);
+
+/** The text of one of PLUGIN_PINS with its manifest `version` and every `@neralabs/rerail@<version>` set to `version`. */
+export function setPluginVersion(text, version) {
+  return text.replace(/^( {2}"version": ")[^"]*(")/mu, `$1${version}$2`).replace(/@neralabs\/rerail@\d[^\s`]*/gu, `@neralabs/rerail@${version}`);
+}
+
+/**
  * Whether core `version` may be tagged for release, given the `v*` tags that exist: it must not be tagged yet and must
  * be later than every released version, so a version moved backwards by mistake is never published. Returns the
  * reason it may not, or null.

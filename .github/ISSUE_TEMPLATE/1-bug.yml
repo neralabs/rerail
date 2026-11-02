@@ -9,7 +9,7 @@ body:
         A rule that flags fine code, misses bad code or steers badly? Use **Rule misfire** instead.
         A vulnerability? Report it privately ([SECURITY.md](https://github.com/neralabs/rerail/blob/main/SECURITY.md)), never here.
 
-        We reply within 5 business days ([response times](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#response-times)). Leave out secrets and code you can't share.
+        We reply within 5 business days and decide within 10, aiming to fix it by then ([response times](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#response-times)). Leave out secrets and code you can't share.
   - type: input
     id: rerail-version
     attributes:
@@ -85,6 +85,12 @@ body:
       label: Output
       description: The error, the steer text, or the relevant lines of `~/.rerail/daemon.log`.
       render: text
+  - type: input
+    id: fork
+    attributes:
+      label: A change in your fork
+      description: Optional. A branch or pull request in your fork with the change ([how it works](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#proposing-a-change-from-your-fork)).
+      placeholder: https://github.com/you/rerail/tree/your-branch
   - type: checkboxes
     id: checks
     attributes:

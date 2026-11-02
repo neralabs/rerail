@@ -1,0 +1,122 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-extraneous-require",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Require only packages package.json lists in its dependency fields (or the workspace root's package.json does); an unlisted package loads only while something else happens to install it.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
+          "utils": {
+            "require-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^require$",
+                  "resolves": {
+                    "global": [
+                      "require"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "require-callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "field": "arguments",
+                "kind": "call_expression",
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "template_string"
+                  }
+                },
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "matches": "require-callee"
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "require-callee"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^resolve$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "importTarget": {
+              "via": "require",
+              "builtin": false,
+              "resolved": true,
+              "declared": false,
+              "aliased": false
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-extraneous-require",
+        "message": "package.json does not list this package in its dependencies.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-extraneous-require"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

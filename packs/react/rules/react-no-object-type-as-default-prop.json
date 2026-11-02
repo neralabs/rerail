@@ -1,0 +1,2089 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-object-type-as-default-prop",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid object, array, function, JSX and other newly created values as destructured prop defaults in function components; each render gets a new reference.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "cap": {
+            "regex": "^_*(?:[^\\p{Ll}_]|$)"
+          },
+          "named-cap": {
+            "has": {
+              "field": "name",
+              "matches": "cap"
+            }
+          },
+          "anonymous": {
+            "not": {
+              "has": {
+                "field": "name",
+                "regex": "(?s)."
+              }
+            }
+          },
+          "neutral-holder": {
+            "any": [
+              {
+                "kind": "program"
+              },
+              {
+                "kind": "statement_block"
+              },
+              {
+                "kind": "expression_statement"
+              },
+              {
+                "kind": "variable_declarator"
+              },
+              {
+                "kind": "arguments"
+              },
+              {
+                "kind": "return_statement"
+              },
+              {
+                "kind": "export_statement"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "array"
+              },
+              {
+                "kind": "ternary_expression"
+              },
+              {
+                "kind": "binary_expression"
+              },
+              {
+                "kind": "unary_expression"
+              },
+              {
+                "kind": "await_expression"
+              },
+              {
+                "kind": "yield_expression"
+              },
+              {
+                "kind": "spread_element"
+              },
+              {
+                "kind": "sequence_expression"
+              },
+              {
+                "kind": "template_substitution"
+              },
+              {
+                "kind": "call_expression"
+              },
+              {
+                "kind": "new_expression"
+              },
+              {
+                "kind": "member_expression"
+              },
+              {
+                "kind": "subscript_expression"
+              },
+              {
+                "kind": "augmented_assignment_expression"
+              },
+              {
+                "kind": "assignment_pattern"
+              },
+              {
+                "kind": "object_assignment_pattern"
+              },
+              {
+                "kind": "class_body"
+              },
+              {
+                "kind": "if_statement"
+              },
+              {
+                "kind": "else_clause"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "for_in_statement"
+              },
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "do_statement"
+              },
+              {
+                "kind": "switch_case"
+              },
+              {
+                "kind": "switch_default"
+              },
+              {
+                "kind": "labeled_statement"
+              },
+              {
+                "kind": "jsx_expression"
+              },
+              {
+                "kind": "public_field_definition"
+              },
+              {
+                "kind": "as_expression"
+              },
+              {
+                "kind": "satisfies_expression"
+              },
+              {
+                "kind": "non_null_expression"
+              }
+            ]
+          },
+          "fresh-value": {
+            "any": [
+              {
+                "kind": "object"
+              },
+              {
+                "kind": "array"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "class"
+              },
+              {
+                "kind": "new_expression"
+              },
+              {
+                "kind": "regex"
+              },
+              {
+                "kind": "jsx_self_closing_element"
+              },
+              {
+                "kind": "jsx_element",
+                "has": {
+                  "field": "open_tag",
+                  "has": {
+                    "field": "name",
+                    "regex": "(?s)."
+                  }
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^Symbol$"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "fresh-value"
+                }
+              }
+            ]
+          },
+          "function-value": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function",
+                "not": {
+                  "regex": "^async\\b"
+                }
+              }
+            ]
+          },
+          "return-path": {
+            "any": [
+              {
+                "kind": "statement_block"
+              },
+              {
+                "kind": "if_statement"
+              },
+              {
+                "kind": "else_clause"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "switch_statement"
+              },
+              {
+                "kind": "switch_body"
+              },
+              {
+                "kind": "switch_case"
+              },
+              {
+                "kind": "switch_default"
+              }
+            ]
+          },
+          "react-create-element": {
+            "kind": "member_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "object",
+                  "kind": "identifier",
+                  "regex": "^React$"
+                }
+              },
+              {
+                "has": {
+                  "field": "property",
+                  "regex": "^createElement$"
+                }
+              }
+            ]
+          },
+          "jsx": {
+            "any": [
+              {
+                "kind": "jsx_element"
+              },
+              {
+                "kind": "jsx_self_closing_element"
+              },
+              {
+                "kind": "ternary_expression",
+                "any": [
+                  {
+                    "has": {
+                      "field": "consequence",
+                      "matches": "jsx"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "alternative",
+                      "matches": "jsx"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "binary_expression",
+                "has": {
+                  "field": "operator",
+                  "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                },
+                "any": [
+                  {
+                    "has": {
+                      "field": "left",
+                      "matches": "jsx"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "right",
+                      "matches": "jsx"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "jsx"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "react-create-element"
+                }
+              }
+            ]
+          },
+          "jsx-or-null": {
+            "any": [
+              {
+                "kind": "jsx_element"
+              },
+              {
+                "kind": "jsx_self_closing_element"
+              },
+              {
+                "kind": "null"
+              },
+              {
+                "kind": "ternary_expression",
+                "any": [
+                  {
+                    "has": {
+                      "field": "consequence",
+                      "matches": "jsx-or-null"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "alternative",
+                      "matches": "jsx-or-null"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "binary_expression",
+                "has": {
+                  "field": "operator",
+                  "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                },
+                "any": [
+                  {
+                    "has": {
+                      "field": "left",
+                      "matches": "jsx-or-null"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "right",
+                      "matches": "jsx-or-null"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "jsx-or-null"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "react-create-element"
+                }
+              }
+            ]
+          },
+          "returns-jsx": {
+            "any": [
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "body",
+                  "matches": "jsx"
+                }
+              },
+              {
+                "has": {
+                  "field": "body",
+                  "kind": "statement_block",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "return-path"
+                      }
+                    },
+                    "kind": "return_statement",
+                    "has": {
+                      "matches": "jsx"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "returns-jsx-or-null": {
+            "any": [
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "body",
+                  "matches": "jsx-or-null"
+                }
+              },
+              {
+                "has": {
+                  "field": "body",
+                  "kind": "statement_block",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "return-path"
+                      }
+                    },
+                    "kind": "return_statement",
+                    "has": {
+                      "matches": "jsx-or-null"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "return-holder-cap": {
+            "inside": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "inside": {
+                      "kind": "object"
+                    },
+                    "has": {
+                      "field": "name",
+                      "kind": "property_identifier",
+                      "matches": "cap"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "any": [
+                            {
+                              "kind": "assignment_expression",
+                              "has": {
+                                "field": "left",
+                                "kind": "identifier",
+                                "matches": "cap"
+                              }
+                            },
+                            {
+                              "kind": "pair",
+                              "has": {
+                                "field": "key",
+                                "kind": "property_identifier",
+                                "matches": "cap"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "parenthesized_expression",
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "assignment_expression",
+                                "has": {
+                                  "field": "left",
+                                  "kind": "identifier",
+                                  "matches": "cap"
+                                }
+                              },
+                              {
+                                "kind": "pair",
+                                "has": {
+                                  "field": "key",
+                                  "kind": "property_identifier",
+                                  "matches": "cap"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "return-holder-none": {
+            "inside": {
+              "inside": {
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "statement_block"
+                      },
+                      {
+                        "kind": "if_statement"
+                      },
+                      {
+                        "kind": "else_clause"
+                      },
+                      {
+                        "kind": "for_statement"
+                      },
+                      {
+                        "kind": "for_in_statement"
+                      },
+                      {
+                        "kind": "while_statement"
+                      },
+                      {
+                        "kind": "do_statement"
+                      },
+                      {
+                        "kind": "switch_statement"
+                      },
+                      {
+                        "kind": "switch_body"
+                      },
+                      {
+                        "kind": "switch_case"
+                      },
+                      {
+                        "kind": "switch_default"
+                      },
+                      {
+                        "kind": "labeled_statement"
+                      },
+                      {
+                        "kind": "try_statement"
+                      },
+                      {
+                        "kind": "catch_clause"
+                      },
+                      {
+                        "kind": "finally_clause"
+                      },
+                      {
+                        "kind": "class_static_block"
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "method_definition",
+                    "inside": {
+                      "kind": "class_body"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      }
+                    ],
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "matches": "neutral-holder"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "parenthesized_expression",
+                              "inside": {
+                                "matches": "neutral-holder"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "returning-jsx-component": {
+            "any": [
+              {
+                "matches": "function-value",
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "export_statement",
+                          "field": "value"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "parenthesized_expression",
+                          "inside": {
+                            "kind": "export_statement",
+                            "field": "value"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "function-value",
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "return_statement"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "parenthesized_expression",
+                          "inside": {
+                            "kind": "return_statement"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "any": [
+                  {
+                    "matches": "named-cap"
+                  },
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "return_statement",
+                          "matches": "return-holder-cap"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "parenthesized_expression",
+                          "inside": {
+                            "kind": "return_statement",
+                            "matches": "return-holder-cap"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matches": "anonymous",
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "kind": "return_statement",
+                              "matches": "return-holder-none"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "parenthesized_expression",
+                              "inside": {
+                                "kind": "return_statement",
+                                "matches": "return-holder-none"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "function-value",
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "arrow_function",
+                          "field": "body",
+                          "any": [
+                            {
+                              "any": [
+                                {
+                                  "inside": {
+                                    "kind": "assignment_expression",
+                                    "has": {
+                                      "field": "left",
+                                      "kind": "identifier",
+                                      "matches": "cap"
+                                    }
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "kind": "parenthesized_expression",
+                                    "inside": {
+                                      "kind": "assignment_expression",
+                                      "has": {
+                                        "field": "left",
+                                        "kind": "identifier",
+                                        "matches": "cap"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "any": [
+                                {
+                                  "inside": {
+                                    "kind": "pair",
+                                    "has": {
+                                      "field": "key",
+                                      "kind": "property_identifier",
+                                      "matches": "cap"
+                                    }
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "kind": "parenthesized_expression",
+                                    "inside": {
+                                      "kind": "pair",
+                                      "has": {
+                                        "field": "key",
+                                        "kind": "property_identifier",
+                                        "matches": "cap"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "any": [
+                                {
+                                  "inside": {
+                                    "matches": "neutral-holder"
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "kind": "parenthesized_expression",
+                                    "inside": {
+                                      "matches": "neutral-holder"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "parenthesized_expression",
+                          "inside": {
+                            "kind": "arrow_function",
+                            "field": "body",
+                            "any": [
+                              {
+                                "any": [
+                                  {
+                                    "inside": {
+                                      "kind": "assignment_expression",
+                                      "has": {
+                                        "field": "left",
+                                        "kind": "identifier",
+                                        "matches": "cap"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "parenthesized_expression",
+                                      "inside": {
+                                        "kind": "assignment_expression",
+                                        "has": {
+                                          "field": "left",
+                                          "kind": "identifier",
+                                          "matches": "cap"
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "inside": {
+                                      "kind": "pair",
+                                      "has": {
+                                        "field": "key",
+                                        "kind": "property_identifier",
+                                        "matches": "cap"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "parenthesized_expression",
+                                      "inside": {
+                                        "kind": "pair",
+                                        "has": {
+                                          "field": "key",
+                                          "kind": "property_identifier",
+                                          "matches": "cap"
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "inside": {
+                                      "matches": "neutral-holder"
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "parenthesized_expression",
+                                      "inside": {
+                                        "matches": "neutral-holder"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "any": [
+                  {
+                    "matches": "anonymous"
+                  },
+                  {
+                    "matches": "named-cap"
+                  }
+                ]
+              },
+              {
+                "matches": "function-value",
+                "any": [
+                  {
+                    "matches": "anonymous",
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "kind": "pair",
+                              "field": "value",
+                              "has": {
+                                "field": "key",
+                                "kind": "property_identifier",
+                                "matches": "cap"
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "parenthesized_expression",
+                              "inside": {
+                                "kind": "pair",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "kind": "property_identifier",
+                                  "matches": "cap"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "matches": "named-cap",
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "kind": "pair",
+                              "field": "value",
+                              "has": {
+                                "field": "key",
+                                "any": [
+                                  {
+                                    "kind": "property_identifier",
+                                    "regex": "^[\\p{Lu}\\p{Lt}]"
+                                  },
+                                  {
+                                    "kind": "string"
+                                  },
+                                  {
+                                    "kind": "number"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "parenthesized_expression",
+                              "inside": {
+                                "kind": "pair",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier",
+                                      "regex": "^[\\p{Lu}\\p{Lt}]"
+                                    },
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "number"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "matches": "anonymous"
+                      },
+                      {
+                        "matches": "named-cap"
+                      }
+                    ],
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "kind": "pair",
+                              "field": "value",
+                              "has": {
+                                "field": "key",
+                                "kind": "computed_property_name",
+                                "any": [
+                                  {
+                                    "regex": "^\\[\\s*[\\p{Lu}\\p{Lt}][\\p{L}\\p{N}_$\\x{200C}\\x{200D}]*\\s*\\]$"
+                                  },
+                                  {
+                                    "regex": "^\\[[\\s\\S]*[^\\p{L}\\p{N}_$\\x{200C}\\x{200D}\\s\\[\\]][\\s\\S]*\\]$"
+                                  },
+                                  {
+                                    "regex": "^\\[\\s*\\p{N}"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "parenthesized_expression",
+                              "inside": {
+                                "kind": "pair",
+                                "field": "value",
+                                "has": {
+                                  "field": "key",
+                                  "kind": "computed_property_name",
+                                  "any": [
+                                    {
+                                      "regex": "^\\[\\s*[\\p{Lu}\\p{Lt}][\\p{L}\\p{N}_$\\x{200C}\\x{200D}]*\\s*\\]$"
+                                    },
+                                    {
+                                      "regex": "^\\[[\\s\\S]*[^\\p{L}\\p{N}_$\\x{200C}\\x{200D}\\s\\[\\]][\\s\\S]*\\]$"
+                                    },
+                                    {
+                                      "regex": "^\\[\\s*\\p{N}"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "method_definition",
+                "inside": {
+                  "kind": "object"
+                },
+                "has": {
+                  "field": "name",
+                  "kind": "property_identifier",
+                  "matches": "cap"
+                }
+              }
+            ]
+          },
+          "returning-jsx-or-null-component": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration",
+                    "not": {
+                      "regex": "^async\\b"
+                    }
+                  }
+                ],
+                "matches": "named-cap"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function",
+                    "not": {
+                      "regex": "^async\\b"
+                    }
+                  }
+                ],
+                "inside": {
+                  "kind": "export_statement",
+                  "field": "value"
+                }
+              },
+              {
+                "matches": "function-value",
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "variable_declarator",
+                          "field": "value",
+                          "has": {
+                            "field": "name",
+                            "kind": "identifier",
+                            "matches": "cap"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "parenthesized_expression",
+                          "inside": {
+                            "kind": "variable_declarator",
+                            "field": "value",
+                            "has": {
+                              "field": "name",
+                              "kind": "identifier",
+                              "matches": "cap"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "function-value",
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "assignment_expression",
+                          "field": "right",
+                          "has": {
+                            "field": "left",
+                            "kind": "identifier",
+                            "matches": "cap"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "parenthesized_expression",
+                          "inside": {
+                            "kind": "assignment_expression",
+                            "field": "right",
+                            "has": {
+                              "field": "left",
+                              "kind": "identifier",
+                              "matches": "cap"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "function-value",
+                "any": [
+                  {
+                    "matches": "named-cap",
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "kind": "assignment_expression",
+                              "field": "right",
+                              "has": {
+                                "field": "left",
+                                "kind": "member_expression"
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "parenthesized_expression",
+                              "inside": {
+                                "kind": "assignment_expression",
+                                "field": "right",
+                                "has": {
+                                  "field": "left",
+                                  "kind": "member_expression"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "matches": "anonymous",
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "kind": "assignment_expression",
+                              "field": "right",
+                              "has": {
+                                "field": "left",
+                                "kind": "member_expression",
+                                "any": [
+                                  {
+                                    "pattern": "module.exports"
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "property",
+                                      "matches": "cap"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "parenthesized_expression",
+                              "inside": {
+                                "kind": "assignment_expression",
+                                "field": "right",
+                                "has": {
+                                  "field": "left",
+                                  "kind": "member_expression",
+                                  "any": [
+                                    {
+                                      "pattern": "module.exports"
+                                    },
+                                    {
+                                      "has": {
+                                        "field": "property",
+                                        "matches": "cap"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "component": {
+            "any": [
+              {
+                "matches": "returning-jsx-component",
+                "all": [
+                  {
+                    "matches": "returns-jsx"
+                  }
+                ]
+              },
+              {
+                "matches": "returning-jsx-or-null-component",
+                "all": [
+                  {
+                    "matches": "returns-jsx-or-null"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "component",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "component",
+            "has": {
+              "field": "parameters",
+              "kind": "formal_parameters",
+              "has": {
+                "any": [
+                  {
+                    "kind": "object_pattern",
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "follows": {
+                              "regex": "^\\($"
+                            }
+                          },
+                          {
+                            "follows": {
+                              "kind": "comment",
+                              "follows": {
+                                "regex": "^\\($"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "object_assignment_pattern",
+                          "has": {
+                            "field": "right",
+                            "matches": "fresh-value"
+                          },
+                          "pattern": "$DEFAULT"
+                        },
+                        {
+                          "kind": "pair_pattern",
+                          "has": {
+                            "field": "value",
+                            "kind": "assignment_pattern",
+                            "has": {
+                              "field": "right",
+                              "matches": "fresh-value"
+                            },
+                            "pattern": "$DEFAULT"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "required_parameter"
+                      },
+                      {
+                        "kind": "optional_parameter"
+                      }
+                    ],
+                    "not": {
+                      "has": {
+                        "field": "value",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "follows": {
+                              "regex": "^\\($"
+                            }
+                          },
+                          {
+                            "follows": {
+                              "kind": "comment",
+                              "follows": {
+                                "regex": "^\\($"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "has": {
+                      "field": "pattern",
+                      "kind": "object_pattern",
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "object_assignment_pattern",
+                            "has": {
+                              "field": "right",
+                              "matches": "fresh-value"
+                            },
+                            "pattern": "$DEFAULT"
+                          },
+                          {
+                            "kind": "pair_pattern",
+                            "has": {
+                              "field": "value",
+                              "kind": "assignment_pattern",
+                              "has": {
+                                "field": "right",
+                                "matches": "fresh-value"
+                              },
+                              "pattern": "$DEFAULT"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.DEFAULT",
+        "code": "react/no-object-type-as-default-prop",
+        "message": "Hoist this default to a module-level constant and default to that, so each render reuses one reference; if it depends on other props, build it with useMemo instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-object-type-as-default-prop"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-object-type-as-default-prop"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/noReactObjectTypeAsDefaultProp"
+            ]
+          }
+        },
+        "each": "DEFAULT"
+      }
+    },
+    {
+      "id": "component-through-bindings",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "component-through-bindings",
+                "has": {
+                  "field": "parameters",
+                  "kind": "formal_parameters",
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "object_pattern",
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "follows": {
+                                  "regex": "^\\($"
+                                }
+                              },
+                              {
+                                "follows": {
+                                  "kind": "comment",
+                                  "follows": {
+                                    "regex": "^\\($"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ],
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "object_assignment_pattern",
+                              "has": {
+                                "field": "right",
+                                "matches": "fresh-value"
+                              },
+                              "pattern": "$DEFAULT"
+                            },
+                            {
+                              "kind": "pair_pattern",
+                              "has": {
+                                "field": "value",
+                                "kind": "assignment_pattern",
+                                "has": {
+                                  "field": "right",
+                                  "matches": "fresh-value"
+                                },
+                                "pattern": "$DEFAULT"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "required_parameter"
+                          },
+                          {
+                            "kind": "optional_parameter"
+                          }
+                        ],
+                        "not": {
+                          "has": {
+                            "field": "value",
+                            "regex": "(?s)."
+                          }
+                        },
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "follows": {
+                                  "regex": "^\\($"
+                                }
+                              },
+                              {
+                                "follows": {
+                                  "kind": "comment",
+                                  "follows": {
+                                    "regex": "^\\($"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ],
+                        "has": {
+                          "field": "pattern",
+                          "kind": "object_pattern",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "object_assignment_pattern",
+                                "has": {
+                                  "field": "right",
+                                  "matches": "fresh-value"
+                                },
+                                "pattern": "$DEFAULT"
+                              },
+                              {
+                                "kind": "pair_pattern",
+                                "has": {
+                                  "field": "value",
+                                  "kind": "assignment_pattern",
+                                  "has": {
+                                    "field": "right",
+                                    "matches": "fresh-value"
+                                  },
+                                  "pattern": "$DEFAULT"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "component"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "jsx-through-bindings": {
+              "any": [
+                {
+                  "kind": "jsx_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                },
+                {
+                  "kind": "ternary_expression",
+                  "any": [
+                    {
+                      "has": {
+                        "field": "consequence",
+                        "matches": "jsx-through-bindings"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "alternative",
+                        "matches": "jsx-through-bindings"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                  },
+                  "any": [
+                    {
+                      "has": {
+                        "field": "left",
+                        "matches": "jsx-through-bindings"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "right",
+                        "matches": "jsx-through-bindings"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "jsx-through-bindings"
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "matches": "react-create-element"
+                  }
+                },
+                {
+                  "kind": "sequence_expression",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "jsx-through-bindings"
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^createElement$",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "matches": "react-site"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "any": [
+                          {
+                            "kind": "jsx_element"
+                          },
+                          {
+                            "kind": "jsx_self_closing_element"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "jsx-or-null-through-bindings": {
+              "any": [
+                {
+                  "kind": "jsx_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                },
+                {
+                  "kind": "null"
+                },
+                {
+                  "kind": "ternary_expression",
+                  "any": [
+                    {
+                      "has": {
+                        "field": "consequence",
+                        "matches": "jsx-or-null-through-bindings"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "alternative",
+                        "matches": "jsx-or-null-through-bindings"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                  },
+                  "any": [
+                    {
+                      "has": {
+                        "field": "left",
+                        "matches": "jsx-or-null-through-bindings"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "right",
+                        "matches": "jsx-or-null-through-bindings"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "jsx-or-null-through-bindings"
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "matches": "react-create-element"
+                  }
+                },
+                {
+                  "kind": "sequence_expression",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "jsx-or-null-through-bindings"
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^createElement$",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "matches": "react-site"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "any": [
+                          {
+                            "kind": "jsx_element"
+                          },
+                          {
+                            "kind": "jsx_self_closing_element"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "returns-jsx-through-bindings": {
+              "any": [
+                {
+                  "kind": "arrow_function",
+                  "has": {
+                    "field": "body",
+                    "matches": "jsx-through-bindings"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "body",
+                    "kind": "statement_block",
+                    "has": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "return-path"
+                        }
+                      },
+                      "kind": "return_statement",
+                      "has": {
+                        "matches": "jsx-through-bindings"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "returns-jsx-or-null-through-bindings": {
+              "any": [
+                {
+                  "kind": "arrow_function",
+                  "has": {
+                    "field": "body",
+                    "matches": "jsx-or-null-through-bindings"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "body",
+                    "kind": "statement_block",
+                    "has": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "return-path"
+                        }
+                      },
+                      "kind": "return_statement",
+                      "has": {
+                        "matches": "jsx-or-null-through-bindings"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "react-site": {
+              "any": [
+                {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "matches": "react-init"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_statement",
+                    "has": {
+                      "field": "source",
+                      "kind": "string",
+                      "value": {
+                        "eq": "react"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "react-init": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^React$"
+                },
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "object",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      },
+                      {
+                        "matches": "require-react"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "require-react"
+                }
+              ]
+            },
+            "require-react": {
+              "kind": "call_expression",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^require$"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "kind": "string",
+                      "nthChild": 1,
+                      "value": {
+                        "eq": "react"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "component-sequence": {
+              "kind": "sequence_expression",
+              "all": [
+                {
+                  "any": [
+                    {
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "variable_declarator"
+                          },
+                          {
+                            "kind": "assignment_expression"
+                          },
+                          {
+                            "kind": "pair"
+                          },
+                          {
+                            "kind": "return_statement"
+                          },
+                          {
+                            "kind": "export_statement"
+                          },
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "sequence_expression",
+                            "matches": "component-sequence"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "parenthesized_expression",
+                        "inside": {
+                          "any": [
+                            {
+                              "kind": "variable_declarator"
+                            },
+                            {
+                              "kind": "assignment_expression"
+                            },
+                            {
+                              "kind": "pair"
+                            },
+                            {
+                              "kind": "return_statement"
+                            },
+                            {
+                              "kind": "export_statement"
+                            },
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "sequence_expression",
+                              "matches": "component-sequence"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "component-through-bindings": {
+              "any": [
+                {
+                  "matches": "returning-jsx-component",
+                  "all": [
+                    {
+                      "matches": "returns-jsx-through-bindings"
+                    }
+                  ]
+                },
+                {
+                  "matches": "returning-jsx-or-null-component",
+                  "all": [
+                    {
+                      "matches": "returns-jsx-or-null-through-bindings"
+                    }
+                  ]
+                },
+                {
+                  "matches": "function-value",
+                  "nthChild": {
+                    "position": 1,
+                    "reverse": true,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "kind": "sequence_expression",
+                    "matches": "component-sequence"
+                  },
+                  "all": [
+                    {
+                      "matches": "returns-jsx-or-null-through-bindings"
+                    }
+                  ],
+                  "any": [
+                    {
+                      "matches": "anonymous"
+                    },
+                    {
+                      "matches": "named-cap"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.DEFAULT",
+        "code": "react/no-object-type-as-default-prop",
+        "message": "Hoist this default to a module-level constant and default to that, so each render reuses one reference; if it depends on other props, build it with useMemo instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-object-type-as-default-prop"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-object-type-as-default-prop"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/noReactObjectTypeAsDefaultProp"
+            ]
+          }
+        },
+        "each": "DEFAULT"
+      }
+    }
+  ]
+}

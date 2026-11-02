@@ -129,3 +129,19 @@ export const SOURCE_LANGUAGES: ReadonlyMap<string, CodeRuleSourceLanguage> = new
   ...CODE_RULE_DIALECT_SUFFIXES,
   ...[...PLANNED_SUFFIXES.map(suffix => [suffix, "text"] as const), ...TEXT_SOURCE_SUFFIXES].filter(([suffix]) => !CODE_RULE_DIALECT_SUFFIXES.has(suffix)),
 ]);
+
+/**
+ * Files audits read as text by their whole name, as no suffix names them (a name longer than its suffix is needed):
+ * the package ignore files that decide which files of a package npm publishes (`file.package.published`). Keyed
+ * lowercase; a listed name wins over the suffixes. The native repository index receives the same map.
+ */
+export const SOURCE_NAMES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([
+  [".npmignore", "text"],
+  [".gitignore", "text"],
+]);
+
+/** The file label audits and the bridge read `path` with: its listed whole name (`SOURCE_NAMES`), else its suffix. */
+export function sourceLanguageOfPath(path: string): CodeRuleSourceLanguage | undefined {
+  const name = path.slice(path.lastIndexOf("/") + 1).replace(/[A-Z]+/g, upper => upper.toLowerCase());
+  return SOURCE_NAMES.get(name) ?? languageOfPath(SOURCE_LANGUAGES, path);
+}

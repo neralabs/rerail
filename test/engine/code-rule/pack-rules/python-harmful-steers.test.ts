@@ -1,5 +1,5 @@
 /**
- * Three Python ports (B406 and B610 on by default, F722 off) must not steer an agent into rewriting idiomatic code. Each reports what
+ * Three Python ports (B406 and B610 on by default, F722 a candidate) must not steer an agent into rewriting idiomatic code. Each reports what
  * its upstream reports, but on these idioms the finding is wrong and the steer harmful:
  *
  * - bandit-b406-import-xml-sax: Bandit reports any import under xml.sax, including the xml.sax.saxutils writing and
@@ -9,7 +9,7 @@
  * - ruff-f722-forward-annotation-syntax-error: Ruff reads a jaxtyping shape (`Float[Array, "b n"]`) as a forward
  *   annotation; jaxtyping parses it with its own grammar.
  *
- * Each case is one file; the test asserts exactly which lines the candidate rule reports. The divergences are declared in
+ * Each case is one file; the test asserts exactly which lines the rule reports. The divergences are declared in
  * each rule's description and, where the pinned corpus has one, in packs/python/divergences.json.
  */
 import { readFile } from "node:fs/promises";
@@ -32,10 +32,8 @@ const evaluationSchema = z.object({
 
 function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  // The three ports fail the port readiness gates (B406 differs from Bandit on a Django file, B610 names fixture words, F722
-  // fails compact), so they are candidates until they pass.
-  const document = loadPackRuleDocuments([repositoryPath("packs", "python", "candidates")]).find(candidate => candidate.rule.id === ruleId);
-  if (document === undefined) throw new Error(`${ruleId} is not in packs/python/candidates`);
+  const document = loadPackRuleDocuments([repositoryPath("packs", "python"), repositoryPath("packs", "python", "candidates")]).find(candidate => candidate.rule.id === ruleId);
+  if (document === undefined) throw new Error(`${ruleId} is not in packs/python or its candidates`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 

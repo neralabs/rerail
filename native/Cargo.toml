@@ -11,22 +11,22 @@ crate-type = ["cdylib"]
 code-rule-profile = []
 bench-backends = ["dep:metal"]
 [dependencies]
-ast-grep-core = "=0.50.0"
+ast-grep-core = "=0.51.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md), and no second
 # parser is linked.
 # Rust parses with ast-grep's tree-sitter-rust 0.24.2 (MIT), the grammar its feasibility census measured.
-ast-grep-language = { version = "=0.50.0", default-features = false, features = ["tree-sitter-php", "tree-sitter-rust"] }
+ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-php", "tree-sitter-rust"] }
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
-gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
-globset = "=0.4.20"
+gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
+globset = "=0.4.21"
 model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }
 napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-symbols"] }
 napi-derive = "3.0"
 indexmap = "=2.14.2"
 memchr = "=2.8.3"
-num-bigint = "=0.4.6"
+num-bigint = "=0.5.1"
 num-integer = "=0.1.47"
 num-traits = "=0.2.19"
 parking_lot = { version = "0.12", features = ["arc_lock"] }
@@ -35,11 +35,11 @@ serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
 regex-syntax = "=0.8.11"
-rusqlite = { version = "=0.40.2", features = ["bundled", "limits"] }
+rusqlite = { version = "=0.41.1", features = ["bundled", "limits"] }
 rustc-hash = "=2.1.3"
 serde_json = "1.0"
 serde_yaml_ng = "=0.10.0"
-sha2 = "0.10"
+sha2 = "0.11"
 tree-sitter-language = "=0.1.9"
 tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
 tree-sitter = "=0.27.1"
@@ -53,10 +53,10 @@ libc = "0.2.189"
 # jemalloc does not build for MSVC targets; Windows keeps the system allocator (`lib.rs`).
 [target.'cfg(not(windows))'.dependencies]
 # The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
-tikv-jemallocator = { version = "=0.6.1", features = ["disable_initial_exec_tls"] }
-tikv-jemalloc-ctl = { version = "=0.6.1", features = ["stats"] }
+tikv-jemallocator = { version = "=0.7.0", features = ["disable_initial_exec_tls"] }
+tikv-jemalloc-ctl = { version = "=0.7.0", features = ["stats"] }
 # Tree-sitter's allocator (`lib.rs`): the same jemalloc, linked by tikv-jemallocator.
-tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }
+tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
@@ -67,14 +67,14 @@ metal = { version = "0.33.0", optional = true }
 [dev-dependencies]
 # The test-only dialects' grammars: `builtin-parser` without tree-sitter-python,
 # tree-sitter-typescript and tree-sitter-javascript, which Rerail vendors.
-ast-grep-language = { version = "=0.50.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
+ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 # Tests count SQLite VM steps (`Connection::progress_handler`) to bound statement work.
-rusqlite = { version = "=0.40.2", features = ["bundled", "limits", "hooks"] }
+rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks"] }
 
 [build-dependencies]
-cc = "=1.8.0"
+cc = "=1.10.0"
 napi-build = "2.2"
-sha2 = "0.10"
+sha2 = "0.11"
 # Reads and validates the language registry (`languages/*.json`) the build generates tables from.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

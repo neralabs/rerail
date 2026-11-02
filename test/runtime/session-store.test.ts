@@ -171,7 +171,7 @@ describe("SQLite session persistence", () => {
     const root = await temporaryDirectory();
     const daemon = await startNativeTestDaemon(root);
     const client = new NativeSessionClient({
-      instance: { workspaceRoot: root, url: new URL(daemon.url) },
+      instance: { workspaceRoot: root, url: new URL(daemon.url), accessToken: daemon.state().accessToken! },
       token: daemon.state().nativeToken!,
       host: "omp", sessionId: "non-json", entries: () => [],
       appendEntry() {}, deliver() {},
@@ -205,7 +205,7 @@ describe("SQLite session persistence", () => {
     const branch: Array<{ type: string; id: string; timestamp: string; customType: string; data: unknown }> = [];
     let nextEntry = 1;
     const client = new NativeSessionClient({
-      instance: { workspaceRoot: root, url: new URL(daemon.url) },
+      instance: { workspaceRoot: root, url: new URL(daemon.url), accessToken: daemon.state().accessToken! },
       token: daemon.state().nativeToken!,
       host: "omp",
       sessionId: "watermark-receipt",

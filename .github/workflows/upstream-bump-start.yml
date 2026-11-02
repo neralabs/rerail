@@ -1,0 +1,183 @@
+name: Upstream bump (start)
+
+# Starts a bump, or a re-snapshot, of the tool-packs a maintainer names (docs/upstream.md, "Start a bump"), on main and
+# by hand only: the nightly report (upstream-releases.yml) says what each upstream's latest release changed, and a
+# maintainer decides what to bump. `tool-packs` is a list of `<pack>/<tool>`, separated by spaces or commas, or `all`:
+# every tool-pack behind its upstream's latest stable release (with `resnapshot`, every gated tool-pack). The versions
+# come from npm run upstream:releases (scripts/upstream/releases.ts, --json): a bump moves each tool-pack to its
+# upstream's latest stable release, and a re-snapshot derives each again at the release it already pins. A named
+# tool-pack that is not gated, or that a bump cannot move (already at the latest release, or a registry that cannot be
+# read), fails the run before anything starts.
+#
+# Then it points the work branch auto/bump-run/upstream at this run's commit of main and dispatches upstream-bump.yml
+# there once, with the list (JSON [{pack, tool, version}], sorted by pack then tool), which in a leg per tool-pack moves
+# the pins and, holding no credential, derives on Linux the test data of every tool-pack the bump made stale;
+# upstream-bump-publish.yml, on main, then checks each leg's result, composes the verified ones into a commit per
+# tool-pack carrying its pins and its derived data in publish/, and opens one pull request. A maintainer then runs
+# Publish pack data (pack-data-publish.yml) for it with replace, whose upload a code owner approves. Upstream code at a
+# release nobody has reviewed never runs here, in main's cache scope, or next to a credential.
+
+run-name: ${{ inputs.resnapshot && 'Start a re-snapshot of' || 'Start a bump of' }} ${{ inputs.tool-packs }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tool-packs:
+        description: "The tool-packs to bump: <pack>/<tool>, separated by spaces or commas, or `all` (every tool-pack behind its latest release; with resnapshot, every gated tool-pack)."
+        required: true
+        type: string
+      resnapshot:
+        description: Derive the tool-packs again at the release each already pins, rather than bump them.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-bump-start
+  cancel-in-progress: false
+
+jobs:
+  # Refuses any ref but main, then reads every gated tool-pack's pin and its upstream's latest stable release from the
+  # registries, and turns the input into the bump's list. Its output is that list, checked: 1 to 64 distinct
+  # tool-packs, each value one the bump takes; empty when `all` finds nothing behind.
+  versions:
+    name: Resolve the versions
+    # Forks skip it; change the owner if the repository moves.
+    if: github.repository_owner == 'neralabs'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tool-packs: ${{ steps.list.outputs.tool-packs }}
+    steps:
+      - name: Refuse any ref but main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::a bump starts only from main, at main's head, not $GITHUB_REF"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - id: list
+        name: Resolve the tool-packs and their versions
+        env:
+          TOOL_PACKS: ${{ inputs.tool-packs }}
+          RESNAPSHOT: ${{ inputs.resnapshot }}
+        run: |
+          set -euo pipefail
+          releases="$RUNNER_TEMP/releases.json"
+          npm run upstream:releases -- --json "$releases"
+          read -r -a requested <<< "${TOOL_PACKS//,/ }"
+          if [ "${#requested[@]}" -eq 0 ]; then
+            echo "::error::name the tool-packs to bump as <pack>/<tool>, or all"
+            exit 1
+          fi
+
+          if [ "${#requested[@]}" -eq 1 ] && [ "${requested[0]}" = "all" ]; then
+            if [ "$RESNAPSHOT" = "true" ]; then
+              selected="$(jq -c '[.[] | { pack, tool, version: .pinned }]' "$releases")"
+            else
+              selected="$(jq -c '[.[] | select(.gap != null and .gap != "current") | { pack, tool, version: .latest }]' "$releases")"
+            fi
+          else
+            refused=0
+            entries=()
+            for toolpack in "${requested[@]}"; do
+              if ! [[ "$toolpack" =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$ ]]; then
+                echo "::error::'$toolpack' is not a <pack>/<tool>; all is the only other input, and alone"
+                refused=1
+                continue
+              fi
+              entry="$(jq -c --arg id "$toolpack" '.[] | select(.toolPack == $id)' "$releases")"
+              if [ -z "$entry" ]; then
+                echo "::error::$toolpack is not a gated tool-pack"
+                refused=1
+                continue
+              fi
+              if [ "$RESNAPSHOT" = "true" ]; then
+                entries+=("$(jq -c '{ pack, tool, version: .pinned }' <<< "$entry")")
+                continue
+              fi
+              reason="$(jq -r '
+                if .latest == null then "its registry could not be read"
+                elif .gap == null then "its pin \(.pinned) or the latest release \(.latest) is not a release version"
+                elif .gap == "current" then "it already pins the latest stable release, \(.pinned); start a re-snapshot to derive it again there"
+                else empty end
+              ' <<< "$entry")"
+              if [ -n "$reason" ]; then
+                echo "::error::not bumping $toolpack: $reason"
+                refused=1
+                continue
+              fi
+              entries+=("$(jq -c '{ pack, tool, version: .latest }' <<< "$entry")")
+            done
+            if [ "$refused" -ne 0 ]; then
+              exit 1
+            fi
+            selected="$(printf '%s\n' "${entries[@]}" | jq -s -c .)"
+          fi
+
+          # upstream-bump.yml takes distinct tool-packs sorted by pack then tool, at most 64.
+          selected="$(jq -c 'unique_by([.pack, .tool])' <<< "$selected")"
+          count="$(jq length <<< "$selected")"
+          if [ "$count" -eq 0 ]; then
+            echo "::notice::every tool-pack pins its upstream's latest stable release; nothing to bump"
+            echo "tool-packs=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$count" -gt 64 ]; then
+            echo "::error::$count tool-packs is more than the 64 a bump takes"
+            exit 1
+          fi
+          mapfile -t values < <(jq -r '.[] | .pack, .tool, .version' <<< "$selected")
+          for value in "${values[@]}"; do
+            if ! [[ "$value" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+              echo "::error::'$value' is not a pack, tool or version the bump takes"
+              exit 1
+            fi
+          done
+          echo "tool-packs=$selected" >> "$GITHUB_OUTPUT"
+
+  # Points the work branch auto/bump-run/upstream at this run's commit, then starts upstream-bump.yml on it once, with
+  # the list. The producer runs upstream's code at a release nobody has reviewed, so it runs on the work branch and never
+  # here, where its cache token would write main's cache scope, which every pull request and push to main reads. This
+  # job checks nothing out and installs nothing. A branch an earlier run left behind is deleted and created again rather
+  # than moved, since GitHub may refuse GITHUB_TOKEN a move across a change to a workflow file. A workflow_dispatch made
+  # with GITHUB_TOKEN starts a run; a branch it creates starts none.
+  start:
+    name: Start the bump on the work branch
+    needs: versions
+    if: needs.versions.outputs.tool-packs != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Point the work branch at this commit and start the bump on it
+        env:
+          TOOL_PACKS: ${{ needs.versions.outputs.tool-packs }}
+          RESNAPSHOT: ${{ inputs.resnapshot }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="auto/bump-run/upstream"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" > /dev/null 2>&1; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch" > /dev/null
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$branch" -f sha="$GITHUB_SHA" > /dev/null
+          gh workflow run upstream-bump.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" -f tool-packs="$TOOL_PACKS" -f resnapshot="$RESNAPSHOT"
+          if [ "$RESNAPSHOT" = "true" ]; then what="the re-snapshot"; how="at"; else what="the bump"; how="to"; fi
+          {
+            echo "Started $what on \`$branch\` at \`$GITHUB_SHA\` of:"
+            echo
+            jq -r --arg how "$how" '.[] | "- `\(.pack)/\(.tool)` \($how) \(.version)"' <<< "$TOOL_PACKS"
+          } | tee -a "$GITHUB_STEP_SUMMARY"

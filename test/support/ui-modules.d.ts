@@ -139,7 +139,7 @@ declare module "*/ui/state.js" {
     disconnected: boolean;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
-  export const ui: { filter: string; query: string; range: number; actRule: string | null; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
+  export const ui: { filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
   export function runningCount(): number;
@@ -152,8 +152,13 @@ declare module "*/ui/attachments.js" {
   /** The page's rule pack writes; `toast` and `invalidate` are the page's. */
   export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
     setUpRecommended(): Promise<void>;
-    keepPack(id: string, keep: boolean, message: string): Promise<void> | undefined;
+    keepPack(id: string, keep: boolean, message: string, failed?: string): Promise<void> | undefined;
   };
+}
+
+declare module "*/ui/format.js" {
+  /** A failure toast: what did not happen, then the error as a sentence. */
+  export function failed(what: string, error: unknown): string;
 }
 
 declare module "*/ui/settings-writes.js" {
@@ -163,9 +168,9 @@ declare module "*/ui/settings-writes.js" {
   export function packSwitchWrites(packId: string, enabled: boolean): SettingPut[];
   /** The page's rule setting writes; `toast`, `invalidate` and `owner` are the page's. */
   export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: () => "repository" | "checkout" }): {
-    setEnabled(ids: readonly string[], enabled: boolean, label: string): Promise<void>;
-    setPackEnabled(packId: string, enabled: boolean, label: string): Promise<void>;
-    setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string): Promise<void>;
+    setEnabled(ids: readonly string[], enabled: boolean, label: string, failed?: string): Promise<void>;
+    setPackEnabled(packId: string, enabled: boolean, label: string, failed?: string): Promise<void>;
+    setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string, failed?: string): Promise<void>;
   };
 }
 
@@ -179,8 +184,8 @@ declare module "*/ui/pack-model.js" {
   export function sortPageRules<R extends Stored>(rules: readonly R[], sort: string): R[];
   export function shownRules<R extends Stored>(rules: readonly R[]): R[];
   export function runningOf(rules: readonly Stored[]): number;
-  export function packSwitch(rules: readonly Stored[]): { on: number; total: number; state: "true" | "false" | "mixed" };
-  export function switchTurnsOn(state: "true" | "false" | "mixed"): boolean;
+  export function packSwitch(rules: readonly Stored[]): { on: number; total: number; state: "true" | "false" };
+  export function switchTurnsOn(state: "true" | "false"): boolean;
   export function catalogKinds(packs: readonly Pack[]): Array<[string, string]>;
   export function catalogPacks<P extends Pack>(packs: readonly P[], kind: string): P[];
   export const SHEET_FILTER_AT: number;
@@ -189,7 +194,10 @@ declare module "*/ui/pack-model.js" {
 
 declare module "*/ui/routes.js" {
   export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings";
-  export interface Route { view: ViewName | null; pack?: string; filterRule?: string; rule?: string; session?: string; jump?: boolean }
+  export interface Route {
+    view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "steered" | "logged";
+    sessionFilter?: "all" | "corr" | "open"; rule?: string; session?: string; jump?: boolean;
+  }
   export function parseRoute(hash: string): Route;
   export function hashOf(route: Partial<Route>): string;
   export function bootRoute(search: string, hash: string): Route & { view: ViewName };
@@ -206,7 +214,7 @@ declare module "*/ui/history-model.js" {
   export interface RankedRule { id: string; title: string; origin: string; count: number }
   export function filterRanked(ranked: RankedRule[], query: string): RankedRule[];
   export function historyOrigin(id: string): string;
-  export function rankedRules(): RankedRule[];
+  export function rankedRules(outcome?: "all" | "steered" | "logged"): RankedRule[];
   export function historyRuleId(ranked?: RankedRule[]): string | null;
   export function historyTitle(id: string): string;
   export type HistoryEmpty = { kind: "noRules" } | { kind: "noSessions" } | { kind: "noViolations"; sessions: number } | { kind: "nothingInRange" };

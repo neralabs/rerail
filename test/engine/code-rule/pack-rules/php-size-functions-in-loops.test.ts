@@ -1,5 +1,5 @@
 /**
- * phpcs-squiz-php-disallow-size-functions-in-loops (packs/php/, candidate) must not steer an agent into breaking a loop
+ * phpcs-squiz-php-disallow-size-functions-in-loops (packs/php/) must not steer an agent into breaking a loop
  *. PHP_CodeSniffer's sniff reports every count(), sizeof() or strlen() in a loop condition and advises
  * hoisting it before the loop. That is only correct when the loop leaves the measured value alone. When the loop
  * grows, shrinks or replaces it (a work queue drained with array_shift, a buffer filled with .=, a fixed-point loop
@@ -22,7 +22,7 @@ const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_r
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const RULE_ID = "phpcs-squiz-php-disallow-size-functions-in-loops";
-const RULE_PATH = repositoryPath("packs", "php", "candidates", "rules", `${RULE_ID}.json`);
+const RULE_PATH = repositoryPath("packs", "php", "rules", `${RULE_ID}.json`);
 
 const evaluationSchema = z.object({
   violations: z.array(z.object({ path: z.string(), message: z.string(), span: z.object({ startLine: z.number().int().nonnegative() }) })).default([]),

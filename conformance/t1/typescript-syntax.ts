@@ -4,8 +4,8 @@
 // expression, which TypeScript never does (tree-sitter/tree-sitter-typescript#299). Run offline, from the repository
 // root, with the addon built:
 //   node --import tsx conformance/t1/typescript-syntax.ts <corpus checkout> <path>[,<path>...] <out.json> [<unparsed.json>]
-// <unparsed.json> is a corpus recording (`packs/typescript/upstream/typescript-eslint/corpus-<name>.expected.json`): its `source.skipped` are
-// the files typescript-eslint 8.70.1's parser, which reads every file there, cannot parse on ESLint 10.11.0.
+// <unparsed.json> is a JSON array of the checkout-relative paths the reference parser cannot parse (typescript-eslint
+// 8.70.1's on ESLint 10.11.0, say); each syntax error's `referenceRejects` says whether its file is one.
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { capabilitiesJson } from "../engine.js";
@@ -18,10 +18,10 @@ import {
   isUnreadFailure,
 } from "../../src/engine/index.js";
 
-const [root, pathList, output, unparsedRecording] = process.argv.slice(2);
-if (root === undefined || pathList === undefined || output === undefined) throw new Error("usage: typescript-syntax.ts <corpus> <paths> <out.json> [<recording>]");
+const [root, pathList, output, unparsedList] = process.argv.slice(2);
+if (root === undefined || pathList === undefined || output === undefined) throw new Error("usage: typescript-syntax.ts <corpus> <paths> <out.json> [<unparsed.json>]");
 const ECMA = new Set(["typescript", "tsx", "javascript"]);
-const unparsed = new Set<string>(unparsedRecording === undefined ? [] : JSON.parse(readFileSync(unparsedRecording, "utf8")).source.skipped);
+const unparsed = new Set<string>(unparsedList === undefined ? [] : (JSON.parse(readFileSync(unparsedList, "utf8")) as string[]));
 
 type Source = { path: string; language: CodeRuleSourceLanguage; source: string };
 const files: Source[] = [];

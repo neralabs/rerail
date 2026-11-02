@@ -12,225 +12,217 @@
  },
  "clauses": [
   {
-   "id": "bind-call",
-   "forbid": {
-    "ast": {
-     "language": "typescript",
-     "utils": {
-      "own-this-boundary": {
-       "any": [
-        {
-         "kind": "function_declaration"
+   "id": "shared",
+   "define": {
+    "language": "typescript",
+    "utils": {
+     "own-this-boundary": {
+      "any": [
+       {
+        "kind": "function_declaration"
+       },
+       {
+        "kind": "function_expression"
+       },
+       {
+        "kind": "generator_function_declaration"
+       },
+       {
+        "kind": "generator_function"
+       },
+       {
+        "kind": "method_definition"
+       },
+       {
+        "kind": "class_static_block"
+       },
+       {
+        "inside": {
+         "kind": "public_field_definition",
+         "stopBy": "neighbor"
         },
-        {
-         "kind": "function_expression"
-        },
-        {
-         "kind": "generator_function_declaration"
-        },
-        {
-         "kind": "generator_function"
-        },
-        {
-         "kind": "method_definition"
-        },
-        {
-         "kind": "class_static_block"
-        },
-        {
-         "inside": {
-          "kind": "public_field_definition",
-          "stopBy": "neighbor"
+        "follows": {
+         "regex": "^=$",
+         "stopBy": "end"
+        }
+       }
+      ]
+     },
+     "bound-function": {
+      "any": [
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "matches": "bound-function",
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "kind": "arrow_function"
+       },
+       {
+        "any": [
+         {
+          "kind": "function_expression"
          },
-         "follows": {
-          "regex": "^=$",
-          "stopBy": "end"
+         {
+          "kind": "generator_function"
+         }
+        ],
+        "not": {
+         "has": {
+          "kind": "this",
+          "stopBy": {
+           "matches": "own-this-boundary"
+          }
          }
         }
-       ]
-      },
-      "bound-function": {
-       "any": [
-        {
-         "kind": "parenthesized_expression",
-         "has": {
-          "matches": "bound-function",
-          "stopBy": "neighbor"
-         }
-        },
-        {
-         "kind": "arrow_function"
-        },
-        {
-         "any": [
-          {
-           "kind": "function_expression"
-          },
-          {
-           "kind": "generator_function"
-          }
-         ],
-         "not": {
+       }
+      ]
+     },
+     "bind-member": {
+      "any": [
+       {
+        "kind": "member_expression",
+        "all": [
+         {
           "has": {
-           "kind": "this",
-           "stopBy": {
-            "matches": "own-this-boundary"
-           }
+           "matches": "bound-function",
+           "pattern": "$OBJ",
+           "stopBy": "neighbor"
+          }
+         },
+         {
+          "has": {
+           "kind": "property_identifier",
+           "regex": "^bind$",
+           "pattern": "$PROP",
+           "stopBy": "neighbor"
           }
          }
-        }
-       ]
-      },
-      "bind-member": {
-       "any": [
-        {
-         "kind": "member_expression",
-         "all": [
-          {
-           "has": {
-            "matches": "bound-function",
-            "pattern": "$OBJ",
-            "stopBy": "neighbor"
-           }
-          },
-          {
-           "has": {
-            "kind": "property_identifier",
-            "regex": "^bind$",
-            "pattern": "$PROP",
-            "stopBy": "neighbor"
-           }
+        ]
+       },
+       {
+        "kind": "subscript_expression",
+        "all": [
+         {
+          "has": {
+           "matches": "bound-function",
+           "pattern": "$OBJ",
+           "stopBy": "neighbor"
           }
-         ]
-        },
-        {
-         "kind": "subscript_expression",
-         "all": [
-          {
-           "has": {
-            "matches": "bound-function",
-            "pattern": "$OBJ",
-            "stopBy": "neighbor"
-           }
-          },
-          {
-           "has": {
-            "any": [
-             {
-              "kind": "string"
-             },
-             {
-              "kind": "template_string",
-              "not": {
-               "has": {
-                "kind": "template_substitution",
-                "stopBy": "neighbor"
-               }
-              }
-             }
-            ],
-            "pattern": "$PROP",
-            "has": {
-             "kind": "string_fragment",
-             "regex": "^bind$",
-             "stopBy": "neighbor"
-            },
-            "stopBy": "neighbor"
-           }
-          }
-         ]
-        }
-       ]
-      },
-      "single-argument": {
-       "kind": "arguments",
-       "all": [
-        {
-         "has": {
-          "not": {
+         },
+         {
+          "has": {
            "any": [
             {
-             "kind": "comment"
+             "kind": "string"
             },
             {
-             "regex": "^[(),]$"
-            }
-           ]
-          },
-          "pattern": "$ARG",
-          "stopBy": "neighbor"
-         }
-        },
-        {
-         "count": {
-          "has": {
-           "not": {
-            "any": [
-             {
-              "kind": "comment"
-             },
-             {
-              "regex": "^[(),]$"
+             "kind": "template_string",
+             "not": {
+              "has": {
+               "kind": "template_substitution",
+               "stopBy": "neighbor"
+              }
              }
-            ]
+            }
+           ],
+           "pattern": "$PROP",
+           "has": {
+            "kind": "string_fragment",
+            "regex": "^bind$",
+            "stopBy": "neighbor"
            },
-           "stopBy": "neighbor"
-          },
-          "max": 1
-         }
-        },
-        {
-         "not": {
-          "has": {
-           "kind": "spread_element",
            "stopBy": "neighbor"
           }
          }
-        }
-       ]
-      },
-      "side-effect-free": {
+        ]
+       }
+      ]
+     },
+     "argument": {
+      "not": {
        "any": [
         {
-         "kind": "number"
+         "kind": "comment"
         },
         {
-         "kind": "string"
-        },
-        {
-         "kind": "true"
-        },
-        {
-         "kind": "false"
-        },
-        {
-         "kind": "null"
-        },
-        {
-         "kind": "regex"
-        },
-        {
-         "kind": "identifier"
-        },
-        {
-         "kind": "undefined"
-        },
-        {
-         "kind": "this"
-        },
-        {
-         "kind": "function_expression"
+         "regex": "^[(),]$"
         }
        ]
-      },
-      "commented": {
-       "has": {
-        "kind": "comment",
-        "stopBy": "end"
-       }
       }
      },
-     "rule": {
+     "single-argument": {
+      "kind": "arguments",
+      "all": [
+       {
+        "has": {
+         "matches": "argument",
+         "pattern": "$ARG",
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "count": {
+         "has": {
+          "matches": "argument",
+          "stopBy": "neighbor"
+         },
+         "max": 1
+        }
+       },
+       {
+        "not": {
+         "has": {
+          "kind": "spread_element",
+          "stopBy": "neighbor"
+         }
+        }
+       }
+      ]
+     },
+     "side-effect-free": {
+      "any": [
+       {
+        "kind": "number"
+       },
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "true"
+       },
+       {
+        "kind": "false"
+       },
+       {
+        "kind": "null"
+       },
+       {
+        "kind": "regex"
+       },
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "undefined"
+       },
+       {
+        "kind": "this"
+       },
+       {
+        "kind": "function_expression"
+       }
+      ]
+     },
+     "commented": {
+      "has": {
+       "kind": "comment",
+       "stopBy": "end"
+      }
+     },
+     "bind-call": {
       "kind": "call_expression",
       "all": [
        {
@@ -244,22 +236,44 @@
          "matches": "single-argument",
          "stopBy": "neighbor"
         }
+       }
+      ]
+     },
+     "parenthesized-bind-call": {
+      "kind": "call_expression",
+      "all": [
+       {
+        "has": {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "bind-member",
+          "stopBy": "neighbor"
+         },
+         "stopBy": "neighbor"
+        }
        },
+       {
+        "has": {
+         "matches": "single-argument",
+         "stopBy": "neighbor"
+        }
+       }
+      ]
+     },
+     "fixable": {
+      "all": [
        {
         "has": {
          "kind": "arguments",
          "has": {
-          "not": {
-           "any": [
-            {
-             "kind": "comment"
-            },
-            {
-             "regex": "^[(),]$"
-            }
-           ]
-          },
-          "matches": "side-effect-free",
+          "all": [
+           {
+            "matches": "argument"
+           },
+           {
+            "matches": "side-effect-free"
+           }
+          ],
           "stopBy": "neighbor"
          },
          "stopBy": "neighbor"
@@ -269,6 +283,24 @@
         "not": {
          "matches": "commented"
         }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "bind-call",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "all": [
+       {
+        "matches": "bind-call"
+       },
+       {
+        "matches": "fixable"
        }
       ]
      }
@@ -298,263 +330,13 @@
    "forbid": {
     "ast": {
      "language": "typescript",
-     "utils": {
-      "own-this-boundary": {
-       "any": [
-        {
-         "kind": "function_declaration"
-        },
-        {
-         "kind": "function_expression"
-        },
-        {
-         "kind": "generator_function_declaration"
-        },
-        {
-         "kind": "generator_function"
-        },
-        {
-         "kind": "method_definition"
-        },
-        {
-         "kind": "class_static_block"
-        },
-        {
-         "inside": {
-          "kind": "public_field_definition",
-          "stopBy": "neighbor"
-         },
-         "follows": {
-          "regex": "^=$",
-          "stopBy": "end"
-         }
-        }
-       ]
-      },
-      "bound-function": {
-       "any": [
-        {
-         "kind": "parenthesized_expression",
-         "has": {
-          "matches": "bound-function",
-          "stopBy": "neighbor"
-         }
-        },
-        {
-         "kind": "arrow_function"
-        },
-        {
-         "any": [
-          {
-           "kind": "function_expression"
-          },
-          {
-           "kind": "generator_function"
-          }
-         ],
-         "not": {
-          "has": {
-           "kind": "this",
-           "stopBy": {
-            "matches": "own-this-boundary"
-           }
-          }
-         }
-        }
-       ]
-      },
-      "bind-member": {
-       "any": [
-        {
-         "kind": "member_expression",
-         "all": [
-          {
-           "has": {
-            "matches": "bound-function",
-            "pattern": "$OBJ",
-            "stopBy": "neighbor"
-           }
-          },
-          {
-           "has": {
-            "kind": "property_identifier",
-            "regex": "^bind$",
-            "pattern": "$PROP",
-            "stopBy": "neighbor"
-           }
-          }
-         ]
-        },
-        {
-         "kind": "subscript_expression",
-         "all": [
-          {
-           "has": {
-            "matches": "bound-function",
-            "pattern": "$OBJ",
-            "stopBy": "neighbor"
-           }
-          },
-          {
-           "has": {
-            "any": [
-             {
-              "kind": "string"
-             },
-             {
-              "kind": "template_string",
-              "not": {
-               "has": {
-                "kind": "template_substitution",
-                "stopBy": "neighbor"
-               }
-              }
-             }
-            ],
-            "pattern": "$PROP",
-            "has": {
-             "kind": "string_fragment",
-             "regex": "^bind$",
-             "stopBy": "neighbor"
-            },
-            "stopBy": "neighbor"
-           }
-          }
-         ]
-        }
-       ]
-      },
-      "single-argument": {
-       "kind": "arguments",
-       "all": [
-        {
-         "has": {
-          "not": {
-           "any": [
-            {
-             "kind": "comment"
-            },
-            {
-             "regex": "^[(),]$"
-            }
-           ]
-          },
-          "pattern": "$ARG",
-          "stopBy": "neighbor"
-         }
-        },
-        {
-         "count": {
-          "has": {
-           "not": {
-            "any": [
-             {
-              "kind": "comment"
-             },
-             {
-              "regex": "^[(),]$"
-             }
-            ]
-           },
-           "stopBy": "neighbor"
-          },
-          "max": 1
-         }
-        },
-        {
-         "not": {
-          "has": {
-           "kind": "spread_element",
-           "stopBy": "neighbor"
-          }
-         }
-        }
-       ]
-      },
-      "side-effect-free": {
-       "any": [
-        {
-         "kind": "number"
-        },
-        {
-         "kind": "string"
-        },
-        {
-         "kind": "true"
-        },
-        {
-         "kind": "false"
-        },
-        {
-         "kind": "null"
-        },
-        {
-         "kind": "regex"
-        },
-        {
-         "kind": "identifier"
-        },
-        {
-         "kind": "undefined"
-        },
-        {
-         "kind": "this"
-        },
-        {
-         "kind": "function_expression"
-        }
-       ]
-      },
-      "commented": {
-       "has": {
-        "kind": "comment",
-        "stopBy": "end"
-       }
-      }
-     },
      "rule": {
-      "kind": "call_expression",
       "all": [
        {
-        "has": {
-         "kind": "parenthesized_expression",
-         "has": {
-          "matches": "bind-member",
-          "stopBy": "neighbor"
-         },
-         "stopBy": "neighbor"
-        }
+        "matches": "parenthesized-bind-call"
        },
        {
-        "has": {
-         "matches": "single-argument",
-         "stopBy": "neighbor"
-        }
-       },
-       {
-        "has": {
-         "kind": "arguments",
-         "has": {
-          "not": {
-           "any": [
-            {
-             "kind": "comment"
-            },
-            {
-             "regex": "^[(),]$"
-            }
-           ]
-          },
-          "matches": "side-effect-free",
-          "stopBy": "neighbor"
-         },
-         "stopBy": "neighbor"
-        }
-       },
-       {
-        "not": {
-         "matches": "commented"
-        }
+        "matches": "fixable"
        }
       ]
      }
@@ -584,293 +366,21 @@
    "forbid": {
     "ast": {
      "language": "typescript",
-     "utils": {
-      "own-this-boundary": {
-       "any": [
-        {
-         "kind": "function_declaration"
-        },
-        {
-         "kind": "function_expression"
-        },
-        {
-         "kind": "generator_function_declaration"
-        },
-        {
-         "kind": "generator_function"
-        },
-        {
-         "kind": "method_definition"
-        },
-        {
-         "kind": "class_static_block"
-        },
-        {
-         "inside": {
-          "kind": "public_field_definition",
-          "stopBy": "neighbor"
-         },
-         "follows": {
-          "regex": "^=$",
-          "stopBy": "end"
-         }
-        }
-       ]
-      },
-      "bound-function": {
-       "any": [
-        {
-         "kind": "parenthesized_expression",
-         "has": {
-          "matches": "bound-function",
-          "stopBy": "neighbor"
-         }
-        },
-        {
-         "kind": "arrow_function"
-        },
-        {
-         "any": [
-          {
-           "kind": "function_expression"
-          },
-          {
-           "kind": "generator_function"
-          }
-         ],
-         "not": {
-          "has": {
-           "kind": "this",
-           "stopBy": {
-            "matches": "own-this-boundary"
-           }
-          }
-         }
-        }
-       ]
-      },
-      "bind-member": {
-       "any": [
-        {
-         "kind": "member_expression",
-         "all": [
-          {
-           "has": {
-            "matches": "bound-function",
-            "pattern": "$OBJ",
-            "stopBy": "neighbor"
-           }
-          },
-          {
-           "has": {
-            "kind": "property_identifier",
-            "regex": "^bind$",
-            "pattern": "$PROP",
-            "stopBy": "neighbor"
-           }
-          }
-         ]
-        },
-        {
-         "kind": "subscript_expression",
-         "all": [
-          {
-           "has": {
-            "matches": "bound-function",
-            "pattern": "$OBJ",
-            "stopBy": "neighbor"
-           }
-          },
-          {
-           "has": {
-            "any": [
-             {
-              "kind": "string"
-             },
-             {
-              "kind": "template_string",
-              "not": {
-               "has": {
-                "kind": "template_substitution",
-                "stopBy": "neighbor"
-               }
-              }
-             }
-            ],
-            "pattern": "$PROP",
-            "has": {
-             "kind": "string_fragment",
-             "regex": "^bind$",
-             "stopBy": "neighbor"
-            },
-            "stopBy": "neighbor"
-           }
-          }
-         ]
-        }
-       ]
-      },
-      "single-argument": {
-       "kind": "arguments",
-       "all": [
-        {
-         "has": {
-          "not": {
-           "any": [
-            {
-             "kind": "comment"
-            },
-            {
-             "regex": "^[(),]$"
-            }
-           ]
-          },
-          "pattern": "$ARG",
-          "stopBy": "neighbor"
-         }
-        },
-        {
-         "count": {
-          "has": {
-           "not": {
-            "any": [
-             {
-              "kind": "comment"
-             },
-             {
-              "regex": "^[(),]$"
-             }
-            ]
-           },
-           "stopBy": "neighbor"
-          },
-          "max": 1
-         }
-        },
-        {
-         "not": {
-          "has": {
-           "kind": "spread_element",
-           "stopBy": "neighbor"
-          }
-         }
-        }
-       ]
-      },
-      "side-effect-free": {
-       "any": [
-        {
-         "kind": "number"
-        },
-        {
-         "kind": "string"
-        },
-        {
-         "kind": "true"
-        },
-        {
-         "kind": "false"
-        },
-        {
-         "kind": "null"
-        },
-        {
-         "kind": "regex"
-        },
-        {
-         "kind": "identifier"
-        },
-        {
-         "kind": "undefined"
-        },
-        {
-         "kind": "this"
-        },
-        {
-         "kind": "function_expression"
-        }
-       ]
-      },
-      "commented": {
-       "has": {
-        "kind": "comment",
-        "stopBy": "end"
-       }
-      }
-     },
      "rule": {
       "all": [
        {
         "any": [
          {
-          "kind": "call_expression",
-          "all": [
-           {
-            "has": {
-             "matches": "bind-member",
-             "stopBy": "neighbor"
-            }
-           },
-           {
-            "has": {
-             "matches": "single-argument",
-             "stopBy": "neighbor"
-            }
-           }
-          ]
+          "matches": "bind-call"
          },
          {
-          "kind": "call_expression",
-          "all": [
-           {
-            "has": {
-             "kind": "parenthesized_expression",
-             "has": {
-              "matches": "bind-member",
-              "stopBy": "neighbor"
-             },
-             "stopBy": "neighbor"
-            }
-           },
-           {
-            "has": {
-             "matches": "single-argument",
-             "stopBy": "neighbor"
-            }
-           }
-          ]
+          "matches": "parenthesized-bind-call"
          }
         ]
        },
        {
         "not": {
-         "all": [
-          {
-           "has": {
-            "kind": "arguments",
-            "has": {
-             "not": {
-              "any": [
-               {
-                "kind": "comment"
-               },
-               {
-                "regex": "^[(),]$"
-               }
-              ]
-             },
-             "matches": "side-effect-free",
-             "stopBy": "neighbor"
-            },
-            "stopBy": "neighbor"
-           }
-          },
-          {
-           "not": {
-            "matches": "commented"
-           }
-          }
-         ]
+         "matches": "fixable"
         }
        }
       ]

@@ -10,11 +10,15 @@ paths:
     ignore:
       - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
       - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'
-  .github/workflows/port-readiness-bump-publish.yml:
+  .github/workflows/upstream-bump-publish.yml:
     ignore:
       - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
       - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'
-  .github/workflows/port-readiness-nightly.yml:
+  .github/workflows/upstream-releases.yml:
+    ignore:
+      - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
+      - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'
+  .github/workflows/pack-data-publish.yml:
     ignore:
       - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
       - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'

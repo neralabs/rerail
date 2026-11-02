@@ -86,6 +86,8 @@ export interface RunningScenario {
   readonly manifest: ScenarioManifest;
   /** `http://127.0.0.1:<port>`. */
   readonly origin: string;
+  /** The capability every request to the daemon carries; a test's browser holds it as the `rerail-access` cookie. */
+  readonly accessToken: string;
   /** Where the daemon's stdout and stderr go (`<root>/daemon.log`) unless it inherits the terminal. */
   readonly logPath: string;
   stop(): Promise<void>;
@@ -98,8 +100,8 @@ export interface DaemonStartOptions {
   readonly inheritOutput?: boolean;
 }
 
-/** The daemon's origin once it wrote its state file and answers `/healthz`; throws when it exits or times out first. */
-async function awaitDaemon(child: ChildProcess, stateFile: string, logPath: string): Promise<string> {
+/** The daemon's origin and capability once it wrote its state file and answers `/healthz`; throws when it exits or times out first. */
+async function awaitDaemon(child: ChildProcess, stateFile: string, logPath: string): Promise<{ origin: string; accessToken: string }> {
   const deadline = Date.now() + DAEMON_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
@@ -107,10 +109,10 @@ async function awaitDaemon(child: ChildProcess, stateFile: string, logPath: stri
       throw new Error(`the scenario daemon stopped before answering (${child.signalCode ?? `exit ${String(child.exitCode)}`}):\n${log}`);
     }
     if (existsSync(stateFile)) {
-      const { url } = JSON.parse(readFileSync(stateFile, "utf8")) as { url: string };
+      const { url, accessToken } = JSON.parse(readFileSync(stateFile, "utf8")) as { url: string; accessToken: string };
       const origin = new URL(url).origin;
-      const health = await fetch(`${origin}/healthz`).catch(() => undefined);
-      if (health?.ok === true) return origin;
+      const health = await fetch(`${origin}/healthz`, { headers: { "x-rerail-access": accessToken } }).catch(() => undefined);
+      if (health?.ok === true) return { origin, accessToken };
     }
     await sleep(POLL_MS);
   }
@@ -145,8 +147,8 @@ export async function startScenarioDaemon(manifest: ScenarioManifest, options: D
     child.stderr?.pipe(log);
   }
   try {
-    const origin = await awaitDaemon(child, stateFile, logPath);
-    return { manifest, origin, logPath, stop: () => terminate(child) };
+    const { origin, accessToken } = await awaitDaemon(child, stateFile, logPath);
+    return { manifest, origin, accessToken, logPath, stop: () => terminate(child) };
   } catch (error) {
     await terminate(child);
     throw error;

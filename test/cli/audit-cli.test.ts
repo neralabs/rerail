@@ -37,6 +37,11 @@ const NO_PRINT = codeRuleSchema.parse({
   }],
 });
 
+/** The capability the test daemon requires; its `fetch`es carry it, as `rerail scan` and the dashboard do. */
+const ACCESS = "test-access-capability";
+const fetch = (input: string | URL, init: RequestInit & { headers?: Record<string, string> } = {}): Promise<Response> =>
+  globalThis.fetch(input, { ...init, headers: { "x-rerail-access": ACCESS, ...init.headers } });
+
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
 afterEach(async () => {
   for (const { root, runtime, daemon } of fixtures.splice(0)) {
@@ -67,7 +72,7 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
   await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "s1", cwd: root } });
   const daemon = await RerailDaemon.start({
     version: "test", databasePath: database, workspaceRoot: root, port: 0,
-    stateFile: join(home, "daemon.json"), kernelSocketPath: join(root, "engine.sock"),
+    stateFile: join(home, "daemon.json"), kernelSocketPath: join(root, "engine.sock"), accessToken: ACCESS,
   });
   fixtures.push({ root, runtime, daemon });
   return { root, home, database, daemon, runtime, repositoryKey };

@@ -212,7 +212,7 @@ class FlatConfigReader {
           if (exported.includes("then")) return statement;
           // A const another module can import is not read: that module may change it.
           for (const specifier of statement.specifiers) {
-            if (specifier.type === "ExportSpecifier") this.#consts.delete(specifier.local.name);
+            if (specifier.type === "ExportSpecifier" && specifier.local.type === "Identifier") this.#consts.delete(specifier.local.name);
           }
           const declared = statement.declaration;
           if (declared == null || declared.type === "TSTypeAliasDeclaration" || declared.type === "TSInterfaceDeclaration") continue;

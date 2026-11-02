@@ -17,56 +17,32 @@
   },
   {
     "rule": "tlint-no-json-directive",
-    "source": "bagisto",
-    "path": "packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking.blade.php",
+    "source": "samples",
+    "path": "bagisto-s-webkul-admin-src-resources-views-catalog-products-edit-types-booking.blade.php-e24ab5fa18e8/packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking.blade.php",
     "line": 266,
     "kind": "upstream-wrong",
     "evidence": "The line holds two `@json(...)` directives (`x: @json($a) ? @json($b) : {`), and Blade compiles both to `json_encode` echoes (illuminate/view 13.34.0 BladeCompiler::compileJson). tlint 9.7.0 NoJsonDirective::lint runs `preg_match` (first match only) on each line, so it reports the line once; Rerail reports each directive."
   },
   {
-    "rule": "tlint-no-json-directive",
-    "source": "bagisto",
-    "path": "packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking/default.blade.php",
-    "line": 513,
-    "kind": "upstream-wrong",
-    "evidence": "The line holds two `@json(...)` directives (`x: @json($a) ? @json($b) : {`), and Blade compiles both to `json_encode` echoes (illuminate/view 13.34.0 BladeCompiler::compileJson). tlint 9.7.0 NoJsonDirective::lint runs `preg_match` (first match only) on each line, so it reports the line once; Rerail reports each directive."
-  },
-  {
-    "rule": "tlint-no-json-directive",
-    "source": "bagisto",
-    "path": "packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking/rental.blade.php",
-    "line": 131,
-    "kind": "upstream-wrong",
-    "evidence": "The line holds two `@json(...)` directives (`x: @json($a) ? @json($b) : {`), and Blade compiles both to `json_encode` echoes (illuminate/view 13.34.0 BladeCompiler::compileJson). tlint 9.7.0 NoJsonDirective::lint runs `preg_match` (first match only) on each line, so it reports the line once; Rerail reports each directive."
-  },
-  {
-    "rule": "tlint-no-json-directive",
-    "source": "bagisto",
-    "path": "packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking/table.blade.php",
-    "line": 195,
-    "kind": "upstream-wrong",
-    "evidence": "The line holds two `@json(...)` directives (`x: @json($a) ? @json($b) : {`), and Blade compiles both to `json_encode` echoes (illuminate/view 13.34.0 BladeCompiler::compileJson). tlint 9.7.0 NoJsonDirective::lint runs `preg_match` (first match only) on each line, so it reports the line once; Rerail reports each directive."
-  },
-  {
     "rule": "bladestan-variable-undefined",
-    "source": "filament",
-    "path": "packages/tables/resources/views/components/search-field.blade.php",
+    "source": "samples",
+    "path": "filament-packages-tables-resources-views-components-search-field.blade.php-56d633be42d4/packages/tables/resources/views/components/search-field.blade.php",
     "line": 38,
     "kind": "upstream-wrong",
     "evidence": "`$this` is read in a bound attribute of an `<x-filament::input>` component tag (`:attributes=\"(new FilamentComponentAttributeBag)->merge([... 'wire:key' => $this->getId() ...])\"`, reported at the tag's line 38). Bladestan 0.11.7 reports \"Undefined variable: $this\" there, an artifact of the code it inlines a component tag as: a read of `$this` outside a component tag is not reported (chart-widget.blade.php line 211, `@if ($emptyStateActions = $this->getEmptyStateActions())`, in the template whose component attributes on line 204 are). Blade evaluates a bound attribute in the template's own scope (illuminate/view 13.34.0 ComponentTagCompiler compiles it into the `withAttributes([...])` call of the view's code, which PhpEngine::evaluatePath runs inside its method, so `$this` is defined; Livewire renders it with the component bound). Rerail reads `$this` at a template's top level as unknown."
   },
   {
     "rule": "bladestan-variable-undefined",
-    "source": "filament",
-    "path": "packages/widgets/resources/views/chart-widget.blade.php",
+    "source": "samples",
+    "path": "filament-packages-widgets-resources-views-chart-widget.blade.php-b916cfff6f2e/packages/widgets/resources/views/chart-widget.blade.php",
     "line": 204,
     "kind": "upstream-wrong",
     "evidence": "`$this` is read in a bound attribute of an `<x-filament::...>` component tag (`:description`, `:heading` and `:icon` of `<x-filament::empty-state>`, each `$this->getEmptyState...()`, all three reported at the tag's line 204). Bladestan 0.11.7 reports \"Undefined variable: $this\" there, an artifact of the code it inlines a component tag as: the same template's read of `$this` outside a component tag on line 211 (`@if ($emptyStateActions = $this->getEmptyStateActions())`) is not reported. Blade evaluates a bound attribute in the template's own scope (illuminate/view 13.34.0 ComponentTagCompiler compiles it into the `withAttributes([...])` call of the view's code, which PhpEngine::evaluatePath runs inside its method, so `$this` is defined; Livewire renders it with the component bound). Rerail reads `$this` at a template's top level as unknown."
   },
   {
     "rule": "bladestan-variable-undefined",
-    "source": "filament",
-    "path": "packages/tables/resources/views/index.blade.php",
+    "source": "samples",
+    "path": "filament-packages-tables-resources-views-index.blade.php-f2d19b926bbc/packages/tables/resources/views/index.blade.php",
     "line": 217,
     "kind": "not-comparable",
     "evidence": "`$getQuery` is view data (Filament's table view receives the `getQuery` closure from its component) read inside an arrow function in a `@php` block: `fn (Builder $query) => $group->groupQuery($query, model: $getQuery()->getModel())`. The template never assigns it, so with the render passing no data PHPStan reads it in the template's scope as \"might not be defined\" and, where the arrow function captures it, as undefined (\"Undefined variable: $getQuery\"). Whether it is defined depends on the caller's data: Rerail reads a variable the template does not define as the caller's data and unknown, in a closure it captures as at the top level."

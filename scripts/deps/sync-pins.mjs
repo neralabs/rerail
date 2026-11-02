@@ -6,8 +6,6 @@
 //   @oh-my-pi/pi-coding-agent (the OMP SDK)
 //     scripts/host/install-omp-host.mjs   the standalone OMP host's version, and the SHA-256 digest of each release asset
 //                                         it pins, read from the GitHub release. The asset set itself stays as pinned.
-//     playground/package.json             every `@oh-my-pi/*` dependency, and the playground's lockfile
-//                                         (npm install --package-lock-only --ignore-scripts: no dependency code runs).
 //   @ast-grep/cli
 //     test/engine/code-rule/code-rule-dsl-upstream-differential.test.ts   the reference version (UPSTREAM_VERSION).
 //
@@ -15,7 +13,6 @@
 // GH_TOKEN or GITHUB_TOKEN, when set, authenticates the release lookup.
 //
 //   node scripts/deps/sync-pins.mjs [--check]   (npm run deps:sync; --check is npm run check:pins, part of npm run check)
-import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +21,6 @@ export const OMP_SDK = "@oh-my-pi/pi-coding-agent";
 export const OMP_RELEASES = "can1357/oh-my-pi";
 export const AST_GREP_CLI = "@ast-grep/cli";
 export const OMP_HOST = "scripts/host/install-omp-host.mjs";
-export const PLAYGROUND = "playground/package.json";
 export const DIFFERENTIAL_TEST = "test/engine/code-rule/code-rule-dsl-upstream-differential.test.ts";
 
 const VERSION_LINE = /^const version = "([^"]+)";$/mu;
@@ -67,20 +63,6 @@ export function withAstGrepReference(text, version) {
   return text.replace(/^const UPSTREAM_VERSION = "[^"]+";$/mu, `const UPSTREAM_VERSION = "${version}";`);
 }
 
-/** Each `@oh-my-pi/*` dependency of a package.json, with its version. */
-export function ompDependencies(manifest) {
-  return Object.entries({ ...manifest.dependencies, ...manifest.devDependencies }).filter(([name]) => name.startsWith("@oh-my-pi/"));
-}
-
-/** A package.json with every `@oh-my-pi/*` dependency at `version`. */
-export function withOmpDependencies(manifest, version) {
-  const set = (dependencies) =>
-    dependencies === undefined
-      ? undefined
-      : Object.fromEntries(Object.entries(dependencies).map(([name, range]) => [name, name.startsWith("@oh-my-pi/") ? version : range]));
-  return { ...manifest, dependencies: set(manifest.dependencies), devDependencies: set(manifest.devDependencies) };
-}
-
 /** A version a package.json names exactly (`18.12.2`), or an error: a pin follows one version, never a range. */
 export function exactVersion(manifest, name) {
   const version = manifest.devDependencies?.[name] ?? manifest.dependencies?.[name];
@@ -91,15 +73,12 @@ export function exactVersion(manifest, name) {
 }
 
 /** Each pin out of step with package.json, as `{ file, pin, has, wants }`. */
-export function pinDrift({ manifest, ompHost, playground, differentialTest }) {
+export function pinDrift({ manifest, ompHost, differentialTest }) {
   const sdk = exactVersion(manifest, OMP_SDK);
   const cli = exactVersion(manifest, AST_GREP_CLI);
   const drift = [];
   const host = ompHostPin(ompHost).version;
   if (host !== sdk) drift.push({ file: OMP_HOST, pin: "OMP host", has: host, wants: sdk });
-  for (const [name, version] of ompDependencies(playground)) {
-    if (version !== sdk) drift.push({ file: PLAYGROUND, pin: name, has: version, wants: sdk });
-  }
   const reference = astGrepReference(differentialTest);
   if (reference !== cli) drift.push({ file: DIFFERENTIAL_TEST, pin: "ast-grep reference", has: reference, wants: cli });
   return drift;
@@ -123,7 +102,6 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
   const files = {
     manifest: JSON.parse(read("package.json")),
     ompHost: read(OMP_HOST),
-    playground: JSON.parse(read(PLAYGROUND)),
     differentialTest: read(DIFFERENTIAL_TEST),
   };
   const drift = pinDrift(files);
@@ -135,10 +113,6 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
   const sdk = exactVersion(files.manifest, OMP_SDK);
   if (drift.some((entry) => entry.file === OMP_HOST)) {
     writeFileSync(join(root, OMP_HOST), withOmpHostPin(files.ompHost, sdk, await ompReleaseDigests(sdk)));
-  }
-  if (drift.some((entry) => entry.file === PLAYGROUND)) {
-    writeFileSync(join(root, PLAYGROUND), `${JSON.stringify(withOmpDependencies(files.playground, sdk), null, 2)}\n`);
-    execFileSync("npm", ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: join(root, "playground"), stdio: "inherit" });
   }
   if (drift.some((entry) => entry.file === DIFFERENTIAL_TEST)) {
     writeFileSync(join(root, DIFFERENTIAL_TEST), withAstGrepReference(files.differentialTest, exactVersion(files.manifest, AST_GREP_CLI)));

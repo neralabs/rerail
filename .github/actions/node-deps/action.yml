@@ -20,9 +20,7 @@ runs:
         node-version: "24"
         cache: ${{ inputs.npm-cache == 'true' && 'npm' || '' }}
         package-manager-cache: ${{ inputs.npm-cache == 'true' }}
-        cache-dependency-path: |
-          package-lock.json
-          playground/package-lock.json
+        cache-dependency-path: package-lock.json
 
     - name: Install dependencies
       shell: bash

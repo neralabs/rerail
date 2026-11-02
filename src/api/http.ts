@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { zodToOpenAPIRegistry, type ZodOpenAPIMetadata } from "@asteasolutions/zod-to-openapi";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
@@ -19,6 +19,7 @@ import { semanticSchemaComponents } from "../engine/code-rule/code-rule-schema-s
 
 import { conversationRuleSchema, matchConditionSchema, sampleSourceSchema } from "../engine/catalog/rule-schema.js";
 import { auditControlsSchema, auditRequestSchema } from "../engine/audit/audit-control-schema.js";
+import { DAEMON_ACCESS_HEADER } from "../runtime/daemon-control.js";
 import { ApiError, invokeOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { eventRecordSchema, auditRecordSchema, presentationPreferenceSchema } from "./operations.js";
 import { deciderSchema, effectiveRuleSchema, libraryRuleRecordSchema, repositorySummarySchema } from "./repository-contracts.js";
@@ -168,6 +169,45 @@ export function hostAllowlist(publicHosts: PublicHosts): MiddlewareHandler {
   return async (context, next) => {
     if (!allowedHost(context.req.header("host"), publicHosts)) return context.json({ error: "host-not-allowed" }, 421);
     await next();
+  };
+}
+
+/** Whether `presented` is `token`, in time independent of where they differ. */
+export function sameSecret(presented: string | undefined, token: string): boolean {
+  if (presented === undefined) return false;
+  const digest = (text: string) => createHash("sha256").update(text).digest();
+  return timingSafeEqual(digest(presented), digest(token));
+}
+
+const ACCESS_REQUIRED = "Every request to the Rerail daemon needs its access capability. "
+  + "Run rerail manage to open the dashboard with it, or send the x-rerail-access header with the accessToken in daemon.json.";
+
+/**
+ * The page itself: its shell and the static files it is built from, which the npm package ships to anyone and hold
+ * nothing of the person's. A browser loads them without the capability and then sends it on every request that reads
+ * or changes anything. An allowlist, so a route added later is guarded unless it is one of these.
+ */
+const PUBLIC_PAGE_FILE = /^\/(?:index\.html)?$|^\/(?!api\/)[\w./-]*\.(?:js|mjs|css|svg|png|ico|woff2?|map|txt)$/u;
+
+/**
+ * The capability every request must carry as `x-rerail-access`, but the page's own files. `Host` and `Origin` say
+ * where a request claims to come from, which any client can write, and on loopback another user of the machine or a
+ * sandboxed process allowed localhost reaches the socket too; this says the caller was given the capability, which
+ * lives in the person's 0600 home. A header and not a cookie: a cookie is sent to every server on the same host
+ * whatever its port, so another localhost server would receive it, and a browser cannot send a custom header to
+ * another origin without a CORS preflight, which this daemon never answers, so no other site can forge one either.
+ * The page keeps the capability in its origin's storage, from the link that opened it.
+ */
+export function accessCapability(token: string): MiddlewareHandler {
+  return async (context, next) => {
+    const pageFile = (context.req.method === "GET" || context.req.method === "HEAD") && PUBLIC_PAGE_FILE.test(context.req.path);
+    if (pageFile || sameSecret(context.req.header(DAEMON_ACCESS_HEADER), token)) {
+      await next();
+      // The address that opened the page may still carry the capability: no request from it names that address.
+      if (pageFile) context.header("referrer-policy", "no-referrer");
+      return;
+    }
+    return context.json({ error: "access-required", message: ACCESS_REQUIRED }, 401);
   };
 }
 

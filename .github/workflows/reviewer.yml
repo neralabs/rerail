@@ -1,18 +1,21 @@
-# Automated PR review by neralabs/reviewer, posted as neralabs-ci. See neralabs/reviewer SPEC.md.
+# Automated PR review by neralabs/reviewer, posted as the neralabs-reviewer app. See
+# https://github.com/neralabs/reviewer (docs/configuration.md for every input).
 #
 # The bot reviews only when asked: request the @neralabs/reviewer team as a reviewer (it clears the request
-# after each review, so request it again for another), or comment "@neralabs-ci review" ("@neralabs-ci help"
-# lists the commands). Only people with write access can trigger it. Pushes do nothing. The review reads the
-# PR and its CI results; it never builds, runs or pushes anything. It approves only PRs that pass every
-# low-risk rule (neralabs/reviewer SPEC.md: no blockers, CI green, no high-risk paths, not from a fork or a
+# after each review, so request it again for another), or comment "@neralabs-reviewer review"
+# ("@neralabs-reviewer help" lists the commands). Only people with write access can trigger it. Pushes do
+# nothing. The review reads the PR and its CI results; it never builds, runs or pushes anything. It approves
+# only PRs that pass every low-risk rule (no blockers, CI green, no high-risk paths, not from a fork or a
 # bot), and its approval counts toward this repo's required review. Like a human approval, it stays through
-# later pushes; "@neralabs-ci stop" withdraws it.
+# later pushes; "@neralabs-reviewer stop" withdraws it.
 name: reviewer
 
 on:
   # pull_request_target, not pull_request: GitHub runs this file from main, so a PR can't rewrite its own
   # reviewer configuration (approvals, which reviewer version runs). Safe because nothing from the PR is
-  # executed: the reviewer checks the PR out as data, and fork PRs are skipped.
+  # executed: the reviewer checks the PR out as data and never runs it. Fork PRs: team requests and
+  # finding-thread replies are ignored; a top-level comment command from someone with write access reviews a
+  # fork PR, and fork PRs are never approved.
   pull_request_target:
     types: [review_requested]
   issue_comment:
@@ -20,7 +23,7 @@ on:
   pull_request_review_comment:
     types: [created]
 
-# Read-only. Writes go through a neralabs-ci token the reviewer mints per job, scoped to pull requests.
+# Read-only. Writes go through a neralabs-reviewer token the reviewer mints per job, scoped to pull requests.
 permissions:
   contents: read
   pull-requests: read
@@ -30,9 +33,23 @@ permissions:
 
 jobs:
   reviewer:
-    uses: neralabs/reviewer/.github/workflows/review.yml@main
+    # Pinned to a release; move both refs together (neralabs/reviewer docs/versioning.md).
+    uses: neralabs/reviewer/.github/workflows/review.yml@v0.1.0
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
-      reviewer_ref: main # keep equal to the @ref above
+      reviewer_ref: v0.1.0
       allow_approve: true
-    secrets: inherit
+      handle: "@neralabs-reviewer"
+      bot_login: neralabs-reviewer[bot]
+      # Claude Opus 5.5 on Amazon Bedrock. The repo variable REVIEWER_MODEL holds the pinned model id or
+      # inference profile, so no AWS account id sits in this public file. Until AWS credits cover the dedicated
+      # reviewer account (from 1 November) it is the main account's tagged profile, with the main account's
+      # key below; then set REVIEWER_MODEL to us.anthropic.claude-opus-5-5 and pass
+      # secrets.REVIEWER_BEDROCK_API_KEY instead.
+      provider: bedrock
+      model: ${{ vars.REVIEWER_MODEL }}
+      aws_region: us-east-1
+    # Named, not `secrets: inherit`: the reviewer gets these and nothing else this repo can see.
+    secrets:
+      REVIEWER_APP_PRIVATE_KEY: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
+      REVIEWER_BEDROCK_API_KEY: ${{ secrets.REVIEWER_BEDROCK_API_KEY_MAIN }}

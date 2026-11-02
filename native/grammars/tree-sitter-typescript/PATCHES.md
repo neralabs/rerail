@@ -77,7 +77,7 @@ the fork.
 Upstream issue: none open at tree-sitter/tree-sitter-typescript (present at tag `v0.23.2` and at
 HEAD `75b3874`). The fork's issue is WillBooster/tree-sitter-typescript#13.
 Mirrors: WillBooster/tree-sitter-typescript#22 (merged as `35573c1`). The fork's tagged-template
-alternative is left out, because 0.23.2 has no tagged template with type arguments.
+alternative, which 0.23.2 lacks altogether, is Patch 27.
 
 Why: upstream's `call_expression` takes any `expression` before its optional type arguments, and
 `instantiation_expression` does the same. Four declared conflicts with `binary_expression`,
@@ -1863,3 +1863,61 @@ declarations. Each generated parser has fewer states (5,900 for TypeScript and 6
 With Patches 25 and 26, upstream's corpus parses as before (111 of its own 112 cases; the one failure patch 1's
 `foo++!`). Over 20,235 TypeScript and TSX files (vscode's, nera-landing's and this repository's, packs' upstream
 sources and fixtures included), in the C locale, every tree is unchanged, so no file gains an error.
+
+## Patch 27: a tagged template may take type arguments
+
+Upstream issue: none open (present at tag `v0.23.2` and at HEAD `75b3874`).
+Mirrors: the tagged-template alternative of WillBooster/tree-sitter-typescript#22, which Patch 2 left out.
+
+Why: TypeScript reads type arguments before a template as a tagged template's (`parseCallExpressionRest`, and
+`canFollowTypeArgumentsInExpression` admits a template), so ``styled.div<{ open?: boolean }>`…` `` tags the template
+with `styled.div` instantiated at the type. Upstream has no tagged template with type arguments. Where the type
+arguments are a single name or an object type with one member, it reads comparisons instead,
+``(styled(B) < { x: boolean }) > `top: 0;` ``, with no error; where the object type has an optional or `;`-separated
+member, it reads an `instantiation_expression`, inserts a `;` and fails, so the engine reports a syntax error and
+refuses every scope-reading rule on the file. styled-components and Emotion write their typed styles this way: over
+35,926 TypeScript and TSX files of eight React repositories (appsmith 31903c7c64, supabase 3e57a9d5fb, superset
+09207d98e9, mantine 1d8c524fac, polar 7d30e464bc, excalidraw b7de45e8, Ghost f962ce3773, react-spectrum 338cf2e19),
+285 files failed to parse on this construct alone, and the React pack's test set held such files for five rules.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -21,7 +21,7 @@ module.exports = function defineGrammar(dialect) {
+     ]),
+ 
+     precedences: ($, previous) => previous.concat([
+-      ['new', 'generic_call', 'instantiation', 'unary', 'binary'],
++      ['new', 'generic_call', 'generic_template_call', 'instantiation', 'unary', 'binary'],
+       [
+         'call',
+         'instantiation',
+@@ -240,6 +240,13 @@ module.exports = function defineGrammar(dialect) {
+           field('function', choice($.primary_expression, $.new_expression)),
+           field('arguments', $.template_string),
+         )),
++        // A tagged template may take type arguments, as in TypeScript: `styled.div<Props>\`…\`` tags the template with
++        // `styled.div` instantiated at `Props`. As for a generic call, TypeScript reads `a < b > \`c\`` this way.
++        prec.dynamic(1, prec('generic_template_call', seq(
++          field('function', choice($.primary_expression, $.new_expression)),
++          field('type_arguments', $.type_arguments),
++          field('arguments', $.template_string),
++        ))),
+         prec('member', seq(
+           field('function', $.primary_expression),
+           '?.',
+```
+
+As with Patch 2's generic call, the tag is a `primary_expression` or a `new_expression`, and the dynamic precedence of
+1 reads ``a < b > `c` `` as a tagged template, which is how TypeScript reads it. The new precedence sits beside
+`generic_call`, below `new`, so `new A<T>` keeps its reading.
+
+Node kinds and field names are unchanged: the tagged template is a `call_expression` with `function`,
+`type_arguments` and `arguments` (a `template_string`), the fields a generic call has. Each generated parser has two
+more states (5,902 for TypeScript and 6,189 for TSX, from 5,900 and 6,187).
+
+Upstream's corpus parses as before (111 of its own 112 cases; the one failure patch 1's `foo++!`). Over the 35,926
+files above, compared with Patches 1 to 26 alone: 285 files that failed to parse now parse and none newly fails, 18
+fail as before; 456 trees change. 440 of them now hold a tagged template with type arguments: the 285, 153 files whose
+tagged templates were read as comparisons, and 2 that still fail elsewhere. The other 16 are error recovery in files
+that fail either way.

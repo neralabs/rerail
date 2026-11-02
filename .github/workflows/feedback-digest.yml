@@ -1,0 +1,52 @@
+name: Feedback digest
+
+# Every Monday, the previous week's GitHub issues as one page of the product team's feedback digest in Notion
+# (scripts/feedback/digest.mjs): new and closed issues, rule misfires by kind, rule and pack, and the open backlog. The
+# run summary shows the same digest. It reads public issue data only. The NOTION_TOKEN secret is a Notion connection
+# with access to the digest's database, and the NOTION_DIGEST_DATA_SOURCE_ID variable is that database's data source; a
+# missing one is a configuration error, not a skip. Run it by hand with `week-ending` to write a past week; a week that
+# already has a page is left alone.
+
+on:
+  schedule:
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+    inputs:
+      week-ending:
+        description: The day after the week's last day, as yyyy-mm-dd (default today)
+        required: false
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: feedback-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    name: Write the week's digest
+    if: github.repository == 'neralabs/rerail'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: scripts/feedback
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Write the digest to Notion
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DIGEST_DATA_SOURCE_ID: ${{ vars.NOTION_DIGEST_DATA_SOURCE_ID }}
+          WEEK_ENDING: ${{ inputs.week-ending }}
+        run: node scripts/feedback/digest.mjs

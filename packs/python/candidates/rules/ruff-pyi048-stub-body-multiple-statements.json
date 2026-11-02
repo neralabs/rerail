@@ -1,0 +1,80 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi048-stub-body-multiple-statements",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Give each function in a stub file a body of exactly one statement such as an ellipsis; stubs only declare types and are never executed.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "stub-body-multiple-statements",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "filler": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^;$"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "function_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "body",
+                "kind": "block",
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "matches": "filler"
+                  },
+                  "follows": {
+                    "stopBy": "end",
+                    "not": {
+                      "matches": "filler"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI048",
+        "message": "Reduce this stub function's body to a single statement, normally `...`; stub files only declare types and are never executed.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI048"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

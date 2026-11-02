@@ -255,7 +255,7 @@ export const linkBodySchema = z.object({
 export const followGitignoreBodySchema = z.object({
   ...targetShape,
   followGitignore: z.boolean()
-    .describe("true: files Git ignores (.gitignore, .git/info/exclude, global excludes) are not audited; tracked files always are. false: only Rerail's own ignores apply."),
+    .describe("true: files Git ignores (.gitignore, .git/info/exclude, global excludes) are not audited; tracked files always are. false: only Rerail's own ignores apply; only a person may choose it, never a coding agent."),
 }).strict();
 
 export const resetBodySchema = z.object({ ...targetShape }).strict();

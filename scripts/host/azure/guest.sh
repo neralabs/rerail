@@ -302,13 +302,14 @@ check_hooks() {
   done
   grep -q rerail "$HOME/.cursor/hooks.json" || { echo "Cursor hooks were not registered"; return 1; }
   node -e '
-    fetch(`http://127.0.0.1:${process.argv[1]}/api/sessions`).then((r) => r.json()).then(({ sessions }) => {
+    const { accessToken } = require(process.argv[2]);
+    fetch(`http://127.0.0.1:${process.argv[1]}/api/sessions`, { headers: { "x-rerail-access": accessToken } }).then((r) => r.json()).then(({ sessions }) => {
       const ids = sessions.map((s) => s.sessionId);
       const missing = ["env-claude", "env-codex"].filter((id) => !ids.includes(id));
       console.log(`daemon recorded: ${ids.join(", ")}`);
       process.exitCode = missing.length === 0 ? 0 : 1;
     });
-  ' "$daemon_port"
+  ' "$daemon_port" "${RERAIL_HOME:-$HOME/.rerail}/daemon.json"
 }
 
 check_daemon_restart() {

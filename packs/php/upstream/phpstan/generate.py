@@ -3,14 +3,13 @@
 PHP 8.5.11:
 
     python3 generate.py fixtures <phpstan-src checkout at tag 2.2.16> <composer project with phpstan/phpstan 2.2.16>
-    python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]
 
 A finding belongs to a ported rule class by its identifier and, where another class reports the same identifier
 (`argument.type`, `missingType.return`, `variable.undefined`), by the message the ported class writes. Only the
 ported identifiers are recorded (`IDENTIFIERS`).
 
 `fixtures` reads each ported class's RuleTestCase statically (read_tests.php) and copies the files its test
-methods analyse to fixtures/<path under tests/PHPStan> (the pack's licenses/phpstan/UPSTREAM.md lists them). A file several
+methods analyse to fixtures/<path under tests/PHPStan> (provenance.json records each copy's upstream path). A file several
 methods analyse with different rule options takes the method whose options are PHPStan's defaults at level max.
 Each analysis unit (a method's files, analysed together) is recorded as:
   - for the identifiers of the class whose test analyses it, the test's own expectation (message, line). A
@@ -18,11 +17,10 @@ Each analysis unit (a method's files, analysed together) is recorded as:
     exactly the expected (message, line) multiset;
   - for the other ported identifiers, PHPStan's output at level max over the unit.
 Methods read_tests.php cannot read statically (data providers, helpers, skipped on this PHP) are left out.
+`source.units` names each unit's origin, by its first file: the identifiers of the class whose test analyses it.
 
-`corpus` runs PHPStan once over a corpus's pack paths at level max (files `php -l` rejects, Blade templates, and
-files PHPStan cannot reflect excluded and listed as skipped). Each finding is the identifier, path and line (PHPStan
-reports no columns). PHPStan is run with the agent environment variables unset: it prints a banner before its JSON
-when it detects an agent."""
+Each finding is the identifier, path and line (PHPStan reports no columns). PHPStan is run with the agent environment
+variables unset: it prints a banner before its JSON when it detects an agent."""
 
 from __future__ import annotations
 
@@ -42,6 +40,7 @@ sys.path.insert(0, str(HERE.parent))
 import common  # noqa: E402
 
 ORIGIN = "https://github.com/phpstan/phpstan-src@08e3736efd29631ab8f32596c5dd2362dec8dc26"
+PROJECT = "phpstan"  # its directory under the pack's licenses/
 AGENT_VARIABLES = ("AGENT", "CLAUDECODE", "OMPCODE", "ORCA_OPENCODE_AGENT")
 
 # Ported identifier -> the message pattern of the ported class (None: no other class reports the identifier).
@@ -67,21 +66,32 @@ def _if(message: str) -> str | None:
     return f"if.always{constant.group(1).capitalize()}" if constant else None
 
 
-# Ported class's test (under tests/PHPStan) -> its identifiers, and the identifier of one of its expected messages.
-TESTS = {
-    "Rules/Variables/DefinedVariableRuleTest.php": (
-        {"variable.undefined"},
-        lambda message: "variable.undefined" if re.match(IDENTIFIERS["variable.undefined"], message) else None),
-    "Rules/Functions/PrintfParametersRuleTest.php": ({"argument.sprintf", "argument.sscanf"}, _printf),
-    "Rules/Arrays/DuplicateKeysInLiteralArraysRuleTest.php": ({"array.duplicateKey"}, lambda message: "array.duplicateKey"),
-    "Rules/Functions/RandomIntParametersRuleTest.php": (
-        {"argument.type"},
-        lambda message: "argument.type" if re.match(IDENTIFIERS["argument.type"], message) else None),
-    "Rules/Functions/MissingFunctionReturnTypehintRuleTest.php": (
-        {"missingType.return"},
-        lambda message: "missingType.return" if re.match(IDENTIFIERS["missingType.return"], message) else None),
-    "Rules/Comparison/IfConstantConditionRuleTest.php": ({"if.alwaysTrue", "if.alwaysFalse"}, _if),
+# Ported class's test (under tests/PHPStan) -> the identifier of one of its expected messages.
+IDENTIFY = {
+    "Rules/Variables/DefinedVariableRuleTest.php":
+        lambda message: "variable.undefined" if re.match(IDENTIFIERS["variable.undefined"], message) else None,
+    "Rules/Functions/PrintfParametersRuleTest.php": _printf,
+    "Rules/Arrays/DuplicateKeysInLiteralArraysRuleTest.php": lambda message: "array.duplicateKey",
+    "Rules/Functions/RandomIntParametersRuleTest.php":
+        lambda message: "argument.type" if re.match(IDENTIFIERS["argument.type"], message) else None,
+    "Rules/Functions/MissingFunctionReturnTypehintRuleTest.php":
+        lambda message: "missingType.return" if re.match(IDENTIFIERS["missingType.return"], message) else None,
+    "Rules/Comparison/IfConstantConditionRuleTest.php": _if,
 }
+
+
+def _tests() -> dict:
+    """fixtures.json ({"rules": {identifier: [upstream test, ...]}}) inverted: each test (under tests/PHPStan, in
+    order of first mention) -> its identifiers, and IDENTIFY's identifier of one of its expected messages."""
+    rules = json.loads((HERE / "fixtures.json").read_text())["rules"]
+    tests = dict.fromkeys(path.removeprefix("tests/PHPStan/") for paths in rules.values() for path in paths)
+    if set(tests) != set(IDENTIFY):
+        raise SystemExit(f"fixtures.json names the tests {sorted(tests)}, IDENTIFY {sorted(IDENTIFY)}")
+    return {test: ({rule for rule, paths in rules.items() if f"tests/PHPStan/{test}" in paths}, IDENTIFY[test])
+            for test in tests}
+
+
+TESTS = _tests()
 
 # The rule options a test method sets, as PHPStan 2.2.16 configures them at level max (conf/config*.neon).
 DEFAULTS = {
@@ -92,6 +102,14 @@ DEFAULTS = {
     "treatPhpDocTypesAsCertain": True,
     "checkNonStringableDynamicAccess": False,
 }
+
+
+def provenance(files: list[str | list[str]]) -> dict[str, dict]:
+    """The provenance entries of the copies `files` names (as `source.files` does: a unit's file, or a multi-file
+    unit's list): each a verbatim copy of the file at its path under tests/PHPStan."""
+    copies = [copy for unit in files for copy in ([unit] if isinstance(unit, str) else unit)]
+    return {f"fixtures/{copy}": {"source": PROJECT, "from": f"tests/PHPStan/{copy}", "how": "verbatim"}
+            for copy in copies}
 
 
 def environment() -> dict[str, str]:
@@ -211,30 +229,10 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path, dump: pathlib.Path |
     if dump is not None:
         dump.write_text(json.dumps(findings, indent=1) + "\n")
     common.write(HERE / "fixtures.expected.json", "phpstan", version(project),
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(IDENTIFIERS), "files": files},
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(IDENTIFIERS), "files": files,
+                  "units": dict(sorted((unit["files"][0], {"rules": sorted(unit["identifiers"])}) for unit in units))},
                  [{key: finding[key] for key in ("rule", "path", "line")} for finding in findings])
-
-
-def corpus(project: pathlib.Path, name: str, root: pathlib.Path, dump: pathlib.Path | None) -> None:
-    files = common.corpus_files(root, name)
-    skipped = common.unparsable(root, files)
-    paths = [root / path for path in common.corpus(name)["paths"]]
-    while True:
-        report = phpstan(project, paths, [str(root / path) for path in skipped])
-        # A file PHPStan cannot reflect stops its analysis; exclude it and run again.
-        severe = [pathlib.Path(path).resolve().relative_to(root.resolve()).as_posix()
-                  for path, file in report["files"].items()
-                  if any(message.get("identifier", "").startswith("phpstan.")
-                         or message["message"].startswith("Reflection error") for message in file["messages"])]
-        if not severe:
-            break
-        skipped += severe
-    found = messages(report, root)
-    if dump is not None:
-        dump.write_text(json.dumps(found, indent=1) + "\n")
-    common.write(HERE / f"corpus-{name}.expected.json", "phpstan", version(project),
-                 common.corpus_source(name, list(IDENTIFIERS), skipped),
-                 [{key: finding[key] for key in ("rule", "path", "line")} for finding in found])
+    common.write_provenance("phpstan", PROJECT, ORIGIN, provenance(files))
 
 
 def main() -> None:
@@ -249,11 +247,7 @@ def main() -> None:
         fixtures(pathlib.Path(arguments[1]).resolve(), pathlib.Path(arguments[2]).resolve(),
                  dump_directory / "phpstan-fixtures.json" if dump_directory else None)
     else:
-        project = pathlib.Path(arguments[1]).resolve()
-        for argument in arguments[2:]:
-            name, _, path = argument.partition("=")
-            corpus(project, name, pathlib.Path(path).resolve(),
-                   dump_directory / f"phpstan-corpus-{name}.json" if dump_directory else None)
+        raise SystemExit(__doc__)
 
 
 if __name__ == "__main__":

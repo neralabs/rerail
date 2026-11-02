@@ -31,6 +31,62 @@ export interface DaemonState {
   workspaceRoot?: string;
   /** Same-user capability for normal native sessions; never exposed by health/API responses. */
   nativeToken?: string;
+  /**
+   * The capability every request must carry: kept in the home across restarts for a loopback daemon, minted on every
+   * start for one reachable off loopback. Absent only in a state file an older daemon wrote. Never exposed by
+   * health/API responses.
+   */
+  accessToken?: string;
+}
+
+/** Header a Rerail process, and the dashboard page, send the daemon's {@link DaemonState.accessToken} in. */
+export const DAEMON_ACCESS_HEADER = "x-rerail-access";
+/** The query parameter of the dashboard link; the page keeps its value in its origin's storage and sends the header. */
+export const DAEMON_ACCESS_PARAM = "rerail-access";
+/** In the Rerail home: the capability a loopback daemon keeps across restarts. */
+export const DAEMON_ACCESS_TOKEN_FILE = "access-token";
+
+/** The headers that admit a request to the daemon `state` records: its access capability, when it has one. */
+export function daemonAccessHeaders(state: Pick<DaemonState, "accessToken">): Record<string, string> {
+  return state.accessToken === undefined ? {} : { [DAEMON_ACCESS_HEADER]: state.accessToken };
+}
+
+/** Where a Rerail process sends requests to a daemon, and the headers that admit them. */
+export interface DaemonEndpoint {
+  url: URL;
+  headers: Record<string, string>;
+}
+
+export function daemonEndpoint(state: Pick<DaemonState, "url" | "accessToken">, path = "/"): DaemonEndpoint {
+  return { url: new URL(path, state.url), headers: daemonAccessHeaders(state) };
+}
+
+/** `url` on the origin a browser on this machine reaches: an unspecified bind address (`0.0.0.0`, `::`) is loopback. */
+function browserReachable(url: string): URL {
+  const reachable = new URL(url);
+  if (reachable.hostname === "0.0.0.0" || reachable.hostname === "[::]") reachable.hostname = "127.0.0.1";
+  return reachable;
+}
+
+/**
+ * `page` (a URL on the daemon `state` records; its root by default) as the link a person opens in a browser: on the
+ * origin the browser reaches, with the capability the page keeps and sends. A page of another origin is returned as it
+ * is. Only for a person's own browser or terminal; a link handed to a coding agent never carries it.
+ */
+export function dashboardLink(state: Pick<DaemonState, "url" | "accessToken">, page: string = state.url): string {
+  const link = browserReachable(page);
+  if (state.accessToken === undefined || link.origin !== browserReachable(state.url).origin) return page;
+  link.searchParams.set(DAEMON_ACCESS_PARAM, state.accessToken);
+  return link.href;
+}
+
+/** Whether the daemon `state` records keeps its capability in `home` across restarts; false when that cannot be read. */
+export function accessTokenKept(home: string, state: Pick<DaemonState, "accessToken">): boolean {
+  try {
+    return state.accessToken !== undefined && readFileSync(join(home, DAEMON_ACCESS_TOKEN_FILE), "utf8").trim() === state.accessToken;
+  } catch {
+    return false;
+  }
 }
 
 export type NativeStatus = { ok: true; kernelVersion: string } | { ok: false; error: string };
@@ -78,13 +134,26 @@ export interface RunningDaemon {
  * - `unresponsive`: the pid is alive but the probe failed. The state is kept:
  *   a transient timeout must not orphan a live daemon, and `stop` still needs
  *   the pid. `start` refuses rather than spawning a second instance.
+ * - `refused`: the listener answered `401`: it does not accept the capability the state file records (edited, or
+ *   written by another daemon). It is running; `start` refuses and says to restart it.
  * - `absent`: no state, or a stale file (pid dead, or a different process
  *   answering on that URL) which has been cleared.
  */
 export type DaemonLookup =
   | { status: "running"; state: DaemonState; health: DaemonHealth }
   | { status: "unresponsive"; state: DaemonState }
+  | { status: "refused"; state: DaemonState }
   | { status: "absent" };
+
+/** What the daemon at a recorded URL answered a health probe: its health, a refusal of the capability, or nothing usable. */
+export type DaemonProbe = { status: "ok"; health: DaemonHealth } | { status: "refused" } | { status: "unreachable" };
+
+/** Why `start` will not use, or replace, a recorded daemon that is alive: what to tell the person. */
+function liveDaemonProblem(lookup: Extract<DaemonLookup, { status: "unresponsive" | "refused" }>): string {
+  return lookup.status === "refused"
+    ? `Rerail daemon pid ${lookup.state.pid} at ${lookup.state.url} refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start.`
+    : `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.`;
+}
 
 export interface DaemonLaunchOptions {
   dev: boolean;
@@ -141,6 +210,7 @@ function hasDaemonStateFields(value: unknown): value is Record<string, unknown> 
     && typeof record.version === "string"
     && (record.ui === "bundled" || record.ui === "dev")
     && (record.nativeToken === undefined || typeof record.nativeToken === "string")
+    && (record.accessToken === undefined || typeof record.accessToken === "string")
     && typeof record.startedAt === "number"
     && typeof record.packageRoot === "string"
     && (record.workspaceRoot === undefined || typeof record.workspaceRoot === "string");
@@ -176,18 +246,24 @@ export async function readDaemonState(stateFile: string): Promise<DaemonState | 
   }
 }
 
-/** The health the daemon at `url` reports; `fetchImpl` lets a client with its own transport, such as the MCP bridge, probe through it. */
+/**
+ * What the daemon `state` records answers on `/healthz`, with the capability it records; `fetchImpl` lets a client with
+ * its own transport, such as the MCP bridge, probe through it. A `401` is a refusal, kept apart from silence: the
+ * daemon is up, and "not answering" would send the person after the wrong cause.
+ */
 export async function probeDaemon(
-  url: string,
+  state: Pick<DaemonState, "url" | "accessToken">,
   fetchImpl: (endpoint: URL, init: RequestInit) => Promise<Response> = fetch,
-): Promise<DaemonHealth | undefined> {
+): Promise<DaemonProbe> {
   try {
-    const response = await fetchImpl(new URL("/healthz", url), { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
-    if (!response.ok) return undefined;
+    const { url, headers } = daemonEndpoint(state, "/healthz");
+    const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    if (response.status === 401) return { status: "refused" };
+    if (!response.ok) return { status: "unreachable" };
     const body = await response.json() as DaemonHealth;
-    return body.status === "ok" ? body : undefined;
+    return body.status === "ok" ? { status: "ok", health: body } : { status: "unreachable" };
   } catch {
-    return undefined;
+    return { status: "unreachable" };
   }
 }
 
@@ -199,14 +275,15 @@ export async function lookupDaemon(home: string): Promise<DaemonLookup> {
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
-  const health = await probeDaemon(state.url);
-  if (health === undefined) return { status: "unresponsive", state };
-  if (health.pid !== state.pid) {
+  const probe = await probeDaemon(state);
+  if (probe.status === "refused") return { status: "refused", state };
+  if (probe.status === "unreachable") return { status: "unresponsive", state };
+  if (probe.health.pid !== state.pid) {
     // Something else answers on that URL; the recorded daemon is not the listener.
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
-  return { status: "running", state, health };
+  return { status: "running", state, health: probe.health };
 }
 
 /** The healthy daemon recorded in `home`, or undefined when there is none to reuse. */
@@ -322,11 +399,7 @@ export async function startDaemon(control: DaemonControl, options: DaemonLaunchO
   return await withStartLock(control.home, async () => {
     const lookup = await lookupDaemon(control.home);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
-    if (lookup.status === "unresponsive") {
-      throw new Error(
-        `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.`,
-      );
-    }
+    if (lookup.status === "unresponsive" || lookup.status === "refused") throw new Error(liveDaemonProblem(lookup));
     return await spawnDaemon(control, options);
   });
 }
@@ -347,11 +420,7 @@ export async function startDaemonForPackage(control: DaemonControl, options: Dae
       await stopDaemon(control.home);
       return await spawnDaemon(control, options);
     }
-    if (lookup.status === "unresponsive") {
-      throw new Error(
-        `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.`,
-      );
-    }
+    if (lookup.status === "unresponsive" || lookup.status === "refused") throw new Error(liveDaemonProblem(lookup));
     return await spawnDaemon(control, options);
   });
 }
@@ -459,8 +528,8 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions)
     }
     const state = await readDaemonState(stateFile);
     if (state !== undefined && state.pid === pid) {
-      const health = await probeDaemon(state.url);
-      if (health?.pid === state.pid) return { started: true, daemon: { state, health } };
+      const probe = await probeDaemon(state);
+      if (probe.status === "ok" && probe.health.pid === state.pid) return { started: true, daemon: { state, health: probe.health } };
     }
     await sleep(POLL_INTERVAL_MS);
   }
@@ -573,16 +642,23 @@ export function orcaExecutable(candidates: readonly string[] = ORCA_EXECUTABLES)
   return candidates.find(candidate => existsSync(candidate));
 }
 
+/** `url` as {@link dashboardLink} makes it for the daemon `home` records; as it is when there is none. */
+export async function dashboardAccessLink(url: string, home: string): Promise<string> {
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE)).catch(() => undefined);
+  return state === undefined ? url : dashboardLink(state, url);
+}
+
 /**
- * Opens a page as a tab in the current Orca window when running under Orca (`ORCA_TAB_ID` set and
- * an Orca CLI installed at one of its fixed locations), otherwise in the desktop browser. Never
- * throws: an Orca failure falls back to the desktop browser.
+ * Opens a page of the home daemon's dashboard, with its access capability when it needs one, as a tab in the current
+ * Orca window when running under Orca (`ORCA_TAB_ID` set and an Orca CLI installed at one of its fixed locations),
+ * otherwise in the desktop browser. Never throws: an Orca failure falls back to the desktop browser.
  */
 export async function openDashboard(
-  url: string,
+  page: string,
   env: NodeJS.ProcessEnv = process.env,
   candidates: readonly string[] = ORCA_EXECUTABLES,
 ): Promise<PageOpening> {
+  const url = await dashboardAccessLink(page, defaultRerailHome(env));
   const orca = env.ORCA_TAB_ID === undefined || env.ORCA_TAB_ID === "" ? undefined : orcaExecutable(candidates);
   if (orca === undefined) {
     openInBrowser(url);

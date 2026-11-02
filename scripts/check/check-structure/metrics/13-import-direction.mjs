@@ -1,7 +1,7 @@
 // #13 Import-direction violations.
 //
 // This metric is the result of the layer boundary lint `scripts/check/check-boundaries.mjs` (its rules:
-// engine-isolation, host-isolation, layer-order, src-self-contained, entry-points, playground-public-api;
+// engine-isolation, host-isolation, layer-order, src-self-contained, entry-points;
 // see its header and test/structure/boundaries.test.mjs): `checkBoundaries(root, { files })` →
 // `{ violations: [{ file, line, rule, message }] }`. A checkout without the lint fails the metric.
 

@@ -1,0 +1,129 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-perf203-try-except-in-loop",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid wrapping each loop iteration in its own try-except before Python 3.11; move the loop into one try block or check the condition first.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "try-except-in-loop",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.10"
+            }
+          },
+          "utils": {
+            "handler": {
+              "kind": "except_clause"
+            },
+            "jump": {
+              "any": [
+                {
+                  "kind": "break_statement"
+                },
+                {
+                  "kind": "continue_statement"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "handler",
+            "regex": "\\A(?:(?P<H>(?:(?s:.*?)\\n)?[ \\t]*(?:(?:[^\\s\"'#\\\\]|\\\\.|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*')[ \\t]*)*?(?:[^\\s\"'#\\\\]|\\\\.|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'))[ \\t\\r]*(?:#[^\\n]*)?(?:\\n[ \\t\\r]*(?:#[^\\n]*)?)*\\z)?",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "matches": "handler"
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "try_statement",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "body",
+                  "kind": "block",
+                  "has": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    },
+                    "matches": "jump"
+                  }
+                }
+              },
+              "all": [
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "precedes": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              ],
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "while_statement"
+                    },
+                    {
+                      "kind": "for_statement",
+                      "not": {
+                        "regex": "^async\\b"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.H",
+        "code": "PERF203",
+        "message": "Move the whole loop into one try block, or check the failing condition before the call, so no handler is set up per iteration. Keep it if the loop must carry on after each failure.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PERF203"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,617 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-iframe-missing-sandbox",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Give every iframe a sandbox attribute that lists only valid permissions and never pairs script access with same-origin access.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "create-element": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^React$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^createElement$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "regex": "^createElement$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "react-site"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "react-site": {
+            "any": [
+              {
+                "kind": "variable_declarator",
+                "has": {
+                  "field": "value",
+                  "matches": "react-init"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "import_statement",
+                  "has": {
+                    "field": "source",
+                    "kind": "string",
+                    "value": {
+                      "eq": "react"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "react-init": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^React$"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^React$"
+                    },
+                    {
+                      "matches": "require-react"
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "require-react"
+              }
+            ]
+          },
+          "require-react": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^require$"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "string",
+                    "nthChild": 1,
+                    "value": {
+                      "eq": "react"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "iframe-tag": {
+            "any": [
+              {
+                "kind": "jsx_opening_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^iframe$"
+                }
+              },
+              {
+                "kind": "jsx_self_closing_element",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^iframe$"
+                }
+              }
+            ]
+          },
+          "sandbox-attribute": {
+            "kind": "jsx_attribute",
+            "has": {
+              "kind": "property_identifier",
+              "regex": "^sandbox$"
+            }
+          },
+          "jsx-sandbox-string": {
+            "kind": "string",
+            "inside": {
+              "matches": "sandbox-attribute",
+              "inside": {
+                "matches": "iframe-tag",
+                "pattern": "$EL"
+              }
+            }
+          },
+          "iframe-string": {
+            "any": [
+              {
+                "kind": "string",
+                "value": {
+                  "eq": "iframe"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "iframe-string",
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "iframe-create-element": {
+            "kind": "call_expression",
+            "pattern": "$CALL",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "create-element"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "iframe-string"
+                  }
+                }
+              }
+            ]
+          },
+          "sandbox-key": {
+            "any": [
+              {
+                "kind": "property_identifier",
+                "regex": "^sandbox$"
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "kind": "identifier",
+                  "regex": "^sandbox$"
+                }
+              }
+            ]
+          },
+          "sandbox-property": {
+            "any": [
+              {
+                "kind": "pair",
+                "has": {
+                  "field": "key",
+                  "matches": "sandbox-key"
+                }
+              },
+              {
+                "kind": "shorthand_property_identifier",
+                "regex": "^sandbox$"
+              },
+              {
+                "kind": "method_definition",
+                "has": {
+                  "field": "name",
+                  "matches": "sandbox-key"
+                }
+              }
+            ]
+          },
+          "props-slot": {
+            "any": [
+              {
+                "nthChild": {
+                  "position": 2,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "matches": "iframe-create-element"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "props-slot"
+                }
+              }
+            ]
+          },
+          "props-with-sandbox": {
+            "any": [
+              {
+                "kind": "object",
+                "has": {
+                  "matches": "sandbox-property"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "props-with-sandbox"
+                }
+              }
+            ]
+          },
+          "first-sandbox-pair": {
+            "kind": "pair",
+            "matches": "sandbox-property",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "matches": "sandbox-property"
+              }
+            },
+            "inside": {
+              "kind": "object",
+              "matches": "props-slot"
+            }
+          },
+          "sandbox-value-slot": {
+            "any": [
+              {
+                "inside": {
+                  "field": "value",
+                  "matches": "first-sandbox-pair"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "sandbox-value-slot"
+                }
+              }
+            ]
+          },
+          "props-sandbox-string": {
+            "kind": "string",
+            "matches": "sandbox-value-slot"
+          },
+          "plain-string": {
+            "kind": "string",
+            "not": {
+              "has": {
+                "any": [
+                  {
+                    "kind": "html_character_reference"
+                  },
+                  {
+                    "kind": "escape_sequence"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-missing",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "iframe-tag",
+            "not": {
+              "has": {
+                "matches": "sandbox-attribute"
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/iframe-missing-sandbox",
+        "message": "Add a sandbox attribute to this iframe, listing only the allow-* permissions its content needs; sandbox=\"\" grants none.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/iframe-missing-sandbox"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "iframe-missing-sandbox"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-missing",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "iframe-create-element",
+            "not": {
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "nthChild": {
+                    "position": 2,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "props-with-sandbox"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/iframe-missing-sandbox",
+        "message": "Add a sandbox attribute to this iframe, listing only the allow-* permissions its content needs; sandbox=\"\" grants none.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/iframe-missing-sandbox"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "iframe-missing-sandbox"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-invalid-token",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "jsx-sandbox-string",
+            "all": [
+              {
+                "matches": "plain-string"
+              }
+            ],
+            "regex": "(?:^[\"'])?(?:[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*(?:allow-downloads-without-user-activation|allow-downloads|allow-forms|allow-modals|allow-orientation-lock|allow-pointer-lock|allow-popups-to-escape-sandbox|allow-popups|allow-presentation|allow-same-origin|allow-scripts|allow-storage-access-by-user-activation|allow-top-navigation-by-user-activation|allow-top-navigation)?[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*|[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*(?P<TOK>[^ ]*?)[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*)(?: |[\"']$)"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.EL",
+        "code": "react/iframe-missing-sandbox",
+        "message": "Remove \"$TOK\" from this iframe's sandbox list or replace it with a valid allow-* permission; browsers ignore unknown tokens.",
+        "each": "TOK",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/iframe-missing-sandbox"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "iframe-missing-sandbox"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "jsx-scripts-and-same-origin",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "jsx-sandbox-string",
+            "all": [
+              {
+                "value": {
+                  "regex": "(?:^| )[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*allow-scripts[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*(?: |$)"
+                }
+              },
+              {
+                "value": {
+                  "regex": "(?:^| )[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*allow-same-origin[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*(?: |$)"
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.EL",
+        "code": "react/iframe-missing-sandbox",
+        "message": "Drop allow-scripts or allow-same-origin from this iframe's sandbox; together they let the framed page remove its own sandbox.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/iframe-missing-sandbox"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "iframe-missing-sandbox"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-invalid-token",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "props-sandbox-string",
+            "all": [
+              {
+                "matches": "plain-string"
+              }
+            ],
+            "regex": "(?:^[\"'])?(?:[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*(?:allow-downloads-without-user-activation|allow-downloads|allow-forms|allow-modals|allow-orientation-lock|allow-pointer-lock|allow-popups-to-escape-sandbox|allow-popups|allow-presentation|allow-same-origin|allow-scripts|allow-storage-access-by-user-activation|allow-top-navigation-by-user-activation|allow-top-navigation)?[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*|[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*(?P<TOK>[^ ]*?)[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*)(?: |[\"']$)"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "react/iframe-missing-sandbox",
+        "message": "Remove \"$TOK\" from this iframe's sandbox list or replace it with a valid allow-* permission; browsers ignore unknown tokens.",
+        "each": "TOK",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/iframe-missing-sandbox"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "iframe-missing-sandbox"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-element-scripts-and-same-origin",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "props-sandbox-string",
+            "all": [
+              {
+                "value": {
+                  "regex": "(?:^| )[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*allow-scripts[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*(?: |$)"
+                }
+              },
+              {
+                "value": {
+                  "regex": "(?:^| )[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*allow-same-origin[\\t\\n\\x0B\\x0C\\r\\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]*(?: |$)"
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "react/iframe-missing-sandbox",
+        "message": "Drop allow-scripts or allow-same-origin from this iframe's sandbox; together they let the framed page remove its own sandbox.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/iframe-missing-sandbox"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "iframe-missing-sandbox"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

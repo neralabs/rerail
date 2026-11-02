@@ -54,6 +54,8 @@ async function recordedSession(repo: string, startedAt = NOW - DAY): Promise<str
     store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Never use console.log, add the logging" }, observedAt: at(1) });
     store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Edit", input: { file_path: "src/a.ts" } }, observedAt: at(2) });
     store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Bash", input: { command: "git push --force origin main" } }, observedAt: at(3) });
+    // Names a secret-like path: the evidence names the tool alone, and its risky `rm` is not quoted either.
+    store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Bash", input: { command: "cat .env && rm -rf .ssh" } }, observedAt: at(3) });
     store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Don't use console.log, we use the logger in src/log.ts" }, observedAt: at(4) });
     store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Thanks, now add a test" }, observedAt: at(5) });
     store.recordSteer(session, "r1", ["n-no-sync", "local:no-console"]);
@@ -118,7 +120,11 @@ describe("risky commands", () => {
 
 describe("rerail rules evidence", () => {
   it("reads the repository's follow-up corrections, risky commands and steers, with the calls before each correction", async () => {
-    const repo = await repository({ "CLAUDE.md": "# Rules\n", ".cursor/rules/style.mdc": "x", "package.json": "{}" });
+    const repo = await repository({
+      "CLAUDE.md": "# Rules\n", ".cursor/rules/style.mdc": "x", "package.json": "{}",
+      // The person's own, kept out of the project by Git: not a standards file the agent is sent to.
+      ".gitignore": ".claude/rules/private.md\n", ".claude/rules/private.md": "mine", ".claude/rules/team.md": "ours",
+    });
     const databasePath = await recordedSession(repo);
     const evidence = await collectRuleEvidence(repo, { databasePath, now: NOW });
     expect(evidence.repository).toMatchObject({ known: true, checkouts: 1 });
@@ -132,11 +138,11 @@ describe("rerail rules evidence", () => {
       text: "Don't use console.log, we use the logger in src/log.ts",
       families: ["standing instruction"],
       standing: true,
-      before: ["Edit src/a.ts", "Bash git push --force origin main"],
+      before: ["Edit src/a.ts", "Bash git push --force origin main", "Bash (a hidden or secret-like path, withheld)"],
     }]);
     expect(evidence.riskyCommands).toEqual([{ label: "force push", count: 1, example: "git push --force origin main" }]);
     expect(evidence.steers).toEqual([{ ruleId: "n-no-sync", count: 2 }, { ruleId: "local:no-console", count: 1 }]);
-    expect(evidence.standards).toEqual([".cursor/rules/style.mdc", "CLAUDE.md"]);
+    expect(evidence.standards).toEqual([".claude/rules/team.md", ".cursor/rules/style.mdc", "CLAUDE.md"]);
   });
 
   it("counts sessions recorded under the key the repository had before it adopted its remote", async () => {

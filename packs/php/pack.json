@@ -3,7 +3,7 @@
   "id": "php",
   "name": "PHP",
   "category": "language",
-  "covers": "7 PHP_CodeSniffer, PHPStan and Psalm rules ported to Rerail, 3 of them on and 4 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "PHP_CodeSniffer, PHPStan and Psalm rules for correct, consistent PHP.",
   "reason": "matches PHP",
   "match": {
     "any": [
@@ -54,10 +54,48 @@
       "on": false
     },
     {
+      "id": "phpcs-generic-php-deprecated-functions",
+      "document": "rules/phpcs-generic-php-deprecated-functions.json",
+      "title": "PHP_CodeSniffer Generic.PHP.DeprecatedFunctions: Deprecated functions",
+      "group": "PHP_CodeSniffer",
+      "on": false
+    },
+    {
+      "id": "phpcs-generic-php-forbidden-functions",
+      "document": "rules/phpcs-generic-php-forbidden-functions.json",
+      "title": "PHP_CodeSniffer Generic.PHP.ForbiddenFunctions: Forbidden functions",
+      "group": "PHP_CodeSniffer",
+      "on": false
+    },
+    {
       "id": "phpcs-generic-php-lower-case-constant",
       "document": "rules/phpcs-generic-php-lower-case-constant.json",
       "title": "PHP_CodeSniffer Generic.PHP.LowerCaseConstant: Lower-case constant",
       "group": "PHP_CodeSniffer"
+    },
+    {
+      "id": "phpcs-generic-php-no-silenced-errors",
+      "document": "rules/phpcs-generic-php-no-silenced-errors.json",
+      "title": "PHP_CodeSniffer Generic.PHP.NoSilencedErrors: No silenced errors",
+      "group": "PHP_CodeSniffer",
+      "on": false
+    },
+    {
+      "id": "phpcs-squiz-php-disallow-size-functions-in-loops",
+      "document": "rules/phpcs-squiz-php-disallow-size-functions-in-loops.json",
+      "title": "PHP_CodeSniffer Squiz.PHP.DisallowSizeFunctionsInLoops: Size functions in loops",
+      "group": "PHP_CodeSniffer",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "app/print.php",
+          "text": "<?php\n\nfunction printAll(array $items): void\n{\n    for ($i = 0; $i < count($items); $i++) {\n        echo $items[$i];\n    }\n}\n"
+        },
+        "passes": {
+          "path": "app/drain.php",
+          "text": "<?php\n\nfunction drain(array $queue): void\n{\n    while (count($queue) > 0) {\n        run(array_shift($queue));\n    }\n}\n"
+        }
+      }
     },
     {
       "id": "phpcs-squiz-php-eval",
@@ -77,15 +115,51 @@
       }
     },
     {
+      "id": "phpstan-argument-sprintf",
+      "document": "rules/phpstan-argument-sprintf.json",
+      "title": "PHPStan argument.sprintf: sprintf() argument count",
+      "group": "PHPStan",
+      "examples": {
+        "caught": {
+          "path": "app/greet.php",
+          "text": "<?php\n\nfunction greet(string $name): string\n{\n    return sprintf('Hello %s, you have %d messages', $name);\n}\n"
+        },
+        "passes": {
+          "path": "app/greet.php",
+          "text": "<?php\n\nfunction greet(string $name, int $count): string\n{\n    return sprintf('Hello %s, you have %d messages', $name, $count);\n}\n"
+        }
+      }
+    },
+    {
       "id": "phpstan-argument-sscanf",
       "document": "rules/phpstan-argument-sscanf.json",
       "title": "PHPStan argument.sscanf: sscanf() argument count",
       "group": "PHPStan"
     },
     {
+      "id": "phpstan-array-duplicate-key",
+      "document": "rules/phpstan-array-duplicate-key.json",
+      "title": "PHPStan array.duplicateKey: Duplicate array key",
+      "group": "PHPStan"
+    },
+    {
+      "id": "phpstan-if-always-false",
+      "document": "rules/phpstan-if-always-false.json",
+      "title": "PHPStan if.alwaysFalse: If condition always false",
+      "group": "PHPStan",
+      "on": false
+    },
+    {
       "id": "phpstan-missing-function-return-type",
       "document": "rules/phpstan-missing-function-return-type.json",
       "title": "PHPStan missingType.return: Missing function return type",
+      "group": "PHPStan",
+      "on": false
+    },
+    {
+      "id": "phpstan-random-int-parameters",
+      "document": "rules/phpstan-random-int-parameters.json",
+      "title": "PHPStan argument.type: random_int() parameters",
       "group": "PHPStan",
       "on": false
     },

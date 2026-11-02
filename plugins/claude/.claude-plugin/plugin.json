@@ -1,0 +1,14 @@
+{
+  "name": "rerail",
+  "displayName": "Rerail",
+  "version": "0.1.0",
+  "description": "Installs Rerail, which checks a coding agent's edits and commands against your rules as it works and steers it back when it breaks one.",
+  "author": {
+    "name": "Nera",
+    "url": "https://nera.software"
+  },
+  "homepage": "https://github.com/neralabs/rerail",
+  "repository": "https://github.com/neralabs/rerail",
+  "license": "Apache-2.0",
+  "keywords": ["rules", "linting", "code-review", "guardrails", "hooks"]
+}

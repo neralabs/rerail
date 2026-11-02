@@ -1,0 +1,35 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "rerail",
+  "version": "0.1.0",
+  "description": "Installs Rerail, which checks a coding agent's edits and commands against your rules as it works and steers it back when it breaks one.",
+  "author": {
+    "name": "Nera",
+    "email": "opensource@nera.software",
+    "url": "https://nera.software"
+  },
+  "homepage": "https://github.com/neralabs/rerail",
+  "repository": "https://github.com/neralabs/rerail",
+  "license": "Apache-2.0",
+  "keywords": ["rules", "linting", "code-review", "guardrails"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Rerail",
+        "shortDescription": "Rules your agent must follow",
+        "longDescription": "Rerail checks the code Codex writes against your repository's rules while it works, and steers it back in the same session when it breaks one. Rules run on your machine in a native engine; ready-made rule packs port ESLint, typescript-eslint, Ruff, Bandit, Clippy and other linters, and you can add rules in your own words. This plugin installs Rerail: its one skill runs Rerail's own set-up (npx @neralabs/rerail setup) in a terminal and relays set-up's questions to you. It needs Codex with a terminal (the CLI or the desktop app), Node.js 24 or later and Git, and does nothing in ChatGPT chat.",
+        "developerName": "Nera",
+        "category": "Developer Tools",
+        "capabilities": ["Install Rerail", "Set up Rerail in a repository"],
+        "websiteURL": "https://github.com/neralabs/rerail",
+        "supportURL": "https://github.com/neralabs/rerail/issues",
+        "privacyPolicyURL": "https://github.com/neralabs/rerail/blob/main/docs/privacy.md",
+        "defaultPrompt": ["Install Rerail in this repository."],
+        "brandColor": "#20246C",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/logo.png"
+      },
+      "onboardingSkill": "./skills/install/SKILL.md"
+    }
+  }
+}

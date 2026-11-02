@@ -3,7 +3,7 @@
   "id": "sql",
   "name": "SQL",
   "category": "language",
-  "covers": "19 SQLFluff 4.4.0 rules ported to Rerail, 17 of them on and 2 off until turned on, each scored against SQLFluff's own recorded findings on its tests; 3 more ports are candidates until they pass the port readiness gates.",
+  "covers": "SQLFluff rules for correct, consistent SQL.",
   "reason": "matches SQL",
   "match": {
     "any": [
@@ -20,6 +20,12 @@
       "id": "sqlfluff-al04-aliasing-unique-table",
       "document": "rules/sqlfluff-al04-aliasing-unique-table.json",
       "title": "SQLFluff AL04: Aliasing unique table",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-al05-aliasing-unused",
+      "document": "rules/sqlfluff-al05-aliasing-unused.json",
+      "title": "SQLFluff AL05: Aliasing unused",
       "group": "SQLFluff"
     },
     {
@@ -89,6 +95,12 @@
       "title": "SQLFluff PG02: Postgres not valid foreign key",
       "group": "SQLFluff",
       "on": false
+    },
+    {
+      "id": "sqlfluff-rf01-references-from",
+      "document": "rules/sqlfluff-rf01-references-from.json",
+      "title": "SQLFluff RF01: References from",
+      "group": "SQLFluff"
     },
     {
       "id": "sqlfluff-rf04-references-keywords",

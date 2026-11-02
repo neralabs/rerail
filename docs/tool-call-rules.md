@@ -324,10 +324,12 @@ the commands your own repository already sanctions (scripts, CI, docs). A rule t
 sanctioned commands — `rm -rf` in a cleanup script — should use `mode: "steer"`, not `"block"`, until it is narrowed.
 
 **4. Install it** with the daemon running (`rerail daemon start`): store it in your library and add it to
-the repository it should run in.
+the repository it should run in. Every request to the daemon carries its access capability, which `daemon.json` in
+your Rerail home records:
 
 ```sh
 curl -X PUT http://127.0.0.1:4737/api/library-rules/oss:no-force-push \
+  -H "x-rerail-access: $(node -p 'require(require("os").homedir() + "/.rerail/daemon.json").accessToken')" \
   -H 'content-type: application/json' \
   -d "{\"kind\": \"conversation\", \"rule\": $(cat no-force-push.json), \"checkout\": \"$PWD\", \"attach\": true}"
 ```

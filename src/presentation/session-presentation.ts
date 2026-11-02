@@ -10,7 +10,7 @@ import {
   type sessionResponseSchema,
 } from "../api/session-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
-import { DAEMON_STATE_FILE, processAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
+import { DAEMON_STATE_FILE, daemonAccessHeaders, processAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/schema.js";
 import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
@@ -132,9 +132,9 @@ function unavailable(
 }
 
 /** Validate responses with the same contracts used by the daemon, without opening a database. */
-async function get<Schema extends z.ZodType>(origin: URL, path: string, schema: Schema): Promise<z.infer<Schema>> {
-  const response = await fetch(new URL(path, origin), {
-    signal: AbortSignal.timeout(READ_TIMEOUT_MS), redirect: "error",
+async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origin" | "state">, path: string, schema: Schema): Promise<z.infer<Schema>> {
+  const response = await fetch(new URL(path, daemon.origin), {
+    headers: daemonAccessHeaders(daemon.state), signal: AbortSignal.timeout(READ_TIMEOUT_MS), redirect: "error",
   });
   if (!response.ok || response.body === null) throw new Error("Rerail read unavailable");
   const reader = response.body.getReader();
@@ -226,7 +226,7 @@ const dashboardScopeSchema = z.object({
 
 /** The repository and checkout the daemon records for the verified checkout; null when it cannot say. */
 async function dashboardScope(daemon: VerifiedDaemon): Promise<RulesDashboardScope | null> {
-  return get(daemon.origin, `/api/repository?${new URLSearchParams({ checkout: daemon.workspace })}`, dashboardScopeSchema)
+  return get(daemon, `/api/repository?${new URLSearchParams({ checkout: daemon.workspace })}`, dashboardScopeSchema)
     .then(context => ({ repositoryKey: context.repository.repositoryKey, checkoutPath: context.checkout?.checkoutPath ?? null }))
     .catch(() => null);
 }
@@ -294,11 +294,11 @@ export function notOnHerePresentation(): SessionPresentation {
  * A state file records intent, not liveness: the recorded pid must still exist and the listener must
  * answer `/healthz` as that same pid before any caller is handed a URL.
  */
-async function liveHealth(origin: URL, pid: number): Promise<z.infer<typeof healthSchema> | undefined> {
-  if (!processAlive(pid)) return undefined;
+async function liveHealth(daemon: VerifiedDaemon): Promise<z.infer<typeof healthSchema> | undefined> {
+  if (!processAlive(daemon.state.pid)) return undefined;
   try {
-    const health = await get(origin, "/healthz", healthSchema);
-    return health.pid === pid ? health : undefined;
+    const health = await get(daemon, "/healthz", healthSchema);
+    return health.pid === daemon.state.pid ? health : undefined;
   } catch {
     return undefined;
   }
@@ -332,7 +332,7 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
   try {
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string") return { url: null, reason: daemon };
-    const health = await liveHealth(daemon.origin, daemon.state.pid);
+    const health = await liveHealth(daemon);
     if (health === undefined) return { url: null, reason: "daemon unavailable" };
     return { url: rulesDashboardUrl(daemon.origin, await dashboardScope(daemon)), reason: null };
   } catch {
@@ -350,7 +350,7 @@ export async function readRepositoryState(cwd: string, host: RerailHost): Promis
   try {
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string" || !processAlive(daemon.state.pid)) return null;
-    const response = await get(daemon.origin, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationResponseSchema);
+    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationResponseSchema);
     return response.repositoryState;
   } catch {
     return null;
@@ -407,7 +407,7 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false,
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string" || !processAlive(daemon.state.pid)) return await withoutDaemon(startState, presence);
     const { workspace, state, origin } = daemon;
-    const response = await get(origin, `/api/presentation?${new URLSearchParams({
+    const response = await get(daemon, `/api/presentation?${new URLSearchParams({
       repository: workspace, host, sessionId, onDemand: String(onDemand),
     })}`, presentationResponseSchema);
     const context = response.context;

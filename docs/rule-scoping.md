@@ -97,9 +97,9 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 | `rerail_rules_list` | `GET /api/rerail-rules` | By Rerail rules, each with its pack. |
 | `library_rules_list`, `library_rules_get`, `library_rules_upsert`, `library_rules_remove` | `/api/library-rules[/{id}]` | Rules created by you. Upsert can attach a new rule (`attach: true`) and copies a By Rerail rule on edit. |
 
-`rules_activity`, `sessions_list`, `violations_list`, `audits_list` and `repository_audits_list` take an optional `repository`; without it they cover the whole machine.
+`rules_activity`, `sessions_list`, `violations_list`, `audits_list` and `repository_audits_list` take an optional `repository`; without it they cover the whole machine for a person, and the caller's own repository for a coding agent.
 
-**MCP caller.** The MCP bridge sends `x-rerail-caller-cwd` on every request: the URI-encoded real path of the folder its session started in. The daemon resolves it to the caller's checkout and folder; a malformed header is a JSON-RPC `-32602` error. A direct MCP client without the header must name a target.
+**MCP caller.** The MCP bridge sends `x-rerail-caller-cwd` on every request: the URI-encoded real path of the folder its session started in. The daemon resolves it to the caller's checkout and folder; a malformed header is a JSON-RPC `-32602` error. A direct MCP client without the header must name a target, and reads no history. A coding agent reads the history (sessions, transcript events, work links, audits, violations, rule activity) of its own checkout's repository only: naming another repository is `403 agent-not-permitted`, and another repository's session or audit answers `404` as one that does not exist. A coding agent may turn Follow `.gitignore` on, before set-up, but never off.
 
 **Dashboard.** The dashboard link for a repository is `<origin>/?repository=<key>&checkout=<path>#rules`, which opens its Overview (`#rules` is the pre-v8 name the dashboard still resolves; its own is `#overview`); `rerail manage`, `/rerail-manage` and the status line build it. Without a scope the dashboard lists repositories to pick from.
 

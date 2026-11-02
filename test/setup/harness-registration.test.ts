@@ -1307,6 +1307,115 @@ describe("Pi settings.json", () => {
     await unregisterHarnesses({ root, home, nodePath, harnesses: ["pi"] });
     expect(await readJson(path)).toEqual({ theme: "dark" });
   });
+
+  // Pi's package gallery installs `npm:@neralabs/rerail`; Pi tells a package by its source, so that entry and the path
+  // set-up registers are two packages, and the second fails to load on the tools both register.
+  it("replaces Rerail's npm source with this install in its place, leaving other npm packages, and says so", async () => {
+    const { home, root, nodePath } = await fixture();
+    const path = join(home, ".pi", "agent", "settings.json");
+    const others = ["npm:@neralabs/rerail-pack-typescript", "npm:@neralabs/rerailx", "npm:@other/pkg@1.0.0"];
+    await seed(path, { theme: "dark", packages: ["npm:@first/pkg", "npm:@neralabs/rerail", ...others] });
+
+    const dryRun = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"], dryRun: true });
+    expect(change(dryRun.changes, "pi", "settings.json"))
+      .toMatchObject({ action: "updated", detail: `register ${root} in Pi packages, replacing npm:@neralabs/rerail (dry run)` });
+    expect((await readJson(path)).packages).toEqual(["npm:@first/pkg", "npm:@neralabs/rerail", ...others]);
+
+    const first = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+    expect(change(first.changes, "pi", "settings.json"))
+      .toMatchObject({ action: "updated", detail: `register ${root} in Pi packages, replacing npm:@neralabs/rerail` });
+    expect(await readJson(path)).toEqual({ theme: "dark", packages: ["npm:@first/pkg", root, ...others] });
+
+    const second = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+    expect(change(second.changes, "pi", "settings.json"))
+      .toMatchObject({ action: "unchanged", detail: `register ${root} in Pi packages: already in place` });
+    expect(await backups(path)).toHaveLength(1);
+
+    await unregisterHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+    expect(await readJson(path)).toEqual({ theme: "dark", packages: ["npm:@first/pkg", ...others] });
+  });
+
+  it("replaces a versioned npm source, and keeps one Rerail entry beside this install's own", async () => {
+    const { home, root, nodePath } = await fixture();
+    const path = join(home, ".pi", "agent", "settings.json");
+    await seed(path, { packages: ["npm:@neralabs/rerail@0.1.0", "npm:@other/pkg"] });
+    const report = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+    expect(change(report.changes, "pi", "settings.json").detail).toBe(`register ${root} in Pi packages, replacing npm:@neralabs/rerail@0.1.0`);
+    expect((await readJson(path)).packages).toEqual([root, "npm:@other/pkg"]);
+
+    await seed(path, { packages: ["npm:@other/pkg", root, "npm:@neralabs/rerail@latest"] });
+    await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+    expect((await readJson(path)).packages).toEqual(["npm:@other/pkg", root]);
+  });
+
+  it("replaces the source of an object entry for Rerail's npm package and keeps its filters", async () => {
+    const { home, root, nodePath } = await fixture();
+    const path = join(home, ".pi", "agent", "settings.json");
+    const other = { source: "npm:@other/pkg", skills: [] };
+    await seed(path, { packages: [other, { source: "npm:@neralabs/rerail@^0.1.0", skills: [] }] });
+
+    const first = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+    expect(change(first.changes, "pi", "settings.json").detail).toBe(`register ${root} in Pi packages, replacing npm:@neralabs/rerail@^0.1.0`);
+    expect((await readJson(path)).packages).toEqual([other, { source: root, skills: [] }]);
+
+    const second = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+    expect(change(second.changes, "pi", "settings.json").action).toBe("unchanged");
+
+    await unregisterHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+    expect((await readJson(path)).packages).toEqual([other]);
+  });
+
+  it("removes Rerail's npm source in every form, and no other npm package, on removal", async () => {
+    const { home, root, nodePath } = await fixture();
+    const path = join(home, ".pi", "agent", "settings.json");
+    await seed(path, {
+      packages: ["npm:@neralabs/rerail", { source: "npm:@neralabs/rerail@0.1.0", extensions: [] }, "npm:@neralabs/rerail-pack-node", "npm:@other/pkg"],
+    });
+    const report = await unregisterHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+    expect(change(report.changes, "pi", "settings.json")).toMatchObject({ action: "updated", detail: "remove rerail from Pi packages" });
+    expect((await readJson(path)).packages).toEqual(["npm:@neralabs/rerail-pack-node", "npm:@other/pkg"]);
+  });
+});
+
+describe("OMP plugin install of Rerail", () => {
+  const ompPluginNote = "OMP also loads Rerail from its plugin install, so two copies run: remove that one with omp plugin uninstall @neralabs/rerail.";
+
+  /** What `omp plugin install @neralabs/rerail` leaves: the package in OMP's plugin folder, and OMP's plugin lockfile. */
+  async function ompPlugin(home: string, lock?: unknown): Promise<string> {
+    const plugins = join(home, ".omp", "plugins");
+    const copy = join(plugins, "node_modules", "@neralabs", "rerail");
+    await mkdir(join(copy, "dist"), { recursive: true });
+    await writeFile(join(copy, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.0" }));
+    await seed(join(plugins, "package.json"), { dependencies: { "@neralabs/rerail": "0.1.0" } });
+    if (lock !== undefined) await seed(join(plugins, "omp-plugins.lock.json"), lock);
+    return copy;
+  }
+
+  it("tells the person when OMP loads its plugin install of Rerail beside this one, and changes nothing of it", async () => {
+    const { home, root, nodePath } = await fixture();
+    const copy = await ompPlugin(home, { plugins: { "@neralabs/rerail": { version: "0.1.0", enabledFeatures: null, enabled: true } }, settings: {} });
+    const report = await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] });
+    expect(report.notes).toContain(ompPluginNote);
+    expect(await readJson(join(copy, "package.json"))).toEqual({ name: "@neralabs/rerail", version: "0.1.0" });
+    expect(await readlink(join(home, ".omp", "agent", "extensions", "rerail"))).toBe(root);
+
+    expect((await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] })).notes).not.toContain(ompPluginNote);
+    expect((await unregisterHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
+  });
+
+  it("says nothing of a plugin install OMP has disabled, one that links to this install, or none", async () => {
+    const { home, root, nodePath } = await fixture();
+    expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
+
+    await ompPlugin(home, { plugins: { "@neralabs/rerail": { version: "0.1.0", enabledFeatures: null, enabled: false } }, settings: {} });
+    expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
+
+    const copy = join(home, ".omp", "plugins", "node_modules", "@neralabs", "rerail");
+    await rm(copy, { recursive: true });
+    await symlink(root, copy);
+    await rm(join(home, ".omp", "plugins", "omp-plugins.lock.json"));
+    expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
+  });
 });
 
 describe("OMP extensions symlink", () => {

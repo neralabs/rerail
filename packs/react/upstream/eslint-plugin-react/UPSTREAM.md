@@ -6,4 +6,3 @@ The fixtures listed below were written by Rerail for the pinned plugin to score,
 |---|---|
 | `upstream/eslint-plugin-react/fixtures/jsx-key/rerail-stencil-h.tsx` | written by Rerail |
 | `upstream/eslint-plugin-react/fixtures/jsx-key/rerail-jsx-import-source-emotion.jsx` | written by Rerail |
-| `upstream/eslint-plugin-react/fixtures/react-in-jsx-scope/rerail-jsx-import-source-preact.jsx` | written by Rerail |

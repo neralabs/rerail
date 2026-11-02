@@ -427,7 +427,6 @@ writeFileSync(
       pack: "next-probes",
       family: "ecma",
       capabilities: ["syntax", "scope", "value"],
-      corpora: [],
       tools: [{ name: "labels", version: "1" }],
       oracles: ".",
       rules: PROBES.map(probe => ({ id: `next-probe-${probe.name}`, upstream: { tool: "labels", rule: `next/${probe.name}` }, policy: `rules/next-probe-${probe.name}.json`, capabilities: capabilities(probe), match: "line+column" })),

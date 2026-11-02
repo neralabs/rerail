@@ -1,12 +1,12 @@
 name: PHP and Composer
 description: >-
-  PHP and Composer at the exact versions the port readiness recorder pins, on PATH ahead of the runner's own PHP. The
-  recorder refuses any PHP but the one `conformance/recorders/port-readiness/runtimes/php/.php-version` names, built
+  PHP and Composer at the exact versions the derivation's runtimes pin, on PATH ahead of the runner's own PHP. The
+  derivation refuses any PHP but the one `scripts/pack-data/runtimes/php/.php-version` names, built
   with exactly the extensions `runtimes/php/extensions.txt` lists, and setup-php takes only a minor version and
   installs its newest patch, so PHP is built from php.net's release source by `runtimes/php/build.sh`, the script a
-  maintainer records locally with. The source and Composer's phar are each checked against the sha256 their publishers
+  maintainer derives locally with. The source and Composer's phar are each checked against the sha256 their publishers
   list before use, and the build is cached on this file, the script and the extension list. The cache is saved by an
-  explicit step straight after the build, never in the post-job step: by the end of the job the recorder has run
+  explicit step straight after the build, never in the post-job step: by the end of the job the derivation has run
   upstream PHP code and unlocked Composer packages, which could have rewritten the prefix.
 
 inputs:
@@ -26,7 +26,7 @@ runs:
       env:
         COMPOSER_VERSION: 2.10.3
         COMPOSER_SHA256: 7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6
-        RUNTIME: conformance/recorders/port-readiness/runtimes/php
+        RUNTIME: scripts/pack-data/runtimes/php
       run: |
         set -euo pipefail
         pinned="$(tr -d '[:space:]' < "$RUNTIME/.php-version")"
@@ -46,7 +46,7 @@ runs:
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
           pkg-config libxml2-dev libsqlite3-dev libonig-dev libssl-dev zlib1g-dev libcurl4-openssl-dev libzip-dev libicu-dev
 
-    # Restore only. actions/cache would save in its post-job step, after the recorder's untrusted code has run.
+    # Restore only. actions/cache would save in its post-job step, after the derivation's untrusted code has run.
     - id: restored
       name: Restore the PHP build
       uses: actions/cache/restore@v6
@@ -61,9 +61,9 @@ runs:
       shell: bash
       env:
         PREFIX: ${{ steps.pin.outputs.prefix }}
-      run: conformance/recorders/port-readiness/runtimes/php/build.sh "$PREFIX"
+      run: scripts/pack-data/runtimes/php/build.sh "$PREFIX"
 
-    # Saved here, before any later step of the job runs the recorder, so what lands in the cache is build.sh's output.
+    # Saved here, before any later step of the job runs the derivation, so what lands in the cache is build.sh's output.
     - name: Save the PHP build
       if: steps.restored.outputs.cache-hit != 'true' && inputs.save == 'true'
       uses: actions/cache/save@v6
@@ -88,20 +88,20 @@ runs:
         echo "$bin" >> "$GITHUB_PATH"
         echo "$PREFIX/bin" >> "$GITHUB_PATH"
 
-    # The recorder runs the `php` on PATH with no php.ini, so this checks that one, as the recorder does, against the
-    # pinned version and extensions.
+    # The derivation runs the `php` on PATH with no php.ini, so this checks that one, as the derivation does, against
+    # the pinned version and extensions.
     - name: Check the PHP on PATH is the pinned one
       shell: bash
       env:
         PREFIX: ${{ steps.pin.outputs.prefix }}
-        RUNTIME: conformance/recorders/port-readiness/runtimes/php
+        RUNTIME: scripts/pack-data/runtimes/php
       run: |
         set -euo pipefail
         pinned="$(tr -d '[:space:]' < "$RUNTIME/.php-version")"
         php="$(command -v php)"
         version="$(php -n -r 'echo PHP_VERSION;')"
         if [ "$php" != "$PREFIX/bin/php" ] || [ "$version" != "$pinned" ]; then
-          echo "::error::the php on PATH is $php, PHP $version; the recorder pins PHP $pinned"
+          echo "::error::the php on PATH is $php, PHP $version; $RUNTIME/.php-version pins PHP $pinned"
           exit 1
         fi
         if ! extensions="$(diff <(php -n -m | grep -v -e '^\[' -e '^$' | LC_ALL=C sort -u) "$RUNTIME/extensions.txt")"; then
