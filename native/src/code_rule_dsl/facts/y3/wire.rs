@@ -204,28 +204,36 @@ pub fn all_edges(sh: &mut Shared, below: &Below, d: &Delta) -> (Vec<(u32, u32)>,
     (pairs, rows)
 }
 
-/// One step over `below` for `top`: Y1, the edge delta, the symbol table, Y2's inputs (scoped
-/// when the top holds the rule's state). `changes` are (path, old content, new content) as text.
-pub fn step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[(String, Option<String>, Option<String>)]) -> StepOut {
-    let t0 = Instant::now();
-    let changes: Vec<&(String, Option<String>, Option<String>)> = changes.iter().filter(|c| c.1 != c.2).collect();
-    let mut out = StepOut { paths: changes.len(), ..Default::default() };
-    // Y1
+/// A path change as the step reads it: (path, old content, new content), contents as text.
+pub type PathEdit = (String, Option<String>, Option<String>);
+
+/// Y1's half of a step (the reference graph's derivation): the edge delta as `Refs` presence
+/// changes, Y1's step, and the reverse index updated.
+pub struct Xref {
+    pub refs: Vec<Change>,
+    pub y1: y1::Step,
+    pub refs_ms: f64,
+}
+
+/// Y1 over `changes` (which change content): Y1's `apply`, the edge delta as position rows, the
+/// reverse index.
+pub fn xref_step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[&PathEdit]) -> Xref {
     let y1c: Vec<y1::Change> = changes.iter().map(|(p, o, n)| y1::Change { path: sh.y1.it.intern(p), old: o.as_ref().map(|x| sh.y1.it.intern(x)), new: n.as_ref().map(|x| sh.y1.it.intern(x)) }).collect();
     let st = y1::apply(&mut sh.y1, below, &mut top.y1, &y1c);
-    out.y1_ms = st.ms;
-    // the edge delta as position rows; the reverse index
     let t = Instant::now();
-    let mut ch = refs_delta(sh, below, &top.y1, &top.rev, &st);
+    let refs = refs_delta(sh, below, &top.y1, &top.rev, &st);
     for &(s, t) in &st.edges_removed {
         top.rev.pull(t, &s);
     }
     for &(s, t) in &st.edges_added {
         top.rev.push(t, s);
     }
-    out.refs_changes = ch.len();
-    out.refs_ms = t.elapsed().as_secs_f64() * 1e3;
-    // the symbol table
+    Xref { refs, y1: st, refs_ms: t.elapsed().as_secs_f64() * 1e3 }
+}
+
+/// The symbol table over `changes` (the symbol table's derivation): the membership, then the
+/// table's presence changes.
+pub fn symbols_step(sh: &mut Shared, top: &mut Top, changes: &[&PathEdit]) -> (Vec<Change>, sym::Work) {
     let pc: Vec<PathChange> = changes.iter().map(|(p, o, n)| PathChange { path: ysym(p), old: o.as_deref().map(ysym), new: n.as_deref().map(ysym) }).collect();
     for c in &pc {
         match c.new {
@@ -233,24 +241,46 @@ pub fn step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[(String, O
             None => top.members.remove(&c.path),
         };
     }
-    let (sc, sw) = top.sym.apply(&mut sh.sym, &pc);
-    out.sym_changes = sc.len();
-    out.sym = sw;
-    ch.extend(sc);
+    top.sym.apply(&mut sh.sym, &pc)
+}
+
+/// Y2's inputs: the presence changes of both halves applied, scoped under the old state when
+/// the top holds the rule's state (then the rule's roots follow the imports).
+pub fn facts_step(top: &mut Top, mut ch: Vec<Change>) -> Option<dc::Scope> {
     sort_changes(&mut ch);
-    // Y2's inputs, scoped under the old state
-    let t = Instant::now();
     match top.rule.as_mut() {
         Some(rule) => {
             let scope = dc::scope(&top.facts, &ch);
             top.facts.apply(&ch);
             rule.apply(&scope);
-            out.scope = Some(scope);
+            Some(scope)
         }
-        None => top.facts.apply(&ch),
+        None => {
+            top.facts.apply(&ch);
+            None
+        }
     }
+}
+
+/// One step over `below` for `top`: Y1, the edge delta, the symbol table, Y2's inputs (scoped
+/// when the top holds the rule's state). `changes` are (path, old content, new content) as text.
+pub fn step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[PathEdit]) -> StepOut {
+    let t0 = Instant::now();
+    let changes: Vec<&PathEdit> = changes.iter().filter(|c| c.1 != c.2).collect();
+    let mut out = StepOut { paths: changes.len(), ..Default::default() };
+    let x = xref_step(sh, below, top, &changes);
+    out.y1_ms = x.y1.ms;
+    out.refs_changes = x.refs.len();
+    out.refs_ms = x.refs_ms;
+    let (sc, sw) = symbols_step(sh, top, &changes);
+    out.sym_changes = sc.len();
+    out.sym = sw;
+    let mut ch = x.refs;
+    ch.extend(sc);
+    let t = Instant::now();
+    out.scope = facts_step(top, ch);
     out.y2_ms = t.elapsed().as_secs_f64() * 1e3;
-    out.y1 = st;
+    out.y1 = x.y1;
     out.ms = t0.elapsed().as_secs_f64() * 1e3;
     out
 }
