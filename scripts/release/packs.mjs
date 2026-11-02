@@ -97,6 +97,9 @@ export function readChangesets(directory = join(ROOT, ".changeset")) {
     .map((file) => ({ file, text: readFileSync(join(directory, file), "utf8") }));
 }
 
+/** A changeset's summary: its text after the front matter, trimmed, which becomes the pack's changelog entry. */
+export const changesetSummary = (text) => text.replace(/^---\r?\n(?:[\s\S]*?\r?\n)?---/u, "").trim();
+
 /** Each package a changeset's front matter names, with its bump: `{ name, bump }`. */
 export function changesetEntries(text) {
   const front = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1] ?? "";

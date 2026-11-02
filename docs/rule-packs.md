@@ -14,14 +14,14 @@ Every pack lives under `packs/` in this repository and is published from there (
 |---|---|--:|---|
 | Cyclomatic complexity (limit 6) | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
 | JavaScript and TypeScript (ESLint core and eslint-plugin-unicorn) | language | 121 (36) | JavaScript or TypeScript source: ESLint's core rules apply to both; its eslint-plugin-unicorn rules run on JavaScript files only. |
-| TypeScript | language | 46 (18) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
+| TypeScript | language | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
 | Python | language | 160 (135) | Python source outside tests, scripts and docs |
 | PHP | language | 15 (5) | PHP source: `*.php` files, not Blade views |
 | Blade | language | 10 (8) | Blade templates: `*.blade.php` files |
 | Rust | language | 33 (17) | `*.rs` files |
 | SQL | language | 21 (19) | `*.sql` files |
 | Next.js | framework | 21 (21) | a `next` dependency |
-| Node.js | framework | 32 (6) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
+| Node.js | framework | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | 23 (21) | `*.vue` files |
 | React | framework | 0 | never yet: every port is still a candidate, and a pack with no rule that starts on is never recommended |
 

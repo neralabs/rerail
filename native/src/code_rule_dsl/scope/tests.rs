@@ -776,6 +776,38 @@ fn typescript_value_and_type_namespaces_are_separate() {
     );
 }
 
+/// The head of a qualified type name reads only the type namespace (typescript-eslint's
+/// `TSQualifiedName`), so a value-only binding never takes it; `typeof` and value member chains
+/// still read values.
+#[test]
+fn typescript_qualified_type_name_heads_read_types_only() {
+    // `foo` occurs as the import, the module string, the parameter and the head.
+    let source = "import * as foo from \"foo\";\nexport class A { constructor(foo: foo.Foo) {} }\n";
+    typescript(source, &[("foo", 2, NotRef), ("foo", 3, Local)]);
+    // The head resolves to the import, not to the parameter.
+    let table = table(GrammarDialect::TypeScript, source);
+    let head = table.reference(&occurrence(source, "foo", 3)).unwrap();
+    let binding = table.resolve(head, "foo").expect("the head resolves");
+    assert!(matches!(binding.site.form, Form::Import));
+    typescript(
+        "function f(foo: number) { let x: foo.Foo; let y: foo.a.b.C; }\n",
+        &[("foo", 1, Global), ("foo", 2, Global)],
+    );
+    typescript(
+        "function f(a: number) { let x: typeof a.b; a.b; }\n",
+        &[("a", 1, Local), ("a", 2, Local)],
+    );
+    typescript(
+        "namespace N { export namespace M { export type T = 1; } }\nenum E { A }\nclass C {}\nimport I = N.M;\nlet n: N.M.T; let e: E.A; let c: C.X; let i: I.T;\n",
+        &[
+            ("N", 2, Local),
+            ("E", 1, Local),
+            ("C", 1, Local),
+            ("I", 1, Local),
+        ],
+    );
+}
+
 #[test]
 fn typescript_declare_global_does_not_shadow() {
     typescript(

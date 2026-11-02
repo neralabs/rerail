@@ -112,6 +112,19 @@ capability on each start. It serves HTTPS with the certificate you pass (`--tls-
 start over plain HTTP unless you pass `--insecure-http`. Rerail's own clients check the certificate's recorded
 fingerprint before they send the capability.
 
+## Support bundles
+
+`rerail support-bundle` writes one file for you to attach to an issue, and only when you run it; it sends nothing
+(`src/cli/support-bundle.ts`). What goes in is an allowlist: versions, Rerail's state, rule ids and modes, a session's
+timeline by event kind and tool name, its steers as delivered, its violations by rule and line, and the end of the
+daemon's log. Your prompts, the agent's replies, tool input and output, source code and rule text are never read into
+it. The daemon's capabilities, home folders, the paths and names of your recorded repositories, your user name and the
+computer's name are replaced, and what looks like a secret or an email address is taken out; other absolute paths stay,
+patterns cannot catch everything, and steer text can quote your code, so read the file before you attach it
+([what it holds](troubleshooting.md#reporting-a-problem)). Issues are public.
+`/rerail-support-bundle` has your coding agent read the file with you, so it goes to the agent's provider like the
+rest of your session ([above](#your-coding-agents-provider)).
+
 ## Deleting your data
 
 - `rerail reset`, run inside a repository, deletes that repository's recorded history (sessions, events, audits) from

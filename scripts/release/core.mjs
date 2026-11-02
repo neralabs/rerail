@@ -66,6 +66,69 @@ export function changelogSection(text, version) {
   return lines.slice(start + 1, end === -1 ? undefined : end).join("\n").trim();
 }
 
+/**
+ * The first section of a changelog: `{ heading, released, body }`, `released` false for an unreleased heading
+ * (`Unreleased`, `<version> (unreleased)`), the body to the next `## ` heading, trimmed; null with no section.
+ */
+export function firstChangelogSection(text) {
+  const section = firstSection(text);
+  if (section === null) return null;
+  const rest = text.slice(section.index + section.length);
+  const next = /^## /mu.exec(rest);
+  return { heading: section.heading, released: unreleasedVersion(section.heading) === null, body: (next === null ? rest : rest.slice(0, next.index)).trim() };
+}
+
+/**
+ * A changelog section's lead: the prose before its first entry or `### ` heading, trimmed, `""` when it opens with one.
+ * It is the release's pitch to the people who upgrade (docs/release.md, "Release notes").
+ */
+export function changelogLead(section) {
+  const lines = section.split("\n");
+  const end = lines.findIndex((line) => line.startsWith("- ") || line.startsWith("### "));
+  return lines.slice(0, end === -1 ? undefined : end).join("\n").trim();
+}
+
+/**
+ * A changelog section's entries: each `- ` line with the indented lines under it, as one string each, blank lines
+ * between an entry's paragraphs kept, so an entry reads as it is written and is found again in an earlier text.
+ */
+export function changelogEntries(section) {
+  const entries = [];
+  const lines = section.split("\n");
+  let blanks = 0;
+  for (const line of lines) {
+    if (line.startsWith("- ")) {
+      entries.push(line);
+      blanks = 0;
+    } else if (line.trim() === "") {
+      blanks += 1;
+    } else if (entries.length > 0 && /^\s+\S/u.test(line)) {
+      entries[entries.length - 1] += `${"\n".repeat(blanks + 1)}${line}`;
+      blanks = 0;
+    } else {
+      blanks = 0;
+    }
+  }
+  return entries;
+}
+
+/**
+ * Why a release's changelog section, as firstChangelogSection reads it, has no lead for the people who upgrade, or
+ * null: a released (dated) section that opens with an entry. An unreleased section is not asked for one yet, and a
+ * section with no entries (the release had no notes) is not asked for one at all.
+ */
+export function changelogLeadRefusal(section) {
+  if (!section.released || changelogLead(section.body) !== "" || changelogEntries(section.body).length === 0) return null;
+  return `CHANGELOG.md's ${section.heading} section opens with an entry: lead it with a paragraph saying what this release gives the people who upgrade, written under \`## Unreleased\` on main (docs/release.md, "Release notes")`;
+}
+
+/** The entries of `after`'s first section that `before` (a changelog's earlier text, or null) does not hold. */
+export function newChangelogEntries(before, after) {
+  const section = firstChangelogSection(after);
+  if (section === null) return [];
+  return changelogEntries(section.body).filter((entry) => before === null || !before.includes(entry));
+}
+
 /** `package.json`'s text with its own `version` set to `version`, and nothing else changed. */
 export function setPackageVersion(text, version) {
   const updated = text.replace(/^( {2}"version": ")[^"]*(")/mu, `$1${version}$2`);
