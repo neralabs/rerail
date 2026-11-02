@@ -173,10 +173,21 @@ impl ContentStore {
             )?;
             insert(&connection, "INSERT OR IGNORE INTO temp.capture_tapes(tape_id)", "", tapes.iter().map(|&tape| [Value::Integer(tape)]))?;
             // `term_freq` before the vocabulary, so its insert trigger finds no predicate to mark.
+            // `RERAIL_CAPTURE_TAPES=1` keeps the tapes' frames, for the SQL fallback's lab
+            // (`RERAIL_LAB_FALLBACK`), whose relations read them through `nera_tree`.
+            if std::env::var_os("RERAIL_CAPTURE_TAPES").is_some() {
+                connection.execute_batch(
+                    "INSERT INTO capture.tape_objects SELECT t.* FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
+                )?;
+            } else {
+                connection.execute_batch(
+                    "INSERT INTO capture.tape_objects SELECT t.tape_id, t.source_id, t.canonical_hash_id, t.grammar_id, \
+                       t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation \
+                       FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
+                )?;
+            }
             connection.execute_batch(
-                "INSERT INTO capture.tape_objects SELECT t.tape_id, t.source_id, t.canonical_hash_id, t.grammar_id, \
-                   t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation \
-                   FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);
+                "
                  INSERT INTO capture.prefilter_sets SELECT s.* FROM temp.capture_tapes c JOIN main.prefilter_sets s USING(tape_id);
                  INSERT INTO capture.tape_kind_counts SELECT k.* FROM temp.capture_tapes c JOIN main.tape_kind_counts k USING(tape_id);
                  INSERT INTO capture.term_postings SELECT p.* FROM temp.capture_tapes c JOIN main.term_postings p USING(tape_id);

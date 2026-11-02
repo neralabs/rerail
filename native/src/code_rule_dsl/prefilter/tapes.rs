@@ -1,8 +1,11 @@
 //! The content store's tapes as `nera_tree` reads them (03 §17, the pure-SQL fallback): a tape's
 //! v9np image decoded from its `tape_objects` frame on first read, its `size` column read in
-//! place. The last few images are held (`HELD`), as SQLite holds pages; nothing per node is built
-//! beside them (decision 0026).
-use super::tree::{Shared, Structure};
+//! place. The last few images are held (`HELD`), as SQLite holds pages. With each image its
+//! parents are rebuilt by one stack pass over the sizes (as `TapeDoc` restores them), so a parent
+//! or an ancestor chain is read, not found by descent from the root; this is a reader's working
+//! state, never stored (decision 0026). `RERAIL_TREE_DESCENT=1` finds them by descent instead,
+//! for the lab's comparison (list step 12).
+use super::tree::{Shared, Structure, descend};
 use crate::code_rule_dsl::language;
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use rusqlite::{Connection, Result, ffi, functions::FunctionFlags};
@@ -16,7 +19,7 @@ const CODEC_ZSTD: i64 = 1;
 
 pub(super) struct StoreTapes {
     database: *mut ffi::sqlite3,
-    held: VecDeque<(i64, Arc<TapeImage>)>,
+    held: VecDeque<(i64, Arc<Held>)>,
     grammars: HashMap<i64, Arc<Grammar>>,
 }
 
@@ -24,12 +27,31 @@ pub(super) struct StoreTapes {
 // mutex `Shared` wraps this in, and the module (with this) is dropped when the connection closes.
 unsafe impl Send for StoreTapes {}
 
+/// A decoded tape and, unless descent is asked for, each node's parent (`u32::MAX` at the root).
+struct Held {
+    image: TapeImage,
+    parents: Option<Vec<u32>>,
+}
+
+fn parents(image: &TapeImage) -> Vec<u32> {
+    let mut parents = Vec::with_capacity(image.node_count());
+    let mut open: Vec<(u32, u32)> = Vec::new();
+    for i in 0..image.node_count() as u32 {
+        while open.last().is_some_and(|&(_, end)| end <= i) {
+            open.pop();
+        }
+        parents.push(open.last().map_or(u32::MAX, |&(at, _)| at));
+        open.push((i, i + image.subtree_size(i as usize)));
+    }
+    parents
+}
+
 fn invalid(message: impl Into<String>) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.into().into())
 }
 
 impl StoreTapes {
-    fn tape(&mut self, fid: i64) -> Result<Arc<TapeImage>> {
+    fn tape(&mut self, fid: i64) -> Result<Arc<Held>> {
         if let Some(at) = self.held.iter().position(|(held, _)| *held == fid) {
             let entry = self.held.remove(at).expect("held tape");
             let image = Arc::clone(&entry.1);
@@ -57,7 +79,9 @@ impl StoreTapes {
                 grammar
             }
         };
-        let image = Arc::new(TapeImage::from_bytes(&bytes, &grammar).map_err(invalid)?);
+        let image = TapeImage::from_bytes(&bytes, &grammar).map_err(invalid)?;
+        let parents = std::env::var_os("RERAIL_TREE_DESCENT").is_none().then(|| parents(&image));
+        let image = Arc::new(Held { image, parents });
         if self.held.len() == HELD {
             self.held.pop_back();
         }
@@ -69,10 +93,22 @@ impl StoreTapes {
 impl Structure for StoreTapes {
     fn size(&mut self, fid: i64, pre: usize) -> Result<usize> {
         let tape = self.tape(fid)?;
-        if pre >= tape.node_count() {
+        if pre >= tape.image.node_count() {
             return Err(invalid("tree node outside its tape"));
         }
-        Ok(tape.subtree_size(pre) as usize)
+        Ok(tape.image.subtree_size(pre) as usize)
+    }
+    fn ancestors(&mut self, fid: i64, node: usize, out: &mut Vec<i64>) -> Result<()> {
+        let tape = self.tape(fid)?;
+        let Some(parents) = &tape.parents else {
+            return descend(self, fid, node, out);
+        };
+        let mut at = *parents.get(node).ok_or_else(|| invalid("tree node outside its tape"))?;
+        while at != u32::MAX {
+            out.push(i64::from(at));
+            at = parents[at as usize];
+        }
+        Ok(())
     }
 }
 

@@ -32,6 +32,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O29 | Phase 4 / 9 | A recursive label through `not has not` settles one level deep: SIM300's `probably` misses `X == 1 + 2 + 3`, `X == [[1]]` (06 S7) | closed (2026-10-31): a sweep with complements sets or clears each roots verdict; S7 equal for every (rule, code) |
 | O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | closed (2026-10-31, decision 0022): S7's engine-only footprint peak is 477 MB on Metal (was 0.99 GB) and 447 MB on the CPU backend (was 575–607), measured as `phys_footprint_peak` after the audit. Freed heap pages are returned at stage ends; SQLite allocates from jemalloc; the GPU's label prefix, scratch and counts are sized by the run; roots stream into rows with digested structure keys. Left: the driver's fixed ~170 MB per GPU execution, and sparse host labels if the corpus grows |
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
+| O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | open: rewrite as joins over materialized, indexed neighbourhoods (spike S203) before the fallback has a driver (list step 20) |
 
 ## O1. Stale-fact detection after a crash
 
@@ -227,7 +228,7 @@ crates.io grammars, not Rerail's vendored and patched ones, so each must be reru
 5. Width distribution: documents above 65,536 nodes or 64 KiB of source (spike: 24 of 6,251).
 
 **Not yet decided:** where W's supertype memberships go in v9np (resolved by 0025's amendment: in the codes); whether the parent column is
-kept (only if SQL parent climbs prove hot: a climb was 1.6–3× faster than interval containment).
+kept (resolved 2026-11-02, 0025 amended: no; parents are rebuilt at decode).
 
 **Closure.** Run the five measurements on Rerail's grammars; record an accepted decision (cite
 0003 and the spike indexes); then copy P `experiments/tape-v8/src/{main.rs, sql.rs}` into
@@ -868,3 +869,13 @@ peaks at `derivation_inputs` with 0.12 rows/node. `no_relation_stores_a_row_per_
 assert at most 0.25 rows/node per table. The in-memory structures the linter first listed
 (`TapeDoc`'s records, `Facts`, the facts vtab's projection, `MetalNode`, Forte's and literal
 sub-grammars' trees) are readers' working state and stay.
+
+## O32. The SQL fallback's relations
+
+List step 12's lab: the fallback (`lower::fallback`) runs 2.21 G VM steps on the 63 batches where
+P runs 0.285 G and the production lowering 0.052 G. Each relation is a correlated `EXISTS` per
+scope row over an unindexed materialized set (`related_on_tape`), the shape the spike measured
+re-running its body per row (S203: 296.7 → 31.2 ms once materialized). **Closure:** relations as
+joins over each scope's neighbourhood from `nera_tree`, materialized once and indexed on
+`(fid, pre)`, measured in the lab against P before list step 20 gives the fallback a driver.
+

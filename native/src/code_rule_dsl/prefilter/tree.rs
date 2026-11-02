@@ -32,7 +32,14 @@ pub(super) trait Structure: Send {
     fn size(&mut self, fid: i64, pre: usize) -> Result<usize>;
     /// `node`'s ancestors, nearest first: by descent from the root, each step skipping siblings.
     fn ancestors(&mut self, fid: i64, node: usize, out: &mut Vec<i64>) -> Result<()> {
-        let end = self.size(fid, 0)?;
+        descend(self, fid, node, out)
+    }
+}
+
+/// `node`'s ancestors, nearest first, by descent from the root through `structure`'s sizes.
+pub(super) fn descend<S: Structure + ?Sized>(structure: &mut S, fid: i64, node: usize, out: &mut Vec<i64>) -> Result<()> {
+    {
+        let end = structure.size(fid, 0)?;
         if node >= end {
             return Err(invalid("tree node outside its tape"));
         }
@@ -44,7 +51,7 @@ pub(super) trait Structure: Send {
                 if crate::code_rule_dsl::budget::step_budget_exhausted() {
                     return Err(rusqlite::Error::SqliteFailure(ffi::Error::new(ffi::SQLITE_INTERRUPT), None));
                 }
-                let size = self.size(fid, child)?;
+                let size = structure.size(fid, child)?;
                 if size == 0 {
                     return Err(invalid("empty indexed subtree"));
                 }

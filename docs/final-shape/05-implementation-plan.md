@@ -148,6 +148,25 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 - Atom-keyed vocabulary (2026-11-02, list step 10): every `term` column (`term_postings`, `term_freq`, `term_node_freq`, `vocabulary_term`, `vocabulary_pending`) holds the term's atom; publication interns new texts in its own transaction (`INSERT INTO atoms(value) ... ON CONFLICT DO NOTHING`, dense). `atoms_by_value` serves text lookups and the anchored fill's prefix seeks. Literal sets stay text (a literal need not be a term). Store floor 2 (`content-v2.sqlite`), `PREFILTER_VERSION` 5. S7's store: vocabulary and atoms 4,168 → 2,964 KB, the store 10.1 → 8.9 MB; 710 keys = W on CPU and Metal.
 - Probes and `tid` (2026-11-02, list step 10): first/last byte sets are the probe's 1-character prefixes and suffixes (`daebe5db`). S199's word-boundary rule is for a word index: on the production path terms are whole leaf texts, and the only word index (`search_text_fts`, G's positional search) is `#[cfg(test)]` (`content_store/mod.rs:19`), so no code changes. `tid` is derived from the term postings, not stored (O7).
 
+- Check (2026-11-02, list step 12): `anchor_lab` against P on the same batches
+  (`scripts/profiling/lab-vs-p/`): 174 Python files, every pack policy (306 clauses, three merged
+  documents), P's own batching (one file each; P's run stopped at its 15-minute cap after 63
+  batches, 69 files), both labs in `RERAIL_LAB_BATCH` mode over those 63.
+
+  | Lowering | VM steps | Candidate rows | Execute CPU |
+  |---|---:|---:|---:|
+  | P (`cbee7a03`, its lab build) | 0.285 G | 879,555 | 11.8 s (P's crate unoptimized) |
+  | Rerail, production (`lower::batch`) | 0.052 G (0.18×) | 2,116,558 (2.4×) | 1.6 s |
+  | Rerail, SQL fallback (`lower::fallback`) | 2.21 G (7.7×) | 1,312,845 (1.5×) | 57 s |
+
+  The production lowering passes: 5.5× fewer steps than P. Its rows are 2.4× P's, because
+  relations, pattern parent hops and uncovered text stay supersets for the transducers (P decoded
+  them in SQL). The fallback fails the bar: its relations are correlated `EXISTS` per scope row
+  over unindexed materialized sets, which the spike measured re-running per row (S203, 296.7 →
+  31.2 ms by materializing); open item O32. Parents: on 20 of the captures the fallback's execute
+  CPU is 1.55–1.63 s with parents rebuilt at decode against 3.53–3.63 s by descent (same 0.143 G
+  steps; load 27), so the store reader rebuilds them (decision 0025 amended).
+
 ### Phase 4: transducer runtime (§3, §5, §7; D2, D3, D9, E5–E9, F1, F2)
 
 **Base: N `cr/packed.rs` + `cr/packed/*`.** This is about 24k lines, already ported into Rerail's crate and tape (3cbf7487). It is the only source with all four backends, including **`MetalInterpreter`** (`metal_program_backend::compile_interpreter`, `metal_batch_runtime.metal`), which D9's "interpreted first" needs. Tempo HEAD removed its opcode interpreter.

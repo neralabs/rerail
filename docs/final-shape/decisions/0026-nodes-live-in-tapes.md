@@ -80,13 +80,16 @@ stored.
 - A descent from the root is the spike's fallback for a missing parent, and was the slow side:
   a top-down recursive walk took 33.5 s against the leaf climb (D36).
 
-**Rerail's tape differs here.** v9np has no parent column (decision 0025: "revisit only if SQL
-parent climbs prove hot"; P measured a climb 1.6–3× faster than interval containment). In memory,
-`TapeDoc` rebuilds parents with a stack at restore, which this decision allows. In SQL,
-`nera_tree` finds a point parent by descent from the root (`prefilter/tapes.rs`): O(depth ×
-siblings), the spike's slow side. The spike's remedy is a parent-delta column in the tape, as
-rec6's `par` (a tape column, not a structure beside it). It is a tape-format change for 0025, to
-be taken when the fallback's climbs are measured (list step 12's lab check).
+**Rerail's tape differs here, and keeps no parent column** (decided 2026-11-02 after list step
+12, decision 0025 amended). The spike stored the delta because its SQL read the tape blob in
+place (`substr` on rec6), so a climb had nothing to compute parents from. Rerail's tapes are zstd
+frames, decoded whole before any read; one stack pass over the sizes at decode gives every
+parent, so a climb is the spike's O(1) arithmetic without the stored bytes. `TapeDoc` does this at
+restore, and the SQL fallback's reader (`prefilter/tapes.rs`) now does too. Measured on the lab's
+captures: the fallback's execute CPU is 1.55–1.63 s with parents rebuilt at decode and 3.53–3.63 s
+by descent (same VM steps), the spike's D36 again (descent the slow side). Revisit if a reader
+ever reads tapes in place without decoding them (the GPU slabs, list step 28, upload decoded
+columns, so they rebuild parents in the same pass).
 
 **What a bare index is.** A key (a kind, a term, a predicate) to the set of nodes that have it:
 postings at rest, a node set (`space::NodeSet`, bits over a document's nodes) in memory. It holds no

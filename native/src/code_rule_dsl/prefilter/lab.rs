@@ -7,6 +7,8 @@
 //!   [RERAIL_LAB_BATCH=1] (production batches: each capture's requested files, captures spread
 //!     over the run, and a warm vocabulary, which a corpus store fills once per term)
 //!   [RERAIL_LAB_DUMP=<dir>] (writes each policy's lowered stages per language)
+//!   [RERAIL_LAB_FALLBACK=1] (lowers as the pure-SQL fallback, `lower::fallback`: relations read
+//!     the tape through `nera_tree`)
 //!   cargo test --release --lib -- --ignored anchor_lab --nocapture
 //!
 //! From Pulling-it-all-together's `matcher/anchors/sql/lab.rs`, pointed at the content store: a
@@ -59,7 +61,11 @@ fn run(policy: &str) {
         let statistics = store
             .candidate_transaction(false, |db| Statistics::read(db, plans.iter().map(|plan| (lang, *plan))))
             .unwrap();
-        lower::batch(plans, lang, fids, &statistics)
+        if std::env::var_os("RERAIL_LAB_FALLBACK").is_some() {
+            lower::fallback(plans, lang, fids, &statistics)
+        } else {
+            lower::batch(plans, lang, fids, &statistics)
+        }
     };
     let run_statement = |store: &ContentStore, statement: &lower::Statement, counter: &Arc<AtomicU64>, emit: &mut dyn FnMut(usize)| {
         store
@@ -304,3 +310,49 @@ fn a_capture_replays_to_the_candidates_of_its_statement() {
     assert_eq!(sizes, [(3, 0)]);
 }
 
+
+/// Captures (`RERAIL_SQL_PROFILE_DIR`) of the candidate SQL over a corpus, for the lab's check
+/// against P on the same files (list step 12): every `.py` file of `RERAIL_LAB_CORPUS` is stored
+/// and published, then the Python pack's policies are selected over `RERAIL_LAB_BATCHES` (a JSON
+/// array of arrays of file names, P's batches) or one batch of every file.
+///   RERAIL_LAB_CORPUS=<dir> RERAIL_SQL_PROFILE_DIR=<out> [RERAIL_LAB_BATCHES=<json>]
+///   [RERAIL_CAPTURE_TAPES=1] cargo test --lib -- --ignored capture_lab_corpus
+#[cfg(test)]
+#[test]
+#[ignore = "requires a corpus directory"]
+fn capture_lab_corpus() {
+    use crate::code_rule_dsl::language::{self, GrammarDialect};
+    let corpus = std::path::PathBuf::from(std::env::var("RERAIL_LAB_CORPUS").expect("RERAIL_LAB_CORPUS"));
+    assert!(std::env::var_os("RERAIL_SQL_PROFILE_DIR").is_some(), "RERAIL_SQL_PROFILE_DIR");
+    let store = open(&temp());
+    let mut names = std::fs::read_dir(&corpus).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".py")).collect::<Vec<_>>();
+    names.sort();
+    let tapes = names
+        .iter()
+        .map(|name| (name.clone(), super::tests::put(&store, &std::fs::read_to_string(corpus.join(name)).unwrap(), GrammarDialect::Python).0))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let pack = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python");
+    let mut documents = Vec::new();
+    for dir in [pack.join("rules"), pack.join("candidates/rules")] {
+        documents.extend(std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "json")));
+    }
+    documents.sort();
+    let compiled = documents
+        .iter()
+        .filter_map(|path| {
+            crate::code_rule_dsl::CodeRuleDslRuntime::compile(std::fs::read_to_string(path).unwrap(), "json".to_owned(), crate::code_rule_dsl::test_support::CAPABILITIES.to_owned()).ok()
+        })
+        .collect::<Vec<_>>();
+    let plans = super::plans::plans(compiled.iter().map(|c| c.inner.as_ref()));
+    let tag = u32::from(language::tape_tag(GrammarDialect::Python).unwrap());
+    let refs = plans[&tag].iter().map(Arc::as_ref).collect::<Vec<_>>();
+    let batches: Vec<Vec<String>> = match std::env::var("RERAIL_LAB_BATCHES") {
+        Ok(path) => serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap(),
+        Err(_) => vec![names.clone()],
+    };
+    for batch in &batches {
+        let ids = batch.iter().filter_map(|name| tapes.get(name).copied()).collect::<Vec<_>>();
+        super::select_indexed_sql(&store, tag, &refs, &ids).unwrap();
+    }
+    eprintln!("captured {} batches of {} files, {} policies, {} plans", batches.len(), tapes.len(), compiled.len(), refs.len());
+}
