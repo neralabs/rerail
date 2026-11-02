@@ -253,8 +253,49 @@ impl Micro {
         (0..self.texts.len()).map(|slot| self.slot(program, slot, tape)).collect()
     }
 
-    /// Slot `slot`'s bits on `tape` (`texts`).
+    /// Slot `slot`'s bits on `tape` (`texts`): the term index's row where the tape has it
+    /// (`R[tid]`, `prefilter::terms`), else each node's text tested.
     pub(in crate::code_rule_dsl) fn slot(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
+        if let Some(row) = tape.transducer_text_row(&self.slot_key(program, slot)) {
+            crate::code_rule_dsl::prof::count("texts.indexed", 1);
+            // `RERAIL_TEXTS_CHECK`: the index's row against the text's.
+            if std::env::var_os("RERAIL_TEXTS_CHECK").is_some() {
+                let scanned = self.scan(program, slot, tape);
+                if scanned.as_deref() != Some(&row[..]) {
+                    crate::code_rule_dsl::prof::count("texts.check_differ", 1);
+                    eprintln!("TEXTS differ: {}", self.slot_key(program, slot));
+                } else {
+                    crate::code_rule_dsl::prof::count("texts.check_same", 1);
+                }
+            }
+            return Some(row.to_vec());
+        }
+        crate::code_rule_dsl::prof::count("texts.scanned", 1);
+        self.scan(program, slot, tape)
+    }
+
+    /// Whether node `node`'s text passes slot `slot`'s test (its kind aside).
+    pub(in crate::code_rule_dsl) fn test(&self, program: &Program, slot: usize, tape: &TapeDoc, node: u32) -> Option<bool> {
+        let (value, _) = self.texts[slot];
+        let mut work = 0;
+        program.value_programs[usize::from(value)].is_match(tape.transducer_text(node), &program.strings, &mut work).ok()
+    }
+
+    /// Slot `slot`'s test as the vocabulary's predicate: (expression, literal) for an equality, a
+    /// prefix (an anchored regex) or a regex; None for a Lua pattern.
+    pub(in crate::code_rule_dsl) fn predicate(&self, program: &Program, slot: usize) -> Option<(String, bool)> {
+        let (value, _) = self.texts[slot];
+        let string = |index: u16| String::from_utf8(program.strings.get(usize::from(index))?.clone()).ok();
+        match &program.predicates[usize::from(value)] {
+            TextPredicate::Equal(index) => Some((string(*index)?, true)),
+            TextPredicate::Prefix(index) => Some((format!("^{}", regex_syntax::escape(&string(*index)?)), false)),
+            TextPredicate::Regex { source, .. } => Some((string(*source)?, false)),
+            TextPredicate::LuaPattern { .. } => None,
+        }
+    }
+
+    /// Slot `slot`'s bits on `tape`, each node's text tested.
+    fn scan(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
         let (value, kind) = self.texts[slot];
         let len = tape.transducer_len();
         let mut bits = vec![0_u64; len.div_ceil(64)];

@@ -902,5 +902,18 @@ interpreter's and JIT's parity. They skip the grid executor's comparison only wh
 label passes (44 launches on S7) and the set steps (1).
 
 **Closure:** the grid executor's frontier waves planned from the batch (its plan counts its
-launches, as `label_passes` does) or enqueued on the device (list step 17). Otherwise it is removed
+launches, as `label_passes` does). List step 17 (decision 0027) did not enqueue them on the device:
+Metal cannot add rounds it did not encode, and the device loops it built are threadgroup loops. Otherwise it is removed
 with the copies it belongs to (list step 31).
+
+## O34. Device rounds for groups a threadgroup cannot hold
+
+Decision 0027 runs a device-decided loop as a threadgroup's loop inside one dispatch: label groups
+(`Runner::group`) and file-local lattice FIX (`metal_lattice`). A recursive group that holds
+interpreter tasks or per-clause pattern kernels cannot be one threadgroup's loop. It keeps
+host-planned rounds with device early exit and a rerun. On S7 there are none (8 groups fused, 0
+unfused). G's grid executor's frontier waves stay as O33 describes them. Widened or non-flat
+lattices run on the CPU.
+
+**Closure:** such groups lowered to micro walks (then they fuse), or measured as rare enough on the
+full corpus that host rounds are the shape; G's executor goes with O33.

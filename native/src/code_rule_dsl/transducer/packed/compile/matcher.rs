@@ -782,6 +782,14 @@ impl LoweredWave {
             .collect()
     }
 
+    /// Every program the wave walks: each clause's own labels' and its root program.
+    pub(in crate::code_rule_dsl) fn walked_programs(&self) -> Vec<&Program> {
+        self.clauses
+            .iter()
+            .flat_map(|clause| clause.labels.defs.iter().filter_map(Label::program).chain(std::iter::once(&clause.program)))
+            .collect()
+    }
+
     /// Each clause's root program, in clause order.
     pub(in crate::code_rule_dsl) fn programs(&self) -> Vec<Program> {
         self.clauses.iter().map(|clause| clause.program.clone()).collect()

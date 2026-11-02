@@ -31,6 +31,7 @@ pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;
 #[allow(dead_code)]
 mod reader;
 pub(in crate::code_rule_dsl) mod sets;
+pub(in crate::code_rule_dsl) mod terms;
 pub(crate) mod tapes;
 mod tree;
 mod values;

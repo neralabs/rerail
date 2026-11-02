@@ -1537,6 +1537,9 @@ pub(super) struct TapeDoc {
     /// Derived classes (`with_labels`): a bitset over the nodes per class from
     /// `DERIVED_CLASS_BASE`.
     labels: Arc<Vec<Vec<u64>>>,
+    /// Text tests read from the term index (`with_texts`, `prefilter::terms`, `R[tid]`): per
+    /// slot key (`Micro::slot_key`), a bit per node.
+    texts: Arc<std::collections::BTreeMap<String, Arc<Vec<u64>>>>,
     /// A host's guests (`embed`); the host a guest reads links to them weakly, as they hold it.
     guests: Guests,
     /// A guest's link to the file it is embedded in.
@@ -1895,6 +1898,7 @@ impl TapeDoc {
             kind_overrides: Arc::new(kind_overrides),
             supertypes: Arc::new(supertypes),
             labels: Arc::new(Vec::new()),
+            texts: Arc::default(),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
         })
@@ -2168,6 +2172,19 @@ impl TapeDoc {
             labels,
             ..self.clone()
         }
+    }
+
+    /// This tape with its text tests' rows from the term index (`prefilter::terms`).
+    pub(super) fn with_texts(&self, texts: std::collections::BTreeMap<String, Arc<Vec<u64>>>) -> Self {
+        Self {
+            texts: Arc::new(texts),
+            ..self.clone()
+        }
+    }
+
+    /// A text test's row from the term index, by its slot key (`with_texts`).
+    pub(super) fn transducer_text_row(&self, key: &str) -> Option<&Arc<Vec<u64>>> {
+        self.texts.get(key)
     }
 
     /// The node at a preorder ordinal: `root.adopt(doc.node(ordinal))` is the node ast-grep

@@ -137,7 +137,15 @@ impl Aggregate<i64, Option<i64>> for FlatJoin {
 /// Semi-naive waves over the component's graph: a wave re-evaluates the dependents of the nodes that changed in the
 /// previous one, each from all of its inputs (the seed, copy sources and binary transfers), in `lat`. A node that
 /// has changed `widen` times takes `lat.widen` of its next value; a lattice of unbounded height needs one.
-fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn Lattice, widen: Option<u32>) -> Result<String> {
+/// Where `lattice_fixpoint` solves: the CPU here, or the device's file-local FIX waves (list step
+/// 17, `transducer::packed::metal_lattice`) for the flat lattice without widening.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::code_rule_dsl) enum Binding {
+    Cpu,
+    Metal,
+}
+
+fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn Lattice, flat: bool, widen: Option<u32>, binding: Binding) -> Result<String> {
     if !lat.finite() && widen.is_none() {
         return Err(user_err(format!("unbounded lattice for {p}: declare `widen k`")));
     }
@@ -193,6 +201,18 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
         }
         x
     };
+    // The device's FIX waves (one dispatch, a threadgroup per component) where it solves the same system.
+    #[cfg(target_os = "macos")]
+    if binding == Binding::Metal && flat && widen.is_none() && !absorb {
+        let copies = copies.iter().map(|&(a, b)| (a as u32, b as u32)).collect::<Vec<_>>();
+        let bins = bins.iter().map(|&(c, o, l, r)| (c as u32, o, l as u32, r as u32)).collect::<Vec<_>>();
+        let system = crate::code_rule_dsl::transducer::packed::metal_lattice::System { seeds: &seed, copies: &copies, bins: &bins };
+        let solved = crate::code_rule_dsl::transducer::packed::metal_lattice::solve(&system)
+            .map_err(|error| user_err(format!("lattice_fixpoint on Metal: {error:?}")))?;
+        crate::code_rule_dsl::prof::count("lattice.device_components", solved.components);
+        return finish(conn, p, target, solved.values, solved.waves, solved.visits, t);
+    }
+    let _ = binding;
     let mut val = seed.clone();
     let mut frontier: Vec<u32> = (0..n as u32).filter(|&v| val[v as usize] != BOT).collect();
     let (mut stamp, mut waves, mut visits) = (vec![0u32; n], 0u32, 0u64);
@@ -218,6 +238,11 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
         frontier = upd.iter().map(|u| u.0).collect();
         for (v, x) in upd { val[v as usize] = x; }
     }
+    finish(conn, p, target, val, waves, visits, t)
+}
+
+/// The solved values written where `target` says, with the run's summary.
+fn finish(conn: &Connection, p: &str, target: Option<&str>, val: Vec<i64>, waves: u32, visits: u64, t: Instant) -> Result<String> {
     let solve = t.elapsed();
     if let Some(name) = target.and_then(|t| t.strip_prefix('@')) {
         let rows = val.iter().filter(|&&v| v != BOT).count();
@@ -315,16 +340,23 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
         Ok(flat_bin(&o, ctx.get(1)?, ctx.get(2)?))
     })?;
     db.create_aggregate_function(c"flat_join", 1, det, FlatJoin)?;
-    // lattice_fixpoint(p[, target[, lattice[, widen]]]): the lattice by declared name (`flat` by default), and the
-    // changes after which a node widens. A NULL target is the default `<p>_out`.
-    for nargs in [1, 2, 3, 4] {
+    // lattice_fixpoint(p[, target[, lattice[, widen[, binding]]]]): the lattice by declared name (`flat` by
+    // default), the changes after which a node widens, and where it solves (`cpu`, the default, or `metal`). A NULL
+    // target is the default `<p>_out`.
+    for nargs in [1, 2, 3, 4, 5] {
         db.create_scalar_function(c"lattice_fixpoint", nargs, FunctionFlags::SQLITE_UTF8, |ctx| {
             let p: String = ctx.get(0)?;
             let target: Option<String> = if ctx.len() > 1 { ctx.get(1)? } else { None };
-            let lat = lattice(&if ctx.len() > 2 { ctx.get::<String>(2)? } else { "flat".to_owned() })?;
+            let name = if ctx.len() > 2 { ctx.get::<Option<String>>(2)?.unwrap_or_else(|| "flat".to_owned()) } else { "flat".to_owned() };
+            let lat = lattice(&name)?;
             let widen: Option<i64> = if ctx.len() > 3 { ctx.get(3)? } else { None };
+            let binding = match (if ctx.len() > 4 { ctx.get::<Option<String>>(4)? } else { None }).as_deref() {
+                None | Some("cpu") => Binding::Cpu,
+                Some("metal") => Binding::Metal,
+                Some(other) => return Err(user_err(format!("lattice_fixpoint: unknown binding `{other}`"))),
+            };
             let conn = unsafe { ctx.get_connection()? };
-            lattice_fixpoint(&conn, &p, target.as_deref(), &*lat, widen.map(|k| k.max(0) as u32))
+            lattice_fixpoint(&conn, &p, target.as_deref(), &*lat, name == "flat", widen.map(|k| k.max(0) as u32), binding)
         })?;
     }
     db.create_scalar_function(c"set_fixpoint_open", 1, FunctionFlags::SQLITE_UTF8, |ctx| {

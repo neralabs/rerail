@@ -178,6 +178,8 @@ impl Wave {
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("1.tapes");
         let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
+        // The walks' text tests from the term index (`R[tid]`, list step 17).
+        let docs = crate::code_rule_dsl::prof::time("demand.texts", || self.texts(graph.store(), &tapes, docs))?;
         let metal = cfg!(target_os = "macos")
             && matches!(self.backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground);
         let programs = self.lowered.programs();
@@ -232,6 +234,35 @@ impl Wave {
         }
         self.chunks.push(Chunk { candidates });
         Ok(Some(demand))
+    }
+
+    /// `docs` with every text test the wave's walks make read from the term index (03 §16 item
+    /// 4, `prefilter::terms`): one slot per distinct test (`Micro::slot_key`). `RERAIL_TEXTS=scan`
+    /// tests each node's text instead.
+    fn texts(&self, store: &ContentStore, tapes: &[Arc<Tape>], docs: Vec<crate::code_rule_dsl::tape::TapeDoc>) -> StoreResult<Vec<crate::code_rule_dsl::tape::TapeDoc>> {
+        use crate::code_rule_dsl::tape::TapeDoc;
+        use crate::code_rule_dsl::prefilter::terms::{TextSlot, rows};
+        use crate::code_rule_dsl::transducer::packed::Micro;
+        if std::env::var("RERAIL_TEXTS").is_ok_and(|mode| mode == "scan") {
+            return Ok(docs);
+        }
+        let walks = self.lowered.walked_programs().into_iter().filter_map(|program| Micro::of(program).map(|walk| (walk, program))).collect::<Vec<_>>();
+        let mut seen = std::collections::HashSet::new();
+        let mut slots = Vec::new();
+        for (walk, program) in &walks {
+            for slot in 0..walk.texts.len() {
+                let key = walk.slot_key(program, slot);
+                let Some((expression, literal)) = walk.predicate(program, slot) else { continue };
+                if !seen.insert(key.clone()) {
+                    continue;
+                }
+                let kind = walk.texts[slot].1;
+                slots.push(TextSlot { key, expression, literal, kind, confirm: Box::new(move |tape: &TapeDoc, node| walk.test(program, slot, tape, node)) });
+            }
+        }
+        let ids = tapes.iter().map(|tape| tape.id.row()).zip(&docs).collect::<Vec<_>>();
+        let rows = rows(store, self.lang, &ids, &slots)?;
+        Ok(docs.iter().zip(rows).map(|(doc, rows)| if rows.is_empty() { doc.clone() } else { doc.with_texts(rows) }).collect())
     }
 
     /// Per clause, per tape: the prefilter's candidates (one statement for every clause's plan over

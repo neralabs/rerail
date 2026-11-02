@@ -50,6 +50,8 @@ mod metal_program_backend;
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::set_steps;
 #[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) use metal_program_backend::lattice as metal_lattice;
+#[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::{RootJobs, RootsFound};
 
 #[cfg(all(test, target_os = "macos"))]

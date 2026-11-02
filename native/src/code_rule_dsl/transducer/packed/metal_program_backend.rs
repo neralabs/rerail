@@ -38,6 +38,8 @@ pub(super) fn metrics() -> (usize, usize) {
 pub(super) mod label_passes;
 #[path = "metal_set_steps.rs"]
 pub(in crate::code_rule_dsl) mod set_steps;
+#[path = "metal_lattice.rs"]
+pub(in crate::code_rule_dsl) mod lattice;
 
 const METAL_JIT_CACHE_LIMIT: usize = 32;
 pub(super) const EXECUTION_LANES: usize = 64;

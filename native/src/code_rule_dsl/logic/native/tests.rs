@@ -138,3 +138,52 @@ fn symbols_are_the_stores_atoms() {
     let atoms: i64 = db.query_row("SELECT count(*) FROM atoms WHERE value IN ('pkg', 'mod', 'f', 'pkg.mod', 'pkg.mod.f')", [], |r| r.get(0)).unwrap();
     assert_eq!(atoms, 5);
 }
+
+/// The device's file-local FIX waves (list step 17) solve the CPU's system: many components (as
+/// files), with chains, cycles, transfers and conflicting seeds, give the same values on both.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn the_device_fix_waves_reach_the_cpus_fixpoint() {
+    let db = connection();
+    let (mut seeds, mut copies, mut bins) = (Vec::new(), Vec::new(), Vec::new());
+    // 300 components of 40 cells: a chain with a back edge (a cycle), a fork, and transfers.
+    let mut state = 7_u64;
+    let mut next = || {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state >> 33
+    };
+    for component in 0..300_i64 {
+        let base = component * 40;
+        seeds.push(format!("({base}, {})", next() % 5));
+        if component % 3 == 0 {
+            seeds.push(format!("({}, {})", base + 20, next() % 5));
+        }
+        for at in 1..40 {
+            copies.push(format!("({}, {})", base + at, base + at - 1));
+        }
+        copies.push(format!("({base}, {})", base + 39));
+        for _ in 0..5 {
+            let (cell, left, right) = (base + (next() % 40) as i64, base + (next() % 40) as i64, base + (next() % 40) as i64);
+            let op = ["+", "-", "*", "/"][(next() % 4) as usize];
+            bins.push(format!("({cell}, '{op}', {left}, {right})"));
+        }
+    }
+    db.execute_batch(&format!(
+        "CREATE TEMP TABLE d_seed(c0, c1); INSERT INTO d_seed VALUES {};
+         CREATE TEMP TABLE d_copy(c0, c1); INSERT INTO d_copy VALUES {};
+         CREATE TEMP TABLE d_bin(c0, c1, c2, c3); INSERT INTO d_bin VALUES {};
+         CREATE TEMP TABLE cpu_out(c0 INTEGER PRIMARY KEY, c1); CREATE TEMP TABLE metal_out(c0 INTEGER PRIMARY KEY, c1);",
+        seeds.join(","),
+        copies.join(","),
+        bins.join(",")
+    ))
+    .unwrap();
+    let on_cpu = db.query_row("SELECT lattice_fixpoint('d', 'cpu_out')", [], |r| r.get::<_, String>(0)).unwrap();
+    let on_metal = db.query_row("SELECT lattice_fixpoint('d', 'metal_out', 'flat', NULL, 'metal')", [], |r| r.get::<_, String>(0)).unwrap();
+    // rows, waves, visits, solve ms, total ms.
+    eprintln!("lattice FIX: cpu {on_cpu}; metal {on_metal}");
+    let cpu = pairs(&db, "SELECT c0, c1 FROM cpu_out ORDER BY c0");
+    assert_eq!(cpu.len(), 12_000, "every cell is reached");
+    assert!(cpu.iter().any(|&(_, v)| v == TOP) && cpu.iter().any(|&(_, v)| v != TOP));
+    assert_eq!(pairs(&db, "SELECT c0, c1 FROM metal_out ORDER BY c0"), cpu);
+}
