@@ -1,20 +1,18 @@
 //! One path per edit: per-content exports change → Y1 `apply` (the maintained reference graph)
 //! → the step's edge delta as Y2's `Refs` presence changes → the symbol table's step (`sym`) →
-//! Y2's scoped updates (dead code, `exported-families`) → findings delta; the three small plans
-//! through M2 (D1 skip, else a from-scratch run). No dataflow anywhere in the path.
+//! Y2's scoped update (dead code) → findings delta. No dataflow anywhere in the path. As copied
+//! from facts-b, less `exported-families` and the three small plans (M2), which are not ported.
 //!
 //! Every component is layered the same way: a frozen base, a frozen overlay per cluster of
 //! worktrees (Spike B's commit-date ranges, plurality membership), and per worktree the rows that
 //! differ. A layer is built by the same step as an edit: the base from nothing (the rules from
 //! scratch over it), an overlay and a worktree as the edit that turns the layer below into it.
-use super::m2::{M2Step, M2};
 use super::sym::{self, PathChange, SymShared, SymState};
-use crate::lmap::LMap;
-use crate::y2::dc::{self, Dc};
-use crate::y2::ef::{self, Ef};
-use crate::y2::facts::{sort_changes, sym as ysym, Change, Facts, Row, Tab, Val};
-use crate::ygraph::path;
-use crate::ygraph::world::{self as y1, Base, Below, Delta, PathRec};
+use crate::code_rule_dsl::facts::lmap::LMap;
+use crate::code_rule_dsl::facts::y2::dc::{self, Dc};
+use crate::code_rule_dsl::facts::y2::facts::{sort_changes, sym as ysym, Change, Facts, Row, Tab, Val};
+use crate::code_rule_dsl::facts::ygraph::path;
+use crate::code_rule_dsl::facts::ygraph::world::{self as y1, Base, Below, Delta, PathRec};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::time::Instant;
 
@@ -39,7 +37,6 @@ pub struct Top {
     pub sym: SymState,
     pub facts: Facts,
     pub dc: Option<Dc>,
-    pub ef: Option<Ef>,
     /// Reverse edge index: target def → source defs (Y1's DefIds).
     pub rev: LMap<u32, Vec<u32>>,
     /// path → content (Y2's interner)
@@ -60,7 +57,6 @@ impl Top {
             sym: l.top.sym.view(),
             facts: l.top.facts.view(),
             dc: l.top.dc.as_ref().map(Dc::view),
-            ef: l.top.ef.as_ref().map(Ef::view),
             rev: l.top.rev.view(),
             members: l.top.members.view(),
         }
@@ -71,9 +67,6 @@ impl Top {
         self.facts.freeze();
         if let Some(d) = self.dc.as_mut() {
             d.freeze();
-        }
-        if let Some(e) = self.ef.as_mut() {
-            e.freeze();
         }
         self.rev.freeze();
         self.members.freeze();
@@ -86,13 +79,11 @@ impl Top {
     pub fn bytes(&self, layer: bool) -> serde_json::Value {
         let (ft, fl) = self.facts.bytes();
         let (dt, dl, _) = self.dc.as_ref().map_or((0, 0, 0), Dc::bytes);
-        let (et, el, _) = self.ef.as_ref().map_or((0, 0, 0), Ef::bytes);
         let pick = |t: usize, l: usize| if layer { l } else { t };
         serde_json::json!({
             "sym": pick(self.sym.top_bytes(), self.sym.layer_bytes()),
             "y2_inputs": pick(ft, fl),
             "dc": pick(dt, dl),
-            "ef": pick(et, el),
             "rev": pick(self.rev.top_bytes(), self.rev.layer_bytes(0)),
             "members": pick(self.members.top_bytes(), self.members.layer_bytes(0)),
         })
@@ -111,9 +102,6 @@ pub struct StepOut {
     pub sym_changes: usize,
     pub y2_ms: f64,
     pub dc: Option<dc::Stats>,
-    pub ef: Option<ef::Stats>,
-    pub m2: Option<M2Step>,
-    pub m2_ms: f64,
     pub ms: f64,
     /// (plan, finding, introduced)
     #[serde(skip)]
@@ -124,7 +112,6 @@ pub struct StepOut {
 }
 
 pub const DEAD_CODE: &str = "unreachable-internal-symbols";
-pub const FAMILIES: &str = "exported-families";
 
 /// A position row of `Refs` (source def's start → target def's start).
 fn refs_row(p: u32, s: u32, tp: u32, ts: u32) -> Row {
@@ -255,25 +242,19 @@ pub fn step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[(String, O
     sort_changes(&mut ch);
     // Y2
     let t = Instant::now();
-    match (top.dc.as_mut(), top.ef.as_mut()) {
-        (Some(dc), Some(ef)) => {
+    match top.dc.as_mut() {
+        Some(dc) => {
             let mut pd = dc.prepare(&top.facts, &ch);
             let scope = std::mem::take(&mut pd.scope);
-            let pe = ef.prepare(&top.facts, &ch);
             top.facts.apply(&ch);
             let sd = dc.finish(&top.facts, pd);
-            let se = ef.finish(&top.facts, pe);
             for (f, added) in &sd.delta {
-                out.delta.push((DEAD_CODE.into(), crate::y2::facts::show_row(&dc_row(f)), *added));
-            }
-            for (f, added) in &se.delta {
-                out.delta.push((FAMILIES.into(), crate::y2::facts::show_row(&ef_row(f)), *added));
+                out.delta.push((DEAD_CODE.into(), crate::code_rule_dsl::facts::y2::facts::show_row(&dc_row(f)), *added));
             }
             out.dc = Some(sd);
             out.scope = Some(scope);
-            out.ef = Some(se);
         }
-        _ => top.facts.apply(&ch),
+        None => top.facts.apply(&ch),
     }
     out.y2_ms = t.elapsed().as_secs_f64() * 1e3;
     out.y1 = st;
@@ -285,24 +266,17 @@ pub fn dc_row(f: &dc::Finding) -> Vec<Val> {
     vec![Val::S(f.0), Val::Int(f.1), Val::Int(f.2), Val::S(f.3), Val::S(ysym(f.4))]
 }
 
-pub fn ef_row(f: &ef::Finding) -> Vec<Val> {
-    vec![Val::S(f.0), Val::Int(f.1), Val::Int(f.2), Val::S(ysym(f.3)), Val::S(f.4)]
-}
-
 /// The base layer: every member added to nothing (the same step as an edit: from nothing its
 /// changes are every row), then the rules from scratch over it.
 pub fn base_layer(sh: &mut Shared, members: &[(String, String)]) -> (Layer, serde_json::Value) {
     let t = Instant::now();
-    let mut top = Top { y1: Delta::default(), sym: SymState::default(), facts: Facts::default(), dc: None, ef: None, rev: LMap::default(), members: LMap::default() };
+    let mut top = Top { y1: Delta::default(), sym: SymState::default(), facts: Facts::default(), dc: None, rev: LMap::default(), members: LMap::default() };
     let changes: Vec<(String, Option<String>, Option<String>)> = members.iter().map(|(p, h)| (p.clone(), None, Some(h.clone()))).collect();
     let st = step(sh, &Below::default(), &mut top, &changes);
     let t1 = Instant::now();
     top.dc = Some(Dc::scratch(&top.facts));
     let dc_ms = t1.elapsed().as_secs_f64() * 1e3;
-    let t1 = Instant::now();
-    top.ef = Some(Ef::scratch(&top.facts));
-    let ef_ms = t1.elapsed().as_secs_f64() * 1e3;
-    let info = serde_json::json!({"members": members.len(), "ms": t.elapsed().as_secs_f64() * 1e3, "y1_ms": st.y1_ms, "refs_ms": st.refs_ms, "edges": st.refs_changes, "sym_ms": st.sym.ms, "y2_inputs_ms": st.y2_ms, "dc_scratch_ms": dc_ms, "ef_scratch_ms": ef_ms, "sym": st.sym, "y1": st.y1});
+    let info = serde_json::json!({"members": members.len(), "ms": t.elapsed().as_secs_f64() * 1e3, "y1_ms": st.y1_ms, "refs_ms": st.refs_ms, "edges": st.refs_changes, "sym_ms": st.sym.ms, "y2_inputs_ms": st.y2_ms, "dc_scratch_ms": dc_ms, "sym": st.sym, "y1": st.y1});
     (top.freeze(false), info)
 }
 
@@ -317,7 +291,7 @@ pub fn over(sh: &mut Shared, below: &Below, l: &Layer, members: &[(String, Strin
 /// The changes that turn membership `from` into `to`.
 pub fn diff(from: &LMap<u32, u32>, to: &[(String, String)]) -> Vec<(String, Option<String>, Option<String>)> {
     let to_m: FxHashMap<u32, u32> = to.iter().map(|(p, h)| (ysym(p), ysym(h))).collect();
-    let s = crate::y2::facts::string;
+    let s = crate::code_rule_dsl::facts::y2::facts::string;
     let mut out: Vec<(String, Option<String>, Option<String>)> = Vec::new();
     for (p, c) in &to_m {
         let old = from.get(p).copied();
@@ -340,10 +314,4 @@ impl Layer {
         b["y1"] = serde_json::json!(self.y1.total_bytes());
         b
     }
-}
-
-/// The M2 plans' half of an event, for `World`.
-pub fn m2_step(m2: &mut M2, w: u32, changes: &[(String, Option<String>, Option<String>)]) -> M2Step {
-    let changes: Vec<(String, Option<String>, Option<String>)> = changes.iter().filter(|c| c.1 != c.2).cloned().collect();
-    m2.apply(w, &changes)
 }

@@ -27,8 +27,8 @@
 //! changes handed to Y2 (`Change`). Exactness: X5's read-set argument (a query whose recorded
 //! reads are unchanged returns the same value), with absent keys recorded as reads too.
 use super::input::{Blocks, Cand, SymBlock, Tok, ABSTRACT, DIRECT_LAZY, EXEC_SURFACE, IMPLICIT, LAZY_DECORATED, LEGACY_ASYNC, LEGACY_SYNC, PRIVATE_API, PROPERTY, PROTOCOL, STRUCTURAL};
-use crate::lmap::{LMap, Rev};
-use crate::y2::facts::{sort_changes, string, sym, with, Change, Kind, Row, Tab, Val};
+use crate::code_rule_dsl::facts::lmap::{LMap, Rev};
+use crate::code_rule_dsl::facts::y2::facts::{sort_changes, string, sym, with, Change, Kind, Row, Tab, Val};
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::Reverse;

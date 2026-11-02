@@ -12,14 +12,65 @@
 //! with their start, 20 `py_decorators`, 21 `proj_explicit_exports`, 22 `py_all_names`, 23
 //! `py_bases` (distinct), 24 `dc__module_names`, 25 `dc__raw_dynamic_imports` entries, 26
 //! `ef__raw_execution_calls`.
-use crate::y2::facts::{sym, Kind};
+use crate::code_rule_dsl::facts::y2::facts::{sym, Kind};
 use rayon::prelude::*;
 use regex::Regex;
-use rerail_facts::sql::value as sv;
 use rustc_hash::FxHashMap;
 use serde_json::Value as Json;
 use std::path::Path;
 use std::sync::LazyLock;
+
+/// The two SQL value functions this file reused from facts-engine's `rerail_facts::sql::value`
+/// (Moti-Velz/facts-engine@52b43e4ab `facts/src/sql/value.rs`, `like` and `trim`), copied with
+/// their bodies unchanged: this crate has no Rust `LIKE`/`trim` with SQLite's semantics.
+mod sv {
+    /// SQLite's `LIKE` (ASCII case-insensitive, `%` and `_`, no escape).
+    pub fn like(pattern: &str, text: &str) -> bool {
+        fn lower(c: char) -> char {
+            c.to_ascii_lowercase()
+        }
+        let p: Vec<char> = pattern.chars().collect();
+        let t: Vec<char> = text.chars().collect();
+        fn go(p: &[char], t: &[char]) -> bool {
+            let mut pi = 0;
+            let mut ti = 0;
+            let mut star: Option<(usize, usize)> = None;
+            while ti < t.len() {
+                if pi < p.len() && p[pi] == '%' {
+                    star = Some((pi, ti));
+                    pi += 1;
+                } else if pi < p.len() && (p[pi] == '_' || lower(p[pi]) == lower(t[ti])) {
+                    pi += 1;
+                    ti += 1;
+                } else if let Some((sp, st)) = star {
+                    pi = sp + 1;
+                    ti = st + 1;
+                    star = Some((sp, st + 1));
+                } else {
+                    return false;
+                }
+            }
+            while pi < p.len() && p[pi] == '%' {
+                pi += 1;
+            }
+            pi == p.len()
+        }
+        go(&p, &t)
+    }
+
+    /// SQLite's `trim`/`ltrim`/`rtrim` with an optional character set (default: space).
+    pub fn trim(s: &str, chars: Option<&str>, left: bool, right: bool) -> String {
+        let set: Vec<char> = chars.map_or_else(|| vec![' '], |c| c.chars().collect());
+        let mut v: &str = s;
+        if left {
+            v = v.trim_start_matches(|c| set.contains(&c));
+        }
+        if right {
+            v = v.trim_end_matches(|c| set.contains(&c));
+        }
+        v.to_owned()
+    }
+}
 
 /// Trait bits of a candidate.
 pub const ABSTRACT: u16 = 1;
