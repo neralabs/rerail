@@ -3,5 +3,5 @@ Copyright 2026 Nera Software Inc.
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
-Its rules are ports of rules from ESLint (MIT); some of its candidates port eslint-plugin-unicorn (MIT). Their
+Its rules are ports of rules from ESLint (MIT) and eslint-plugin-unicorn (MIT). Their
 licences and the record of every file copied from them are in licenses/eslint/ and licenses/eslint-plugin-unicorn/.

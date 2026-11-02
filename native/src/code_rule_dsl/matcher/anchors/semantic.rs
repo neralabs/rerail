@@ -10,6 +10,8 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
         // Every value predicate except `constant: false` needs a known value, which only the
         // kinds the decoder reads can have. Following bindings, a name has a value too, and in
         // PHP a named or class constant.
+        // A name (`name: true`) is no value: identifiers, private names and strings have one.
+        Semantic::Value(test) if test.name => AnchorPlan::unrestricted(),
         Semantic::Value(test) if test.constant != Some(false) => {
             let kinds = super::value_kinds(&test.reading);
             AnchorPlan {

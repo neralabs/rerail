@@ -14,7 +14,7 @@ License: MIT (Copyright (c) 2025 Vercel, Inc.); [`LICENSE`](LICENSE) is the upst
 |---|---|---|
 | `upstream/eslint-plugin-next/tests/**` | `test/unit/eslint-plugin-next/*` | verbatim: the rule test files |
 | `upstream/eslint-plugin-next/fixtures/**` | `test/unit/eslint-plugin-next/*` | extracted: each file is one RuleTester case's `code`, verbatim |
-| `upstream/eslint-plugin-next/fixtures/renamed/**` | as its original | renamed: the file of the same path below `fixtures/`, with its names and literals renamed |
+| `upstream/eslint-plugin-next/fixtures/renamed/**` | as its original | renamed: the file of the same path below `fixtures/`, with its names renamed (literals and the names' order kept) |
 
 The files taken from it are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of @next/eslint-plugin-next's rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the generator `upstream/eslint-plugin-next/generate.mjs` (with its stub `RuleTester` and stub plugin module), `upstream/eslint-plugin-next/fixtures.cases.json`, and the `*.expected.json` expected findings written by running the pinned plugin.
 

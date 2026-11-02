@@ -57,6 +57,7 @@ impl Adapter for Sql {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
+    const STRIPS_BOM: bool = false;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -413,6 +414,9 @@ impl ValueRules for Sql {
 
     fn feature(feature: ValueFeature<'_>) -> Result<(), Refusal> {
         match feature {
+            ValueFeature::ToPrecision => refused(
+                "`toPrecision` lays a number out as ECMAScript's Number.prototype.toPrecision; SQL numbers have no such layout",
+            ),
             ValueFeature::Type(_) => refused(
                 "a SQL literal's type is its dialect's: PostgreSQL's pg_typeof and SQLite's typeof name different types (1.5 is numeric or real, 'a' unknown or text)",
             ),
