@@ -442,6 +442,8 @@ The workflow's jobs, its guarantees and the comment's states are described in
 ### Adding or changing a pack
 
 Each change below is one pull request, with a changeset for the pack ([.changeset/README.md](.changeset/README.md)).
+The whole path of a port, from candidate to shipped, with what each step has needed in practice, is
+[docs/porting-a-pack.md](docs/porting-a-pack.md).
 
 **A rule.** A pack ships the rules in `packs/<id>/rules/` that `pack.json` lists; `candidates/` holds ports under
 evaluation, which are scored and reported but never shipped. Start a new port as a candidate

@@ -19,7 +19,8 @@ The generators that write the expected findings are outside this directory, on t
 the renamer `scripts/pack-data/rename/`). How the data is snapshotted and published is
 [docs/upstream.md](../docs/upstream.md).
 
-Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack).
+Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack); the contributor's path
+through a port, from candidate to shipped, is [docs/porting-a-pack.md](../docs/porting-a-pack.md).
 
 ## The gate
 
