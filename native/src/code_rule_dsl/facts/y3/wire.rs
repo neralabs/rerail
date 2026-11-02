@@ -9,7 +9,7 @@
 //! scratch over it), an overlay and a worktree as the edit that turns the layer below into it.
 use super::sym::{self, PathChange, SymShared, SymState};
 use crate::code_rule_dsl::facts::lmap::LMap;
-use crate::code_rule_dsl::facts::y2::dc::{self, Dc};
+use crate::code_rule_dsl::facts::y2::dc::{self, Rule};
 use crate::code_rule_dsl::facts::y2::facts::{sort_changes, sym as ysym, Change, Facts, Row, Tab, Val};
 use crate::code_rule_dsl::facts::ygraph::path;
 use crate::code_rule_dsl::facts::ygraph::world::{self as y1, Base, Below, Delta, PathRec};
@@ -36,7 +36,8 @@ pub struct Top {
     pub y1: Delta,
     pub sym: SymState,
     pub facts: Facts,
-    pub dc: Option<Dc>,
+    /// Dead code's roots (imported-module counts); its reachability is `facts::deadcode`'s.
+    pub rule: Option<Rule>,
     /// Reverse edge index: target def → source defs (Y1's DefIds).
     pub rev: LMap<u32, Vec<u32>>,
     /// path → content (Y2's interner)
@@ -56,7 +57,7 @@ impl Top {
             y1: Delta::at(below),
             sym: l.top.sym.view(),
             facts: l.top.facts.view(),
-            dc: l.top.dc.as_ref().map(Dc::view),
+            rule: l.top.rule.as_ref().map(Rule::view),
             rev: l.top.rev.view(),
             members: l.top.members.view(),
         }
@@ -65,8 +66,8 @@ impl Top {
     pub fn freeze(mut self, overlay: bool) -> Layer {
         self.sym.freeze();
         self.facts.freeze();
-        if let Some(d) = self.dc.as_mut() {
-            d.freeze();
+        if let Some(r) = self.rule.as_mut() {
+            r.freeze();
         }
         self.rev.freeze();
         self.members.freeze();
@@ -78,7 +79,7 @@ impl Top {
     /// frozen layer.
     pub fn bytes(&self, layer: bool) -> serde_json::Value {
         let (ft, fl) = self.facts.bytes();
-        let (dt, dl, _) = self.dc.as_ref().map_or((0, 0, 0), Dc::bytes);
+        let (dt, dl) = self.rule.as_ref().map_or((0, 0), Rule::bytes);
         let pick = |t: usize, l: usize| if layer { l } else { t };
         serde_json::json!({
             "sym": pick(self.sym.top_bytes(), self.sym.layer_bytes()),
@@ -90,7 +91,7 @@ impl Top {
     }
 }
 
-/// One step's work and its findings delta.
+/// One step's work.
 #[derive(Default, Debug, serde::Serialize)]
 pub struct StepOut {
     pub paths: usize,
@@ -101,12 +102,9 @@ pub struct StepOut {
     pub sym: sym::Work,
     pub sym_changes: usize,
     pub y2_ms: f64,
-    pub dc: Option<dc::Stats>,
     pub ms: f64,
-    /// (plan, finding, introduced)
-    #[serde(skip)]
-    pub delta: Vec<(String, String, bool)>,
-    /// Dead code's scope (`dc::CAPTURE` set: the lattice experiment, E3).
+    /// Dead code's scope (when the top holds the rule's state): what the product graph's rows
+    /// and the findings re-evaluate.
     #[serde(skip)]
     pub scope: Option<dc::Scope>,
 }
@@ -206,8 +204,8 @@ pub fn all_edges(sh: &mut Shared, below: &Below, d: &Delta) -> (Vec<(u32, u32)>,
     (pairs, rows)
 }
 
-/// One step over `below` for `top`: Y1, the edge delta, the symbol table, Y2 (scoped when the
-/// top holds the rules' state). `changes` are (path, old content, new content) as text.
+/// One step over `below` for `top`: Y1, the edge delta, the symbol table, Y2's inputs (scoped
+/// when the top holds the rule's state). `changes` are (path, old content, new content) as text.
 pub fn step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[(String, Option<String>, Option<String>)]) -> StepOut {
     let t0 = Instant::now();
     let changes: Vec<&(String, Option<String>, Option<String>)> = changes.iter().filter(|c| c.1 != c.2).collect();
@@ -240,18 +238,13 @@ pub fn step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[(String, O
     out.sym = sw;
     ch.extend(sc);
     sort_changes(&mut ch);
-    // Y2
+    // Y2's inputs, scoped under the old state
     let t = Instant::now();
-    match top.dc.as_mut() {
-        Some(dc) => {
-            let mut pd = dc.prepare(&top.facts, &ch);
-            let scope = std::mem::take(&mut pd.scope);
+    match top.rule.as_mut() {
+        Some(rule) => {
+            let scope = dc::scope(&top.facts, &ch);
             top.facts.apply(&ch);
-            let sd = dc.finish(&top.facts, pd);
-            for (f, added) in &sd.delta {
-                out.delta.push((DEAD_CODE.into(), crate::code_rule_dsl::facts::y2::facts::show_row(&dc_row(f)), *added));
-            }
-            out.dc = Some(sd);
+            rule.apply(&scope);
             out.scope = Some(scope);
         }
         None => top.facts.apply(&ch),
@@ -262,21 +255,15 @@ pub fn step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[(String, O
     out
 }
 
-pub fn dc_row(f: &dc::Finding) -> Vec<Val> {
-    vec![Val::S(f.0), Val::Int(f.1), Val::Int(f.2), Val::S(f.3), Val::S(ysym(f.4))]
-}
-
 /// The base layer: every member added to nothing (the same step as an edit: from nothing its
-/// changes are every row), then the rules from scratch over it.
+/// changes are every row), then the rule's roots from scratch over it.
 pub fn base_layer(sh: &mut Shared, members: &[(String, String)]) -> (Layer, serde_json::Value) {
     let t = Instant::now();
-    let mut top = Top { y1: Delta::default(), sym: SymState::default(), facts: Facts::default(), dc: None, rev: LMap::default(), members: LMap::default() };
+    let mut top = Top { y1: Delta::default(), sym: SymState::default(), facts: Facts::default(), rule: None, rev: LMap::default(), members: LMap::default() };
     let changes: Vec<(String, Option<String>, Option<String>)> = members.iter().map(|(p, h)| (p.clone(), None, Some(h.clone()))).collect();
     let st = step(sh, &Below::default(), &mut top, &changes);
-    let t1 = Instant::now();
-    top.dc = Some(Dc::scratch(&top.facts));
-    let dc_ms = t1.elapsed().as_secs_f64() * 1e3;
-    let info = serde_json::json!({"members": members.len(), "ms": t.elapsed().as_secs_f64() * 1e3, "y1_ms": st.y1_ms, "refs_ms": st.refs_ms, "edges": st.refs_changes, "sym_ms": st.sym.ms, "y2_inputs_ms": st.y2_ms, "dc_scratch_ms": dc_ms, "sym": st.sym, "y1": st.y1});
+    top.rule = Some(Rule::scratch(&top.facts));
+    let info = serde_json::json!({"members": members.len(), "ms": t.elapsed().as_secs_f64() * 1e3, "y1_ms": st.y1_ms, "refs_ms": st.refs_ms, "edges": st.refs_changes, "sym_ms": st.sym.ms, "y2_inputs_ms": st.y2_ms, "sym": st.sym, "y1": st.y1});
     (top.freeze(false), info)
 }
 
