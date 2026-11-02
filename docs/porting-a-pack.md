@@ -99,7 +99,7 @@ in `gates.json`, and `summary.json`'s `promotable` list is the list to promote f
 | `loads` fails `in-scope` | The scope covers every file type `gates.yaml`'s `upstream.lints` names | Widen the scope, or set the port's `lints` when the rule covers fewer types by design |
 | `compact` fails | A document under 15 KiB, or one that expresses the logic | Replace listed cases with the construct they share |
 | `no-unexplained-false-positives`, `no-unexplained-misses` | Agreement with the tool's expected findings on its tests and Rerail's probes | Fix the rule. Declare a divergence only after checking the tool's own answer on that line, with the evidence in the entry |
-| `catches-something` | A true positive on the fixtures, or an `examples` pair | Add the pair to the candidate's port entry when the tool's tests never exercise the rule at the pin |
+| `catches-something` | A true positive on the fixtures, or an `examples` pair in `pack.json` | Get the rule a true positive: a case of the tool's tests it should report, or an authored case the tool confirms. The check reads `pack.json` only, so a candidate's pair on its port entry proves the rule to check 3 but does not pass this check; it counts once the rule ships |
 | `holds-under-rename` | Agreement on the rename variants (ECMA tool-packs) | A failure means the rule matched the test's names or literals: match the construct. A pass "without evidence" (every finding renamed away) is reported; say in the pull request what other evidence stands in |
 | `samples-catch-labelled`, `samples-silent-on-clean` | Agreement with the labelled lines of the real-code samples | Fix the rule, or a divergence with `"source": "samples"` after checking the label is right ([How samples are judged](../conformance/README.md#how-samples-are-judged)) |
 | `stays-silent` | One of the rule's own upstream units where the tool reports nothing, or one clean sample the rule is silent on | When the tool's tests for the rule all have findings (common), add a clean real-code sample labelled for the rule ([Samples](upstream.md#samples)). Other rules' units and Rerail's probes do not count |
@@ -128,9 +128,10 @@ flowchart LR
 1. **The generator** (`upstream/<tool>/generate.*`, with the tool-pack's recipe under `scripts/pack-data/recipes/`)
    copies the tool's tests for each ported rule, runs the pinned tool on them and writes `fixtures.expected.json`,
    with each unit's upstream origin in `source.units`, then the provenance through the shared writer
-   ([What the generators write](upstream.md#what-the-generators-write)). The tests it reads per rule are a data file
-   beside it (`fixtures.json`, `{ "rules": { "<rule>": ["<upstream path>", …] } }`), which `gates.yaml`'s `watch`
-   block names, so the nightly upstream report knows what to watch.
+   ([What the generators write](upstream.md#what-the-generators-write)). Which tests it reads per rule is what
+   `gates.yaml`'s `watch.tests` names, so the nightly upstream report watches the same files: a path convention
+   (`test/{rule}.js`) or a hand-kept list beside the generator (`fixtures.json`,
+   `{ "rules": { "<rule>": ["<upstream path>", …] } }`).
 2. **Derive** runs upstream's code, so it runs in a sandbox with no AWS or GitHub credentials
    ([Derive in a sandbox](upstream.md#derive-in-a-sandbox)), on the pinned runtime. Before it runs, every authored
    file the tool's `UPSTREAM.md` lists must be on disk, or it stops and asks for a pull: a port pull request carries
