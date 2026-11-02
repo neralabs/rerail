@@ -3,14 +3,20 @@
 // CHANGELOG.md as its notes, so release notes are written once, in the changelog (docs/release.md, "GitHub Releases").
 // Core's Release, on `v<version>`, is a pre-release on `next` and `beta` and the repository's latest release on
 // `latest`; a pack's, on `<name>@<version>`, is never the latest release, and is a pre-release only when published
-// under `next` (held). A Release that exists already has its notes rewritten, so any run can be run again.
+// under `next` (held). A Release that exists already has its notes, pre-release flag and latest flag rewritten, so any
+// run can be run again, and a put-back (release.yml's `latest` input) makes the version put back the latest release.
 //
 // Release mode names what a release run published, as dist-tags-check.mjs takes it, and reads the notes from the
-// checkout, which must be the released commit: release.yml runs it for core, release-packs.yml for the packs.
-// Backfill mode makes the Release of every release tag in this checkout that has none (the oldest first), with the
-// notes at that tag's commit; fetch the tags first (`git fetch --tags`). Every backfilled pack Release is taken as
-// published under `latest`, and only the highest core version on `latest` is marked latest. `--dry-run` prints each
-// Release it would make, with its notes, and changes nothing on GitHub. gh needs write access to the repository.
+// checkout's changelog: the released commit on a release run (release.yml for core, release-packs.yml for the packs),
+// or main on a put-back, whose changelog keeps every released version's section. A version whose changelog has no
+// section of its own gets a Release saying no entries were written, as the Release pull request says.
+// Backfill mode makes the Release of every release tag on the remote that has none (the oldest first), with the notes
+// at that tag's commit; fetch the tags first (`git fetch --tags --prune --prune-tags`). It skips, and names, a local
+// tag the remote does not have, a tag whose local commit is not the remote's (fetch it again with `--force`), and a
+// tag whose changelog has no section for its version, so a backfilled Release always has notes. Every backfilled pack
+// Release is taken as published under `latest`, and only the highest core version on `latest` is marked latest.
+// `--dry-run` prints each Release it would make, with its notes, and changes nothing on GitHub. gh needs write access
+// to the repository.
 //
 //   node scripts/release/github-release.mjs [--dry-run] <name>@<version>[:<dist-tag>] ...   (or $RELEASED, the same, space-separated)
 //   node scripts/release/github-release.mjs --backfill [--dry-run]
@@ -26,6 +32,8 @@ import { releaseTag, ROOT } from "./packs.mjs";
 const PACK_PREFIX = "@neralabs/rerail-pack-";
 const CORE_RELEASE_TAG = /^v(\d+\.\d+\.\d+(?:-(beta|next)\.\d+)?)$/u;
 const PACK_RELEASE_TAG = /^(@neralabs\/rerail-pack-[a-z0-9-]+)@(\d+\.\d+\.\d+\S*)$/u;
+/** The remote the backfill takes the release tags from. */
+const REMOTE = "origin";
 
 /** The changelog holding `name`'s release notes: core's root CHANGELOG.md, or a pack's packs/<id>/CHANGELOG.md. */
 export function changelogPath(name) {
@@ -36,7 +44,7 @@ export function changelogPath(name) {
 
 /**
  * The GitHub Release of `name`'s `version`, published under npm dist-tag `distTag`, given the text of its changelog:
- * `{ tag, title, notes, prerelease, latest }`, its notes the version's changelog section.
+ * `{ tag, title, notes, prerelease, latest }`, its notes the version's changelog section, or that none was written.
  */
 export function githubRelease({ name, version, distTag }, changelog) {
   const core = name === CORE_NAME;
@@ -45,10 +53,14 @@ export function githubRelease({ name, version, distTag }, changelog) {
   return { tag, title: tag, notes: section === "" ? NO_CHANGELOG_ENTRIES : section, prerelease: distTag !== "latest", latest: core && distTag === "latest" };
 }
 
-/** gh's arguments that make `release` on GitHub with its notes from stdin; when it `exists`, that rewrite its notes. */
+/**
+ * gh's arguments that make `release` on GitHub with its notes from stdin; when it `exists`, that rewrite its notes,
+ * pre-release flag and latest flag, so a run made again, or a put-back, sets the flags right.
+ */
 export function ghReleaseArgs(release, exists) {
-  if (exists) return ["release", "edit", release.tag, "--notes-file", "-"];
-  return ["release", "create", release.tag, "--verify-tag", "--title", release.title, "--notes-file", "-", `--prerelease=${release.prerelease}`, `--latest=${release.latest}`];
+  const flags = [`--prerelease=${release.prerelease}`, `--latest=${release.latest}`];
+  if (exists) return ["release", "edit", release.tag, "--notes-file", "-", ...flags];
+  return ["release", "create", release.tag, "--verify-tag", "--title", release.title, "--notes-file", "-", ...flags];
 }
 
 /**
@@ -63,9 +75,48 @@ export function releasedByTag(tag) {
 }
 
 /**
- * The GitHub Releases missing for `tags`, in their order, given the `existing` tags that have one and
- * `readAt(tag, path)`, a file's text at a tag (null when it has none). Only the highest core version released to
- * `latest` is marked latest, and only when its Release is among them.
+ * The tags `git ls-remote --tags` lists, as a Map from tag to the commit it marks: an annotated tag's peeled `^{}`
+ * line gives its commit, a lightweight tag's line the commit itself.
+ */
+export function parseRemoteTags(text) {
+  const commits = new Map();
+  for (const line of text.split("\n")) {
+    const match = /^([0-9a-f]+)\trefs\/tags\/(.+?)(\^\{\})?$/u.exec(line);
+    if (match === null) continue;
+    const [, commit, tag, peeled] = match;
+    if (peeled !== undefined || !commits.has(tag)) commits.set(tag, commit);
+  }
+  return commits;
+}
+
+/**
+ * The release tags a backfill may read, given the checkout's `local` tags (`{ tag, commit }`, in the order to make
+ * them) and the `remote`'s (tag to commit, parseRemoteTags): `{ tags, localOnly, diverged, missing }`. A local release
+ * tag the remote does not have is `localOnly`, one at a commit other than the remote's is `diverged` (its notes would be
+ * read from the wrong commit), and a remote release tag the checkout does not have is `missing`. Tags marking no
+ * release are left out of all four.
+ */
+export function backfillTags(local, remote) {
+  const tags = [];
+  const localOnly = [];
+  const diverged = [];
+  for (const { tag, commit } of local) {
+    if (releasedByTag(tag) === null) continue;
+    const remoteCommit = remote.get(tag);
+    if (remoteCommit === undefined) localOnly.push(tag);
+    else if (remoteCommit !== commit) diverged.push(tag);
+    else tags.push(tag);
+  }
+  const known = new Set(local.map(({ tag }) => tag));
+  const missing = [...remote.keys()].filter((tag) => releasedByTag(tag) !== null && !known.has(tag));
+  return { tags, localOnly, diverged, missing };
+}
+
+/**
+ * The GitHub Releases a backfill makes for `tags`, in their order, given the `existing` tags that have one and
+ * `readAt(tag, path)`, a file's text at a tag (null when it has none): `{ releases, noNotes }`, where `noNotes` lists
+ * the tags left without a Release because their changelog has no section for their version. Only the highest core
+ * version released to `latest` is marked latest, and only when its Release is among them.
  */
 export function backfillPlan(tags, existing, readAt) {
   const tagged = tags.map((tag) => ({ tag, released: releasedByTag(tag) })).filter(({ released }) => released !== null);
@@ -73,12 +124,19 @@ export function backfillPlan(tags, existing, readAt) {
     .filter(({ released }) => released.name === CORE_NAME && released.distTag === "latest")
     .map(({ released }) => released.version)
     .sort(semver.rcompare);
-  return tagged
-    .filter(({ tag }) => !existing.has(tag))
-    .map(({ tag, released }) => {
-      const release = githubRelease(released, readAt(tag, changelogPath(released.name)) ?? "");
-      return { ...release, latest: release.latest && released.version === newest };
-    });
+  const releases = [];
+  const noNotes = [];
+  for (const { tag, released } of tagged) {
+    if (existing.has(tag)) continue;
+    const changelog = readAt(tag, changelogPath(released.name)) ?? "";
+    if (changelogSection(changelog, released.version) === "") {
+      noNotes.push(tag);
+      continue;
+    }
+    const release = githubRelease(released, changelog);
+    releases.push({ ...release, latest: release.latest && released.version === newest });
+  }
+  return { releases, noNotes };
 }
 
 const run = (command, args, input) => execFileSync(command, args, { cwd: ROOT, encoding: "utf8", input, maxBuffer: 1 << 28 });
@@ -90,6 +148,16 @@ const existingReleases = () =>
       .split("\n")
       .filter((tag) => tag !== ""),
   );
+
+/** The checkout's tags, the oldest first, each with the commit it marks (an annotated tag's peeled). */
+const localTags = () =>
+  run("git", ["for-each-ref", "--sort=creatordate", "--format=%(refname:lstrip=2)\t%(objectname)\t%(*objectname)", "refs/tags"])
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => {
+      const [tag, object, peeled] = line.split("\t");
+      return { tag, commit: peeled === "" ? object : peeled };
+    });
 
 /** A file's text at tag `tag`, or null when the tag's commit has no such file. */
 function readAt(tag, path) {
@@ -107,7 +175,7 @@ function makeReleases(releases, existing, dryRun) {
   for (const release of releases) {
     const exists = existing.has(release.tag);
     const kind = `${release.prerelease ? "pre-release" : "release"}, ${release.latest ? "latest" : "not latest"}`;
-    const what = exists ? `the notes of the GitHub Release ${release.tag}` : `the GitHub Release ${release.tag} (${kind})`;
+    const what = exists ? `the notes and flags of the GitHub Release ${release.tag} (${kind})` : `the GitHub Release ${release.tag} (${kind})`;
     if (dryRun) {
       console.log(`Would ${exists ? "rewrite" : "create"} ${what}, titled "${release.title}", with these notes:\n\n${release.notes}\n`);
       continue;
@@ -117,18 +185,27 @@ function makeReleases(releases, existing, dryRun) {
   }
 }
 
+/** Makes the Release of every release tag on the remote that has none, skipping and naming what it cannot read. */
+function backfill(existing, dryRun) {
+  const { tags, localOnly, diverged, missing } = backfillTags(localTags(), parseRemoteTags(run("git", ["ls-remote", "--tags", REMOTE])));
+  if (missing.length > 0) throw new Error(`${REMOTE} has release tag(s) this checkout lacks: ${missing.join(", ")}; run git fetch --tags first`);
+  if (localOnly.length > 0) console.log(`Skipped ${localOnly.length} local release tag(s) ${REMOTE} does not have (prune them with git fetch --prune --prune-tags): ${localOnly.join(", ")}`);
+  if (diverged.length > 0) console.log(`Skipped ${diverged.length} release tag(s) not at ${REMOTE}'s commit in this checkout (fetch them again with git fetch --force --tags): ${diverged.join(", ")}`);
+  const { releases, noNotes } = backfillPlan(tags, existing, readAt);
+  if (noNotes.length > 0) console.log(`Skipped ${noNotes.length} release tag(s) whose changelog has no section for the version: ${noNotes.join(", ")}`);
+  makeReleases(releases, existing, dryRun);
+  const had = tags.filter((tag) => existing.has(tag)).length;
+  console.log(`${dryRun ? "Would create" : "Created"} ${releases.length} GitHub Release(s); ${had} release tag(s) already have one.`);
+}
+
 function main(args) {
   const dryRun = args.includes("--dry-run");
-  const backfill = args.includes("--backfill");
+  const backfillMode = args.includes("--backfill");
   const rest = args.filter((arg) => arg !== "--dry-run" && arg !== "--backfill");
   const existing = existingReleases();
-  if (backfill) {
-    if (rest.length > 0) throw new Error(`--backfill reads every release tag in the checkout; it takes no ${rest.join(" ")}`);
-    const tags = run("git", ["for-each-ref", "--sort=creatordate", "--format=%(refname:lstrip=2)", "refs/tags"]).split("\n").filter((tag) => tag !== "");
-    const releases = backfillPlan(tags, existing, readAt);
-    makeReleases(releases, existing, dryRun);
-    const had = tags.filter((tag) => releasedByTag(tag) !== null).length - releases.length;
-    console.log(`${dryRun ? "Would create" : "Created"} ${releases.length} GitHub Release(s); ${had} release tag(s) already have one.`);
+  if (backfillMode) {
+    if (rest.length > 0) throw new Error(`--backfill reads every release tag on ${REMOTE}; it takes no ${rest.join(" ")}`);
+    backfill(existing, dryRun);
     return;
   }
   const named = rest.length > 0 ? rest : (process.env.RELEASED ?? "").split(/\s+/u).filter((entry) => entry !== "");

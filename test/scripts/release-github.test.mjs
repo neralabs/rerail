@@ -1,10 +1,10 @@
 // scripts/release/github-release.mjs: the GitHub Release each released version gets, its notes the version's changelog
-// section, the gh call that makes it or rewrites its notes, and the Releases a backfill makes for release tags without
-// one.
+// section, the gh call that makes it or rewrites its notes and flags, the remote release tags a backfill may read, and
+// the Releases a backfill makes for release tags without one.
 
 import { describe, expect, it } from "vitest";
 import { NO_CHANGELOG_ENTRIES } from "../../scripts/release/core.mjs";
-import { backfillPlan, changelogPath, ghReleaseArgs, githubRelease, releasedByTag } from "../../scripts/release/github-release.mjs";
+import { backfillPlan, backfillTags, changelogPath, ghReleaseArgs, githubRelease, parseRemoteTags, releasedByTag } from "../../scripts/release/github-release.mjs";
 
 const CORE = "@neralabs/rerail";
 const PYTHON = "@neralabs/rerail-pack-python";
@@ -62,8 +62,9 @@ describe("ghReleaseArgs", () => {
     expect(ghReleaseArgs({ ...release, prerelease: true, latest: false }, false)).toContain("--latest=false");
   });
 
-  it("rewrites only the notes of a Release that exists, so a run can be run again", () => {
-    expect(ghReleaseArgs(release, true)).toEqual(["release", "edit", "v0.1.1", "--notes-file", "-"]);
+  it("rewrites the notes and both flags of a Release that exists, so a run made again, or a put-back, sets them right", () => {
+    expect(ghReleaseArgs(release, true)).toEqual(["release", "edit", "v0.1.1", "--notes-file", "-", "--prerelease=false", "--latest=true"]);
+    expect(ghReleaseArgs({ ...release, prerelease: true, latest: false }, true)).toEqual(["release", "edit", "v0.1.1", "--notes-file", "-", "--prerelease=true", "--latest=false"]);
   });
 });
 
@@ -80,6 +81,59 @@ describe("releasedByTag", () => {
   });
 });
 
+describe("parseRemoteTags", () => {
+  it("maps each tag to its commit, an annotated tag's from its peeled line, whichever order git lists them in", () => {
+    const text = [
+      "5282f738\trefs/tags/v0.1.0-next.1",
+      "abf575c5\trefs/tags/v0.1.0-next.1^{}",
+      "b9988b1e\trefs/tags/v0.1.0-next.3",
+      `1234abcd\trefs/tags/${PYTHON}@0.1.4`,
+      `1111aaaa\trefs/tags/${PYTHON}@0.1.4^{}`,
+      "",
+    ].join("\n");
+    expect([...parseRemoteTags(text)]).toEqual([
+      ["v0.1.0-next.1", "abf575c5"],
+      ["v0.1.0-next.3", "b9988b1e"],
+      [`${PYTHON}@0.1.4`, "1111aaaa"],
+    ]);
+    expect(parseRemoteTags("")).toEqual(new Map());
+  });
+});
+
+describe("backfillTags", () => {
+  const local = [
+    { tag: "v0.1.0-next.0", commit: "aaaa" },
+    { tag: "v0.1.0-next.1", commit: "bbbb" },
+    { tag: "port-readiness-recordings", commit: "cccc" },
+    { tag: "scratch", commit: "dddd" },
+    { tag: `${PYTHON}@0.1.4`, commit: "eeee" },
+    { tag: "v0.1.0", commit: "ffff" },
+  ];
+  const remote = new Map([
+    ["v0.1.0-next.1", "b111"],
+    [`${PYTHON}@0.1.4`, "eeee"],
+    ["v0.1.0", "ffff"],
+    ["v0.1.1", "0000"],
+    ["gate-recordings", "9999"],
+  ]);
+
+  it("keeps, in local order, the release tags at the remote's commit, and names what it leaves out", () => {
+    expect(backfillTags(local, remote)).toEqual({
+      tags: [`${PYTHON}@0.1.4`, "v0.1.0"],
+      localOnly: ["v0.1.0-next.0"],
+      diverged: ["v0.1.0-next.1"],
+      missing: ["v0.1.1"],
+    });
+  });
+
+  it("leaves tags that mark no release out of every list", () => {
+    const { localOnly, diverged, missing } = backfillTags(local, remote);
+    for (const tag of ["port-readiness-recordings", "scratch", "gate-recordings"]) {
+      expect([...localOnly, ...diverged, ...missing]).not.toContain(tag);
+    }
+  });
+});
+
 describe("backfillPlan", () => {
   const files = {
     "v0.1.0-next.4": { "CHANGELOG.md": "# Changelog\n\n## 0.1.0 (unreleased)\n\n- Coming.\n" },
@@ -92,18 +146,27 @@ describe("backfillPlan", () => {
   const tags = ["v0.1.0-next.4", "port-readiness-recordings", `${PYTHON}@0.1.4`, "@neralabs/rerail-pack-sql@0.1.1", "v0.1.0", "v0.1.1"];
 
   it("makes the Release of every release tag without one, in tag order, with the notes at that tag", () => {
-    const plan = backfillPlan(tags, new Set(["port-readiness-recordings"]), readAt);
-    expect(plan.map(({ tag }) => tag)).toEqual(["v0.1.0-next.4", `${PYTHON}@0.1.4`, "@neralabs/rerail-pack-sql@0.1.1", "v0.1.0", "v0.1.1"]);
-    expect(plan[0]).toMatchObject({ notes: NO_CHANGELOG_ENTRIES, prerelease: true, latest: false });
-    expect(plan[1]).toMatchObject({ notes: "### Patch Changes\n\n- e06db22: Messages.", prerelease: false, latest: false });
-    expect(plan[2].notes).toBe(NO_CHANGELOG_ENTRIES);
-    expect(plan[3]).toMatchObject({ notes: "First release.", latest: false });
-    expect(plan[4]).toMatchObject({ notes: "- Fixed a thing.", latest: true });
+    const { releases } = backfillPlan(tags, new Set(["port-readiness-recordings"]), readAt);
+    expect(releases.map(({ tag }) => tag)).toEqual([`${PYTHON}@0.1.4`, "v0.1.0", "v0.1.1"]);
+    expect(releases[0]).toMatchObject({ notes: "### Patch Changes\n\n- e06db22: Messages.", prerelease: false, latest: false });
+    expect(releases[1]).toMatchObject({ notes: "First release.", latest: false });
+    expect(releases[2]).toMatchObject({ notes: "- Fixed a thing.", latest: true });
+  });
+
+  it("leaves a tag whose changelog has no section for its version, or no changelog at all, without a Release, and names it", () => {
+    const { releases, noNotes } = backfillPlan(tags, new Set(), readAt);
+    expect(noNotes).toEqual(["v0.1.0-next.4", "@neralabs/rerail-pack-sql@0.1.1"]);
+    expect(releases.some(({ notes }) => notes === NO_CHANGELOG_ENTRIES)).toBe(false);
+  });
+
+  it("does not name a tag that has its Release already, whatever its changelog says", () => {
+    const { noNotes } = backfillPlan(tags, new Set(["v0.1.0-next.4"]), readAt);
+    expect(noNotes).toEqual(["@neralabs/rerail-pack-sql@0.1.1"]);
   });
 
   it("marks no older core version latest when the newest has its Release already", () => {
-    const plan = backfillPlan(tags, new Set(["v0.1.1", `${PYTHON}@0.1.4`]), readAt);
-    expect(plan.map(({ tag }) => tag)).toEqual(["v0.1.0-next.4", "@neralabs/rerail-pack-sql@0.1.1", "v0.1.0"]);
-    expect(plan.some(({ latest }) => latest)).toBe(false);
+    const { releases } = backfillPlan(tags, new Set(["v0.1.1", `${PYTHON}@0.1.4`]), readAt);
+    expect(releases.map(({ tag }) => tag)).toEqual(["v0.1.0"]);
+    expect(releases.some(({ latest }) => latest)).toBe(false);
   });
 });

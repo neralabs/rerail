@@ -329,6 +329,8 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
   pack data it adds, changes or removes ([Adding or changing a pack](#adding-or-changing-a-pack)).
 - A change to what the core package ships adds an entry under `## Unreleased` in `CHANGELOG.md`
   ([release notes](docs/release.md#release)).
+- A changeset summary or changelog entry is a release note: it says what changed for the person upgrading, in plain
+  language, and leaves out commit hashes, ticket ids and repository-internal maintenance.
 - Tests cover the behavior you changed, and docs that describe it are updated.
 
 ## Reporting a bug

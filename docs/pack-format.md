@@ -463,6 +463,8 @@ table:
 
 Pack versions are managed with [changesets](https://github.com/changesets/changesets): a pull request that changes a
 pack adds a changeset (`npx changeset`) naming the pack's package and its bump, with a one-line summary for users.
+The summary is the pack's release note: it says what changed for the person upgrading, in plain language, and leaves
+out commit hashes, ticket ids and repository-internal maintenance.
 A change counts when it touches what the pack publishes: its `package.json` (except `publishConfig` alone, which only
 steers `npm publish`) or a path its `files` lists (`pack.json`, `rules/`, `licenses/`, `LICENSE`, `NOTICE`,
 `README.md`); expected findings, candidates and `CHANGELOG.md` do not. The
@@ -525,9 +527,9 @@ that version's section of the pack's `CHANGELOG.md`, so a pack's release notes a
 summary, in words for the people who upgrade. After the **Published dist-tags** job passes, the run's **GitHub
 Releases** job makes one for each version it published (`scripts/release/github-release.mjs`). A pack's Release is
 never the repository's latest release, which is core's, and is a pre-release only for a held pack published under
-`next`. Run again, the job rewrites the notes of a Release that exists. Releases missing for tags released before
-this, or by a run that failed before its Release, are made by hand with the script's backfill
-([release.md](release.md#release)).
+`next`. Run again, the job rewrites the notes and flags of a Release that exists. Releases missing for tags released
+before this, or by a run that failed before its Release, are made by hand with the script's backfill, which skips a
+version whose changelog has no section ([release.md](release.md#release)).
 
 The scripts are in `scripts/release/`. To check a pack's tarball locally:
 `node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>`.

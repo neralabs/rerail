@@ -331,7 +331,7 @@ jobs:
   # published: its notes are the version's section of the pack's CHANGELOG.md (scripts/release/github-release.mjs), so
   # release notes are written once, in the changelog. A pack's Release is never the repository's latest release (core's
   # is), and is a pre-release only when the pack was held and published under `next`. Run again, it rewrites the
-  # notes of the Releases it made.
+  # notes and flags of the Releases it made.
   github-releases:
     name: GitHub Releases
     needs: [publish, dist-tags]
