@@ -32,3 +32,13 @@ fn sql_decodings_agree_with_the_rust_ones() {
     let args = ["v8spike", "sql", "python", db.to_str().unwrap(), "100", dir.to_str().unwrap()].map(String::from);
     super::main(&args);
 }
+
+/// The spike's `measure` on a corpus (O8's pre-lock measurements): `RERAIL_V9NP_MEASURE` is
+/// `<corpus> <lang> <dir>...`. One JSON line per run.
+#[test]
+#[ignore = "O8's measurements; RERAIL_V9NP_MEASURE='<corpus> <lang> <dir>...', --ignored --nocapture"]
+fn measure_on_a_corpus() {
+    let spec = std::env::var("RERAIL_V9NP_MEASURE").expect("RERAIL_V9NP_MEASURE='<corpus> <lang> <dir>...'");
+    let args = ["v8spike", "measure"].into_iter().map(String::from).chain(spec.split_whitespace().map(String::from)).collect::<Vec<_>>();
+    super::main(&args);
+}
