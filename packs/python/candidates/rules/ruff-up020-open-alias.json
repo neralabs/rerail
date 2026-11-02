@@ -1,0 +1,65 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up020-open-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the builtin open instead of io.open; in Python 3 they are the same function.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "io-open",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "io-open": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "import": ["io.open"] }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "io-open" }
+                }
+              ]
+            },
+            "io-open-call": {
+              "kind": "call",
+              "has": { "stopBy": "neighbor", "field": "function", "matches": "io-open" }
+            },
+            "call-in-string": {
+              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    { "matches": "io-open-call", "capture": "C" },
+                    { "matches": "call-in-string" }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              { "matches": "io-open-call", "pattern": "$C" },
+              { "matches": "call-in-string" }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "each": "C",
+        "code": "UP020",
+        "message": "Call the builtin `open` instead of `io.open`; they are the same function in Python 3. If `open` is rebound in this scope, use `builtins.open`.",
+        "suppress": { "noqa": { "codes": ["UP020"] } }
+      }
+    }
+  ]
+}

@@ -7,6 +7,12 @@ export const plural = (n, one, many = `${one}s`) => (n === 1 ? one : many);
 export const collapse = s => String(s ?? "").replace(/\s+/g, " ").trim();
 /** "Claude Code", "Claude Code and Cursor", "Claude Code, Codex and Cursor". */
 export const andList = names => (names.length <= 1 ? names[0] ?? "" : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
+/** A failure toast: what did not happen, then the error as a sentence. "Couldn’t add Python. The daemon did not answer within 30 s." */
+export function failed(what, error) {
+  const why = collapse(error?.message ?? error);
+  if (why === "") return `${what}.`;
+  return `${what}. ${why[0].toUpperCase()}${why.slice(1)}${/[\p{L}\p{N})]$/u.test(why) ? "." : ""}`;
+}
 
 /** Local-midnight epoch for the day containing `t`. */
 export function startOfDay(t = Date.now()) {

@@ -1,0 +1,467 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-slot000-no-slots-in-str-subclass",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Define __slots__ in subclasses of str (enums excepted); without it every instance carries its own attribute dict and uses more memory.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "no-slots-in-str-subclass",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "utils": {
+            "slots-target": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__slots__$"
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "slots-target"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "slots-assignment": {
+              "kind": "assignment",
+              "any": [
+                {
+                  "has": {
+                    "field": "left",
+                    "matches": "slots-target"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "right",
+                    "kind": "assignment",
+                    "matches": "slots-assignment"
+                  }
+                }
+              ]
+            },
+            "slots-statement": {
+              "kind": "expression_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "assignment",
+                "matches": "slots-assignment"
+              }
+            },
+            "str-base": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "str"
+                    ],
+                    "import": [
+                      "builtins.str"
+                    ]
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^str$",
+                  "resolves": {
+                    "binding": {
+                      "form": "typeParameter"
+                    }
+                  },
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "module",
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "dotted_name",
+                            "regex": "^builtins$"
+                          },
+                          {
+                            "kind": "identifier",
+                            "regex": "^str$",
+                            "binds": {},
+                            "not": {
+                              "binds": {
+                                "form": "typeParameter"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "str-base"
+                  }
+                }
+              ]
+            },
+            "enum-name": {
+              "params": [
+                "E"
+              ],
+              "rule": {
+                "pattern": "$E",
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "attribute"
+                      }
+                    ],
+                    "resolves": {
+                      "import": [
+                        "enum.Enum",
+                        "enum.Flag",
+                        "enum.IntEnum",
+                        "enum.IntFlag",
+                        "enum.StrEnum",
+                        "enum.ReprEnum",
+                        "enum.CheckEnum"
+                      ]
+                    }
+                  },
+                  {
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "class_definition",
+                          "has": {
+                            "field": "superclasses",
+                            "kind": "argument_list",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": {
+                                "enum-base": {
+                                  "E": "$SB"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "attribute",
+                    "all": [
+                      {
+                        "matches": {
+                          "class-ref": {
+                            "K": "$K"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "all": [
+                              {
+                                "kind": "identifier",
+                                "pattern": "$KX",
+                                "compare": {
+                                  "left": "KX",
+                                  "op": "eq",
+                                  "right": "K",
+                                  "text": "node"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "field": "name",
+                                  "kind": "class_definition",
+                                  "has": {
+                                    "field": "superclasses",
+                                    "kind": "argument_list",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": {
+                                        "enum-base": {
+                                          "E": "$SB"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": {
+                        "enum-name": {
+                          "E": "$N4"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "enum-base": {
+              "params": [
+                "E"
+              ],
+              "rule": {
+                "pattern": "$E",
+                "any": [
+                  {
+                    "matches": {
+                      "enum-name": {
+                        "E": "$N1"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "subscript",
+                    "has": {
+                      "field": "value",
+                      "matches": {
+                        "enum-name": {
+                          "E": "$N2"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": {
+                        "enum-base": {
+                          "E": "$N3"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "class-ref": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "class_definition",
+                          "has": {
+                            "field": "name",
+                            "pattern": "$K"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": {
+                        "class-ref": {
+                          "K": "$K"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "attribute",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "attribute",
+                          "kind": "identifier",
+                          "pattern": "$N"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "object",
+                          "matches": {
+                            "class-ref": {
+                              "K": "$O"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "all": [
+                              {
+                                "kind": "identifier",
+                                "pattern": "$OX",
+                                "compare": {
+                                  "left": "OX",
+                                  "op": "eq",
+                                  "right": "O",
+                                  "text": "node"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "field": "name",
+                                  "kind": "class_definition",
+                                  "has": {
+                                    "field": "body",
+                                    "has": {
+                                      "stopBy": {
+                                        "any": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "kind": "function_definition"
+                                          }
+                                        ]
+                                      },
+                                      "kind": "class_definition",
+                                      "has": {
+                                        "field": "name",
+                                        "kind": "identifier",
+                                        "pattern": "$K",
+                                        "compare": {
+                                          "left": "K",
+                                          "op": "eq",
+                                          "right": "N"
+                                        },
+                                        "binds": {
+                                          "latest": true
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "class_definition",
+              "field": "name",
+              "all": [
+                {
+                  "has": {
+                    "field": "superclasses",
+                    "kind": "argument_list",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "str-base"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "field": "superclasses",
+                      "kind": "argument_list",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": {
+                          "enum-base": {
+                            "E": "$TB"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "field": "body",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "slots-statement"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SLOT000",
+        "message": "Add `__slots__ = ()` to this `str` subclass so instances skip the per-instance `__dict__`; if it assigns instance attributes, list their names in `__slots__` instead.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SLOT000"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,816 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-pth101-os-chmod",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use Path.chmod() instead of os.chmod(); path objects read better than string-based os calls.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "os-chmod",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "os.chmod"
+        ]
+       }
+      },
+      "callee": {
+       "any": [
+        {
+         "matches": "target",
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "none-literal": {
+       "any": [
+        {
+         "kind": "none"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "none-literal"
+         }
+        }
+       ]
+      },
+      "int-ref": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "global": [
+           "int"
+          ],
+          "import": [
+           "builtins.int"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "int-ref"
+         }
+        }
+       ]
+      },
+      "arm-if": {
+       "precedes": {
+        "regex": "^if$"
+       }
+      },
+      "arm-else": {
+       "follows": {
+        "regex": "^else$"
+       }
+      },
+      "int-t": {
+       "any": [
+        {
+         "kind": "integer",
+         "not": {
+          "regex": "[jJ]$"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "int-t"
+         }
+        },
+        {
+         "kind": "named_expression",
+         "has": {
+          "field": "value",
+          "matches": "int-t"
+         }
+        },
+        {
+         "kind": "unary_operator",
+         "has": {
+          "field": "argument",
+          "matches": "intlike"
+         }
+        },
+        {
+         "kind": "binary_operator",
+         "not": {
+          "has": {
+           "field": "operator",
+           "regex": "^[/@]$"
+          }
+         },
+         "all": [
+          {
+           "has": {
+            "field": "left",
+            "matches": "intlike"
+           }
+          },
+          {
+           "has": {
+            "field": "right",
+            "matches": "intlike"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "boolean_operator",
+         "all": [
+          {
+           "has": {
+            "field": "left",
+            "matches": "intlike"
+           }
+          },
+          {
+           "has": {
+            "field": "right",
+            "matches": "intlike"
+           }
+          },
+          {
+           "any": [
+            {
+             "has": {
+              "field": "left",
+              "matches": "int-t"
+             }
+            },
+            {
+             "has": {
+              "field": "right",
+              "matches": "int-t"
+             }
+            }
+           ]
+          }
+         ]
+        },
+        {
+         "kind": "conditional_expression",
+         "all": [
+          {
+           "has": {
+            "matches": "arm-if",
+            "all": [
+             {
+              "matches": "intlike"
+             }
+            ]
+           }
+          },
+          {
+           "has": {
+            "matches": "arm-else",
+            "all": [
+             {
+              "matches": "intlike"
+             }
+            ]
+           }
+          },
+          {
+           "has": {
+            "any": [
+             {
+              "matches": "arm-if"
+             },
+             {
+              "matches": "arm-else"
+             }
+            ],
+            "all": [
+             {
+              "matches": "int-t"
+             }
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "bool-t": {
+       "any": [
+        {
+         "kind": "true"
+        },
+        {
+         "kind": "false"
+        },
+        {
+         "kind": "not_operator"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "bool-t"
+         }
+        },
+        {
+         "kind": "named_expression",
+         "has": {
+          "field": "value",
+          "matches": "bool-t"
+         }
+        },
+        {
+         "kind": "boolean_operator",
+         "all": [
+          {
+           "has": {
+            "field": "left",
+            "matches": "bool-t"
+           }
+          },
+          {
+           "has": {
+            "field": "right",
+            "matches": "bool-t"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "conditional_expression",
+         "all": [
+          {
+           "has": {
+            "matches": "arm-if",
+            "all": [
+             {
+              "matches": "bool-t"
+             }
+            ]
+           }
+          },
+          {
+           "has": {
+            "matches": "arm-else",
+            "all": [
+             {
+              "matches": "bool-t"
+             }
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "intlike": {
+       "any": [
+        {
+         "matches": "int-t"
+        },
+        {
+         "matches": "bool-t"
+        }
+       ]
+      },
+      "int-ctor": {
+       "any": [
+        {
+         "kind": "call",
+         "has": {
+          "field": "function",
+          "matches": "int-ref"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "int-ctor"
+         }
+        }
+       ]
+      },
+      "int-initializer": {
+       "any": [
+        {
+         "matches": "int-t"
+        },
+        {
+         "matches": "int-ctor"
+        }
+       ]
+      },
+      "int-annotation": {
+       "any": [
+        {
+         "matches": "int-ref"
+        },
+        {
+         "kind": "subscript",
+         "has": {
+          "field": "value",
+          "matches": "int-ref"
+         }
+        },
+        {
+         "kind": "type",
+         "has": {
+          "matches": "int-annotation"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "int-annotation"
+         }
+        }
+       ]
+      },
+      "int-def": {
+       "any": [
+        {
+         "kind": "function_definition",
+         "has": {
+          "field": "return_type",
+          "matches": "int-annotation"
+         }
+        },
+        {
+         "kind": "decorated_definition",
+         "has": {
+          "field": "definition",
+          "matches": "int-def"
+         }
+        }
+       ]
+      },
+      "int-with": {
+       "kind": "as_pattern",
+       "all": [
+        {
+         "has": {
+          "nthChild": 1,
+          "matches": "int-initializer"
+         }
+        },
+        {
+         "has": {
+          "field": "alias",
+          "any": [
+           {
+            "pattern": "$WN"
+           },
+           {
+            "has": {
+             "pattern": "$WN"
+            }
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "int-name": {
+       "kind": "identifier",
+       "any": [
+        {
+         "resolves": {
+          "binding": {
+           "only": true,
+           "site": {
+            "not": {
+             "kind": "assignment",
+             "has": {
+              "field": "type",
+              "kind": "type"
+             }
+            }
+           },
+           "value": {
+            "matches": "int-initializer"
+           }
+          }
+         }
+        },
+        {
+         "resolves": {
+          "binding": {
+           "only": true,
+           "site": {
+            "not": {
+             "has": {
+              "any": [
+               {
+                "kind": "list_splat_pattern"
+               },
+               {
+                "kind": "dictionary_splat_pattern"
+               }
+              ]
+             }
+            }
+           },
+           "annotation": {
+            "matches": "int-annotation"
+           }
+          }
+         }
+        },
+        {
+         "resolves": {
+          "binding": {
+           "only": true,
+           "site": {
+            "matches": "int-def"
+           }
+          }
+         }
+        },
+        {
+         "pattern": "$WN",
+         "resolves": {
+          "binding": {
+           "only": true,
+           "form": "with",
+           "site": {
+            "any": [
+             {
+              "matches": "int-with"
+             },
+             {
+              "has": {
+               "stopBy": "end",
+               "matches": "int-with"
+              }
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      },
+      "name-root": {
+       "any": [
+        {
+         "matches": "int-name"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "name-root"
+         }
+        },
+        {
+         "kind": "call",
+         "has": {
+          "field": "function",
+          "matches": "name-root"
+         }
+        }
+       ]
+      },
+      "file-descriptor": {
+       "any": [
+        {
+         "kind": "integer",
+         "not": {
+          "regex": "[jJ]$"
+         }
+        },
+        {
+         "matches": "class-int-attr"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "file-descriptor"
+         }
+        },
+        {
+         "matches": "name-root"
+        }
+       ]
+      },
+      "nested-class-body": {
+       "kind": "block",
+       "inside": {
+        "kind": "class_definition"
+       }
+      },
+      "int-member": {
+       "kind": "identifier",
+       "pattern": "$ATTR",
+       "any": [
+        {
+         "binds": {
+          "latest": true,
+          "scope": "class",
+          "form": [
+           "assignment",
+           "named"
+          ],
+          "value": {
+           "matches": "int-initializer"
+          }
+         }
+        },
+        {
+         "binds": {
+          "latest": true,
+          "scope": "class",
+          "form": [
+           "annotated",
+           "annotation"
+          ],
+          "annotation": {
+           "matches": "int-annotation"
+          }
+         }
+        },
+        {
+         "binds": {
+          "latest": true,
+          "scope": "class",
+          "form": "definition",
+          "site": {
+           "matches": "int-def"
+          }
+         }
+        }
+       ]
+      },
+      "class-int-member": {
+       "kind": "class_definition",
+       "has": {
+        "field": "body",
+        "has": {
+         "stopBy": {
+          "matches": "nested-class-body"
+         },
+         "matches": "int-member"
+        }
+       }
+      },
+      "class-ref": {
+       "any": [
+        {
+         "kind": "identifier",
+         "resolves": {
+          "binding": {
+           "site": {
+            "any": [
+             {
+              "matches": "class-int-member"
+             },
+             {
+              "has": {
+               "field": "definition",
+               "matches": "class-int-member"
+              }
+             }
+            ]
+           }
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "class-ref"
+         }
+        }
+       ]
+      },
+      "inner-class-name": {
+       "kind": "identifier",
+       "pattern": "$MID",
+       "binds": {
+        "latest": true,
+        "scope": "class",
+        "form": "definition",
+        "site": {
+         "any": [
+          {
+           "matches": "class-int-member"
+          },
+          {
+           "has": {
+            "field": "definition",
+            "matches": "class-int-member"
+           }
+          }
+         ]
+        }
+       }
+      },
+      "outer-ref": {
+       "any": [
+        {
+         "kind": "identifier",
+         "resolves": {
+          "binding": {
+           "site": {
+            "any": [
+             {
+              "matches": "outer-class"
+             },
+             {
+              "has": {
+               "field": "definition",
+               "matches": "outer-class"
+              }
+             }
+            ]
+           }
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "outer-ref"
+         }
+        }
+       ]
+      },
+      "mid-ref": {
+       "any": [
+        {
+         "kind": "attribute",
+         "all": [
+          {
+           "has": {
+            "field": "attribute",
+            "pattern": "$MID"
+           }
+          },
+          {
+           "has": {
+            "field": "object",
+            "matches": "outer-ref"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "mid-ref"
+         }
+        }
+       ]
+      },
+      "class-int-attr": {
+       "kind": "attribute",
+       "all": [
+        {
+         "has": {
+          "field": "attribute",
+          "pattern": "$ATTR"
+         }
+        },
+        {
+         "has": {
+          "field": "object",
+          "any": [
+           {
+            "matches": "class-ref"
+           },
+           {
+            "matches": "mid-ref"
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "outer-class": {
+       "kind": "class_definition",
+       "has": {
+        "field": "body",
+        "has": {
+         "stopBy": {
+          "matches": "nested-class-body"
+         },
+         "matches": "inner-class-name"
+        }
+       }
+      }
+     },
+     "rule": {
+      "kind": "call",
+      "has": {
+       "field": "function",
+       "matches": "callee"
+      },
+      "all": [
+       {
+        "any": [
+         {
+          "arguments": {
+           "signature": [
+            "path"
+           ],
+           "mode": "syntactic",
+           "absent": [
+            "path"
+           ]
+          }
+         },
+         {
+          "arguments": {
+           "signature": [
+            "path"
+           ],
+           "mode": "syntactic",
+           "bind": {
+            "S": "path"
+           }
+          }
+         }
+        ]
+       },
+       {
+        "not": {
+         "has": {
+          "field": "arguments",
+          "kind": "argument_list",
+          "has": {
+           "kind": "keyword_argument",
+           "all": [
+            {
+             "has": {
+              "field": "name",
+              "regex": "^dir_fd$"
+             }
+            },
+            {
+             "has": {
+              "field": "value",
+              "not": {
+               "matches": "none-literal"
+              }
+             }
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     },
+     "constraints": {
+      "S": {
+       "not": {
+        "matches": "file-descriptor"
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH101",
+    "message": "Use `Path(path).chmod(mode)` instead of `os.chmod(path, mode)`; leave it where the path is a file descriptor or bytes, or `dir_fd` comes through `**kwargs`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH101"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,358 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf020-never-union",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove Never and NoReturn from union types; they have no values, so the union equals its other members.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "never-like": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Never",
+                "typing.NoReturn",
+                "typing_extensions.Never",
+                "typing_extensions.NoReturn",
+                "_typeshed.Never",
+                "_typeshed.NoReturn"
+              ]
+            }
+          },
+          "union-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Union",
+                "typing_extensions.Union",
+                "_typeshed.Union"
+              ]
+            }
+          },
+          "pep604-operand": {
+            "matches": "never-like",
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "any": [
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\|$"
+                  }
+                },
+                {
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "union_type"
+                  }
+                }
+              ]
+            }
+          },
+          "union-subscript": {
+            "kind": "subscript",
+            "has": {
+              "field": "value",
+              "matches": "union-ref"
+            }
+          },
+          "union-generic": {
+            "kind": "generic_type",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "union-ref"
+            }
+          },
+          "union-member": {
+            "matches": "never-like",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "union-subscript",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[\\[\\],]$"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 3
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter",
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type"
+                      },
+                      "min": 2
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "union-generic"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "tuple",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[(),]$"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 2
+                  },
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "matches": "union-subscript",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "tuple",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[(),]$"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 2
+                  },
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "union-generic"
+                      },
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "pep604-in-string": {
+            "kind": "string",
+            "not": {
+              "has": {
+                "stopBy": "end",
+                "kind": "escape_sequence"
+              }
+            },
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "pep604-operand",
+                    "pattern": "$N",
+                    "capture": "N"
+                  },
+                  {
+                    "matches": "pep604-in-string"
+                  }
+                ]
+              }
+            }
+          },
+          "union-in-string": {
+            "kind": "string",
+            "not": {
+              "has": {
+                "stopBy": "end",
+                "kind": "escape_sequence"
+              }
+            },
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "union-member",
+                    "pattern": "$N",
+                    "capture": "N"
+                  },
+                  {
+                    "matches": "union-in-string"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "never-in-pep604-union",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "pep604-operand",
+                "pattern": "$N"
+              },
+              {
+                "matches": "pep604-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "RUF020",
+        "each": "N",
+        "message": "Keep only the other members of this `|` union; `$N` has no values, so it adds nothing. If that leaves `None | None`, write a single `None`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF020"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "never-in-typing-union",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "union-member",
+                "pattern": "$N"
+              },
+              {
+                "matches": "union-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "RUF020",
+        "each": "N",
+        "message": "Keep only the other members of this `Union[...]`; `$N` has no values, so it adds nothing. If one member is left, use it directly without `Union`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF020"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

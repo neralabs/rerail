@@ -181,7 +181,7 @@ describe("the writes the whole-pack switch sends", () => {
     expect(stored("ts:b").enabled).toBe(false);
     expect(stored("ts:a").enabled).toBe(true);
     expect(puts()).toHaveLength(1);
-    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Could not save/u));
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Couldn’t save\. /u));
   });
 
   it("owns a change to the worktree's own rules by this worktree, and any other pack's by the repository", async () => {

@@ -1,0 +1,89 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d215-overindented-section-underline",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Align a docstring section's dashed underline with the docstring's own indentation, not deeper than it.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "doc-stmt": {"kind": "expression_statement", "not": {"any": [{"has": {"stopBy": "neighbor", "regex": "^,$"}}, {"follows": {"stopBy": "end", "not": {"kind": "comment"}}}]}, "any": [{"inside": {"stopBy": "neighbor", "kind": "module"}}, {"inside": {"stopBy": "neighbor", "kind": "block", "inside": {"stopBy": "neighbor", "any": [{"kind": "function_definition"}, {"kind": "class_definition"}]}}}]},
+          "doc-holder": {"any": [{"matches": "doc-stmt"}, {"kind": "parenthesized_expression", "inside": {"stopBy": "neighbor", "matches": "doc-holder"}}]},
+          "docstring": {"kind": "string", "not": {"has": {"stopBy": "neighbor", "kind": "string_start", "regex": "[bBfFtT]"}}, "inside": {"stopBy": "neighbor", "matches": "doc-holder"}},
+          "directive-hidden": {"value": {"regex": "\\n([ \\t]*)\\.\\. [^\\n]*(?:\\n(?:[ \\t]*\\n)*\\1[ \\t]+[^\\s][^\\n]*)*?\\n(?:[ \\t]*\\n)*\\1[ \\t]+(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*(?:\\n|\\z)"}},
+          "owner": {"any": [{"kind": "module"}, {"kind": "function_definition"}, {"kind": "class_definition"}]},
+          "checked": {"matches": "docstring", "not": {"matches": "directive-hidden"}, "inside": {"stopBy": "end", "kind": "expression_statement", "any": [{"inside": {"stopBy": "neighbor", "kind": "module"}}, {"layout": {"before": {"to": "token", "breaks": {"min": 1}}}}]}}
+        }
+      }
+    },
+    {
+      "id": "indent-0",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{0}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{1,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-1",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{1}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{2,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-2",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{2}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{3,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-3",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{3}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{4,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-4",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{4}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{5,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-5",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{5}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{6,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-6",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{6}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{7,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-8",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{8}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{9,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-9",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{9}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{10,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-10",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{10}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{11,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-12",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{12}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{13,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-16",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{16}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{17,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    },
+    {
+      "id": "indent-20",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "checked", "inside": {"stopBy": {"matches": "owner"}, "matches": "owner", "regex": "\\A(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{20}[uUrR]*[\\\"']"}, "regex": "(?m)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{21,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)"}}},
+      "violation": {"code": "D215", "anchor": "capture.NAME", "each": "NAME", "message": "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name.", "suppress": {"noqa": {"codes": ["D215"]}}}
+    }
+  ]
+}

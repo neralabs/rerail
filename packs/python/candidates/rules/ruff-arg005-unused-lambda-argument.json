@@ -1,0 +1,232 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-arg005-unused-lambda-argument",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove lambda parameters the body never reads, or prefix them with an underscore when the caller passes them anyway.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "dummy-variable-rgx": {
+            "type": "string",
+            "default": "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$",
+            "description": "Names of arguments that may be unused."
+          },
+          "flake8-unused-arguments.ignore-variadic-names": {
+            "type": "boolean",
+            "default": false,
+            "description": "Don't report unused *args and **kwargs."
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-lambda-argument",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "utils": {
+            "locals-call": {
+              "kind": "call",
+              "has": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^locals$"
+                  },
+                  {
+                    "kind": "list_splat",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^locals$"
+                    }
+                  }
+                ]
+              }
+            },
+            "other-scope": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "body",
+                    "kind": "lambda"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "kind": "for_in_clause"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "list_comprehension"
+                      },
+                      {
+                        "kind": "set_comprehension"
+                      },
+                      {
+                        "kind": "dictionary_comprehension"
+                      },
+                      {
+                        "kind": "generator_expression"
+                      }
+                    ]
+                  },
+                  "not": {
+                    "kind": "for_in_clause",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "for_in_clause"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "own-locals": {
+              "matches": "locals-call",
+              "not": {
+                "matches": "other-scope"
+              }
+            },
+            "lambda": {
+              "any": [
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "body",
+                      "any": [
+                        {
+                          "matches": "locals-call"
+                        },
+                        {
+                          "has": {
+                            "stopBy": {
+                              "matches": "other-scope"
+                            },
+                            "matches": "own-locals"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "class_definition"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$N",
+            "binds": {
+              "form": "parameter",
+              "scope": "lambda",
+              "latest": true,
+              "used": false
+            },
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "lambda_parameters",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "lambda"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "kind": "lambda"
+                  },
+                  "kind": "lambda",
+                  "matches": "lambda"
+                }
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "regex": {
+                    "$option": "dummy-variable-rgx"
+                  }
+                },
+                {
+                  "$option": "flake8-unused-arguments.ignore-variadic-names",
+                  "cases": {
+                    "true": [
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "list_splat_pattern"
+                            },
+                            {
+                              "kind": "dictionary_splat_pattern"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "default": [],
+                  "spread": true
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ARG005",
+        "message": "Remove `$N` if no caller passes it, or prefix it with an underscore if the lambda must accept it; keep the name when callers pass it by keyword.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ARG005"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
