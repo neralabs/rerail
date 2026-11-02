@@ -11,7 +11,8 @@
 # Environment: EDITS (default 8: each size bucket twice), SAMPLE (the percentage of each worktree's files both engines
 # read, by path hash; default 100), BACKEND (cpu | metal, default cpu), OBSERVER (directory | head, default directory),
 # WORKSPACES (default ~/rerail-bench/memory47/workspaces), ADDON (default this worktree's target-addon build), ENGINES
-# (default "native slice"), QUIET (the load to wait under, default 3).
+# (default "native slice"), QUIET (the load to wait under, default 3), NATIVE_RULES (a directory native reads instead of
+# the pack, e.g. lowered-rules.py's: the slice's clauses alone, like for like).
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 RUN=${1:?run dir}
@@ -26,13 +27,15 @@ ADDON=${ADDON:-$REPO/target-addon/addon/rerail_engine.darwin-arm64.node}
 ENGINES=${ENGINES:-native slice}
 QUIET=${QUIET:-3}
 RULES=(--rules "$REPO/packs/python/rules" --rules "$REPO/packs/python/candidates/rules")
+NATIVE=("${RULES[@]}")
+[ -n "${NATIVE_RULES:-}" ] && NATIVE=(--rules "$NATIVE_RULES")
 mkdir -p "$RUN"/{native,slice}/findings
 cd "$REPO"
 {
   echo "commit $(git rev-parse HEAD)"
   shasum -a 256 "$ADDON"
   sysctl -n machdep.cpu.brand_string
-  echo "worktrees $* edits $EDITS sample $SAMPLE backend $BACKEND observer $OBSERVER engines $ENGINES"
+  echo "worktrees $* edits $EDITS sample $SAMPLE backend $BACKEND observer $OBSERVER engines $ENGINES native rules ${NATIVE_RULES:-the pack}"
 } > "$RUN/provenance.txt"
 
 load() { echo "$(date +%T) $1 load $(sysctl -n vm.loadavg)" | tee -a "$RUN/load.txt"; }
@@ -49,14 +52,14 @@ for n in "$@"; do
   for engine in $ENGINES; do
     out="$RUN/$engine/$n"
     mkdir -p "$out"
-    extra=()
-    [ "$engine" = slice ] && extra=(--backend "$BACKEND" --observer "$OBSERVER")
-    [ "$engine" = native ] && extra=(--idle-ms 0)
+    rules=("${RULES[@]}")
+    extra=(--backend "$BACKEND" --observer "$OBSERVER")
+    [ "$engine" = native ] && rules=("${NATIVE[@]}") && extra=(--idle-ms 0)
     quiet
     load "$engine $n start"
     status=0
     /usr/bin/time -l -o "$out/time.txt" node --import tsx benchmark/workspaces/workspaces.ts run --engine "$engine" \
-      "${RULES[@]}" --workspaces "$WORKSPACES" --first 40 --only "$n" --edits "$EDITS" --sample "$SAMPLE" --addon "$ADDON" "${extra[@]}" \
+      "${rules[@]}" --workspaces "$WORKSPACES" --first 40 --only "$n" --edits "$EDITS" --sample "$SAMPLE" --addon "$ADDON" "${extra[@]}" \
       --output "$out/$engine.json" --findings-out "$RUN/$engine/findings" 2> "$out/stderr.txt" || status=$?
     echo "$status" > "$out/exit.txt"
     load "$engine $n end (exit $status)"
