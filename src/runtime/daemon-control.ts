@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -8,6 +8,7 @@ import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { makeRerailHome } from "../engine/storage/private-files.js";
 
 /** What `rerail status` and the launcher need to find a running daemon. */
 export interface DaemonState {
@@ -173,14 +174,31 @@ export interface StartDaemonResult {
   daemon: RunningDaemon;
 }
 
+/** Whether `pid` is a live process of any user: a process another user runs still holds its pid (`EPERM`). */
 export function processAlive(pid: number): boolean {
+  return processLiveness(pid) !== "dead";
+}
+
+/**
+ * Whether `pid` is a live process this OS user runs, the only kind that can be this user's daemon. A state file whose
+ * pid belongs to another user is left over from a daemon that is gone, its pid since reused; probing the URL it records
+ * would send the capability to whoever listens there now. On Windows `EPERM` also answers for this user's elevated
+ * processes, so there it still counts as this user's.
+ */
+export function ownProcessAlive(pid: number): boolean {
+  return processLiveness(pid) === "own";
+}
+
+function processLiveness(pid: number): "own" | "other-user" | "dead" {
+  let owner: "own" | "other-user" = "own";
   try {
     process.kill(pid, 0);
   } catch (error) {
-    // EPERM means the process exists but belongs to another user; it is still alive.
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
+    // EPERM means the process exists but this user may not signal it: on POSIX, another user's.
+    if ((error as NodeJS.ErrnoException).code !== "EPERM") return "dead";
+    if (process.platform !== "win32") owner = "other-user";
   }
-  return !isZombie(pid);
+  return isZombie(pid) ? "dead" : owner;
 }
 
 /**
@@ -271,7 +289,8 @@ export async function lookupDaemon(home: string): Promise<DaemonLookup> {
   const stateFile = join(home, DAEMON_STATE_FILE);
   const state = await readDaemonState(stateFile);
   if (state === undefined) return { status: "absent" };
-  if (!processAlive(state.pid)) {
+  // Another user's process cannot be this user's daemon: the state is stale, and its URL is never probed.
+  if (!ownProcessAlive(state.pid)) {
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
@@ -395,7 +414,7 @@ async function repairSqlite(control: DaemonControl): Promise<void> {
 }
 
 export async function startDaemon(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
-  await mkdir(control.home, { recursive: true, mode: 0o700 });
+  makeRerailHome(control.home);
   return await withStartLock(control.home, async () => {
     const lookup = await lookupDaemon(control.home);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
@@ -410,7 +429,7 @@ export async function startDaemon(control: DaemonControl, options: DaemonLaunchO
  * an older daemon cannot safely accept fields introduced by the active hook.
  */
 export async function startDaemonForPackage(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
-  await mkdir(control.home, { recursive: true, mode: 0o700 });
+  makeRerailHome(control.home);
   return await withStartLock(control.home, async () => {
     const lookup = await lookupDaemon(control.home);
     if (lookup.status === "running") {
@@ -562,7 +581,7 @@ export function autostartDaemon(): void {
   const home = defaultRerailHome();
   const packageRoot = PACKAGE_ROOT;
   try {
-    mkdirSync(home, { recursive: true, mode: 0o700 });
+    makeRerailHome(home);
     const log = openSync(join(home, DAEMON_LOG_FILE), "a", 0o600);
     try {
       const child = spawn(

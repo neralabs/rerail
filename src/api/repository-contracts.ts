@@ -239,7 +239,7 @@ export const libraryUpsertResultSchema = z.object({
   rule: libraryRuleRecordSchema,
   copiedFromRuleId: z.string().nullable().describe("Set when the write edited a By Rerail rule and stored a copy instead."),
   attached: z.object({ repositoryKey: z.string(), folders: z.array(z.string()) }).strict().nullable()
-    .describe("Where the rule (or the copy) was added; a copy also switches the original off there."),
+    .describe("Where the rule (or the copy) was added; a copy switches the original off there once it is approved."),
 }).strict();
 
 export const rerailRuleSchema = z.discriminatedUnion("kind", [

@@ -104,8 +104,12 @@ export async function updateWithSnapshot(updater: SnapshotUpdater, databasePath:
   return result;
 }
 
-/** `rerail rules export|import`: the library and every repository's configuration, as a rules dump. */
-export function runRulesCommand(args: readonly string[], usage: () => string): number {
+/**
+ * `rerail rules export|import`: the library and every repository's configuration, as a rules dump. `import --approve`
+ * approves each imported rule as it is imported (`rule-approval.ts`): the person's own dump, so never pre-approved.
+ */
+export function runRulesCommand(args: readonly string[], usage: () => string, io: { stdout?: { write(text: string): unknown } } = {}): number {
+  const stdout = io.stdout ?? process.stdout;
   const action = args[0];
   const database = defaultRerailDatabasePath();
   if (action === "export") {
@@ -131,19 +135,24 @@ export function runRulesCommand(args: readonly string[], usage: () => string): n
     } finally {
       rmSync(staging, { force: true });
     }
-    process.stdout.write(`Exported ${dump.library.length} rules created by you and ${dump.repositories.length} repositories from ${database} to ${output}\n`);
+    stdout.write(`Exported ${dump.library.length} rules created by you and ${dump.repositories.length} repositories from ${database} to ${output}\n`);
     return 0;
   }
   if (action === "import") {
     const file = args[1];
     if (file === undefined || file.startsWith("--")) throw new Error(`rules import needs a dump file\n\n${usage()}`);
-    parseArguments(args.slice(2), { flags: [], options: [] }, argument => `Unknown rules import option: ${argument}\n\n${usage()}`);
+    const { flags } = parseArguments(args.slice(2), { flags: ["--approve"], options: [] }, argument => `Unknown rules import option: ${argument}\n\n${usage()}`);
     const source = resolve(file);
     const value = parseJsonWithoutDuplicateKeys(readFileSync(source, "utf8"), source);
     const db = openRerailDatabase(database);
     try {
-      const report = importRulesDump(db, loadRuleCatalog(), value);
-      process.stdout.write(`Imported ${report.library} rules created by you and ${report.repositories} repositories from ${source} into ${database}\n`);
+      const report = importRulesDump(db, loadRuleCatalog(), value, { approve: flags.has("--approve") });
+      stdout.write(`Imported ${report.library} rules created by you and ${report.repositories} repositories from ${source} into ${database}\n`);
+      for (const id of report.approved) stdout.write(`● Approved ${id}: it runs in the mode it is set to from the next edit.\n`);
+      const waiting = report.waiting.length;
+      if (waiting > 0) {
+        stdout.write(`${waiting} imported ${plural(waiting, "rule")} ${waiting === 1 ? "runs" : "run"} in Log until a person approves ${waiting === 1 ? "it" : "them"}: rerail rules approve\n`);
+      }
     } finally {
       db.$client.close();
     }

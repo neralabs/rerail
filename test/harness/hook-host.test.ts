@@ -1,7 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
 import {
   emitHookOutput,
@@ -193,6 +193,27 @@ describe("hook host durable state", () => {
     }))));
 
     expect(await readPending(path)).toEqual([delivery("steer"), { ...delivery("block"), requested: "block" }]);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses held steers through a symlink under .rerail, says so, and writes nothing where it leads", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, ".rerail", "sessions");
+    const elsewhere = join(root, "elsewhere");
+    await mkdir(storageRoot, { recursive: true });
+    await mkdir(elsewhere);
+    await symlink(elsewhere, join(storageRoot, "claude-code-pending"));
+    const path = pendingPath(storageRoot, "claude-code", "session-1");
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await expect(persistPending(path, [delivery("first")])).rejects.toThrow(`through ${join(storageRoot, "claude-code-pending")}: it is a symbolic link`);
+      expect(await readdir(elsewhere)).toEqual([]);
+      // Nor is a steer planted there read back as one Rerail held.
+      await writeFile(join(elsewhere, basename(path)), JSON.stringify([delivery("planted")]));
+      await expect(readPending(path)).rejects.toThrow("it is a symbolic link");
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("it is a symbolic link"));
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("serializes one-shot work per host session and releases the lock after failure", async () => {

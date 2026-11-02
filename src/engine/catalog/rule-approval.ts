@@ -4,14 +4,15 @@
  * third party's, or one installed from a folder or tarball) runs in Log only until its content is approved; an edit is
  * new content, and waits again. Approval is of content, once per machine: a rule by its id at the digest of its
  * document, a pack by its package name at the digest of everything it ships, so a pack is approved once per version.
- * Rerail's own packs from npm need none.
+ * Rerail's own packs from npm need none. An edited copy of a By Rerail rule replaces its original only once approved:
+ * until then the original keeps running where the copy is added, so writing a copy never weakens a rule.
  */
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
-import { libraryRules, ruleApprovals, RULE_APPROVAL_SUBJECTS } from "../storage/schema.js";
+import { libraryRules, ruleApprovals, ruleAttachments, ruleSettings, RULE_APPROVAL_SUBJECTS } from "../storage/schema.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
-import type { RuleCatalog } from "./repository-model.js";
+import type { EffectiveRule, RuleCatalog } from "./repository-model.js";
 import { RERAIL_PUBLISHER, type RulePack } from "./rule-packs.js";
 import { isWorktreePack } from "./worktree-pack.js";
 
@@ -112,10 +113,40 @@ export function isApproved(db: Pick<RerailDatabase, "select">, subject: RuleAppr
   )).get() !== undefined;
 }
 
-/** Record that a person approved `subject`; approving it again changes nothing. */
-export function approve(db: Pick<RerailDatabase, "insert">, subject: RuleApprovalSubject, now: number = Date.now()): void {
+/**
+ * Record that a person approved `subject`; approving it again changes nothing. The first approval of an edited copy of
+ * a By Rerail rule since it was created switches the original off wherever the copy is added, with a repository
+ * setting, as the copy now replaces it there.
+ */
+export function approve(db: Pick<RerailDatabase, "select" | "insert">, subject: RuleApprovalSubject, now: number = Date.now()): void {
+  const copy = subject.kind === "rule"
+    ? db.select({ copiedFromRuleId: libraryRules.copiedFromRuleId, createdAt: libraryRules.createdAt }).from(libraryRules)
+      .where(eq(libraryRules.ruleId, subject.id)).get()
+    : undefined;
+  const first = copy?.copiedFromRuleId != null && db.select({ id: ruleApprovals.subjectId }).from(ruleApprovals).where(and(
+    eq(ruleApprovals.subjectKind, "rule"), eq(ruleApprovals.subjectId, subject.id), gte(ruleApprovals.approvedAt, copy.createdAt),
+  )).get() === undefined;
   db.insert(ruleApprovals)
     .values({ subjectKind: subject.kind, subjectId: subject.id, digest: subject.digest, approvedAt: now })
     .onConflictDoNothing()
     .run();
+  if (!first) return;
+  const added = db.select({ repositoryKey: ruleAttachments.repositoryKey, folder: ruleAttachments.folder }).from(ruleAttachments)
+    .where(and(eq(ruleAttachments.sourceKind, "library_rule"), eq(ruleAttachments.sourceId, subject.id))).all();
+  for (const { repositoryKey, folder } of added) {
+    db.insert(ruleSettings)
+      .values({ ownerKind: "repository", ownerId: repositoryKey, folder, targetKind: "rule", targetId: copy.copiedFromRuleId!, on: false, mode: null, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [ruleSettings.ownerKind, ruleSettings.ownerId, ruleSettings.folder, ruleSettings.targetKind, ruleSettings.targetId],
+        set: { on: false, updatedAt: now },
+      })
+      .run();
+  }
+}
+
+/** How many rules and packs (each counted once) among `rules` are on and run in Log, waiting for a person's approval. */
+export function awaitingApprovalOf(rules: readonly EffectiveRule[]): number {
+  return new Set(rules.flatMap(rule => (rule.on && rule.approval?.approved === false
+    ? [`${rule.approval.subject.kind}\0${rule.approval.subject.id}`]
+    : []))).size;
 }

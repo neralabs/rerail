@@ -8,9 +8,10 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   (`check-boundaries.mjs`), the Windows checkout check (`check-windows-paths.mjs`: every tracked path short
   enough and named so Windows can check it out), the internal reference check (`check-internal-refs.mjs`: no
   internal ticket ID in a tracked path or text) and the licence allowlist.
-- `deps/`: pins that follow a dependency's version (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release
-  digests follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI.
-  `.github/workflows/dependabot-pins.yml` runs it on Dependabot's pull requests; `npm run check` fails on drift.
+- `deps/`: pins that follow a dependency (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release digests
+  follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI, and `reviewer.yml`'s
+  `reviewer_ref` follows the commit its `uses:` pins. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's
+  npm pull requests; `npm run check` fails on drift.
 - `dev/`: a development install from this checkout (`just rerail-dev`), its restore, nuke and smoke runs, and the
   dashboard scenario launcher for design review (`ui-scenario.ts`, `just ui-scenario <scenario>`).
 - `dsl/`: the code-rule DSL benchmark.

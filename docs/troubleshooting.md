@@ -260,6 +260,14 @@ With Claude Code and Cursor both connected, Cursor's Third-Party Imports setting
 the hooks in `~/.claude/settings.json` too. Rerail's Claude Code hook ignores the events Cursor sends it, so each
 Cursor chat is recorded once, as a Cursor session. Nothing to do.
 
+### Claude Code: a command on Rerail's files says `Operation not permitted`
+
+With Claude Code's sandbox on, set-up keeps the agent's commands and file tools out of the Rerail home and
+`~/.cache/rerail` (see [What a coding agent can reach](installation.md#what-a-coding-agent-can-reach)). Rerail's own
+commands run outside the sandbox, but only as a plain call: one with a redirect (`> file`), a `cd` or a `$(...)`
+stays sandboxed and fails. Run the command without them, or run it yourself in a terminal. Run `rerail setup` again
+after moving `RERAIL_HOME` or Node, so the entries name the new paths.
+
 ### A session open before set-up shows nothing
 
 Coding agents load hooks and commands when a session starts. Open a new session after set-up, `rerail install`,

@@ -1,9 +1,11 @@
 /**
  * `rerail rules approve`: list the rules and packs whose content waits for a person's approval here, or approve one
- * (`rule-approval.ts`). Until approved, such a rule runs in Log only. A coding agent runs this only after the person
- * said yes to the content it read back to them (`skills/rerail-create`, "Approve").
+ * (`rule-approval.ts`), printing what it approves first. Until approved, such a rule runs in Log only. A coding agent
+ * runs this only after the person said yes to the content it read back to them (`skills/rerail-create`, "Approve"),
+ * and the command files never pre-approve it, so the agent's host asks the person before it runs.
  */
 import { resolve } from "node:path";
+import { eq } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { approvalKey, approve, currentSubject, packSubject, readApprovals, ruleSubject, type RuleApprovalSubject } from "../engine/catalog/rule-approval.js";
@@ -58,6 +60,29 @@ function list(db: RerailDatabase, catalog: RuleCatalog, write: (text: string) =>
   ].join("\n") + "\n");
 }
 
+/**
+ * `value` as indented JSON, with every invisible character (format, private-use and unassigned code points: zero-width
+ * spaces, bidi controls, tag characters) written as its escape, so the person reads exactly what the agent will.
+ */
+function visibleJson(value: unknown): string {
+  return JSON.stringify(value, null, 2).replace(/[\p{Cf}\p{Co}\p{Cn}]/gu, character => {
+    const code = character.codePointAt(0)!;
+    return code > 0xffff ? `\\u{${code.toString(16)}}` : `\\u${code.toString(16).padStart(4, "0")}`;
+  });
+}
+
+/** What approving `subject` approves, written before it is approved: a rule's content in full, a pack's rules by id. */
+function approvalText(db: RerailDatabase, catalog: RuleCatalog, subject: RuleApprovalSubject): string {
+  if (subject.kind === "pack") {
+    const pack = [...catalog.packs.values()].find(candidate => (candidate.packageName ?? candidate.id) === subject.id);
+    const ids = pack?.rules.map(rule => clean(rule.id)) ?? [];
+    return `● pack ${clean(subject.id)}@${clean(pack?.version ?? "?")} ships ${ids.length} ${ids.length === 1 ? "rule" : "rules"}: ${ids.join(", ")}\n`;
+  }
+  const document = db.select({ document: libraryRules.document }).from(libraryRules).where(eq(libraryRules.ruleId, subject.id)).get()?.document
+    ?? catalog.documents.get(subject.id);
+  return `● ${clean(subject.id)}${document === undefined ? "" : ` (${document.kind} rule)`} has this content:\n${visibleJson(document?.rule)}\n`;
+}
+
 /** `rerail rules approve [<rule id | pack> …] [--repo <dir>]`. */
 export function runRuleApproveCommand(
   args: readonly string[],
@@ -89,6 +114,7 @@ export function runRuleApproveCommand(
         write(`● ${clean(subject.id)} is already approved as it is.\n`);
         continue;
       }
+      write(approvalText(db, catalog, subject));
       approve(db, subject);
       write(`● Approved ${subject.kind} ${clean(subject.id)}: it runs in the mode it is set to from the next edit.\n`);
     }

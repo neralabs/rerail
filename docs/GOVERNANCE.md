@@ -30,8 +30,8 @@ request, credits its author with `Co-authored-by:`, and closes it with a link to
   ([Disagreement](#how-decisions-are-made)).
 - **In the open.** A decision about Rerail's code, rules, packs or docs, wherever it is reached, is recorded in the
   issue or pull request it concerns, with its reason, before anyone acts on it.
-- **Everyday changes.** A pull request merges once a code owner other than its author approves it, or the
-  `neralabs-ci` reviewer approves a low-risk change (`reviewer.yml`), and **CI result** passes. It is squash-merged.
+- **Everyday changes.** A pull request merges once a code owner other than its author approves it and **CI result**
+  passes. It is squash-merged. The automated reviewer (`reviewer.yml`) comments but never approves.
 - **Changes that start with an issue.** For anything [Start with an issue](../CONTRIBUTING.md#start-with-an-issue)
   lists, a maintainer agrees the approach in the issue before the code is written. A large change writes a short design
   there first ([Large changes](../CONTRIBUTING.md#large-changes)).

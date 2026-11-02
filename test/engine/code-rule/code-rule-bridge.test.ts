@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -163,6 +164,19 @@ describe("CodeRuleBridge", () => {
       await capture;
       await audit;
     }
+  });
+
+  it("captures only the digest and size of a secret-like file as its preimage, never its text", async () => {
+    const root = await workspace();
+    const text = "TOKEN = 'sk-live-0123456789'\n";
+    await writeFile(join(root, "src", "secrets.py"), text);
+    await writeFile(join(root, "src", "a.py"), "before\n");
+    const bridge = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await bridge.openWorkspace("session-1");
+    await expect(bridge.begin("edit-1", "write", { path: ["src/secrets.py", "src/a.py"] })).resolves.toEqual({
+      "src/secrets.py": { withheld: { sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) } },
+      "src/a.py": { text: "before\n" },
+    });
   });
 
   it("opens and checks tool edits while a stale baseline read is stalled", async () => {

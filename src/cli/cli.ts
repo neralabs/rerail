@@ -22,7 +22,7 @@ import {
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "../activation/customer-profile.js";
 import {
-  onRuleCount, readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
+  checkoutRuleCounts, readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
@@ -154,7 +154,7 @@ function usage(): string {
     "  rerail packs remove <id | package>...",
     "  rerail packs recommend [--repo <dir>]",
     "  rerail rules export [--output <rules.json>]",
-    "  rerail rules import <rules.json>",
+    "  rerail rules import <rules.json> [--approve]",
     "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
@@ -373,11 +373,12 @@ async function runUpdateCommand(
 }
 
 /**
- * Rules on in `workspace`'s checkout, from its repository's configuration, for `/rerail` where the coding agent
- * cannot name its session. A status read: it never writes, and where the configuration cannot be read (busy, or
- * the checkout not recorded) the summary drops the count line rather than failing.
+ * Rules on in `workspace`'s checkout, and how many of them run in Log waiting for a person's approval, from its
+ * repository's configuration, for `/rerail` where the coding agent cannot name its session. A status read: it never
+ * writes, and where the configuration cannot be read (busy, or the checkout not recorded) the summary drops the count
+ * lines rather than failing.
  */
-function enabledRuleCount(workspace: string): number | null {
+function repositoryRuleCounts(workspace: string): { on: number; awaitingApproval: number } | null {
   const databasePath = defaultRerailDatabasePath();
   if (!existsSync(databasePath)) return null;
   let database;
@@ -385,7 +386,7 @@ function enabledRuleCount(workspace: string): number | null {
     database = openRerailDatabase(databasePath, { readonly: true });
     const checkout = lookupCheckout(database, workspace);
     if (checkout === undefined) return null;
-    return onRuleCount(database, checkout);
+    return checkoutRuleCounts(database, checkout);
   } catch (error) {
     process.stderr.write(`rerail: could not count this repo's rules: ${error instanceof Error ? error.message : String(error)}\n`);
     return null;
@@ -417,10 +418,12 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
     : await readPresentation({ host: host as RerailHost, sessionId, cwd, onDemand: true, startState });
   const repositoryState = presentation === null ? await readSummaryState(cwd, host as RerailHost, startState) : presentation.repositoryState;
   const rulesUrl = (await readRulesDashboard({ cwd })).url;
+  const counts = presentation === null && repositoryState === "started" ? repositoryRuleCounts(cwd) : null;
   process.stdout.write(`${renderRerailSummary({
     presentation,
     repositoryState,
-    ruleCount: presentation === null && repositoryState === "started" ? enabledRuleCount(cwd) : null,
+    ruleCount: counts?.on ?? null,
+    awaitingApproval: counts?.awaitingApproval ?? null,
     rulesUrl,
     repositoryName: repositoryName(cwd),
     sigil: host === "codex" ? "$" : "/",
