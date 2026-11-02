@@ -97,6 +97,14 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       addColumn(database, "repositories", "follow_gitignore", "integer DEFAULT true NOT NULL");
     },
   },
+  {
+    // A repository's `merge_assist`, off by default: only a person turns Merge Assist on. No floor: an older build
+    // never reads the column, and its inserts take the default. Its tables need no step; the DDL creates them.
+    id: "repositories-merge-assist",
+    up(database) {
+      addColumn(database, "repositories", "merge_assist", "integer DEFAULT false NOT NULL");
+    },
+  },
 ];
 
 /** The derived audit history tables as `audit-history-derived-tables` introduced them. */

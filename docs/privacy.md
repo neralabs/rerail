@@ -8,11 +8,15 @@ your disk. It describes the code in this repository; the file named after each s
 - **No telemetry.** Rerail has no telemetry, analytics, crash reporting or usage metrics, and depends on no library
   that provides them (`package.json`).
 - **Never sends your work anywhere.** Rerail itself never transmits your source code, prompts, coding-agent
-  transcripts, rules or findings. Its only network traffic is listed below, and none of it carries them.
+  transcripts, rules or findings. Its only network traffic is listed below, and none of it carries them. Merge Assist,
+  when you turn it on, has your own coding agent's CLI do so ([below](#your-coding-agents-provider)).
 - **No hosted model.** Semantic matching uses an embedding model that ships inside the package
   (`model/`, `minishlab/potion-base-8M`), runs in-process, and is verified against its SHA-256 manifest before it
   loads. The engine is built with no HTTP or socket code (`native/Cargo.toml`, `native/src/model.rs`). Rerail calls no
   hosted LLM or inference API.
+- **No credentials of its own.** Rerail makes no network request with credentials of its own. Where it runs a tool
+  that reaches the network for you (`npm`, and with Merge Assist on, `gh` and your coding agent's CLI), that tool uses
+  your own configuration and sign-in, and Rerail never reads or stores a token.
 - **No silent updates.** A new version arrives only when you run `rerail update` or `rerail setup` (`src/setup/updater.ts`).
 - **No pack install scripts.** Rule packs are installed and removed with `npm --ignore-scripts`
   (`src/setup/rule-pack-store.ts`).
@@ -22,8 +26,8 @@ your disk. It describes the code in this repository; the file named after each s
 
 ## What goes over the network
 
-All of it goes through `npm`, to the registry your own npm configuration names, and carries package names and versions
-only (`src/runtime/npm.ts`):
+Apart from Merge Assist (below), all of it goes through `npm`, to the registry your own npm configuration names, and
+carries package names and versions only (`src/runtime/npm.ts`):
 
 | When | What npm fetches |
 | --- | --- |
@@ -39,12 +43,28 @@ Signed customer profiles, which are in internal testing, add one more request: `
 activation code, a device public key, your platform and architecture, and the Rerail version to the activation URL
 **you** supply. `rerail activate --file` is the offline alternative (`src/activation/customer-profile.ts`).
 
+Merge Assist, which is in internal testing and off for every repository until you turn it on, adds read-only requests
+to GitHub through **`gh`**, with your own `gh` sign-in (`src/runtime/merge-assist/github.ts`):
+
+| When | What `gh` reads |
+| --- | --- |
+| A Merge Assist scan (at session start, after a decision is saved, and on demand) | Your sign-in state, the open pull requests of the repository, the `.rerail/candidates/` files at each one's head commit, and whether each author has write access |
+
+Rerail runs only `gh auth status`, `gh pr list` and `gh api` with `GET`; it never writes to GitHub. A repository whose
+remote is not on GitHub is not read at all; only its local branches are.
+
 ## Your coding agent's provider
 
 Rerail steers your coding agent by adding messages to its session. Your agent sends its whole session, Rerail's
 messages included, to its own model provider on its next request, under that provider's terms. Those messages can hold
 file paths and line numbers, a rule's message (which may quote the matched code), a suggested fix, and the text of
 rules you wrote. Rerail does not make that request; your agent does.
+
+With Merge Assist on, Rerail also runs your coding agent's CLI (Claude Code or Codex) headless to judge corrections
+and decisions: whether a correction is a decision worth keeping, and whether a teammate's decision contradicts one of
+yours (`src/runtime/merge-assist/agent-judge.ts`). That run sends the correction, the code it corrected, and the
+candidate decisions it compares to the CLI's provider, under that provider's terms and your own sign-in. The CLI runs
+with no tools, in an empty temporary folder, so it cannot read your repository. Rerail makes no model request itself.
 
 ## What Rerail keeps on your machine
 
@@ -55,6 +75,7 @@ Rerail stores what it needs to evaluate rules and show you their history. None o
 | `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits and findings, and every event your coding agents report: your prompts, the agent's replies, and tool calls with their inputs and outputs. Also the daemon's state and log, your consent answer, installed rule packs and managed installs |
 | `~/.cache/rerail/` | `content-v1.sqlite`: compressed copies of the source files Rerail has read, with their syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per coding-agent session: its events, and the text of files as they were before the agent edited them. The folder holds a `.gitignore` of `*`, so Git never shows or commits it |
+| `<your repository>/.rerail/candidates/` | With Merge Assist on, one file per decision you made on the branch, meant to be committed so teammates see it (mode `0644`). It holds only the decision, its scope, its rule and an author name: your `gh` login, else Git's `user.name`, else your account's user name on this machine. Never the correction, your code, session ids or anything else from the transcript |
 
 `~/.rerail/`, the database, the daemon's state and log files and the session ledgers are created readable by your
 user only (directories `0700`, files `0600`).

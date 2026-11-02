@@ -5,8 +5,11 @@
 import { z } from "zod";
 import { CANDIDATE_GENERALITIES, CANDIDATE_STATES } from "./candidate.js";
 
-/** The agent CLIs Merge Assist can run headless for judgment, in default preference order. */
-export const JUDGE_RUNNERS = ["claude", "codex", "omp"] as const;
+/**
+ * The agent CLIs Merge Assist can run headless for judgment, in default preference order. Each must be able to run
+ * with no tools at all, MCP servers included; OMP and Pi cannot yet (their MCP servers stay connected in print mode).
+ */
+export const JUDGE_RUNNERS = ["claude", "codex"] as const;
 export type JudgeRunnerId = (typeof JUDGE_RUNNERS)[number];
 
 /** Rerail checks a code rule exactly; a note is only ever judged by the person's agent. */
@@ -64,7 +67,8 @@ export const peerSchema = z.object({
   number: z.number().int().nullable(),
   title: z.string().nullable(),
   url: z.string().nullable(),
-  trusted: z.boolean().describe("A local branch on this machine, or a pull request whose author has write access."),
+  author: z.string().nullable().describe("Who GitHub says opened the pull request; null for a local branch. A candidate's own author field is self-declared."),
+  trusted: z.boolean().describe("A local branch with no untrusted pull request behind it, or a pull request whose author has write access."),
 });
 export type Peer = z.infer<typeof peerSchema>;
 
@@ -111,6 +115,7 @@ export const mergeAssistStatusSchema = z.object({
     judge: judgeReadinessSchema,
     github: githubReadinessSchema,
     candidatesIgnored: z.boolean().describe("Whether Git ignores .rerail/candidates/ here, so candidates stay local."),
+    rulesActive: z.boolean().describe("Whether Rerail is set up and started in this checkout, so candidate rules can steer. Merge Assist never sets a repository up itself."),
   }),
   budget: z.object({ used: z.number().int(), limit: z.number().int(), windowMinutes: z.number().int() }),
   scanning: z.boolean(),

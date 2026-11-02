@@ -294,6 +294,12 @@ export function followsGitignore(db: Reader, checkout: Pick<CheckoutContext, "re
     .where(eq(repositories.repositoryKey, checkout.repositoryKey)).get()?.followGitignore ?? true;
 }
 
+/** Whether Merge Assist is on for `repositoryKey`'s repository: its setting, off for a repository not recorded. */
+export function mergeAssistEnabled(db: Reader, repositoryKey: RepositoryKey): boolean {
+  return db.select({ mergeAssist: repositories.mergeAssist }).from(repositories)
+    .where(eq(repositories.repositoryKey, repositoryKey)).get()?.mergeAssist ?? false;
+}
+
 /** The recorded checkouts of the same repository inside `checkout`'s folder; never itself. */
 export function nestedCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): CheckoutRecord[] {
   return db.select().from(checkouts)

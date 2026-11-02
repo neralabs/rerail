@@ -1,0 +1,102 @@
+/*
+ * Merge Assist (views/merge.js): the heading, then off the consent card (what turning it on does, what Rerail found,
+ * the button), or on the status strip and the sections (Decided differently, Needs your review, Added from other
+ * branches, Decisions on this branch with Not rules folded under it). Sections reuse the shared heading, list card,
+ * badge and empty block (base.css); rows are this page's own (class names `m…`).
+ */
+
+.mpage{margin-top:16px;max-width:960px;--measure:72ch}
+.mpage > div:empty{display:none}
+/* Text read only by a screen reader: the strip's "into", a checklist line's Ready / Note. */
+.mpage .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---- heading ---- */
+.mhead{display:block;margin:0 0 18px}
+.mhead h2{display:flex;align-items:center;gap:10px;font-size:20px;letter-spacing:-.01em;line-height:28px}
+.mhead .mexp{background:var(--info-subtle);color:var(--info-foreground)}
+.mhead p.pitch{margin:6px 0 0;max-width:var(--measure);font-size:13.5px;line-height:20px;color:var(--muted-foreground)}
+.mnote{margin:0 0 16px}
+.mnote > div{min-width:0}
+.mnote p.acts{margin-top:8px}
+
+/* ---- off: the consent card ---- */
+.mconsent{padding:20px 24px 22px}
+.mconsent h3{margin:0 0 10px;font-size:14px;font-weight:600;color:var(--foreground)}
+.mconsent h3 + ul{margin-top:0}
+.mconsent ul + h3{margin-top:22px}
+.mbul{margin:0;padding-left:18px;display:grid;gap:8px;font-size:13.5px;line-height:1.5;max-width:var(--measure)}
+.mbul li::marker{color:var(--muted-foreground)}
+.mchecks{list-style:none;margin:0;padding:0;display:grid;gap:8px;font-size:13.5px;line-height:1.5;max-width:var(--measure)}
+.mchecks li{display:flex;align-items:flex-start;gap:10px}
+.mchecks li > .ico{margin-top:3px}
+.mchecks li.mready > .ico{color:var(--success-foreground)}
+.mchecks li.mnotready > .ico{color:var(--warning-foreground)}
+.mchecks .btn.ghost.link{padding-block:0;vertical-align:baseline}
+.mon{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:22px;padding-top:18px;border-top:1px solid var(--border)}
+.mon .btn{min-width:196px;justify-content:center}
+.mon p{margin:0;font-size:12.5px;line-height:1.5;color:var(--muted-foreground);flex:1 1 280px}
+
+/* ---- on: the status strip ---- */
+.mstrip{margin-bottom:28px}
+.mcells{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px 24px;padding:14px 16px}
+.mcell{display:flex;flex-direction:column;gap:3px;min-width:0}
+.mcell .k{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.mcell .v{font-size:13px;line-height:1.45;color:var(--foreground);overflow-wrap:anywhere}
+.mcell .v .sub{display:block;font-size:12px;color:var(--muted-foreground)}
+.mcell .v .mono{font-size:12px}
+.mcell .marrow{color:var(--muted-foreground)}
+.mon-state{display:inline-flex;align-items:center;gap:6px;color:var(--success-foreground);font-weight:500}
+.mwarn-t{color:var(--warning-foreground)}
+.mstripacts{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 16px;border-top:1px solid var(--border)}
+/* Scan now keeps one width while it reads Scanning…, so nothing beside it moves. */
+.mstripacts .mscan{min-width:104px;justify-content:center}
+.mstripacts .btn.danger.quiet{margin-left:auto}
+.mstrip .mproblems{margin:0;border:0;border-top:1px solid var(--border);border-radius:0}
+.mstrip .mproblems summary{color:var(--warning-foreground);padding:10px 16px}
+.mstrip .mproblems .in{border-top:0;padding:0 16px 14px}
+
+/* ---- sections ---- */
+.msec{margin-bottom:32px}
+.msec[hidden]{display:none}
+.msec > .ghead h2 .n2{vertical-align:1px}
+.msec > .ghead p .mono,.msec > .ghead p code{font-size:11.5px}
+.msec > div:empty{display:none}
+.mlist[hidden]{display:none}
+.mrow{display:grid;gap:8px;padding:14px 16px;border-top:1px solid var(--border)}
+.mlist > .mrow:first-child{border-top:0}
+.mrow[aria-busy="true"]{opacity:.7}
+.mrow.off .mq{color:var(--muted-foreground)}
+/* The decision itself: someone's own words, so it reads as a quotation, plain and full width. */
+.mq{margin:0;font-size:14px;line-height:1.5;font-weight:500;color:var(--foreground);max-width:var(--measure);overflow-wrap:anywhere}
+.mmeta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px;color:var(--muted-foreground)}
+.mmeta .mauthor{font-weight:500;color:var(--foreground)}
+.mmeta .mtitle{color:var(--foreground);overflow-wrap:anywhere}
+.mlink{color:var(--brand-foreground);text-decoration:underline;text-underline-offset:3px}
+.mlink:hover{text-decoration-thickness:2px}
+.mscope{display:inline-flex;flex-wrap:wrap;gap:4px}
+.mscope .badge.mono{font-size:11px}
+.badge.mlevel.code{background:var(--brand-subtle);color:var(--brand-foreground)}
+.badge.mwarn{background:var(--warning-subtle);color:var(--warning-foreground)}
+.mreason{margin:0;font-size:12.5px;line-height:1.5;color:var(--muted-foreground);max-width:var(--measure)}
+.mev{display:grid;gap:10px;padding:10px 12px;background:var(--sheet-inset);border-radius:var(--radius-lg);font-size:12.5px;line-height:1.5}
+.mevb .k,.mside .k,.mmsg .k{display:block;margin-bottom:3px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.mevb p{margin:0;overflow-wrap:anywhere}
+.mviol{margin:0;padding:0;list-style:none;display:grid;gap:3px}
+.mviol li{overflow-wrap:anywhere}
+.macts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:2px}
+
+/* Decided differently: both decisions side by side, then the message to send their author. */
+.mvs{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+.mside{padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);min-width:0}
+.mside.theirs{border-color:var(--outside-border)}
+.mmsg{padding:10px 12px;background:var(--panel-box);border-radius:var(--radius-lg);font-size:13px;line-height:1.5}
+.mmsg p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;max-width:var(--measure)}
+
+/* Decisions marked as not a rule, folded under this branch's. */
+.mfold{background:var(--card)}
+.msec .mfold > .in{padding:0;border-top:1px solid var(--border)}
+.msec .mfold > .in > .list{border:0;border-radius:0;box-shadow:none}
+
+/* ---- the sidebar's count of findings waiting: a filled pill, unlike the packs' muted on-counts ---- */
+.sn-item .n.due{align-self:center;min-width:20px;padding:0 6px;border-radius:var(--pill);background:var(--brand);color:var(--primary-foreground);font-weight:600;line-height:18px;text-align:center}
+.sn-item[aria-current="page"] .n.due{color:var(--primary-foreground);opacity:1}

@@ -10,6 +10,7 @@ import { workspaceStartState, startStateReader } from "../runtime/repository-sta
 import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
+import { createMergeAssistService, type MergeAssistService } from "../runtime/merge-assist/service.js";
 import type { RerailApiStores } from "./operation.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 
@@ -19,6 +20,8 @@ export interface DatabaseApiStoresOptions {
   readonly origin: () => string;
   /** The coding agent check set-up provides (`codingAgentStates`); the API answers 503 without it. */
   readonly codingAgents?: () => Promise<CodingAgentState[]>;
+  /** The Merge Assist service sessions share (the runtime's); without one, a service over this database. */
+  readonly mergeAssist?: MergeAssistService;
 }
 
 /**
@@ -36,6 +39,7 @@ export class DatabaseApiStores implements RerailApiStores {
   #database: RerailDatabase | undefined;
   #startStates: ((workspace: string) => RepositoryStartState) | undefined;
   #checkouts: ((workspace: string) => CheckoutContext | undefined) | undefined;
+  #mergeAssist: MergeAssistService | undefined;
   /** Writes through this instance; `PRAGMA data_version` only counts other connections' commits. */
   #localRevision = 0;
   /** {@link installedAt} once known; it never changes. */
@@ -84,6 +88,11 @@ export class DatabaseApiStores implements RerailApiStores {
 
   ruleCatalog(): RuleCatalog {
     return loadRuleCatalog();
+  }
+
+  mergeAssist(): MergeAssistService {
+    this.#mergeAssist ??= this.#options.mergeAssist ?? createMergeAssistService({ database: this.database(), ruleCatalog: this.ruleCatalog() });
+    return this.#mergeAssist;
   }
 
   checkouts(): (workspace: string) => CheckoutContext | undefined {

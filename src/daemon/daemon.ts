@@ -11,6 +11,7 @@ import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, type DaemonHealth, type DaemonState, type NativeStatus } from "../runtime/daemon-control.js";
 import { startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { createMergeAssistService } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
@@ -288,12 +289,16 @@ export class RerailDaemon {
     const storageRoot = join(workspaceRoot, ".rerail", "sessions");
     const modelPath = bundledModelPath();
     let daemon: RerailDaemon | undefined;
+    // One Merge Assist for the API and every session this daemon runs, so a scan runs once per checkout and gh's
+    // readiness is read once; its database opens with the stores', on first use.
+    const mergeAssist = createMergeAssistService({ database: () => stores.database(), ruleCatalog: loadRuleCatalog });
     // Open the database before binding anything: a refused open (a file this build cannot read, say) must leave no
     // engine socket behind, or every later start fails with EADDRINUSE.
     const stores = new DatabaseApiStores(databasePath, {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
+      mergeAssist,
     });
     let engineService: EngineService | undefined;
     let nativeServer: NativeSessionServer | undefined;
@@ -305,9 +310,10 @@ export class RerailDaemon {
         modelPath,
         databasePath,
         workspaceRoot,
+        mergeAssist,
       });
       const nativeToken = randomBytes(32).toString("hex");
-      const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath });
+      const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath, mergeAssist });
       nativeServer = sessions;
       const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
       const app = new Hono();

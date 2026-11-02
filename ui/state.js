@@ -78,6 +78,10 @@ export const data = {
   followGitignore: null,
   /** Recommended packs for the scoped repository, each with its folder; fetched only when needed. */
   recommendations: null,
+  /** Merge Assist for the scoped checkout (`GET /api/merge-assist`, `MergeAssistStatus`); `null` until loaded. */
+  mergeAssist: null,
+  /** Why the last Merge Assist read failed; `null` once one succeeds. */
+  mergeAssistError: null,
   /** Why the coding agents could not be checked, when `GET /api/coding-agents` failed. */
   agentsError: null,
   /** Freshness: last successful poll, and whether the last attempt failed. */
@@ -131,6 +135,13 @@ export const ui = {
   closedEvents: new Set(),
   openFolds: new Set(),
   resumeOpen: false,
+  /** Merge Assist writes in flight: `finding:<id>` → action, `candidate:<id>` → state (`merge-model.js` `sectionsOf`). */
+  mergePending: new Map(),
+  /** Merge Assist's open disclosures: "notRules", "problems". */
+  mergeOpen: new Set(),
+  /** Merge Assist being turned on or off, and a Scan now, while their request is out for the repository shown. */
+  mergeSwitching: false,
+  mergeScanning: false,
   theme: "",
 };
 

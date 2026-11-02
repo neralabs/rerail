@@ -42,3 +42,5 @@
 - [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md) and
   [transducer-design.md](transducer-design.md): the tape transducer language
 - [in-session-status-line-prd.md](in-session-status-line-prd.md): requirements for in-session visibility
+- [merge-assist-prd.md](merge-assist-prd.md): requirements and design for Merge Assist (internal testing), which
+  shares decisions between branches before they merge

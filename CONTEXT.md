@@ -119,3 +119,15 @@ The construct a name's binding site is (the engine's `Form`), which `binds: { fo
 ## Scope Kind
 
 The kind of scope that holds a binding (the engine's `ScopeKind`), which `binds: { scope }` filters: Python's module, class, function, lambda, comprehension and type-parameter scopes, eslint-scope's for TypeScript, PHP's global, function and closure, and SQL's `query`. A SQL query block is a `SELECT`, `UPDATE`, `DELETE` or `INSERT` with its clauses, or the block around a `WITH` statement that binds its CTE names; a qualified column reference resolves to a relation of its own block or an enclosing one.
+
+## Merge Assist
+
+An experimental, per-repository feature, off until a person turns it on, that shares the decisions developers make while correcting their coding agents between branches of one repository before they merge. It captures Candidate Rules, reads those on other local branches and open pull requests, and sorts each into a Finding tier.
+
+## Candidate Rule
+
+One decision a developer made while correcting their coding agent, saved as a file on the branch (`.rerail/candidates/<id>.json`, `rerail.candidate/v1`) so it travels with commits. It holds the decision text, its scope and author, and a Code Rule in `steer` mode when Rerail could check it exactly; without one it is a note only the person's coding agent judges. It is `active` or `rejected` (Not a rule), never stronger than steer, and never holds the correction or code it came from.
+
+## Finding Tiers
+
+Where Merge Assist puts a Candidate Rule from another branch. **Absorb**: from a trusted author and compatible with this branch, it steers this checkout, with undo. **Review**: this branch already breaks it, its author is not trusted, or the judgment cannot tell; it waits for the person to adopt or dismiss it. **Talk**: it contradicts one of this branch's own decisions; both are shown and nothing is applied, for the two people to resolve.

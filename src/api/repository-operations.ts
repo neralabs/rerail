@@ -76,7 +76,7 @@ interface TargetInput {
   readonly folder?: string | undefined;
 }
 
-interface Target {
+export interface Target {
   readonly repository: RepositoryListing;
   readonly checkout: CheckoutContext | undefined;
   /** The folder the target names: `folder`, else the folder `checkout` points into, else the agent's folder. */
@@ -159,7 +159,7 @@ function guardAgentRepository(
  * reaches only the repository it works in, whatever it names: another's rules, settings and checkouts are not its
  * business, and its paths are the person's.
  */
-function resolveTarget(stores: RerailApiStores, input: TargetInput, caller: ApiCaller, write: boolean): Target {
+export function resolveTarget(stores: RerailApiStores, input: TargetInput, caller: ApiCaller, write: boolean): Target {
   const db = stores.database();
   const located = input.checkout !== undefined
     ? checkoutAt(stores, input.checkout, write)
@@ -411,7 +411,7 @@ function attachmentsOf(db: RerailDatabase, repositoryKey: string): z.infer<typeo
 }
 
 /** A checkout of the repository that is on disk to scan: the target's, else the main checkout, else the most recently seen. */
-function checkoutOnDisk(target: Target): string {
+export function checkoutOnDisk(target: Target): string {
   if (target.checkout !== undefined && existsSync(target.checkout.checkoutPath)) return target.checkout.checkoutPath;
   const present = target.repository.checkouts.filter(checkout => existsSync(checkout.checkoutPath));
   const main = present.find(checkout => repositoryIdentityLocation(checkout.checkoutPath).main);

@@ -34,7 +34,8 @@ import { realpathSync } from "node:fs";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
-import { lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
+import { lookupCheckout, mergeAssistEnabled, recordCheckout } from "../engine/catalog/repository-registry.js";
+import { createMergeAssistService, type MergeAssistRuntime } from "./merge-assist/service.js";
 import { RepositoryStartWatch } from "./repository-start.js";
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../engine/native/semantic-primitives.js";
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
@@ -45,7 +46,7 @@ import { restorableRule, type DroppedEvents, type RuleMutation } from "./session
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, subagentSteer } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
-import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
+import { SqliteSessionReader, SqliteSessionStore, type SessionAttribution } from "./session-store.js";
 import type {
   ContentItem,
   ContentSnapshot,
@@ -150,6 +151,9 @@ const CODE_RULE_BOUNDARIES: Partial<Record<AdapterEvent["kind"], true>> = { call
 
 /** A turn end that waited longer than this on its settle work is written to the daemon log. */
 const SLOW_TURN_END_WAIT_MS = 1_000;
+
+/** How long closing a session waits for its Merge Assist capture (a judgment can take minutes; the session end cannot). */
+const MERGE_ASSIST_CLOSE_WAIT_MS = 10_000;
 
 /** Code-rule calls recorded without a matching result, in ledger order. */
 function unresolvedCodeRuleCalls(ledger: readonly LedgerEntry[]): Extract<LedgerEntry, { type: "policy-call" }>[] {
@@ -346,6 +350,8 @@ interface PendingSteer {
   delivery: AdapterDelivery;
   revision: number;
   scope: string[];
+  /** Called once the steer leaves the queue, with whether a delivery took it (a Merge Assist note records itself then). */
+  settled?: (delivered: boolean) => void;
 }
 
 /**
@@ -416,6 +422,12 @@ interface RuntimeSessionState {
   codeRuleOpening: boolean;
   ownerClaim: PolicyOwnerClaim | undefined;
   auditRequestWork: Promise<void> | undefined;
+  /** Merge Assist's turn-end captures for the session, one at a time; closing the session waits a bounded time for them. */
+  mergeAssistCapture: Promise<void> | undefined;
+  /** A turn end's capture waits behind the running one; another turn end adds nothing, that capture reads its events too. */
+  mergeAssistCaptureQueued: boolean;
+  /** The marks of the Merge Assist notes queued for a delivery that has not taken them yet; none is queued twice. */
+  mergeAssistNotesInFlight: Set<string>;
   repositoryAudit: Promise<void> | undefined;
   pendingCodeRuleCalls: Array<{ id: string; toolName: string }>;
   /** The edit checks a boundary stopped waiting for, until they drain; no later boundary waits for them again. */
@@ -584,6 +596,11 @@ export interface RerailRuntimeOptions {
     onMatch(match: RuleMatch, sample: AdapterSample, turn: number): void;
     onTurn?(turn: number): void;
   };
+  /**
+   * The Merge Assist the daemon's sessions and API share; without one, the runtime makes its own over its database
+   * the first time a session runs in a repository where Merge Assist is on.
+   */
+  mergeAssist?: MergeAssistRuntime;
 }
 
 export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
@@ -617,12 +634,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #discoveryWaitMs: number | undefined;
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
+  #mergeAssist: MergeAssistRuntime | undefined;
+  /** Where Merge Assist's capture reads the sessions' stored events; opened on its first capture. */
+  #sessionEvents: SqliteSessionReader | undefined;
 
   constructor(options: RerailRuntimeOptions) {
     this.#storageRoot = options.storageRoot;
     this.#modelPath = options.modelPath;
     this.#nativeSession = options.nativeSession;
     this.#deliverBackground = options.deliverBackground;
+    this.#mergeAssist = options.mergeAssist;
     this.#beforeSessionPublish = options.beforeSessionPublish;
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#discoveryWaitMs = options.discoveryWaitMs;
@@ -766,6 +787,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         this.#reportSlowTurnEndWait(event.sessionId, "generated-edit audits", settleStartedAt);
       });
     }
+    if (event.kind === "turn-end") this.#runMergeAssist(state, "capture");
     if (event.kind === "session-end") return [];
     const deliveries = await this.#collectPendingSteers(state);
     if (yields) {
@@ -1083,6 +1105,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#controls.close();
     this.#audits.close();
     this.#sessionStore.close();
+    this.#sessionEvents?.close();
     this.#sessionStoreClosed = true;
     this.#catalogs.close();
     this.#startWatch?.close();
@@ -1141,6 +1164,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       codeRuleReady: false,
       codeRuleOpening: false,
       auditRequestWork: undefined,
+      mergeAssistCapture: undefined,
+      mergeAssistCaptureQueued: false,
+      mergeAssistNotesInFlight: new Set(),
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
       pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger).map(call => ({ id: call.toolCallId, toolName: call.toolName })),
@@ -1332,6 +1358,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#evaluatorOpens.add(workspace);
     const released = (): void => { this.#evaluatorOpens.delete(workspace); };
     void workspace.then(released, released);
+    this.#runMergeAssist(opened, "start");
     return { processedEventIds: [...processed] };
   }
 
@@ -1450,6 +1477,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         bridge?.interrupt();
         await state?.auditRequestWork;
       }
+      // A capture in flight gets a bounded time to finish: the person's last correction is still saved, though its note
+      // goes nowhere now. A scan is never waited for; it finishes in the background.
+      await this.#settleMergeAssistCapture(state);
     } finally {
       try {
         try {
@@ -1623,6 +1653,99 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
+   * Merge Assist's background work for a session (docs/merge-assist-prd.md §5.2–5.3): at its start, apply the
+   * checkout's candidates and scan other branches; at a turn end, capture the person's corrections, one capture at a
+   * time, and scan again when one was saved. No boundary waits for it; its notes go out at a later one. A turn end while
+   * a capture waits to run adds nothing: that capture reads the session's events when it starts. Only where a person
+   * turned Merge Assist on.
+   */
+  #runMergeAssist(state: RuntimeSessionState, step: "start" | "capture"): void {
+    if (state.closed || this.#stopped()) return;
+    const { sessionId, host } = state.descriptor;
+    const failed = (error: unknown): void => {
+      process.stderr.write(`rerail: Merge Assist failed in session ${sessionId}: ${error instanceof Error ? error.message : String(error)}\n`);
+    };
+    const service = (): MergeAssistRuntime | undefined => {
+      const repositoryKey = this.#repositoryKey(state.checkout);
+      if (repositoryKey === null || !mergeAssistEnabled(this.#catalogs.database, repositoryKey)) return undefined;
+      this.#mergeAssist ??= createMergeAssistService({ database: this.#catalogs.database, ruleCatalog: () => this.#catalogs.ruleCatalog });
+      return this.#mergeAssist;
+    };
+    const checkoutPath = state.checkout.root;
+    const scan = (running: MergeAssistRuntime, scanning: Promise<void>): void => {
+      void scanning.then(() => this.#queueMergeAssistNotes(state, running), failed);
+    };
+    if (step === "start") {
+      const running = service();
+      if (running !== undefined) scan(running, running.openSession(checkoutPath, host));
+      return;
+    }
+    if (state.mergeAssistCaptureQueued) return;
+    state.mergeAssistCaptureQueued = true;
+    const capture = (state.mergeAssistCapture ?? Promise.resolve()).then(async () => {
+      state.mergeAssistCaptureQueued = false;
+      const running = service();
+      if (running === undefined) return;
+      this.#sessionEvents ??= new SqliteSessionReader(this.#catalogs.databasePath);
+      const result = await running.captureSession({ sessionId, host, checkoutPath, events: this.#sessionEvents });
+      this.#queueMergeAssistNotes(state, running);
+      // A new decision may contradict another branch's: the scan compares them (§5.3).
+      if (result.saved.length > 0) scan(running, running.scanSession(checkoutPath, host));
+    }).catch(failed);
+    state.mergeAssistCapture = capture;
+    void capture.finally(() => {
+      if (state.mergeAssistCapture === capture) state.mergeAssistCapture = undefined;
+    });
+  }
+
+  /** Wait for the session's Merge Assist capture, at most {@link MERGE_ASSIST_CLOSE_WAIT_MS}. */
+  async #settleMergeAssistCapture(state: RuntimeSessionState | undefined): Promise<void> {
+    const capture = state?.mergeAssistCapture;
+    if (capture === undefined) return;
+    const timeout = Promise.withResolvers<void>();
+    const timer = setTimeout(timeout.resolve, MERGE_ASSIST_CLOSE_WAIT_MS);
+    try {
+      await Promise.race([capture, timeout.promise]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * The session's Merge Assist notes, queued as steers that carry no rule, for its next boundary (or at once to a
+   * native host). A note speaks for no source, so no edit makes it stale; it is recorded as given only once a delivery
+   * takes it. A session whose evaluator could not open takes none: they stay for one that can deliver them.
+   */
+  #queueMergeAssistNotes(state: RuntimeSessionState, service: MergeAssistRuntime): void {
+    const { sessionId, host } = state.descriptor;
+    if (state.closed || this.#stopped() || this.#sessions.get(sessionId) !== state) return;
+    if (!state.codeRuleReady && !state.codeRuleOpening) return;
+    const checkoutPath = state.checkout.root;
+    for (const note of service.pendingNotes(sessionId, checkoutPath, state.mergeAssistNotesInFlight)) {
+      for (const mark of note.marks) state.mergeAssistNotesInFlight.add(mark);
+      const pending: PendingSteer = {
+        delivery: {
+          sessionId, requested: "steer", mechanism: ADAPTER_CAPABILITIES[host].delivery.steer, content: note.content, ruleIds: [], rules: [], strategy: "message",
+        },
+        // A note speaks for no source: no edit makes it stale.
+        revision: Number.POSITIVE_INFINITY,
+        scope: [],
+        settled: delivered => {
+          for (const mark of note.marks) state.mergeAssistNotesInFlight.delete(mark);
+          if (!delivered) return;
+          try {
+            service.markNotesDelivered(sessionId, checkoutPath, note.marks);
+          } catch (error) {
+            process.stderr.write(`rerail: could not record a Merge Assist note as given: ${error instanceof Error ? error.message : String(error)}\n`);
+          }
+        },
+      };
+      state.pendingSteers.push(pending);
+      if (state.codeRuleReady && this.#deliverBackground !== undefined) void this.#deliverSteer(state, pending, true);
+    }
+  }
+
+  /**
    * Whether a steer, or a held finding, still speaks for the current revision of every source it names. A steer whose
    * edit was rolled back always does: it is the agent's only word that its edit is gone.
    */
@@ -1688,29 +1811,38 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const index = state.pendingSteers.indexOf(pending);
     if (index < 0) return undefined;
     state.pendingSteers.splice(index, 1);
-    if (!this.#isCurrentSteer(state, pending)) {
-      this.#recordUndelivered(state, pending);
-      return undefined;
-    }
-    if (this.#stopped()) return undefined;
+    let delivered = false;
     try {
-      await this.persistDelivery(pending.delivery);
-    } catch (error) {
-      process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
-    }
-    // A stop committed elsewhere while the ledger was written withholds the result.
-    if (!this.#isCurrentSteer(state, pending)) {
-      this.#recordUndelivered(state, pending);
+      if (!this.#isCurrentSteer(state, pending)) {
+        this.#recordUndelivered(state, pending);
+        return undefined;
+      }
+      if (this.#stopped()) return undefined;
+      try {
+        await this.persistDelivery(pending.delivery);
+      } catch (error) {
+        process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+      // A stop committed elsewhere while the ledger was written withholds the result.
+      if (!this.#isCurrentSteer(state, pending)) {
+        this.#recordUndelivered(state, pending);
+        return undefined;
+      }
+      if (this.#stopped()) return undefined;
+      if (!native) {
+        delivered = true;
+        return pending.delivery;
+      }
+      try {
+        await this.#deliverBackground!(pending.delivery);
+        delivered = true;
+      } catch (error) {
+        process.stderr.write(`rerail: policy delivery failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
       return undefined;
+    } finally {
+      pending.settled?.(delivered);
     }
-    if (this.#stopped()) return undefined;
-    if (!native) return pending.delivery;
-    try {
-      await this.#deliverBackground!(pending.delivery);
-    } catch (error) {
-      process.stderr.write(`rerail: policy delivery failed: ${error instanceof Error ? error.message : String(error)}\n`);
-    }
-    return undefined;
   }
 
   async #ingestSessionStart(event: Extract<AdapterEvent, { kind: "session-start" }>): Promise<readonly AdapterDelivery[]> {

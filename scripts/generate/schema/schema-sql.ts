@@ -30,6 +30,9 @@ import {
   auditViolations,
   auditViolationsStaging,
   ruleViolationRollup,
+  mergeAssistItems,
+  mergeAssistJudgments,
+  mergeAssistState,
 } from "../../../src/engine/index.js";
 
 export const SCHEMA_SQL_PATH = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..", "src", "engine", "storage", "schema-sql.generated.ts");
@@ -67,6 +70,9 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   ruleAttachments,
   ruleSettings,
   libraryRules,
+  mergeAssistItems,
+  mergeAssistJudgments,
+  mergeAssistState,
   schemaMigrations,
   });
   const statements = await generateSQLiteMigration(empty, current);

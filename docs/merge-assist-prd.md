@@ -2,8 +2,7 @@
 
 **Document type:** Product requirements and technical design for an experimental feature.
 
-**Delivery status:** Demo branch (`tbelanger/ner-2224-merge-assist`). Experimental; off unless a person turns it on
-for a repository. Tracked in Linear [NER-2224](https://linear.app/nera/issue/NER-2224).
+**Delivery status:** Demo. Experimental and internal testing; off unless a person turns it on for a repository.
 
 **Prior art:** [Amp comparison](branch-coordination-amp-comparison.md).
 
@@ -70,7 +69,7 @@ merges, a hosted service, other Git hosts than GitHub for remote pull requests.
 ### 5.1 Turning it on
 
 Merge Assist is off for every repository. A person turns it on in the dashboard (**Merge Assist** page) or with
-`rerail merge-assist on`. A coding agent cannot turn it on. The page states, before the switch:
+`rerail merge-assist on`. A coding agent cannot turn it on through Rerail's MCP tools or API (§7). The page states, before the switch:
 
 - Rerail reads corrections you give your coding agent in this repository and asks **your coding agent's CLI** to
   summarise each one as a decision. That sends the correction and the code it corrected to your agent's provider, as
@@ -127,8 +126,11 @@ For each candidate on another branch:
 `git merge-tree` conflicts between your branch and theirs are shown as context on a Talk or Review item that covers
 the same files. On their own, overlapping or adjacent lines are never a finding.
 
-**Trusted** means the candidate came from a local branch on this machine, or from a pull request whose author has
-write access to the repository (`gh api repos/{owner}/{repo}/collaborators/{login}/permission`).
+**Trusted** means the candidate came from a pull request whose author has write access to the repository
+(`gh api repos/{owner}/{repo}/collaborators/{login}/permission`), or from a local branch on this machine that tracks
+no remote other than `origin` and holds no commits of an open pull request whose author lacks write access (a branch
+checked out from an outside contributor's pull request is not trusted). An absorbed decision is checked again on every
+scan: one whose author is no longer trusted, or whose rule your branch now breaks, goes back to review.
 
 ### 5.5 The dashboard page
 
@@ -139,13 +141,16 @@ write access to the repository (`gh api repos/{owner}/{repo}/collaborators/{logi
 - **Decided differently** (Talk), **Needs your review**, **Added from other branches**, and **Decisions on this branch**
   (your own candidates: decision text, whether Rerail checks it exactly or your agent judges it, the folders, when it
   was saved, and **Not a rule**).
+- Each finding names where it came from and who is behind it: a pull request's author as GitHub reports it, or, for a
+  local branch, the branch and the author its candidate file declares, labelled "declared by". A candidate's own
+  `author` field is never shown for a pull request, since anyone can write any name there.
 - An empty state that explains what will appear and how to make the first decision.
 
 ### 5.6 CLI and MCP
 
 ```sh
 rerail merge-assist [status] [--json]      # this checkout: state, decisions, findings
-rerail merge-assist on | off               # people only
+rerail merge-assist on | off               # the person's (the CLI runs as the person; see §7)
 rerail merge-assist scan [--json]
 rerail merge-assist reject <candidate-id>  # "Not a rule" for one of your own decisions
 rerail merge-assist adopt <finding-id>     # Review → applied
@@ -155,8 +160,9 @@ rerail merge-assist undo <finding-id>      # remove an absorbed or adopted decis
 
 MCP tools (the same operations the dashboard uses): `merge_assist_get`, `merge_assist_scan`,
 `merge_assist_candidate_set`, `merge_assist_finding_set`, and the people-only `merge_assist_settings_set`. An agent may
-reject one of its own branch's candidates when the person asks; it may not adopt, turn the feature on, or undo
-another person's decision on their behalf.
+reject one of its own branch's candidates when the person asks, and dismiss a finding that is still open. It may not
+adopt, turn the feature on, undo a decision, or dismiss one that applies, since that has undo's effect. These limits
+hold for the MCP tools and the HTTP API; the CLI runs as the person (§7).
 
 ## 6. Candidate file format
 
@@ -198,7 +204,7 @@ agent CLI and, when absorbed, into the developer's own agent session. The threat
 | Path tricks in candidate file names or ids | Ids match `^candidate:[a-z0-9-]{1,64}$`; files are read only from `.rerail/candidates/` at the top of a tree, by Git object, never by following a path from the file |
 | Recursive Rerail sessions from the judge | The judge runs in a temporary directory that is not a started repository, so Rerail's own hooks ignore it, and with the agent CLI's extension/plugin discovery off where it has a switch |
 | Credential exposure | Rerail passes the environment the agent CLI and `gh` need and never reads or stores tokens. `gh` runs with prompts and the update notifier off |
-| An agent turning on Merge Assist or adopting decisions to widen its own latitude | Turning on, adopting and undoing someone's decision are people-only operations |
+| An agent turning on Merge Assist or adopting decisions to widen its own latitude | On the MCP tools and the HTTP API, turning on, adopting and undoing are people-only: a coding agent's call is refused. An agent may dismiss only a finding that is still open, because dismissing an applied one undoes it. The CLI runs as the person, so an agent with shell access can run `rerail merge-assist on`, `adopt` or `undo`, as it can any Rerail command. The people-only guarantee covers the MCP and API surface, not the shell |
 | Runaway spending of the user's tokens | A per-repository budget (default 40 judgment calls an hour), results cached by content hash, and the page shows the use |
 
 ## 8. Privacy
@@ -258,14 +264,19 @@ after a scan, from the candidate files in the working tree plus the absorbed and
 
 ### 9.4 Agent CLI invocations
 
+The judge must run with no tools at all, MCP servers included, so that text written by other people cannot make it
+act. Each invocation was checked against a real run.
+
 | CLI | Command | Notes |
 | --- | --- | --- |
 | Claude Code | `claude -p --output-format json --json-schema <schema> --tools "" --disallowedTools "mcp__*" --strict-mcp-config --no-session-persistence --max-turns 2` | Reads `structured_output`. Not `--bare`, which would not use the person's subscription |
-| Codex | `codex exec --sandbox read-only --skip-git-repo-check --ephemeral --output-schema <file> -o <file> -` | Prompt on stdin |
-| OMP | `omp -p --no-tools --no-session --no-extensions --no-skills --mode json` | Schema stated in the prompt; output validated |
+| Codex | `codex exec --sandbox read-only --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules --disable shell_tool --disable unified_exec --disable code_mode_host --disable multi_agent --output-schema <file> -o <file> -` | Prompt on stdin. Without the `--disable` switches the model keeps a read-only shell; without `--ignore-user-config` it loads the person's MCP servers and hooks |
+
+OMP and Pi are not judges yet: in print mode their MCP servers stay connected even with `--no-tools`, and neither has a
+switch to turn MCP off for one run. A session in OMP or Pi uses Claude Code or Codex when either is installed.
 
 All run in a fresh `0700` temporary directory, with a 120-second timeout, a 1 MiB output cap, and no shell. The
-runner preference is the host of the session that triggered the work, then Claude Code, Codex, OMP.
+runner preference is the host of the session that triggered the work, then Claude Code, then Codex.
 
 ## 10. Demo
 

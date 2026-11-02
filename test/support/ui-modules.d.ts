@@ -75,6 +75,7 @@ declare module "*/ui/poll.js" {
   export function queueInScope(scope: Scope, method: string, path: string, body: object | Promise<object | null> | null): Promise<boolean>;
   export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
   export function saveFollowGitignore(follow: boolean, page: { toast(message: string): void; invalidate(): void }): Promise<void>;
+  export function writeMergeAssist(scope: Scope, method: string, path: string, body: object): Promise<import("../../src/engine/index.js").MergeAssistStatus | null>;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
   export function refresh(): Promise<void>;
   export function refreshNow(): Promise<void>;
@@ -130,16 +131,19 @@ declare module "*/ui/state.js" {
     activityAllSessions: { started: number; withViolations: number } | null;
     packs: unknown[];
     attachedPacks: Map<string, string[]>;
-    repository: { setUp: boolean; repositoryKey?: string } | null;
+    repository: { setUp: boolean; repositoryKey?: string; name?: string } | null;
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
     followGitignore: boolean | null;
     sessionDetail: Map<string, SessionDetail>;
     missing: boolean;
     disconnected: boolean;
+    /** `GET /api/merge-assist` for the scoped checkout (`MergeAssistStatus`). */
+    mergeAssist: import("../../src/engine/index.js").MergeAssistStatus | null;
+    mergeAssistError: string | null;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
-  export const ui: { filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
+  export const ui: { filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null; mergePending: Map<string, string>; mergeOpen: Set<string>; mergeSwitching: boolean; mergeScanning: boolean };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
   export function runningCount(): number;
@@ -193,7 +197,7 @@ declare module "*/ui/pack-model.js" {
 }
 
 declare module "*/ui/routes.js" {
-  export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings";
+  export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "merge";
   export interface Route {
     view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "steered" | "logged";
     sessionFilter?: "all" | "corr" | "open"; rule?: string; session?: string; jump?: boolean;
@@ -279,4 +283,41 @@ declare module "*/ui/first-open.js" {
   export function rulesOnSource(packCount: number, mineCount: number): string;
   export const LIVE_MINUTES: number;
   export function liveState(session: { endedAt: number | null; startedAt: number; lastEventAt: number | null }, now: number): "live" | "stale" | null;
+}
+
+declare module "*/ui/merge-model.js" {
+  type Status = import("../../src/engine/index.js").MergeAssistStatus;
+  type Finding = import("../../src/engine/index.js").Finding;
+  type OwnDecision = import("../../src/engine/index.js").OwnDecision;
+  type Segment = string | { code: string };
+  export const RUNNER_NAMES: Record<string, string>;
+  export function runnerName(id: string): string;
+  export function authorOf(finding: Finding): { name: string | null; declared: boolean };
+  export function safePeerUrl(url: unknown, context?: { repositoryKey?: string; repository?: string | null }): string | null;
+  export function peerLabel(peer: Finding["peer"]): string;
+  export function levelText(level: "code" | "note"): string;
+  export interface Sections {
+    talk: Array<Finding & { busy: boolean }>;
+    review: Array<Finding & { busy: boolean }>;
+    added: Array<Finding & { busy: boolean }>;
+    own: Array<OwnDecision & { busy: boolean }>;
+    notRules: Array<OwnDecision & { busy: boolean }>;
+  }
+  export function sectionsOf(status: Status, pending?: Map<string, string>): Sections;
+  export function waitingCount(status: Status | null | undefined, pending?: Map<string, string>): number;
+  export function branchText(status: Status): { branch: string; base: string };
+  export function judgeText(judge: Status["readiness"]["judge"]): { ok: boolean; text: string; detail?: string | null };
+  export function githubText(github: Status["readiness"]["github"]): { ok: boolean; text: string };
+  export function scannedWhat(lastScan: NonNullable<Status["lastScan"]>): string;
+  export function budgetText(budget: Status["budget"]): { text: string; spent: boolean };
+  export function scanSummary(before: Status | null, after: Status): string;
+  export function readinessChecks(readiness: Status["readiness"]): Array<{ key: string; ok: boolean; text: Segment[]; overview?: boolean }>;
+  export function writeError(error: unknown): string;
+  export function quoted(text: string): string;
+}
+
+declare module "*/ui/views/merge.js" {
+  export const needs: string[];
+  export const actions: Record<string, (id?: string, element?: unknown) => Promise<void> | void>;
+  export function render(root: unknown): void;
 }

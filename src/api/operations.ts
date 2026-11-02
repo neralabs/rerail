@@ -23,6 +23,7 @@ import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT, type StoredSessionSummary } from "../runtime/session-store.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
+import { mergeAssistOperations } from "./merge-assist-operations.js";
 import { activityRules, callerRepositoryKey, historyScope, repositoryOperations, within } from "./repository-operations.js";
 import { inactiveField, inactiveOf } from "./repository-contracts.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
@@ -672,6 +673,7 @@ export const operations: readonly Operation[] = [
     },
   }),
   ...repositoryOperations,
+  ...mergeAssistOperations,
 ];
 
 /** The flat argument object an MCP tool takes: path params, query, and body merged. */

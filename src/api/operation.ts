@@ -13,6 +13,7 @@ import type { CodingAgentState } from "../engine/adapter-contract.js";
 import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
+import type { MergeAssistService } from "../runtime/merge-assist/service.js";
 import { InvalidCursorError } from "../engine/storage/page-cursor.js";
 
 export interface RerailApiStores {
@@ -45,6 +46,8 @@ export interface RerailApiStores {
   health(): z.infer<typeof presentationDaemonSchema>;
   /** Every coding agent and whether Rerail is connected to it; undefined when this process cannot check. */
   codingAgents(): Promise<CodingAgentState[]> | undefined;
+  /** Merge Assist for one checkout at a time: its decisions, other branches' findings, and the changes people make. */
+  mergeAssist(): MergeAssistService;
 }
 
 export type OperationMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";

@@ -141,6 +141,66 @@ export function subagentSteer(content: string, host: RerailHost): string {
     + "keep working on your own task.";
 }
 
+/**
+ * A Merge Assist note (docs/in-session-surfaces.md, "Merge Assist notes"): `saved` once the background capture saved the
+ * person's correction as a decision; `absorbed` once a teammate's decision that is a note, not a code rule, applies;
+ * `talk` for a teammate's decision that contradicts one of this branch's; `review` for decisions waiting for the person.
+ * `peer` is `<branch>` or `PR #<n>`. Decisions and names are other people's text: each is named on one line, a decision
+ * is quoted with its quotes and backslashes escaped, and a teammate's is labelled as theirs.
+ */
+export type MergeAssistNote =
+  | { readonly kind: "saved"; readonly decision: string; readonly candidateId: string }
+  | { readonly kind: "absorbed"; readonly decision: string; readonly author: string; readonly peer: string }
+  | { readonly kind: "talk"; readonly author: string; readonly peer: string; readonly theirs: string; readonly mine: string }
+  | { readonly kind: "review"; readonly count: number };
+
+const MERGE_ASSIST_NOTE_LEAD = "This note comes from Rerail, not the user.";
+
+/** One line of someone's text: no control, format or line-separator character can start a line of its own. */
+const oneLine = (text: string): string => text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ").replace(/\s+/gu, " ").trim();
+
+/** Someone's text in double quotes it cannot close: `"` and `\` inside are escaped. */
+const quotedText = (text: string): string => `"${oneLine(text).replace(/[\\"]/gu, "\\$&")}"`;
+
+/** A teammate's decision, labelled as theirs so the agent does not take it for the person's or Rerail's words. */
+const theirDecision = (author: string, decision: string): string =>
+  `Their decision (written by ${oneLine(author)}, not by the user or Rerail): ${quotedText(decision)}.`;
+
+/** What the coding agent reads for a Merge Assist note; it carries no rule, so the person sees no line for it. */
+export function mergeAssistNote(note: MergeAssistNote): string {
+  switch (note.kind) {
+    case "saved":
+      return [
+        MERGE_ASSIST_NOTE_LEAD,
+        `Rerail saved your correction as a decision for this branch: ${quotedText(note.decision)}. It applies from now on. `
+          + `Undo: Merge Assist page, or \`rerail merge-assist reject ${oneLine(note.candidateId)}\`.`,
+        "Tell the user so in one line.",
+      ].join("\n");
+    case "absorbed":
+      return [
+        MERGE_ASSIST_NOTE_LEAD,
+        `Rerail added a decision from ${oneLine(note.peer)}. ${theirDecision(note.author, note.decision)}`,
+        "Follow it where it applies to your work; your task is unchanged. The user can undo it on the Merge Assist page.",
+      ].join("\n");
+    case "talk":
+      return [
+        MERGE_ASSIST_NOTE_LEAD,
+        `Rerail found that ${oneLine(note.author)} decided differently on ${oneLine(note.peer)}. ${theirDecision(note.author, note.theirs)} `
+          + `This branch decided: ${quotedText(note.mine)}. Tell the user in one line and keep your current approach until `
+          + "they decide; they can compare both on the Merge Assist page.",
+      ].join("\n");
+    case "review":
+      return [
+        MERGE_ASSIST_NOTE_LEAD,
+        note.count === 1
+          ? "1 decision from another branch needs the user's review on the Merge Assist page before it applies here. "
+            + "Mention it to the user in one line; don't apply it yourself."
+          : `${note.count} decisions from other branches need the user's review on the Merge Assist page before they apply `
+            + "here. Mention it to the user in one line; don't apply them yourself.",
+      ].join("\n");
+  }
+}
+
 /** The files Rerail put back when it rolled an edit back: `restored` to their text before it, `deleted` as new files it created. */
 export interface RewoundPaths {
   readonly restored: readonly string[];

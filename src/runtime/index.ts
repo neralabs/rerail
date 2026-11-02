@@ -23,6 +23,17 @@ export { type HostRuntimePort, type HostRuntimeSessionState, RerailHostRuntime }
 export { OmpMessageContentSource, type OmpSessionEntryLike, OmpWatermarkStore } from "./omp-semantic.js";
 export { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
 export {
+  createMergeAssistService,
+  MERGE_ASSIST_ERROR_CODES,
+  MergeAssistError,
+  type MergeAssistActor,
+  type MergeAssistErrorCode,
+  type MergeAssistRuntime,
+  type MergeAssistService,
+  type MergeAssistServiceOptions,
+  type MergeAssistSession,
+} from "./merge-assist/service.js";
+export {
   isRerailStarted,
   setCheckoutStarted,
   setRepositoryStarted,

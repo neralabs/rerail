@@ -1,6 +1,6 @@
 # Branch coordination: comparison with Amp
 
-Spike note for NER-2224. It compares Amp (ampcode.com) with the four candidate designs: landing gate, continuous radar, intent ledger and speculative integration. Amp docs were read on 2026-11-02 (docs index: [idx]). Unmarked statements about Amp are documented and cited. `[INFERENCE]` marks our own reasoning. "Not found" means we searched all 64 markdown pages listed in [idx] for `conflict|overlap|collid|collision|lock|same files|semantic|incompatib|rebase|stale`, plus the Chronicle news list [news], and found nothing beyond what is cited here.
+Spike note for Merge Assist ([PRD](merge-assist-prd.md)). It compares Amp (ampcode.com) with the four candidate designs: landing gate, continuous radar, intent ledger and speculative integration. Amp docs were read on 2026-11-02 (docs index: [idx]). Unmarked statements about Amp are documented and cited. `[INFERENCE]` marks our own reasoning. "Not found" means we searched all 64 markdown pages listed in [idx] for `conflict|overlap|collid|collision|lock|same files|semantic|incompatib|rebase|stale`, plus the Chronicle news list [news], and found nothing beyond what is cited here.
 
 ## Summary
 

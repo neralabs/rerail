@@ -39,7 +39,7 @@ export {
   type RepositoryStartState,
   type RepositoryStatus,
 } from "./catalog/repository-model.js";
-export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
+export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, mergeAssistEnabled, recordCheckout } from "./catalog/repository-registry.js";
 export { exportRulesDump, importRulesDump, type RulesDump } from "./catalog/rule-bootstrap.js";
 export { offerSetupReview } from "./catalog/setup-review.js";
 export {
@@ -83,7 +83,8 @@ export {
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
 export { type CodeRuleAuditor, type CodeRuleSourceLanguage, type CodeRuleViolation, renderSteer, type RuleSteerDelivery } from "./code-rule/code-rule.js";
 export {
-  asLateSteer, headlineText, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines, steerRules, type SteerFinding, type SteerTrigger,
+  asLateSteer, headlineText, mergeAssistNote, type MergeAssistNote, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
+  steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";
 export { steerOrigin } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
@@ -127,6 +128,13 @@ export {
   checkouts,
   events,
   libraryRules,
+  mergeAssistItems,
+  mergeAssistJudgments,
+  mergeAssistState,
+  type MergeAssistItemRow,
+  type MergeAssistJudgmentRow,
+  type MergeAssistStateRow,
+  type NewMergeAssistItemRow,
   policySessionOwners,
   presentationPreferences,
   repositories,
@@ -144,3 +152,6 @@ export {
 export { ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";
+export * from "./merge-assist/candidate.js";
+export { type CandidateSet } from "./merge-assist/candidate-files.js";
+export * from "./merge-assist/model.js";

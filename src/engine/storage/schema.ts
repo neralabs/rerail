@@ -23,6 +23,8 @@ import {
 import { RULE_MODES } from "../catalog/rule-mode.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
 import type { RuleDocument } from "../catalog/rule-store.js";
+import type { Candidate } from "../merge-assist/candidate.js";
+import { FINDING_STATUSES, FINDING_TIERS } from "../merge-assist/model.js";
 
 /**
  * One machine database holds the rule catalog and every repository's execution history.
@@ -155,7 +157,8 @@ export const ruleCatalogIdentities = sqliteTable(
  * `origin` (or sole) remote, else `clone:<clone id>`; `aliases_json` lists other keys that resolve here.
  * `configured_at` null means Not set up, so nothing runs; `started` is the default every checkout follows, and null
  * means nobody started or stopped the repository yet (off). `follow_gitignore` leaves files Git ignores out of every
- * audit of the repository's checkouts; a session reads it when it opens.
+ * audit of the repository's checkouts; a session reads it when it opens. `merge_assist` turns Merge Assist on for the
+ * repository's checkouts; only a person turns it on.
  */
 export const repositories = sqliteTable(
   "repositories",
@@ -166,6 +169,7 @@ export const repositories = sqliteTable(
     configuredAt: integer("configured_at"),
     started: integer("started", { mode: "boolean" }),
     followGitignore: integer("follow_gitignore", { mode: "boolean" }).notNull().default(true),
+    mergeAssist: integer("merge_assist", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -573,6 +577,88 @@ export const policySessionOwners = sqliteTable("policy_session_owners", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+export const MERGE_ASSIST_ORIGINS = ["own", "peer"] as const;
+export type MergeAssistOrigin = (typeof MERGE_ASSIST_ORIGINS)[number];
+export const MERGE_ASSIST_PEER_KINDS = ["branch", "pull-request"] as const;
+export type MergeAssistPeerKind = (typeof MERGE_ASSIST_PEER_KINDS)[number];
+/** A finding's statuses, and `rejected` for an own candidate a person marked Not a rule. */
+export const MERGE_ASSIST_ITEM_STATUSES = [...FINDING_STATUSES, "rejected"] as const;
+export type MergeAssistItemStatus = (typeof MERGE_ASSIST_ITEM_STATUSES)[number];
+
+/**
+ * One candidate rule known to a checkout: its own (`origin` `own`, captured from a session here, with the session and
+ * event it came from) or one read from another branch or pull request (`peer`, with the peer's ref, commit and author,
+ * the tier it was sorted into, and the evidence). `peer_ref` is `''` for an own candidate so the unique key holds.
+ * `candidate_json` is the parsed candidate as read; `candidate_hash` identifies that version, so a changed candidate is
+ * judged again and a dismissed one shows again.
+ */
+export const mergeAssistItems = sqliteTable(
+  "merge_assist_items",
+  {
+    id: text("id").primaryKey(),
+    checkoutPath: text("checkout_path").notNull(),
+    repositoryKey: text("repository_key")
+      .notNull()
+      .references(() => repositories.repositoryKey, { onDelete: "cascade", onUpdate: "cascade" }),
+    candidateId: text("candidate_id").notNull(),
+    candidateHash: text("candidate_hash").notNull(),
+    origin: text("origin", { enum: MERGE_ASSIST_ORIGINS }).notNull(),
+    peerKind: text("peer_kind", { enum: MERGE_ASSIST_PEER_KINDS }),
+    peerRef: text("peer_ref").notNull().default(""),
+    peerCommit: text("peer_commit"),
+    peerNumber: integer("peer_number"),
+    peerUrl: text("peer_url"),
+    peerTitle: text("peer_title"),
+    peerAuthor: text("peer_author"),
+    trusted: integer("trusted", { mode: "boolean" }).notNull().default(false),
+    tier: text("tier", { enum: FINDING_TIERS }),
+    status: text("status", { enum: MERGE_ASSIST_ITEM_STATUSES }).notNull(),
+    candidate: text("candidate_json", { mode: "json" }).$type<Candidate>().notNull(),
+    evidence: text("evidence_json", { mode: "json" }).$type<Record<string, unknown>>().notNull().default(sql`'{}'`),
+    reason: text("reason"),
+    message: text("message"),
+    sessionId: text("session_id"),
+    eventSequence: integer("event_sequence"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  table => [
+    unique("merge_assist_items_candidate").on(table.checkoutPath, table.origin, table.peerRef, table.candidateId),
+    index("merge_assist_items_repository").on(table.repositoryKey),
+    check("merge_assist_items_origin", sql`${table.origin} IN (${sql.raw(inList(MERGE_ASSIST_ORIGINS))})`),
+    check("merge_assist_items_peer_kind", sql`${table.peerKind} IS NULL OR ${table.peerKind} IN (${sql.raw(inList(MERGE_ASSIST_PEER_KINDS))})`),
+    check("merge_assist_items_tier", sql`${table.tier} IS NULL OR ${table.tier} IN (${sql.raw(inList(FINDING_TIERS))})`),
+    check("merge_assist_items_status", sql`${table.status} IN (${sql.raw(inList(MERGE_ASSIST_ITEM_STATUSES))})`),
+    check("merge_assist_items_candidate_json", sql`json_type(${table.candidate}) = 'object'`),
+    check("merge_assist_items_evidence_json", sql`json_type(${table.evidence}) = 'object'`),
+  ],
+);
+
+/**
+ * Agent CLI judgments, keyed by a hash of the task kind and its inputs: the cache a repeated task is answered from, and
+ * the record the hourly budget counts. A failed attempt is recorded with `task` `<kind>:failed` so it counts too.
+ * `created_at` is epoch milliseconds.
+ */
+export const mergeAssistJudgments = sqliteTable(
+  "merge_assist_judgments",
+  {
+    key: text("key").primaryKey(),
+    repositoryKey: text("repository_key").notNull(),
+    task: text("task").notNull(),
+    runner: text("runner").notNull(),
+    resultJson: text("result_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  table => [index("merge_assist_judgments_repository_created").on(table.repositoryKey, table.createdAt)],
+);
+
+/** Merge Assist's bookkeeping by key: `scan:<checkout path>` holds the last scan, `cursor:<session id>` the last captured event sequence. */
+export const mergeAssistState = sqliteTable("merge_assist_state", {
+  key: text("key").primaryKey(),
+  valueJson: text("value_json").notNull(),
+  updatedAt: integer("updated_at"),
+});
+
 /** The `migrations.ts` steps a file has run, by id. */
 export const schemaMigrations = sqliteTable("schema_migrations", {
   id: text("id").primaryKey(),
@@ -595,9 +681,10 @@ export function sessionsOfRepository(repositoryIds: string | readonly string[], 
 /**
  * Session history `rerail reset` deletes for every session of the repository, running or not.
  * `audit_result_pages` and `audit_unlisted_failures` cascade with `audits`; `sessions` and `policy_session_owners`
- * lose only ended sessions, so running ones keep recording.
+ * lose only ended sessions, so running ones keep recording. A Merge Assist item keyed by a session records which
+ * correction a branch's own candidate came from; the candidate file stays in the checkout.
  */
-export const SESSION_HISTORY_TABLES = [events, workLinks, audits, auditRequests, repositoryAudits] as const;
+export const SESSION_HISTORY_TABLES = [events, workLinks, audits, auditRequests, repositoryAudits, mergeAssistItems] as const;
 
 export type RuleRow = typeof rules.$inferSelect;
 export type NewRuleRow = typeof rules.$inferInsert;
@@ -608,3 +695,7 @@ export type AuditRow = typeof audits.$inferSelect;
 export type PresentationPreference = typeof presentationPreferences.$inferSelect;
 export type PresentationPresence = PresentationPreference["presence"];
 export type RuleCatalogIdentityRow = typeof ruleCatalogIdentities.$inferSelect;
+export type MergeAssistItemRow = typeof mergeAssistItems.$inferSelect;
+export type NewMergeAssistItemRow = typeof mergeAssistItems.$inferInsert;
+export type MergeAssistJudgmentRow = typeof mergeAssistJudgments.$inferSelect;
+export type MergeAssistStateRow = typeof mergeAssistState.$inferSelect;

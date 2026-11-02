@@ -55,6 +55,7 @@ import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runShowMeCommand } from "./show-me.js";
+import { runMergeAssistCommand } from "./merge-assist-cli.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
 import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
@@ -168,6 +169,7 @@ function usage(): string {
     internalTesting("Not part of the 0.1.0 release:"),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
+    "  rerail merge-assist [status|on|off|scan|reject <candidate-id>|adopt <finding-id>|dismiss <finding-id>|undo <finding-id>] [--repo <dir>] [--json]",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
     "  rerail [--profile <name>] activate --code <code> --activation-url <url> --trust-root <roots.json>",
@@ -571,9 +573,9 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
+  // `seed`, `rules`, `show-me`, `reset` and `merge-assist` write the Rerail database with the invoking package's schema (a checkout build, say).
   // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "support-bundle"].includes(command ?? "")) return true;
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "merge-assist", "support-bundle"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && commandArgs[1] === "status";
 }
@@ -682,6 +684,8 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
   if (command === "state") return runStateCommand(args);
+  // Internal testing: Merge Assist.
+  if (command === "merge-assist") return await runMergeAssistCommand(args, usage);
   // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
   if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
   return undefined;

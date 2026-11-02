@@ -7,6 +7,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
+import { globPattern } from "../glob-pattern.js";
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { stableJsonText } from "../stable-json.js";
 
@@ -19,8 +20,12 @@ export const MAX_CANDIDATES_PER_BRANCH = 64;
 export const MAX_CANDIDATE_BYTES = 16 * 1024;
 /** The longest decision, in characters, after cleaning. */
 export const MAX_DECISION_LENGTH = 280;
+/** The longest message a candidate's rule steers with. */
+export const MAX_RULE_MESSAGE_LENGTH = 200;
 const MAX_SCOPE_PATTERNS = 16;
 const MAX_PATTERN_LENGTH = 200;
+/** The most `*` and `**` tokens one scope pattern holds. */
+const MAX_PATTERN_WILDCARDS = 4;
 
 export const CANDIDATE_ID_PATTERN = /^candidate:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const FILE_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.json$/;
@@ -32,28 +37,51 @@ export type CandidateState = (typeof CANDIDATE_STATES)[number];
 
 /**
  * Decision text as it may be shown to a person or an agent: control and format characters removed, Markdown links
- * reduced to their label, bare URLs dropped, whitespace collapsed.
+ * reduced to their label, bare URLs dropped, whitespace collapsed. Cleaning is repeated until nothing changes, since
+ * removing one link can leave another (`[[a](b)](c)`), so clean text cleans to itself.
  */
 export function cleanDecision(text: string): string {
-  return text
-    .replace(/[\p{Cc}\p{Cf}]+/gu, " ")
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  let cleaned = text;
+  for (;;) {
+    const next = cleaned
+      .replace(/[\p{Cc}\p{Cf}]+/gu, " ")
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    // After the first pass every change shortens the text, so this ends.
+    if (next === cleaned) return next;
+    cleaned = next;
+  }
 }
 
 const decisionSchema = z.string()
   .transform(cleanDecision)
   .pipe(z.string().min(1, "the decision is empty").max(MAX_DECISION_LENGTH, `the decision is longer than ${MAX_DECISION_LENGTH} characters`));
 
-/** A repository-relative glob: no absolute path, no `..` segment, no backslash or NUL. */
+/** Whether Rerail's glob matcher compiles `pattern`: braces closed and not nested. */
+function compiles(pattern: string): boolean {
+  try {
+    globPattern([pattern]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A repository-relative glob: no absolute path, no `..` segment, no backslash or NUL, at most
+ * {@link MAX_PATTERN_WILDCARDS} `*` and `**` tokens, and one the glob matcher compiles. Peer scopes are matched on every
+ * scan, so a pattern that could not compile, or one built to be slow, is refused when the candidate is read.
+ */
 export const scopePatternSchema = z.string()
   .min(1)
   .max(MAX_PATTERN_LENGTH)
   .refine(pattern => !pattern.startsWith("/") && !/^[A-Za-z]:/.test(pattern), "a scope pattern is relative to the repository")
   .refine(pattern => !pattern.split("/").includes(".."), "a scope pattern stays inside the repository")
-  .refine(pattern => !/[\\\0]/.test(pattern), "a scope pattern uses / and no NUL");
+  .refine(pattern => !/[\\\0]/.test(pattern), "a scope pattern uses / and no NUL")
+  .refine(pattern => (pattern.match(/\*\*|\*/g)?.length ?? 0) <= MAX_PATTERN_WILDCARDS, `a scope pattern has at most ${MAX_PATTERN_WILDCARDS} * or ** wildcards`)
+  .refine(compiles, "a scope pattern closes each { and does not nest them");
 
 const authorSchema = z.string().regex(/^[\p{L}\p{N}][\p{L}\p{N} ._@-]{0,63}$/u, "the author is a login or name of up to 64 letters, digits, spaces and . _ @ -");
 
@@ -73,8 +101,27 @@ export const candidateSchema = z.object({
 }).strict().superRefine((candidate, context) => {
   const rule = candidate.rule as CodeRule | undefined;
   if (rule === undefined) return;
-  if (rule.id !== candidate.id) context.addIssue({ code: "custom", path: ["rule", "id"], message: "the rule's id is the candidate's id" });
-  if (rule.mode !== "steer") context.addIssue({ code: "custom", path: ["rule", "mode"], message: "a candidate's rule steers; it never logs only or blocks" });
+  const issue = (path: Array<string | number>, message: string): void => context.addIssue({ code: "custom", path: ["rule", ...path], message });
+  if (rule.id !== candidate.id) issue(["id"], "the rule's id is the candidate's id");
+  if (rule.mode !== "steer") issue(["mode"], "a candidate's rule steers; it never logs only or blocks");
+  if (rule.description !== undefined && rule.description !== candidate.decision) issue(["description"], "the rule's description is the candidate's decision");
+  // The rule steers wherever its own scope says; a peer's rule is checked only within the candidate's scope.
+  const include = new Set(rule.scope?.include ?? []);
+  if (rule.scope === undefined || include.size !== new Set(candidate.scope).size || !candidate.scope.every(pattern => include.has(pattern))) {
+    issue(["scope", "include"], "the rule's scope includes exactly the candidate's scope");
+  }
+  if ((rule.scope?.exclude.length ?? 0) > 0) issue(["scope", "exclude"], "the rule's scope excludes nothing");
+  if (rule.clauses.length !== 1) issue(["clauses"], "a candidate's rule has exactly one clause");
+  rule.clauses.forEach((clause, index) => {
+    const forbid = clause.forbid;
+    if (forbid === undefined || !("regex" in forbid || "ast" in forbid)) issue(["clauses", index], "a candidate's rule forbids a regex or an ast pattern");
+    const violation = clause.violation;
+    if (violation === undefined) return;
+    if (violation.message !== cleanDecision(violation.message) || violation.message.length > MAX_RULE_MESSAGE_LENGTH) {
+      issue(["clauses", index, "violation", "message"], `the rule's message is clean text of at most ${MAX_RULE_MESSAGE_LENGTH} characters, without links or control characters`);
+    }
+    if (violation.fix !== undefined) issue(["clauses", index, "violation", "fix"], "a candidate's rule suggests no fix");
+  });
 });
 
 export type Candidate = z.infer<typeof candidateSchema>;
@@ -123,7 +170,10 @@ export function isCandidateFileName(name: string): boolean {
   return FILE_NAME_PATTERN.test(name);
 }
 
-/** A new id from the decision's first words and six random hex digits. */
+/**
+ * A new id from the decision's first words and six random hex digits. Ids are not checked for collisions here; a
+ * caller writing a candidate uses {@link unusedCandidateId}.
+ */
 export function newCandidateId(decision: string, random: () => string = () => randomBytes(3).toString("hex")): string {
   const slug = cleanDecision(decision)
     .toLowerCase()
@@ -138,4 +188,19 @@ export function newCandidateId(decision: string, random: () => string = () => ra
     .replace(/-+$/, "");
   const suffix = random().toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8) || "0";
   return `candidate:${slug === "" ? "decision" : slug}-${suffix}`;
+}
+
+/** How many fresh ids {@link unusedCandidateId} tries before giving up. */
+const ID_ATTEMPTS = 16;
+
+/**
+ * A new id for `decision` that `taken` does not report as used, so writing the candidate never replaces another one's
+ * file. Throws after {@link ID_ATTEMPTS} taken ids, which with six random hex digits means `taken` answers wrongly.
+ */
+export function unusedCandidateId(decision: string, taken: (id: string) => boolean, random?: () => string): string {
+  for (let attempt = 0; attempt < ID_ATTEMPTS; attempt += 1) {
+    const id = newCandidateId(decision, random);
+    if (!taken(id)) return id;
+  }
+  throw new Error(`no unused candidate id after ${ID_ATTEMPTS} attempts`);
 }
