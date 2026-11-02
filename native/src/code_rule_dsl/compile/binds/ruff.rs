@@ -336,6 +336,27 @@ fn stubs_defer_only_type_definitions_and_class_bases() {
     check("F821_stub_py315.pyi", f821(), source, &[]);
 }
 
+/// F822 on the `__all__` entries Ruff reads but whose shape tree-sitter writes differently: a
+/// parenthesised string (Ruff's AST has no parentheses) and a bare tuple on the right of `=`,
+/// `+=` or `: T =` (an `expression_list`, Ruff's `Expr::Tuple`).
+#[test]
+fn f822_reads_parenthesised_and_bare_tuple_entries() {
+    let source = "\
+b = c = 1
+__all__: list = ['b', \"c\", ((('a')))]
+__all__ = (\"d\"), \"b\"
+__all__ += \"e\", \"c\"
+";
+    let at = |text: &str| {
+        let start = source.find(text).expect(text) as u64;
+        (start, start + text.len() as u64)
+    };
+    assert_eq!(
+        ranges("F822", f821(), source),
+        [at("'a'"), at("\"d\""), at("\"e\"")]
+    );
+}
+
 #[test]
 fn f405_names_only_a_star_import_may_bind() {
     let source = oracle!("python/scope/usage/F405.py");

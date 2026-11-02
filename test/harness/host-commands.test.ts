@@ -114,7 +114,7 @@ describe("/rerail", () => {
     await run("rerail-help");
     expect(notices).toHaveLength(2);
     expect(notices[1]).toEqual(notices[0]);
-    expect(notices[0]?.message).toContain("/rerail-help        show a list of commands");
+    expect(notices[0]?.message).toContain("/rerail-help         show a list of commands");
   });
 
   it("says Rerail is not on here, and how to start it, where it is stopped", async () => {
@@ -232,6 +232,26 @@ describe("/rerail-show-me", () => {
     expect(sent[0]).toContain(`${cli}' show-me --json`);
     expect(sent[0]).toContain(`${cli}' show-me --cleanup`);
     expect(sent[0]).toContain("with your file edit or write tool");
+  });
+});
+
+describe("/rerail-bug-report", () => {
+  it("hands the coding agent the person's words and the skill, through the session's own launcher", async () => {
+    const { run, sent, notices } = commandHarness();
+    await run("rerail-bug-report", "the daemon hung");
+    expect(notices).toEqual([]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("\"the daemon hung\"");
+    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' support-bundle --json`);
+  });
+
+  it("points the coding agent at a skill the package ships", async () => {
+    const { run, sent } = commandHarness();
+    await run("rerail-bug-report", "");
+    expect(sent[0]).toContain("The person's words: (none given)");
+    const path = /Read (\S+SKILL\.md) and follow it\./u.exec(sent[0]!)?.[1];
+    expect(path).toBeDefined();
+    await expect(readFile(path!, "utf8")).resolves.toMatch(/^---\nname: rerail-bug-report\n/u);
   });
 });
 

@@ -1,0 +1,1 @@
+The development rule playground is removed from the repository. It was never published; the package's `THIRD_PARTY_NOTICES` drops the shadcn/ui components it adapted, and a code comment, `README.md` and the dashboard's README stop mentioning it. Nothing else the package ships changes.

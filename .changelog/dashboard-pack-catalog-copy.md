@@ -1,0 +1,1 @@
+The dashboard's rule pack catalog, set-up review and pack panel say less: each intro is one or two short sentences, and the pack panel no longer says a pack's rules start in Log or Steer when some start in Block.

@@ -327,8 +327,12 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
   runs it).
 - A change to a pack under `packs/` adds a changeset ([.changeset/README.md](.changeset/README.md)), and stages the
   pack data it adds, changes or removes ([Adding or changing a pack](#adding-or-changing-a-pack)).
-- A change to what the core package ships adds an entry under `## Unreleased` in `CHANGELOG.md`
-  ([release notes](docs/release.md#release)).
+- A change to what the core package ships adds an entry as a file of its own in `.changelog/`
+  ([.changelog/README.md](.changelog/README.md)), never under `## Unreleased` in `CHANGELOG.md`.
+- A changeset summary or changelog entry is a release note, and goes out as it is on the GitHub Release: it says what
+  changed for the person upgrading, in plain language, in a sentence or two (at most 60 words), and leaves out commit
+  hashes, ticket ids, pull request numbers and repository-internal maintenance; CI fails a pull request whose entry or
+  summary says otherwise ([release notes](docs/release.md#release)).
 - Tests cover the behavior you changed, and docs that describe it are updated.
 
 ## Reporting a bug
@@ -456,8 +460,9 @@ with `npm run conformance:languages -- --pack <id>` (`--samples` adds the sample
 
 **The conformance comment.** On a pull request from a branch of this repository, CI keeps one comment headed
 **Conformance**: whether every shipped rule passes, the shipped rules' blocking failures, the candidates ready to
-promote, the shipped rules whose `pack.json` `on` disagrees with upstream-status, the checks that pass without
-evidence (a vacuous `holds-under-rename`, for one), and where each other candidate stops. A shipped rule that fails a
+promote, the shipped rules whose `pack.json` `on` disagrees with upstream-status, and where each other candidate
+stops. A rule whose findings the rename variants all lose (`holds-under-rename` with nothing surviving) fails: the
+renamer keeps literals and the order of names, so such a rule matches the cases' names, not the construct. A shipped rule that fails a
 blocking check fails CI: fix it, or move it back to `candidates/`. Everything else in the comment is reported only. On
 a pull request from a fork no CI runs (below); run `npm run test:conformance` yourself and say so in the pull
 request. What each check needs is in [conformance/README.md](conformance/README.md#the-gate), and the

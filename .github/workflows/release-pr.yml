@@ -5,8 +5,8 @@ name: Release pull request
 #   - packs: with changesets pending, `npm run version:packs`, each pack's version and CHANGELOG.md, written by
 #     changesets (docs/pack-format.md, "Release");
 #   - core: when anything core ships has changed since its last `v*` tag, the next patch version in package.json and
-#     package-lock.json, and CHANGELOG.md's unreleased section dated as that version (docs/distribution-model.md,
-#     "Release channels").
+#     package-lock.json, and CHANGELOG.md's section for that version, its unreleased lead and the entries pending in
+#     .changelog/, whose files it deletes (docs/release.md, "Release notes").
 # Merging it is the release: release-packs.yml publishes the packs, and this workflow's tag job tags core's version
 # `v<version>`, whose push starts release.yml, which builds and publishes core. With nothing releasable, an open
 # Release pull request is closed.
