@@ -361,8 +361,9 @@ pub struct LevelCounts {
 }
 
 /// `min_level` after an edit: `fwd`/`rev` and `seed` are the new graph and seed bits, `lvl` the
-/// old exact levels (grown with `INF` for new ids); on return `lvl` is exact for the new graph.
-pub fn level_update<F: Rows, B: Rows>(fwd: &F, rev: &B, seed: &[u64], lvl: &mut [u32], e: &Edit, sc: &mut Scratch) -> LevelCounts {
+/// old exact levels (grown with `INF` for new ids); on return `lvl` is exact for the new graph,
+/// and `toggled` holds (appended) every id whose reachability changed, each once.
+pub fn level_update<F: Rows, B: Rows>(fwd: &F, rev: &B, seed: &[u64], lvl: &mut [u32], e: &Edit, sc: &mut Scratch, toggled: &mut Vec<u32>) -> LevelCounts {
     let n = fwd.n();
     debug_assert_eq!(rev.n(), n);
     debug_assert_eq!(lvl.len(), n);
@@ -470,11 +471,13 @@ pub fn level_update<F: Rows, B: Rows>(fwd: &F, rev: &B, seed: &[u64], lvl: &mut 
     }
     let (mut lo, mut hi) = (u32::MAX, 0u32);
     let mut came = 0u64;
+    let first_came = toggled.len();
     let mut lower = |sc: &mut Scratch, lvl: &mut [u32], v: u32, l: u32, lo: &mut u32, hi: &mut u32| {
         let x = lvl[v as usize];
         if l < x {
             if x == INF && !tst(&sc.mark, v) {
                 came += 1;
+                toggled.push(v);
             }
             lvl[v as usize] = l;
             sc.bucket(l).push(v);
@@ -533,6 +536,7 @@ pub fn level_update<F: Rows, B: Rows>(fwd: &F, rev: &B, seed: &[u64], lvl: &mut 
             c.changed += 1;
             if lvl[v as usize] == INF {
                 c.toggled += 1;
+                toggled.push(v);
             }
         }
     }
@@ -543,6 +547,7 @@ pub fn level_update<F: Rows, B: Rows>(fwd: &F, rev: &B, seed: &[u64], lvl: &mut 
         clr(&mut sc.inv, v);
     }
     c.toggled += came;
+    debug_assert_eq!(toggled.len() - first_came, c.toggled as usize);
     for &(v, _) in &old {
         clr(&mut sc.mark, v);
     }
@@ -961,7 +966,12 @@ mod tests {
             let seed = self.seed_bits();
             let fwd = self.fwd.rows(Csr::new(&self.boff, &self.btgt, self.nb));
             let rev = self.rev.rows(Csr::new(&self.roff, &self.rtgt, self.nb));
-            let lc = level_update(&fwd, &rev, &seed, &mut self.lvl, &e, &mut self.sc);
+            let before = self.lvl.clone();
+            let mut toggled = Vec::new();
+            let lc = level_update(&fwd, &rev, &seed, &mut self.lvl, &e, &mut self.sc, &mut toggled);
+            toggled.sort_unstable();
+            let want: Vec<u32> = (0..n as u32).filter(|&v| (before[v as usize] == INF) != (self.lvl[v as usize] == INF)).collect();
+            assert_eq!(toggled, want, "toggled ids");
             let sc = set_update(&fwd, &rev, &seed, &mut self.set, &e, &mut self.sc);
             set_update_bf(&fwd, &rev, &seed, &mut self.set_bf, &e, &mut self.sc);
             let sd: Vec<u32> = self.seeds.iter().copied().collect();
