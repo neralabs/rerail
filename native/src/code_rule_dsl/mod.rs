@@ -337,6 +337,13 @@ impl CompiledCodeRuleDsl {
         self.inner.scope.matches(&path)
     }
 
+    /// Whether the code rule reads text: a clause holds a regex or file query, so files no
+    /// code-rule language lists are read for it, as `text`.
+    #[napi]
+    pub fn reads_text(&self) -> bool {
+        self.inner.reads_text()
+    }
+
     #[napi]
     pub fn digest(&self) -> String {
         self.inner.digest.clone()

@@ -17,7 +17,8 @@ import type { AuditMode } from "../audit/audit.js";
 import { readGitBlobs } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
-import { sourceLanguageOfPath } from "./code-rule-languages.js";
+import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
+import { binaryPrefix } from "./binary-prefix.js";
 
 
 const MAX_SOURCE_BYTES = 1_000_000;
@@ -49,10 +50,20 @@ interface Source {
 export type ObservedSource = Omit<Source, "text" | "deleted">;
 /** Baseline observations keyed by workspace directory, shared so later sessions reuse digests of unchanged sources. */
 export type SourceObservationCache = Map<string, ReadonlyMap<string, ObservedSource>>;
+/**
+ * A file the auditor may read: `unlisted` when no language lists it, so it is read as `UNLISTED_TEXT_LANGUAGE` and,
+ * being binary or no regular file, is no source at all and skipped without a read error.
+ */
 interface SourceLocation {
   readonly absolute: string;
   readonly path: string;
   readonly language: CodeRuleSourceLanguage;
+  readonly unlisted: boolean;
+}
+/** Where `path` is read from and with which label: its listed one, else `UNLISTED_TEXT_LANGUAGE`. */
+function sourceLocation(absolute: string, path: string): SourceLocation {
+  const language = sourceLanguageOfPath(path);
+  return { absolute, path, language: language ?? UNLISTED_TEXT_LANGUAGE, unlisted: language === undefined };
 }
 function observation({ text: _text, deleted: _deleted, ...source }: Source): ObservedSource {
   return source;
@@ -192,6 +203,10 @@ function uncapturedEdit(
   return undefined;
 }
 
+/**
+ * The paths an edit tool's input names: each single-line string under a path-like key, or the files a patch in one
+ * names. Any file may be one; the auditor decides which it reads (`acceptsPath`).
+ */
 export function generatedEditPaths(toolName: string, input: unknown): string[] {
   if (!/^(?:write|edit|multiedit|ast_edit|apply_patch)$/iu.test(toolName)) return [];
   const candidates: string[] = [];
@@ -200,7 +215,7 @@ export function generatedEditPaths(toolName: string, input: unknown): string[] {
     const patched = patchPaths(candidate);
     return patched.length > 0 ? patched : [candidate];
   });
-  return [...new Set(paths.filter(path => sourceLanguageOfPath(path) !== undefined))];
+  return [...new Set(paths.filter(path => path.trim() !== "" && !/[\0\r\n]/u.test(path)))];
 }
 
 /** Tools that run arbitrary commands can write any source without a preimage, so their results reconcile the workspace. */
@@ -760,14 +775,15 @@ export class CodeRuleBridge {
 
   async #observePath(walk: SourceWalk, absolute: string): Promise<void> {
     const { discovery } = walk;
+    let info: Stats | undefined;
     try {
-      const info = await lstat(absolute);
+      info = await lstat(absolute);
       if (discovery.cancelled || info.isSymbolicLink()) return;
       if (info.isDirectory()) await this.#expandDirectory(walk, absolute);
       else if (info.isFile()) await this.#observeRegularFile(walk, absolute, info);
     } catch (error) {
       if (discovery.cancelled) return;
-      this.#recordObservationFailure(walk, absolute, error);
+      this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
     }
   }
 
@@ -785,14 +801,13 @@ export class CodeRuleBridge {
   /** A file Git ignores is not observed at all: no baseline entry, so no later read or edit of it is audited. */
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
     const path = sessionPath(walk.discovery.root, absolute);
-    const language = sourceLanguageOfPath(path);
-    if (language !== undefined && !this.#auditor.ignoresPath?.(path, false))
-      await this.#observeFile(walk, { absolute, path, language }, info);
+    if (!this.#auditor.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
   }
 
+  /** An unlisted binary file is observed without a read error, so it is not read again while its stamp holds. */
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
     const { discovery, observedAt, previousSources, captureChanges, scan: { sources: observed } } = walk;
-    const { absolute, path, language } = location;
+    const { absolute, path, language, unlisted } = location;
     const stamp = `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
     let modifiedAt = Math.max(info.mtimeMs, info.ctimeMs);
     const previous = previousSources.get(path);
@@ -805,7 +820,8 @@ export class CodeRuleBridge {
       return;
     }
     if (info.size > MAX_SOURCE_BYTES) {
-      observed.set(path, { path, language, stamp, modifiedAt, observedAt, readError: `Source exceeds ${MAX_SOURCE_BYTES} byte policy limit` });
+      if (unlisted && await binaryPrefix(absolute)) observed.set(path, { path, language, stamp, modifiedAt, observedAt });
+      else observed.set(path, { path, language, stamp, modifiedAt, observedAt, readError: `Source exceeds ${MAX_SOURCE_BYTES} byte policy limit` });
       return;
     }
     const source = await readFile(absolute);
@@ -816,6 +832,10 @@ export class CodeRuleBridge {
       const after = await lstat(absolute);
       if (discovery.cancelled) return;
       modifiedAt = Math.max(modifiedAt, after.mtimeMs, after.ctimeMs);
+    }
+    if (unlisted && source.includes(0)) {
+      observed.set(path, { path, language, stamp, modifiedAt, observedAt });
+      return;
     }
     if (source.length > MAX_SOURCE_BYTES || source.includes(0)) {
       observed.set(path, { path, language, stamp, modifiedAt, observedAt, readError: "Source exceeds its byte budget or contains binary data" });
@@ -829,10 +849,11 @@ export class CodeRuleBridge {
     });
   }
 
-  #recordObservationFailure(walk: SourceWalk, absolute: string, error: unknown): void {
+  /** `file` when the path is known to be a file: an unlisted one fails as a source, not as a folder walked. */
+  #recordObservationFailure(walk: SourceWalk, absolute: string, error: unknown, file: boolean): void {
     const { discovery, previousSources, scan } = walk;
     const path = sessionPath(discovery.root, absolute);
-    const language = sourceLanguageOfPath(path);
+    const language = sourceLanguageOfPath(path) ?? (file ? UNLISTED_TEXT_LANGUAGE : undefined);
     const readError = error instanceof Error ? error.message : String(error);
     if (language !== undefined) {
       scan.sources.set(path, { path, language, readError });
@@ -851,6 +872,8 @@ export class CodeRuleBridge {
       this.#observed.set(source.path, observation(source));
       return undefined;
     }
+    // Absent before the call and after it, as a path the input named that is no file: nothing was edited.
+    if (source.deleted && preimage !== undefined && preimage.text === undefined && preimage.readError === undefined) return undefined;
     const edit = this.#editFromToolSource(source, preimage);
     this.#updateObservedSource(source);
     return edit;
@@ -887,16 +910,15 @@ export class CodeRuleBridge {
     const absolute = isAbsolute(configuredPath) ? configuredPath : resolve(root, configuredPath);
     const path = relative(root, absolute).split(sep).join("/");
     if (path === "" || isAbsolute(path)) return undefined;
-    const language = sourceLanguageOfPath(path);
-    if (language === undefined || !this.#auditor.acceptsPath(path)) return undefined;
-    return { absolute, path, language };
+    if (!this.#auditor.acceptsPath(path)) return undefined;
+    return sourceLocation(absolute, path);
   }
 
   /**
    * Reads the file through one descriptor opened without following a final symlink. Its real path must stay inside
    * the checkout that owns it (the session folder for an auditor that judges one folder), and still name the file
    * that was opened, so a folder swapped for a symlink mid-read cannot bring outside bytes in. A file the auditor
-   * finds no owner for is not read.
+   * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source.
    */
   async #readLocatedSource(root: string, location: SourceLocation): Promise<Source | undefined> {
     let handle: FileHandle;
@@ -908,16 +930,19 @@ export class CodeRuleBridge {
     }
     try {
       const info = await handle.stat();
-      if (!info.isFile()) return { path: location.path, language: location.language, readError: "Source is not a regular file" };
+      if (!info.isFile()) return location.unlisted ? undefined : { path: location.path, language: location.language, readError: "Source is not a regular file" };
       const owner = this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(location.path);
       if (owner === undefined) return undefined;
       const canonical = await realpath(location.absolute);
       if (canonical !== owner && !canonical.startsWith(`${owner}${sep}`)) return undefined;
       const named = await lstat(canonical);
       if (named.dev !== info.dev || named.ino !== info.ino) return undefined;
-      if (info.size > MAX_SOURCE_BYTES)
+      if (info.size > MAX_SOURCE_BYTES) {
+        if (location.unlisted && await binaryPrefix(handle)) return undefined;
         return { path: location.path, language: location.language, readError: `Source exceeds ${MAX_SOURCE_BYTES} byte policy limit` };
+      }
       const source = await handle.readFile();
+      if (location.unlisted && source.includes(0)) return undefined;
       if (source.length > MAX_SOURCE_BYTES || source.includes(0))
         return { path: location.path, language: location.language, readError: "Source exceeds its byte budget or contains binary data" };
       return {

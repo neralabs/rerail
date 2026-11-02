@@ -117,10 +117,12 @@ function response(batch: CodeRuleEditBatch) {
 }
 
 describe("CodeRuleBridge", () => {
-  it("extracts supported generated file paths", () => {
+  it("extracts the paths an edit tool names, any file, leaving out multi-line strings", () => {
     expect(generatedEditPaths("write", { path: "src/a.py", content: "pass" })).toEqual(["src/a.py"]);
     expect(generatedEditPaths("edit", { patch: "[src/a.ts#A1B2]\nPUT 1.=1:\n+pass\n" })).toEqual(["src/a.ts"]);
     expect(generatedEditPaths("ast_edit", { paths: ["src/a.rs", "docs/policy.md"] })).toEqual(["src/a.rs", "docs/policy.md"]);
+    expect(generatedEditPaths("write", { path: "Justfile", content: "build:\n" })).toEqual(["Justfile"]);
+    expect(generatedEditPaths("apply_patch", { input: "patch body\nwith no file header\n" })).toEqual([]);
     expect(generatedEditPaths("read", { path: "src/a.py" })).toEqual([]);
   });
 
@@ -532,7 +534,7 @@ describe("CodeRuleBridge", () => {
     }));
   });
 
-  it("labels Blade templates with the blade language, not php, and suffix-only basenames by their extname", async () => {
+  it("labels Blade templates with the blade language, not php, suffix-only basenames by their extname, and an unlisted name as text", async () => {
     const root = await workspace();
     const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
     const bridge = new CodeRuleBridge(root, auditor(auditGeneratedEdits));
@@ -549,6 +551,7 @@ describe("CodeRuleBridge", () => {
     expect(auditGeneratedEdits).toHaveBeenCalledWith("session-1", expect.objectContaining({
       edits: [
         { path: "src/.blade.php", language: "php", generatedText: "<?php\necho 2;\n" },
+        { path: "src/.php", language: "text", generatedText: "<?php\necho 3;\n" },
         { path: "src/Kernel.php", language: "php", generatedText: "<?php\necho 1;\n" },
         { path: "src/page.blade.php", language: "blade", generatedText: "{{ $title }}\n" },
       ],

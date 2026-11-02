@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   codeRuleSchema,
+  languageFor,
   NativeCodeRuleEnforcer,
   SqliteAuditControlStore,
   type AdapterDelivery,
@@ -222,7 +223,8 @@ describe("The rewind steer strategy", () => {
           let revision = 0;
           const auditor: CodeRuleAuditor = {
             openWorkspace: async () => undefined,
-            acceptsPath: () => true,
+            // As rules without a text clause: the session's own files under `sessions/` are no sources.
+            acceptsPath: path => languageFor(path) !== undefined,
             auditGeneratedEdits: async (_sessionId, batch) => {
               // Rerail's own rollback is the only batch audited in log mode.
               if (batch.mode === undefined) revision = batch.revision;

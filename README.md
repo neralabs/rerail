@@ -101,7 +101,7 @@ rerail manage                 # Rule packs page: add it to this repository
 
 A ported rule ships only once it passes the conformance check: it is scored against the original tool's own findings on the tool's tests, at the exact release the pack pins, and on real-code samples. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md), the [pack format](docs/pack-format.md) and [the conformance check](conformance/README.md#the-gate).
 
-Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex clauses work on any file. Move your own rules between machines with `rerail rules export` and `rerail rules import`.
+Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
 
 ## Supported coding agents
 
