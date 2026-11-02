@@ -71,8 +71,8 @@ describe("a repo's line in the repo choices", () => {
   });
 
   it("says a repo that is not set up runs nothing, whatever it holds", () => {
-    expect(repoLine(repo({ setUp: false, started: true }), null)).toBe("Not set up · nothing runs");
-    expect(repoLine(repo({ setUp: false, checkoutCount: 3 }), { total: 2, on: 2 })).toBe("Not set up · nothing runs · 3 checkouts");
+    expect(repoLine(repo({ setUp: false, started: true }), null)).toBe("Not set up · no rules run");
+    expect(repoLine(repo({ setUp: false, checkoutCount: 3 }), { total: 2, on: 2 })).toBe("Not set up · no rules run · 3 checkouts");
   });
 
   it("says Off with the rules it holds while a repo is off, and only On or Off until the counts are read", () => {

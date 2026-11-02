@@ -146,7 +146,7 @@ export function sinceFor(range = ui.range) {
   return Math.floor((Date.now() - range * 86_400_000) / QUANTUM) * QUANTUM;
 }
 
-const RANGE_LABEL = { 0: "today", 7: "last 7 days", 30: "last 30 days" };
+const RANGE_LABEL = { 0: "today", 7: "in the last 7 days", 30: "in the last 30 days" };
 export const rangeLabel = () => RANGE_LABEL[ui.range] ?? "since install";
 
 const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 };

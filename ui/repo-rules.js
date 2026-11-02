@@ -35,11 +35,11 @@ function rulesWords(started, counts) {
 
 /**
  * The line under a repository's name in the repository choices: "Set up · 12 rules on · 2 checkouts", "Set up · Off ·
- * 12 rules", "Set up · No rules added", "Not set up · nothing runs". One checkout goes unsaid.
+ * 12 rules", "Set up · No rules added", "Not set up · no rules run". One checkout goes unsaid.
  */
 export function repoLine(repo, counts) {
   const checkouts = repo.checkoutCount > 1 ? [`${fmt(repo.checkoutCount)} checkouts`] : [];
-  const state = repo.setUp ? ["Set up", ...rulesWords(repo.started, counts)] : ["Not set up", "nothing runs"];
+  const state = repo.setUp ? ["Set up", ...rulesWords(repo.started, counts)] : ["Not set up", "no rules run"];
   return [...state, ...checkouts].join(" · ");
 }
 

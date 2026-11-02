@@ -139,6 +139,10 @@ test("a rule created by you is deleted from the repository after a confirm, and 
   await other.goto(url);
   await expect(ruleRow(other, STEER_LIBRARY_RULE).first()).toBeVisible();
   await expect(ruleRow(other, BLOCK_LIBRARY_RULE)).toHaveCount(0);
+  // Its violations stay: History by rule still lists it.
+  await other.goto(new URL("#history", url).href);
+  await other.locator('#content [data-act="range"][data-i="9999"]').first().click();
+  await expect(other.locator("#content")).toContainText("No longer in this repo");
   await other.close();
 
   await page.locator('#toast [data-act="ruleundo"]').click();

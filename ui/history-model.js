@@ -67,17 +67,17 @@ function sessionsSinceInstall() {
 
 /**
  * What History shows when no rule has a violation in the range (whatever the chip), or `null` when some does:
+ * - `nothingInRange`: violations exist, none in the range, whether or not any rule is on now;
  * - `noRules`: no rule is on, so nothing can be logged;
  * - `noSessions`: rules are on, but no coding agent session ran yet;
- * - `noViolations` (`sessions`: the audited sessions): sessions ran and no rule ever logged one;
- * - `nothingInRange`: violations exist, none in the range.
+ * - `noViolations` (`sessions`: the sessions started): sessions ran and no rule ever logged one.
  */
 export function historyEmpty(ranked = rankedRules("all")) {
   if (ranked.length > 0) return null;
+  const everLogged = (sessionsSinceInstall()?.withViolations ?? 0) > 0
+    || Object.values(sinceFor() === 0 ? data.activity : data.activityAll).some(a => a.measured !== false && a.distinctViolations > 0);
+  if (everLogged) return { kind: "nothingInRange" };
   if (![...data.rules.values()].some(stored => stored.enabled)) return { kind: "noRules" };
   const sessions = sessionsSinceInstall()?.started ?? 0;
-  if (sessions === 0) return { kind: "noSessions" };
-  const everLogged = Object.values(sinceFor() === 0 ? data.activity : data.activityAll)
-    .some(a => a.measured !== false && a.distinctViolations > 0);
-  return everLogged ? { kind: "nothingInRange" } : { kind: "noViolations", sessions };
+  return sessions === 0 ? { kind: "noSessions" } : { kind: "noViolations", sessions };
 }

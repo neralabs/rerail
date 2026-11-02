@@ -16,9 +16,9 @@ const packOn = pack => (reviewing() ? keptPacks().includes(pack.id) : isAttached
 
 /** Remove pack's question, in place: the whole pack goes, its history stays. */
 function removeQuestion(pack) {
-  const n = pack.rules.length, repo = repoName() || "this repo";
+  const repo = repoName() || "this repo";
   return h("span.rmask", { role: "alertdialog", "aria-label": `Remove ${pack.name}?` },
-    h("span", null, `Remove ${n === 1 ? "the 1 rule" : `all ${fmt(n)} rules`} in ${pack.name} from ${repo}? ${n === 1 ? "It goes" : "They go"} off and the pack returns to Rule packs. History is kept.`),
+    h("span", null, `Remove ${pack.name} from ${repo}? History is kept.`),
     h("button.btn.sm.danger", { "data-act": "removepack", "data-i": pack.id }, "Remove"),
     h("button.btn.sm.ghost.link", { "data-act": "cancelremove" }, "Cancel"));
 }
@@ -29,7 +29,7 @@ function removeQuestion(pack) {
  */
 export function removePackControl(pack, quiet = false) {
   if (ui.removeAsk === pack.id) return removeQuestion(pack);
-  return h(`button.btn.sm.danger${quiet ? ".quiet" : ""}`, { "data-act": "removepack", "data-i": pack.id, title: "Its rules go off and the pack returns to Rule packs" }, "Remove pack");
+  return h(`button.btn.sm.danger${quiet ? ".quiet" : ""}`, { "data-act": "removepack", "data-i": pack.id }, "Remove pack");
 }
 
 /** Add pack while the pack is not on here; else Remove pack (`removePackControl`). */

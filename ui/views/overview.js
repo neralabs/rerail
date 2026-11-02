@@ -10,6 +10,7 @@ import { data, ui, activityAllOf, fires, rangeLabel, repoName, rulesArray, ruleS
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
+import { loggedTip } from "../render/rules.js";
 import { bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules } from "../first-open.js";
 
 export const needs = ["rules", "packs", "activity", "recentSessions"];
@@ -58,9 +59,8 @@ function dismissWelcome() {
 function stoppedBanner(repo) {
   return h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
     h("b", null, `Rerail is stopped in ${repo}.`),
-    h("p", null, "Nothing is audited or logged here; your rules and history are kept. Starting it here starts every checkout of the repo; ",
-      h("span.mono", null, "/rerail-start"), " in a session starts that checkout."),
-    h("p.acts", null, h("button.btn.sm.solid", { "data-act": "repostart", "data-i": data.repository.repositoryKey }, "Start Rerail"))));
+    h("p", null, "No rules run here, and nothing is logged; rules and history are kept."),
+    h("p.acts", null, h("button.btn.sm.solid", { "data-act": "repostart", "data-i": data.repository.repositoryKey, title: `Starts every checkout of ${repo}.` }, "Start Rerail"))));
 }
 
 /** The welcome shows only where Rerail is started: a repository set up but never started reads as stopped. */
@@ -148,7 +148,7 @@ function updateRuleRow(row, item) {
   setAttr(title, "title", item.title);
   setClass(row, "off", !isRunning(item.stored));
   setText(row.querySelector(".count b"), fmt(item.fires));
-  setAttr(row.querySelector(".count"), "title", `${fmt(item.fires)} ${plural(item.fires, "violation")} logged ${rangeLabel()}`);
+  setAttr(row.querySelector(".count"), "title", loggedTip(item.stored, item.fires));
   const sw = row.querySelector(".sw");
   setAttr(sw, "aria-checked", String(item.stored.enabled));
   setAttr(sw, "aria-label", `Toggle ${item.title}`);
@@ -191,12 +191,17 @@ function updateSessionRow(row, s) {
 
 /* ---------- empty blocks ---------- */
 
-function emptyBlock(body, repo) {
+const rulesOffCard = () => h("div.list", null, h("div.empty", null,
+  h("h3", null, "Every rule is off."),
+  h("p", null, "Turn rules on in a rule pack, then start a coding agent session."),
+  h("p.acts", null, h("button.btn.sm.solid", { "data-act": "nav", "data-i": rulesOnHash(ruleSources()) }, "Turn rules on"))));
+
+function emptyBlock(body) {
   const label = rangeLabel();
   if (body === "no-rules") {
     return h("div.list", null, h("div.empty", null,
-      h("h3", null, "No rules added yet"),
-      h("p", null, `Nothing is checked in ${repo} yet. Add rule packs, or write a rule of your own with your coding agent. Once rules are on, start a coding agent session in this repo and the violations they log show here.`),
+      h("h3", null, "No rules added yet."),
+      h("p", null, "Add a rule pack, or write a rule of your own with your coding agent."),
       h("p.acts", null,
         h("button.btn.sm.solid", { "data-act": "nav", "data-i": "packs" }, icon("plus"), "Add rule packs"),
         h("button.btn.sm", { "data-act": "nav", "data-i": "create" }, "Create a rule"))));
@@ -206,17 +211,20 @@ function emptyBlock(body, repo) {
     const on = rulesArray().filter(isRunning).length;
     if (on > 0) {
       return h("div.list", null, h("div.empty", null,
-        h("h3", null, "No sessions yet"),
+        h("h3", null, "No sessions yet."),
         h("p", null, "The rules that log the most violations, and your recent sessions, show here.")));
     }
-    return h("div.list", null, h("div.empty", null,
-      h("h3", null, "Every rule is off"),
-      h("p", null, "Turn rules on in a rule pack, then start a coding agent session."),
-      h("p.acts", null, h("button.btn.sm.solid", { "data-act": "nav", "data-i": rulesOnHash(ruleSources()) }, "Turn rules on"))));
+    return rulesOffCard();
   }
+  if (!rulesArray().some(isRunning)) return rulesOffCard();
+  const { started, withViolations } = data.activitySessions ?? { started: 0, withViolations: 0 };
+  // Violations from rules taken out of the repository: the sessions tile counts them, and the list of rules can't.
+  const title = withViolations > 0 ? `No current rule logged violations ${label}.` : `No violations logged ${label}.`;
+  const line = withViolations > 0 ? null
+    : started > 0 ? `Rerail logged none in ${fmt(started)} ${plural(started, "session")} ${label}.` : `No sessions ${label}.`;
   return h("div.list", null, h("div.empty", null,
-    h("h3", null, `No violations logged ${label}`),
-    h("p", null, ui.range === ALL_TIME ? "Wait for the next coding agent session." : "Widen the range, or wait for the next coding agent session."),
+    h("h3", null, title),
+    line === null ? null : h("p", null, line),
     ui.range === ALL_TIME ? null : h("p.acts", null, h("button.btn.sm", { "data-act": "range", "data-i": ALL_TIME }, "Show since install"))));
 }
 
@@ -280,7 +288,7 @@ export function render(root) {
   if (body === "lists") renderLists(top, repo);
   else if (body !== "loading") {
     const on = rulesArray().filter(isRunning).length;
-    setContent(page.empty, JSON.stringify([body, repo, on, ui.range, rulesOnHash(sources)]), () => emptyBlock(body, repo));
+    setContent(page.empty, JSON.stringify([body, repo, on, ui.range, rulesOnHash(sources), data.activitySessions]), () => emptyBlock(body));
   }
 }
 

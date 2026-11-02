@@ -44,7 +44,7 @@ describe("the Follow .gitignore setting on the page", () => {
     writes()[0]!.answer(200, { repository: { followGitignore: false } });
     await saving;
     expect(data.followGitignore).toBe(false);
-    expect(toast).toHaveBeenCalledWith("Files Git ignores are checked from the next session.");
+    expect(toast).toHaveBeenCalledWith("New sessions include Git-ignored files.");
   });
 
   it("puts the setting back and says why when the write fails", async () => {

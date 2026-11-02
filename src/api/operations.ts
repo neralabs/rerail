@@ -391,6 +391,11 @@ export const operations: readonly Operation[] = [
           ...(inactive === undefined ? {} : { inactive }),
         };
       }
+      // A rule taken out since keeps its violations: History still lists it.
+      for (const [id, totals] of activity) {
+        if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
+        rules[id] = { measured: true, ...totals, rerails: rerails.get(id) ?? 0 };
+      }
       return {
         since: input.since,
         rules,

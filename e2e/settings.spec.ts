@@ -72,7 +72,7 @@ test.describe("Settings over a repo with history", () => {
     const { sessions, openSessions } = await answer.json() as { sessions: number; openSessions: number };
     expect(sessions).toBe(manifest.primary.sessionIds.length - manifest.primary.openSessionIds.length);
     expect(openSessions).toBe(manifest.primary.openSessionIds.length);
-    await expect(page.locator("#toast")).toContainText(String(sessions));
+    await expect(page.locator("#toast")).toContainText("History cleared");
 
     await page.goto(await rerail.dashboard("mature", { hash: "history" }));
     await page.reload();

@@ -203,7 +203,9 @@ export function showRepository(key) {
 function checkRule(id) {
   if (data.rules.has(id)) return;
   if (panelRuleId() === id) closePanel();
-  toast(`${id} isn’t a rule in ${repoName() || "this repo"}.`);
+  const pack = packRuleOf(id)?.pack;
+  if (pack && !isAttached(pack)) toast(`${pack.name} pack is not added.`, { action: { label: "Open pack", act: "viewpack", id: pack.id } });
+  else toast(`${id} isn’t a rule in ${repoName() || "this repo"}.`);
 }
 
 /** A route's rule link: its sheet, checked against the rules once they are in; a route without one closes a rule sheet. */

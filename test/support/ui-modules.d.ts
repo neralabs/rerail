@@ -45,7 +45,7 @@ declare module "*/ui/sessions-model.js" {
   }
   export function sessionTurns(events: readonly unknown[]): TurnView[];
   export function placeCorrections(turns: TurnView[], corrections: readonly Correction[]): TurnView[];
-  export function resumeCommand(s: { host: string; cwd: string; sessionId: string }): { name: string; cmd: string | null; how?: string };
+  export function resumeCommand(s: { host: string; cwd: string; sessionId: string }): { name: string; cmd: string | null; cwd?: string };
   export function droppedEvents(s: { sessionId: string }): number;
   export function uncheckedBoundaries(s: { sessionId: string }): number;
   export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
@@ -249,6 +249,7 @@ declare module "*/ui/render/rule-sheet-model.js" {
   export function askPrompt(rule: AskRule, intent: AskIntent): string;
   export function agentSeesPrompt(id: string, text: string): string;
   export const LOG_NOTE: string;
+  export function askHint(rule: { byRerail: boolean }): string;
   export function agentSeesHint(rule: { byRerail: boolean; log: boolean }): string;
   export function fmtDay(t: number | null | undefined): string;
   export interface LibraryAttachment { sourceKind: "library_rule"; sourceId: string; folder: string }

@@ -18,7 +18,7 @@ let t = null;
 
 function build(tl) {
   t = {
-    empty: h("div.empty", { style: "padding:48px 20px", hidden: true }, h("h3", null, "No violations logged"), h("p"), h("p", { style: "margin-top:12px" }, h("button.btn.sm", { "data-act": "showall" }, "Show all events"))),
+    empty: h("div.empty", { style: "padding:48px 20px", hidden: true }, h("h3", null, "No violations logged."), h("p"), h("p", { style: "margin-top:12px" }, h("button.btn.sm", { "data-act": "showall" }, "Show all events"))),
     loading: h("div.empty", { hidden: true }, h("p", null, "Loading…")),
     earlier: h("div.smore", { hidden: true }, h("button.btn.sm", { "data-act": "earlier" })),
     start: h("div.bound", null, "Session started"),
@@ -154,7 +154,9 @@ function updateCorr(node, item) {
   setText(node.querySelector(".mono"), f.ruleId);
   const result = violationOutcome(f);
   node.dataset.outcome = result;
-  setText(node.querySelector(".badge"), result === "logged" ? "Logged" : "Steered");
+  const badge = node.querySelector(".badge");
+  setText(badge, result === "logged" ? "Logged" : "Steered");
+  setAttr(badge, "title", result === "logged" ? "Rerail recorded it; the coding agent wasn’t told." : "Rerail told the coding agent.");
   setAttr(node.querySelector("[data-act=detail]"), "data-i", f.ruleId);
   setAttr(node.querySelector("[data-act=detail]"), "hidden", c.rule === null);
   setText(node.querySelector(".said"), f.message);
@@ -245,12 +247,12 @@ export function renderTimeline(tl, rail, sess, turns, cs, page) {
   const rulesPending = codeRulesPendingBoundaries(sess);
   const gaps = [
     ...(dropped === 0 ? [] : [`${fmt(dropped)} ${plural(dropped, "event")} never reached Rerail`]),
-    ...(unchecked === 0 ? [] : [`shell edits were not yet checked at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
-    ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
+    ...(unchecked === 0 ? [] : [`shell edits reached rules late ${fmt(unchecked)} ${plural(unchecked, "time")}`]),
+    ...(rulesPending === 0 ? [] : [`code rules weren’t ready ${fmt(rulesPending)} ${plural(rulesPending, "time")}`]),
   ].join("; ");
   setText(t.empty.querySelector("p"), gaps === ""
-    ? `Rerail audited all ${fmt(sess.eventCount)} events in this session and logged no violations.`
-    : `Rerail logged no violations in the ${fmt(sess.eventCount)} events it audited; ${gaps}.`);
+    ? `Rerail audited the whole session: ${fmt(sess.eventCount)} events.`
+    : `Rerail saw ${fmt(sess.eventCount)} events; ${gaps}.`);
   setAttr(t.loading, "hidden", loaded && !(quietEmpty && total === null));
   setAttr(rail, "hidden", quietEmpty || !loaded);
   // The start is only reached once the whole session is loaded back to it.
