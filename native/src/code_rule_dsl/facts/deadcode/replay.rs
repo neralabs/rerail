@@ -162,7 +162,7 @@ fn replay(label: &str, default_check_every: usize, default_check_load: bool) -> 
 
     // Y3's world, as E3 builds it: the base layer (strict-majority membership) and an overlay per
     // cluster (plurality membership).
-    let mut sh = Shared { y1: y1_shared(), sym: Default::default(), y2_path: Default::default() };
+    let mut sh = Shared { y1: y1_shared(), sym: Default::default(), y2_path: Default::default(), source: None, inputs_ms: 0.0 };
     crate::code_rule_dsl::facts::ygraph::summary::load(&exports, &mut sh.y1.it, &mut sh.y1.sums, None);
     crate::code_rule_dsl::facts::y3::input::load(&exports, &mut sh.sym.blocks, None);
     let fp_inputs = footprint_mb();

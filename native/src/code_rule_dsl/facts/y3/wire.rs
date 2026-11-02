@@ -17,18 +17,50 @@ use crate::code_rule_dsl::facts::ygraph::world::{self as y1, Base, Below, Delta,
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::time::Instant;
 
+/// Where a (path, content)'s per-content inputs come from when no step has read them yet: its
+/// exports (`facts::xinputs::exports`) and whether the producer failed on the content; None when
+/// the content is unknown (the steps then refuse it, as a member without exports).
+pub trait Source {
+    fn exports(&mut self, path: &str, content: &str) -> Option<(bool, crate::code_rule_dsl::facts::xinputs::exports::Exports)>;
+}
+
 /// What every layer and worktree shares.
 pub struct Shared {
     pub y1: y1::Shared,
     pub sym: SymShared,
     /// Y1's path symbols in Y2's interner (the two interners meet only here).
     pub y2_path: FxHashMap<u32, u32>,
+    /// The inputs' source; None when every input was loaded up front (`summary::load`,
+    /// `input::load`).
+    pub source: Option<Box<dyn Source>>,
+    /// Wall time spent reading inputs from the source, since the caller last took it.
+    pub inputs_ms: f64,
 }
 
 impl Shared {
     fn y2p(&mut self, p: u32) -> u32 {
         let Shared { y1, y2_path, .. } = self;
         *y2_path.entry(p).or_insert_with(|| ysym(y1.it.str(p)))
+    }
+
+    /// Reads from the source the inputs of every (path, content) of `changes` no step has read.
+    fn ensure(&mut self, changes: &[&PathEdit]) {
+        let Shared { y1, sym, source, inputs_ms, .. } = self;
+        let Some(source) = source.as_mut() else { return };
+        let t = Instant::now();
+        for (p, o, n) in changes {
+            for c in [o, n].into_iter().flatten() {
+                let (ps, cs) = (y1.it.intern(p), y1.it.intern(c));
+                if y1.sums.get(ps, cs).is_some() {
+                    continue;
+                }
+                if let Some((failure, ex)) = source.exports(p, c) {
+                    crate::code_rule_dsl::facts::ygraph::summary::insert(&mut y1.it, &mut y1.sums, p, c, failure, &ex);
+                    super::input::insert(&mut sym.blocks, p, c, &ex);
+                }
+            }
+        }
+        *inputs_ms += t.elapsed().as_secs_f64() * 1e3;
     }
 }
 
@@ -225,6 +257,7 @@ pub struct Xref {
 /// Y1 over `changes` (which change content): Y1's `apply`, the edge delta as position rows, the
 /// reverse index.
 pub fn xref_step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[&PathEdit]) -> Xref {
+    sh.ensure(changes);
     let y1c: Vec<y1::Change> = changes.iter().map(|(p, o, n)| y1::Change { path: sh.y1.it.intern(p), old: o.as_ref().map(|x| sh.y1.it.intern(x)), new: n.as_ref().map(|x| sh.y1.it.intern(x)) }).collect();
     let st = y1::apply(&mut sh.y1, below, &mut top.y1, &y1c);
     let t = Instant::now();
@@ -242,6 +275,7 @@ pub fn xref_step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[&Path
 /// The symbol table over `changes` (the symbol table's derivation): the membership, then the
 /// table's presence changes.
 pub fn symbols_step(sh: &mut Shared, top: &mut Top, changes: &[&PathEdit]) -> (Vec<Change>, sym::Work) {
+    sh.ensure(changes);
     let pc: Vec<PathChange> = changes.iter().map(|(p, o, n)| PathChange { path: ysym(p), old: o.as_deref().map(ysym), new: n.as_deref().map(ysym) }).collect();
     for c in &pc {
         match c.new {
