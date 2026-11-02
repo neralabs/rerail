@@ -65,8 +65,10 @@ access 2.5–4.3× faster.
 How it is locked:
 - **Flags folded into the code space** (named, extra, missing, error), with a code for the one
   Python kind whose `extra` varies.
-- **Supertype memberships** (W's v8 table) go to a sidecar keyed by the tape digest. They are a
-  grammar property of the structure, not of the tape.
+- **Supertype memberships stay in the tape** (W's v8 table). Amended 2026-11-02 (user decision):
+  the sidecar keyed by the tape digest is dropped. Memberships are 0.23–0.45 per node, 1.35–2.7
+  B/node in the tape; a SQL table with a row per membership and its index would be ~25–40 B a row,
+  double or triple the tape. If they must shrink, that happens inside the tape.
 - **No parent column**: parents are rebuilt with a stack where a consumer needs them. Revisit only
   if SQL parent climbs prove hot.
 - **Reads stay behind `TapeDoc`'s `transducer_*` accessors**, so the switch is local to `tape.rs`.
@@ -89,8 +91,7 @@ encoder must stream within the 500 MB budget.
 - no parent column: `restore_tree` rebuilds parents from the sizes with a stack;
 - `TapeDoc` and its accessors are unchanged, so nothing outside `tape.rs` changed.
 
-Not done here: supertype memberships stay in the image (their sidecar keyed by the tape digest
-comes with the sidecars, list step 28), and nothing reads the stored columns randomly yet (the
+Supertype memberships stay in the image (amended above; no sidecar). Nothing reads the stored columns randomly yet (the
 anchor index's SQL reads, `tape/v9np/sql.rs`, are the spike's harness).
 
 Checks: the tape tests (41, adapted from v8's tables to the columns), S7 710 keys = W on CPU and

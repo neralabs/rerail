@@ -1580,3 +1580,71 @@ fn stored_tape_bytes_against_v8() {
         6.0 * memberships as f64 / nodes as f64,
     );
 }
+
+/// Whether a node's stored supertype memberships are a lookup: by its kind alone (the grammar's
+/// supertype map, transitively), or by (parent kind, field, kind) learned from the corpus.
+/// `RERAIL_TAPE_SIZE='<lang> <dir>'`.
+#[test]
+#[ignore = "measurement; RERAIL_TAPE_SIZE='<lang> <dir>', --ignored --nocapture"]
+fn supertype_memberships_against_lookups() {
+    use std::collections::{BTreeSet, HashMap};
+    let spec = std::env::var("RERAIL_TAPE_SIZE").expect("RERAIL_TAPE_SIZE='<lang> <dir>'");
+    let (lang, dir) = spec.split_once(' ').expect("<lang> <dir>");
+    let (docs, _, _) = super::v9np::load(lang, &[dir.to_owned()], usize::MAX);
+    let (mut nodes, mut by_kind_equal, mut by_kind_superset) = (0_usize, 0_usize, 0_usize);
+    let mut by_context: HashMap<(u16, u16, u16), HashMap<Vec<u16>, usize>> = HashMap::new();
+    let mut by_kind_alone: HashMap<u16, HashMap<Vec<u16>, usize>> = HashMap::new();
+    for doc in &docs {
+        let dialect = crate::code_rule_dsl::language::dialect_by_label(crate::code_rule_dsl::language::label_of_path(doc.path.to_str().unwrap()).unwrap()).unwrap();
+        let grammar = Grammar::new(dialect).unwrap();
+        let language = grammar.language();
+        // Each kind's supertypes in the grammar's map, closed over supertypes that are subtypes.
+        let mut map: HashMap<u16, BTreeSet<u16>> = HashMap::new();
+        for &supertype in language.supertypes() {
+            let mut stack = vec![supertype];
+            let mut seen = BTreeSet::new();
+            while let Some(at) = stack.pop() {
+                for &sub in language.subtypes_for_supertype(at) {
+                    if seen.insert(sub) {
+                        map.entry(sub).or_default().insert(supertype);
+                        stack.push(sub);
+                    }
+                }
+            }
+        }
+        let native = StrDoc::new(&doc.source, dialect);
+        let image = TapeImage::encode(native.tree.root_node(), &grammar, &doc.source, &|| false).unwrap().primary;
+        let tape = TapeDoc::restore(Arc::new(doc.source.clone()), Arc::clone(&grammar), &image, &|| false).unwrap();
+        let mut stored: HashMap<u32, Vec<u16>> = HashMap::new();
+        for (node, kind) in tape.transducer_supertypes() {
+            stored.entry(node).or_default().push(kind);
+        }
+        for node in 0..tape.transducer_len() as u32 {
+            let kind = tape.transducer_kind(node);
+            let mut set = stored.remove(&node).unwrap_or_default();
+            set.sort_unstable();
+            let lookup = map.get(&kind).map(|set| set.iter().copied().collect::<Vec<_>>()).unwrap_or_default();
+            nodes += 1;
+            by_kind_equal += usize::from(lookup == set);
+            by_kind_superset += usize::from(set.iter().all(|s| lookup.contains(s)));
+            let parent = tape.transducer_parent(node).map_or(u16::MAX, |p| tape.transducer_kind(p));
+            *by_context.entry((parent, tape.transducer_field(node), kind)).or_default().entry(set.clone()).or_default() += 1;
+            *by_kind_alone.entry(kind).or_default().entry(set).or_default() += 1;
+        }
+    }
+    // A key decides its set where one set holds all its nodes; otherwise its minority nodes miss.
+    fn misses<K>(table: &HashMap<K, HashMap<Vec<u16>, usize>>) -> usize {
+        table.values().map(|sets| sets.values().sum::<usize>() - sets.values().max().unwrap()).sum()
+    }
+    println!(
+        "{} files, {nodes} nodes: grammar map by kind equals the stored set for {:.4}%, contains it for {:.4}%; \
+         learned by kind misses {} nodes ({} kinds), by (parent kind, field, kind) misses {} nodes ({} keys)",
+        docs.len(),
+        100.0 * by_kind_equal as f64 / nodes as f64,
+        100.0 * by_kind_superset as f64 / nodes as f64,
+        misses(&by_kind_alone),
+        by_kind_alone.len(),
+        misses(&by_context),
+        by_context.len(),
+    );
+}
