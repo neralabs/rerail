@@ -21,7 +21,7 @@ Every pack lives under `packs/` in this repository and is published from there (
 | Rust | language | 33 (17) | `*.rs` files |
 | SQL | language | 21 (19) | `*.sql` files |
 | Next.js | framework | 21 (21) | a `next` dependency |
-| Node.js | framework | 32 (6) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
+| Node.js | framework | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | 23 (21) | `*.vue` files |
 | React | framework | 0 | never yet: every port is still a candidate, and a pack with no rule that starts on is never recommended |
 
