@@ -8,6 +8,7 @@
 //! differ. A layer is built by the same step as an edit: the base from nothing (the rules from
 //! scratch over it), an overlay and a worktree as the edit that turns the layer below into it.
 use super::sym::{self, PathChange, SymShared, SymState};
+use crate::code_rule_dsl::facts::deadcode::digest::SetDigest;
 use crate::code_rule_dsl::facts::lmap::LMap;
 use crate::code_rule_dsl::facts::y2::dc::{self, Rule};
 use crate::code_rule_dsl::facts::y2::facts::{sort_changes, sym as ysym, Change, Facts, Row, Tab, Val};
@@ -42,6 +43,10 @@ pub struct Top {
     pub rev: LMap<u32, Vec<u32>>,
     /// path → content (Y2's interner)
     pub members: LMap<u32, u32>,
+    /// Digests of the stack's `Refs` rows (the reference graph's derivation output) and of its
+    /// symbol-table rows, maintained by each step's presence changes.
+    pub refs_digest: SetDigest,
+    pub sym_digest: SetDigest,
 }
 
 /// A frozen layer of every component.
@@ -60,6 +65,8 @@ impl Top {
             rule: l.top.rule.as_ref().map(Rule::view),
             rev: l.top.rev.view(),
             members: l.top.members.view(),
+            refs_digest: l.top.refs_digest,
+            sym_digest: l.top.sym_digest,
         }
     }
 
@@ -228,6 +235,7 @@ pub fn xref_step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[&Path
     for &(s, t) in &st.edges_added {
         top.rev.push(t, s);
     }
+    top.refs_digest.changes(&refs, &mut Vec::new());
     Xref { refs, y1: st, refs_ms: t.elapsed().as_secs_f64() * 1e3 }
 }
 
@@ -241,7 +249,9 @@ pub fn symbols_step(sh: &mut Shared, top: &mut Top, changes: &[&PathEdit]) -> (V
             None => top.members.remove(&c.path),
         };
     }
-    top.sym.apply(&mut sh.sym, &pc)
+    let (out, work) = top.sym.apply(&mut sh.sym, &pc);
+    top.sym_digest.changes(&out, &mut Vec::new());
+    (out, work)
 }
 
 /// Y2's inputs: the presence changes of both halves applied, scoped under the old state when
@@ -289,7 +299,7 @@ pub fn step(sh: &mut Shared, below: &Below, top: &mut Top, changes: &[PathEdit])
 /// changes are every row), then the rule's roots from scratch over it.
 pub fn base_layer(sh: &mut Shared, members: &[(String, String)]) -> (Layer, serde_json::Value) {
     let t = Instant::now();
-    let mut top = Top { y1: Delta::default(), sym: SymState::default(), facts: Facts::default(), rule: None, rev: LMap::default(), members: LMap::default() };
+    let mut top = Top { y1: Delta::default(), sym: SymState::default(), facts: Facts::default(), rule: None, rev: LMap::default(), members: LMap::default(), refs_digest: SetDigest::default(), sym_digest: SetDigest::default() };
     let changes: Vec<(String, Option<String>, Option<String>)> = members.iter().map(|(p, h)| (p.clone(), None, Some(h.clone()))).collect();
     let st = step(sh, &Below::default(), &mut top, &changes);
     top.rule = Some(Rule::scratch(&top.facts));

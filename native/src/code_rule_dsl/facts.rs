@@ -47,6 +47,10 @@ pub(crate) mod y2;
 /// `CrossFile` interface.
 #[allow(dead_code, unused_imports, unused_mut, clippy::all)]
 pub(crate) mod y3;
+/// Dead code as derivation families on `propagate`: Y1's rows, the symbol table, the product
+/// graph's CSR, its reached set (E3) and the findings, per worktree.
+#[allow(dead_code)]
+pub(crate) mod deadcode;
 
 /// The derivation graph as the push path reads and writes it: the store itself (every write a
 /// transaction) or the overlay over it (writes in memory, written back in the background).
