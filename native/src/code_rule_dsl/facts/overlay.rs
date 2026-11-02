@@ -60,6 +60,9 @@ pub(crate) struct Counters {
     pub written: u64,
     /// Layers the push path wrote itself because the writer was behind.
     pub pressed: u64,
+    /// Re-runs that reproduced the derivation held below (its reads and output), so nothing
+    /// was written for them (Y1's backdating).
+    pub backdated: u64,
 }
 
 #[derive(Default)]
@@ -410,6 +413,15 @@ impl Graph for Overlay {
                 if u32::try_from(status).is_err() {
                     return Err(StoreError::Invalid(format!("derivation {what} is outside the run cells")));
                 }
+            }
+            // Backdating: a re-run that reproduces what is held (its producer, status, reads and
+            // output; cost is accounting) leaves nothing to write, and changes nothing.
+            let held = self.derivation_of(output)?;
+            if held.as_deref().is_some_and(|held| held.producer == record.producer && held.status == record.status && held.inputs == inputs)
+                && self.binding_of(output)? == Some(record.digest)
+            {
+                self.shared.lock().counters.backdated += 1;
+                continue;
             }
             {
                 let mut state = self.shared.lock();

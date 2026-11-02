@@ -164,3 +164,28 @@ fn propagation_over_the_overlay_matches_propagation_over_the_store() {
     }
     assert_eq!(store.binding("t").unwrap(), Some(d(11)));
 }
+
+/// Backdating (Y1): a re-run that reproduces the derivation held below, from SQLite or a layer,
+/// writes nothing and changes nothing; one that reads or outputs anything else is written.
+#[test]
+fn a_rerun_that_reproduces_its_derivation_is_backdated() {
+    let (store, spill) = store("backdate");
+    let overlay = Overlay::new(Arc::clone(&store), limits(spill, usize::MAX, usize::MAX, usize::MAX, false)).unwrap();
+    overlay.bind_names(&[binding("a", 1), binding("b", 1)]).unwrap();
+    overlay.record_derivations(&[record("x", &[("a", 1)], 5)]).unwrap();
+    overlay.flush().unwrap();
+    let written = overlay.counters().written;
+    // The same reads and output (its cost aside): nothing to write.
+    let mut again = record("x", &[("a", 1)], 5);
+    again.cost = 0;
+    assert!(overlay.record_derivations(&[again]).unwrap().is_empty());
+    overlay.flush().unwrap();
+    assert_eq!((overlay.counters().backdated, overlay.counters().written), (1, written));
+    // Another read, or another output, is written.
+    assert!(overlay.record_derivations(&[record("x", &[("b", 1)], 5)]).unwrap().is_empty());
+    assert_eq!(overlay.record_derivations(&[record("x", &[("b", 1)], 6)]).unwrap(), ["x"]);
+    overlay.flush().unwrap();
+    assert_eq!(overlay.counters().backdated, 1);
+    assert_eq!(store.binding("x").unwrap(), Some(d(6)));
+    assert_eq!(store.derivations_reading(&["b".to_owned()]).unwrap().len(), 1);
+}
