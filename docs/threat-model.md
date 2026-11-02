@@ -273,19 +273,22 @@ Two controls now narrow this.
 These entries take effect only when the host's sandbox is on, and Claude Code's is opt-in.
 [installation.md](installation.md) says, for each host, what is isolated and what is not.
 
-**Rule approval.** A rule runs only with content a person approved (`src/engine/catalog/rule-approval.ts`):
+**Rule approval.** A rule Rerail did not publish steers only with content a person approved; until then it runs in Log,
+recorded and sent to no one (`src/engine/catalog/rule-approval.ts`):
 
-- **What needs approval.** `rerail rules add`, `/rerail-create`, an MCP write and an import only propose a rule.
-- **How a person approves.** In the dashboard, or with `rerail rules approve <id>`, which prints the content it
-  approves. The command files do not pre-approve it, so the host asks the person. The MCP approve operation refuses an
-  `agent` caller.
-- **Edits.** An edit keeps the last approved content running, so editing cannot switch a rule off.
-- **What runs without approval.** Rules of `@neralabs/rerail-pack-*` installed from the registry. A pack added from a
-  folder or tarball waits for approval.
-- **Checked on every read.** Each read recomputes the approved content's hash, so a database row that merely claims
-  approval approves nothing.
+- **What needs approval.** A rule created by you, a rule in a worktree's `.rerail/rules/`, and every rule of a pack
+  Rerail does not publish from npm: a third party's, or one installed from a folder or tarball. `rerail rules add`,
+  `/rerail-create`, an MCP write and an import only propose a rule; `rerail rules import --approve` is the person's own.
+- **How a person approves.** In the dashboard, or with `rerail rules approve <id | package>`, which prints the content
+  it approves. The command files do not pre-approve it, so the host asks the person. The MCP approve operation refuses
+  an `agent` caller.
+- **What is approved.** Content, on this machine: a rule by its id and document digest, a pack by its package name and
+  the digest of everything its version ships. An edit, or a new pack version, waits again and runs in Log meanwhile.
+- **Copies.** A coding agent's edited copy of a By Rerail rule runs in Log beside the original, which a repository
+  setting switches off only when a person first approves the copy, so writing a copy cannot weaken a rule.
+- **What steers without approval.** Rerail's own packs from npm (`@neralabs/rerail-pack-*`, not from a folder).
 - **Before asking.** `/rerail-create` audits a rule's content before it asks the person to approve it
-  (`skills/rerail-create/SKILL.md`).
+  (`skills/rerail-create/references/approving-rules.md`).
 
 **What remains:**
 
@@ -294,7 +297,8 @@ These entries take effect only when the host's sandbox is on, and Claude Code's 
 - **Some weakening is allowed by design.** Within MCP, an agent can stop Rerail in its own checkout or set a rule to
   `log`.
 - **Older versions bypass approval.** The `rule-approvals` migration sets no schema floor. A host still on an older
-  version runs each library rule's latest content until it updates.
+  version steers with every library rule until it updates.
+- **Log still evaluates.** A rule waiting for approval runs in Log: its matches are recorded, never sent to the agent.
 - **The passkey control is not built.** Its design would require a WebAuthn assertion before any weakening change, so
   that a leaked capability could not weaken rules either.
 
@@ -332,13 +336,13 @@ hook delivers it as the next user message.
 - **Every part is capped.** The place, rule id and tool name get 300 characters each, each message line 600, the whole
   message 2,000 and the fix 240. The native engine already cuts each capture to its first line and 80 characters
   (`native/src/code_rule_dsl/violations.rs`).
-- **Rule text needs approval.** Text from a rule that is not Nera-shipped runs only once a person has approved it (T1).
+- **Rule text needs approval.** Text from a rule Rerail did not publish steers only once a person has approved it (T1).
 
 **What remains:**
 
 - **Captures still read as prose.** They sit inside the rule's own sentences and are not quoted as data. 255 of the
   331 pack messages compose words from captures, so quoting them would garble the messages.
-- **A compromised Nera pack release is pre-approved.** Its `message` and `fix` reach the agent.
+- **A compromised Rerail pack release is pre-approved.** Its `message` and `fix` reach the agent.
 - **Schema-only validation.** With no engine loaded, `readStoredCodeRule` (`src/engine/catalog/rule-quarantine.ts`)
   accepts a stored rule on schema alone.
 

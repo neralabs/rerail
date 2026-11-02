@@ -6,7 +6,8 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { preUpdateSnapshotPath, runRulesCommand, type SnapshotUpdater, updateWithSnapshot } from "../../src/cli/project-cli.js";
 import type { UpdateResult, UpdateStatus } from "../../src/setup/index.js";
-import { openRerailDatabase } from "../../src/engine/index.js";
+import { defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, upsertLibraryRule } from "../../src/engine/index.js";
+import { MOCK_CODE_RULES } from "../../src/cli/index.js";
 
 const directories: string[] = [];
 
@@ -26,6 +27,31 @@ describe("rerail rules export", () => {
 
     expect(runRulesCommand(["export", "--output", output], () => "usage")).toBe(0);
     expect(existsSync(output)).toBe(true);
+  });
+});
+
+describe("rerail rules import", () => {
+  it("says what runs in Log after an import, and with --approve approves each imported rule as it is imported", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-rules-import-"));
+    directories.push(root);
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    const rule = MOCK_CODE_RULES[0]!;
+    const db = openRerailDatabase(defaultRerailDatabasePath());
+    upsertLibraryRule(db, loadRuleCatalog(), rule, "code");
+    db.$client.close();
+    let output = "";
+    const io = { stdout: { write: (text: string) => (output += text) } };
+    const dump = join(root, "rules.json");
+    expect(runRulesCommand(["export", "--output", dump], () => "usage", io)).toBe(0);
+
+    output = "";
+    expect(runRulesCommand(["import", dump], () => "usage", io)).toBe(0);
+    expect(output).toContain("1 imported rule runs in Log until a person approves it: rerail rules approve\n");
+
+    output = "";
+    expect(runRulesCommand(["import", dump, "--approve"], () => "usage", io)).toBe(0);
+    expect(output).toContain(`● Approved ${rule.id}: it runs in the mode it is set to from the next edit.\n`);
+    expect(output).not.toContain("runs in Log");
   });
 });
 

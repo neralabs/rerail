@@ -14,8 +14,6 @@
   DSL. Hand-written prose with generated regions; see `scripts/generate/README.md`.
 - [in-session-surfaces.md](in-session-surfaces.md): what Rerail shows inside a coding-agent session
 - [privacy.md](privacy.md): what Rerail sends over the network, what it stores locally, and how to delete it
-- [threat-model.md](threat-model.md): what Rerail protects, from whom, the boundaries it enforces and the risks that
-  remain
 - [internal-testing.md](internal-testing.md): features in the code that are not ready for public use, and where each
   surfaces
 

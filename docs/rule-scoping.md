@@ -49,18 +49,6 @@ The `suppressions` setting governs only linters' comments. Rerail's own comment,
 
 **Rule Path Criteria** (`scope.include`, `scope.exclude` on a code rule, excludes winning) still narrow the paths a present rule evaluates. Execution `scope` and run mode still decide when it evaluates.
 
-## Approval
-
-A rule runs only with content a person approved, unless Nera shipped it in a pack installed from the npm registry. The
-content is the whole rule except `mode` and `revision`. A write through `/api`, the dashboard's, is approved as it is
-saved, as are the rules `rerail seed` and `rerail show-me` write. Every other new rule or change waits, from a coding
-agent, the CLI or a pack added from a folder or a tarball: a new rule runs nowhere, and is reported as unavailable with
-the reason `awaiting-approval` where it is attached; a changed rule keeps running the content approved before. Rules
-created by you before approval existed were approved as they stood on upgrade. A person approves in
-the dashboard or with `rerail rules approve <id>`; `rerail rules list` shows what waits. Every effective rule reports its
-`approval` (`shipped`, `approved` or `pending`), and `repository_rules_get` counts the rules that wait
-(`awaitingApproval`). See [Approving a rule](writing-rules.md#approving-a-rule).
-
 ## Precedence
 
 For a file at path `p`, the rules present are those attached in a folder that contains `p` (`web` contains `web/x`, not `web2/x`). Each field (`on`, `mode`, `suppressions`, and each option in `config`) of each rule is then decided separately, first value wins:
@@ -82,7 +70,7 @@ A rule Rerail did not publish runs in Log, whatever its settings say, until a pe
 
 An approval is of content, on this machine: a rule by its id and the digest of its document, a pack by its package name and the digest of its version, what it says of itself (`name`, `category`, `covers`, `reason`), `honourSuppressionComments` and every rule document it lists. An edit, or a new version of a pack, is new content and waits again; going back to approved content needs no second approval. A library rule a person writes through the dashboard or HTTP API is approved with the write; one a coding agent writes, or `rerail rules add` adds, waits. Library rules stored before approvals existed count as approved.
 
-A person approves with `rerail rules approve <id | package>` (no name lists what waits), the Approve button on the rule's page or the pack's sheet in the dashboard, or `rule_approvals_set`. The session footer counts what waits (`2 to approve`) and Overview lists it. An approval changes the configuration signature, so a running session picks it up at its next event.
+A person approves with `rerail rules approve <id | package>` (no name lists what waits), the Approve button on the rule's page or the pack's sheet in the dashboard, or `rule_approvals_set`. `rerail rules approve` prints what it approves first: a rule's JSON in full with invisible characters written as escapes, or a pack's rule ids; Rerail's command files never pre-approve it, so a coding agent's host asks the person before it runs. The session footer counts what waits (`2 to approve`), as does `/rerail`, and Overview lists it. An approval changes the configuration signature, so a running session picks it up at its next event.
 
 `rule_approvals_set` refuses a coding agent, but `rerail rules approve` cannot tell who runs it: a coding agent with a shell can run it as well as a person can. That the agent runs it only after the person says yes is the `/rerail-create` skill's instruction, not something Rerail enforces, as with the rest of the line between people and coding agents ([coding agents](#coding-agents)). Approval keeps a rule a person never read from steering by default; it does not stop an agent set on approving one.
 
@@ -100,7 +88,7 @@ The HTTP API (`/api`) is for people; MCP callers (`/mcp`) are coding agents. The
 
 Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, starts and stops a whole repository, or approves a rule's content ([approval](#approval)); a rule a coding agent writes runs in Log until then.
 
-**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library (`<id>-copy`, `-copy-2`, …) instead. The copy is attached wherever the original is present in the target repository, at the same folders. Once the copy is approved, a repository setting switches the original off there: at once for a person's write, which is approved as it is saved, and for a coding agent's when a person first approves the copy. Until then the original keeps running. The original stays a reference to its installed pack.
+**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library (`<id>-copy`, `-copy-2`, …) instead. The copy is attached wherever the original is present in the target repository, at the same folders. Its first approval switches the original off there with a repository setting: at once for a person's write, which is approved as it is saved, and for a coding agent's copy when a person approves it. Until then the original keeps running beside the copy, which runs in Log, so writing a copy never weakens a rule. The original stays a reference to its installed pack.
 
 ## Management surfaces
 
@@ -110,7 +98,7 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 |---|---|---|
 | `repositories_list` | `GET /api/repositories` | Every repository: key, name, aliases, set up, started, checkout count. |
 | `repository_context_get` | `GET /api/repository` | One repository with its clones and checkouts (own and effective state), and the caller's checkout and folder. |
-| `repository_rules_get` | `GET /api/repository/rules` | Effective rules with on, mode, suppressions, config and approval, what decided each, unavailable references (`awaiting-approval` among the reasons), and how many rules wait for approval. |
+| `repository_rules_get` | `GET /api/repository/rules` | Effective rules with on, mode, suppressions and config, what decided each, and unavailable references. |
 | `repository_settings_set` | `PUT /api/repository/settings` | Owner `repository` or `checkout`, folder, targets (rule or pack), `on`, `mode`, `suppressions` and `config` (null clears; omitted keeps). |
 | `repository_attachments_set` | `PUT /api/repository/attachments` | Add or remove packs and rules per folder, with optional repository settings. The first addition, or `configure: true`, sets the repository up. |
 | `repository_start`, `repository_stop` | `POST /api/repository/start`, `/stop` | Scope `checkout` (with the checkouts inside it) or `repository`. |
@@ -129,6 +117,6 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 
 ## Export and import
 
-`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings, start state and approvals belong to this machine and are not exported, so an imported library rule runs in Log until a person approves it. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings, start state and approvals belong to this machine and are not exported, so an imported library rule whose content was not approved here runs in Log until a person approves it, and the command says how many do. `rerail rules import <file> --approve` approves each imported rule as it is imported, for a dump of your own rules, and prints each id; Rerail's command files never pre-approve it, so a coding agent's host asks first. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
 
 Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array with `on`, `mode`, `suppressions`, `onFrom`, `modeFrom` and `suppressionsFrom` for each folder (audits recorded before `suppressions` existed lack those two). Later edits don't rewrite past audits.

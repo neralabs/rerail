@@ -43,7 +43,7 @@ To add a rule of your own, type `/rerail-create` followed by what you want:
 /rerail-create never import from src/legacy in new code
 ```
 
-The agent drafts the rule from your description, tests it against the repository without saving it, and adds it after you confirm. The rule runs once you approve it, in the dashboard or with `rerail rules approve <id>`, after the agent has audited its content. [Writing rules](docs/writing-rules.md) covers which rules are worth having.
+The agent drafts the rule from your description, tests it against the repository without saving it, and adds it after you confirm. [Writing rules](docs/writing-rules.md) covers which rules are worth having.
 
 ## How it works
 

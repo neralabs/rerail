@@ -504,8 +504,8 @@ rerail settings --session ID --mode log             # save this workspace's defa
 rerail update check      # is a newer version on the channel?
 rerail update            # install it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
-rerail rules list        # your rules, and those waiting for approval
-rerail rules approve ID  # print a waiting rule's content and approve it so it runs
+rerail rules approve     # list the rules and packs that run in Log, waiting for your approval
+rerail rules approve ID  # print a waiting rule's content and approve it so it steers
 rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
 rerail support-bundle    # write a file of diagnostics to attach to an issue, to ~/rerail-support-bundle.json
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database, delete the install
