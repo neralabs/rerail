@@ -337,9 +337,21 @@ Set-up run in WSL for a repository on the Windows drive says so, and goes on:
 
 ## Reporting a problem
 
+In a coding agent, run `/rerail-bug-report`. It works out what kind of problem this is, and what to do about it:
+
+| The problem | What it does |
+| --- | --- |
+| An engine bug: Rerail itself crashed, hung, lost a steer or could not run a rule | Offers to report it with the Bug report form |
+| A bug in a rule that ships with Rerail | Offers Log or off in this repository, and to report it with the Rule misfire form |
+| A bug in your own rule, or your team's | Helps you fix it, through `/rerail-create`'s Tune |
+| Not a bug: Rerail is off here, the rule is on Log, or it works as documented | Says why, and how to get what you wanted |
+
+To report it, the agent gives you the form filled in, for you to finish and submit, or files the issue if you ask it to.
+Nothing is sent without you.
+
 A dashboard link only opens on your computer, so a maintainer can't follow one. To give them what they need, write a
-support bundle and attach it to [your issue](https://github.com/neralabs/rerail/issues/new/choose): in a coding agent
-run `/rerail-support-bundle`, which also checks the file with you, or in a terminal, inside the repository:
+support bundle and attach it to [your issue](https://github.com/neralabs/rerail/issues/new/choose). `/rerail-bug-report`
+writes it and checks the file with you; in a terminal, inside the repository, run:
 
 ```sh
 rerail support-bundle
