@@ -52,7 +52,7 @@ pub(super) use lower::{Axis, MatchTree, Stop, match_tree};
 pub(crate) use analysis::calls_positive_only;
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 // The prefilter lowers a plan's structure to SQL (`prefilter/lower.rs`).
-pub(super) use anchors::{Condition, Required, Requirement};
+pub(super) use anchors::{Condition, Direction, Required, Requirement};
 pub(super) use arguments::{Arguments, Passed, SlotKind};
 pub(super) use arguments_sql::SQL_CALL_KINDS;
 use ast_grep_core::matcher::Matcher;

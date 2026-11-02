@@ -16,6 +16,7 @@ use ast_grep_core::Doc;
 mod candidates;
 mod vocabulary;
 mod execute;
+mod gates;
 mod graph;
 mod kinds;
 mod lab;

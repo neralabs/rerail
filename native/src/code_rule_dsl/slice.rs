@@ -10,6 +10,8 @@
 //!
 //! Hosts call it through `napi::CodeRuleSlice` (S6's napi method, after S7's gate passed).
 
+use crate::code_rule_dsl::stats::ingest::{FactTable, merge_facts};
+use crate::code_rule_dsl::stats::plans::write_stat1;
 use crate::code_rule_dsl::prof;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::facts::families::{Families, Ingested};
@@ -193,7 +195,7 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
     prof::time("slice.remember", || -> StoreResult<()> {
         wave.statistics(&lease, scope)?;
         memo::remember(&lease, store, scope, &rules.digest, &memoised)?;
-        remember(&lease, scope, &rules.digest, &documents)
+        remember(&lease, scope, &rules.digest, &documents, &fresh)
     })?;
 
     crate::code_rule_dsl::prof::release();
@@ -248,9 +250,18 @@ fn keep(lease: &Lease<'_>, scope: &str, fresh: &[i64]) -> StoreResult<()> {
     Ok(())
 }
 
-/// The run's rules, documents and wave rows, kept for the next run of `scope`.
-fn remember(lease: &Lease<'_>, scope: &str, digest: &[u8; 32], documents: &[Document]) -> StoreResult<()> {
+/// The kept wave rows as fact relations stored as SQL tables, for their column statistics.
+const KEPT_FACTS: [FactTable<'static>; 2] = [
+    FactTable { name: "slice_match", doc: "c1", local: &["c2"], values: &["scope", "c0"] },
+    FactTable { name: "slice_span", doc: "c0", local: &["c1", "c2", "c3"], values: &["scope"] },
+];
+
+/// The run's rules, documents and wave rows, kept for the next run of `scope`. The documents
+/// `fresh` (evaluated, reused or gone) are the only ones whose rows change, so the column
+/// statistics move by theirs alone (`merge_facts`), and `sqlite_stat1` is written from them.
+fn remember(lease: &Lease<'_>, scope: &str, digest: &[u8; 32], documents: &[Document], fresh: &[i64]) -> StoreResult<()> {
     lease.execute("INSERT OR REPLACE INTO slice_rules(scope, digest) VALUES (?1, ?2)", rusqlite::params![scope, &digest[..]])?;
+    merge_facts(lease, &KEPT_FACTS, fresh, -1)?;
     for table in ["slice_document", "slice_match", "slice_span"] {
         lease.execute(&format!("DELETE FROM {table} WHERE scope = ?1"), [scope])?;
     }
@@ -262,6 +273,14 @@ fn remember(lease: &Lease<'_>, scope: &str, digest: &[u8; 32], documents: &[Docu
     }
     lease.execute("INSERT INTO slice_match SELECT ?1, c0, c1, c2 FROM match", [scope])?;
     lease.execute("INSERT INTO slice_span SELECT ?1, c0, c1, c2, c3 FROM span", [scope])?;
+    merge_facts(lease, &KEPT_FACTS, fresh, 1)?;
+    write_stat1(
+        lease,
+        &[
+            ("slice_match", "sqlite_autoindex_slice_match_1", &["scope", "c1", "c0", "c2"]),
+            ("slice_span", "sqlite_autoindex_slice_span_1", &["scope", "c0", "c1", "c2", "c3"]),
+        ],
+    )?;
     Ok(())
 }
 

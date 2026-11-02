@@ -793,3 +793,38 @@ fn documents_seen_before_take_their_rows_from_the_content_memo() {
     assert_eq!((back.evaluated.len(), back.reused.as_slice()), (0, &["b.py".to_owned()][..]));
     assert_eq!(keys(&back), keys(&first));
 }
+
+#[test]
+fn the_statistics_loop_runs_on_the_slices_path() {
+    let one = temp("stats-one");
+    std::fs::create_dir_all(&one).unwrap();
+    write(&one, "a.py", "import os\nos.chmod('f', 0o777)\n");
+    write(&one, "b.py", "def f():\n    assert x\n    return 1\n");
+    let policies = policies();
+    let store = ContentStore::open(&temp("stats").with_extension("sqlite")).unwrap();
+    let mut rules = Rules::lower(&policies, ExecutionBackend::CpuJit).unwrap();
+    let count = |sql: &str| store.query_rows(sql, [], |row| row.get::<_, i64>(0)).unwrap()[0];
+    let first = audit(&store, WS, directory_root(&store, &one).unwrap(), &mut rules).unwrap();
+    assert_eq!(keys(&first), keys(&cold(&one, &policies)), "gated sets keep every finding");
+    // The gates are compiled plans with the statistics they read, and each batch's selectivity
+    // is fed back.
+    let plans = count("SELECT count(*) FROM compiled_plans");
+    assert!(plans > 0);
+    assert!(count("SELECT count(*) FROM compiled_plan_reads") > 0);
+    assert!(count("SELECT count(*) FROM plan_feedback") > 0);
+    // The kept rows' column statistics, and SQLite's from them.
+    let matches = count("SELECT count(*) FROM slice_match");
+    assert_eq!(count("SELECT rows FROM fact_stats WHERE tbl = 'slice_match' AND col = 'c0'"), matches);
+    assert_eq!(count("SELECT count(*) FROM sqlite_stat1 WHERE tbl IN ('slice_match', 'slice_span')"), 2);
+    // An edit: the statistics move by the edited document, and match a cold build's.
+    write(&one, "b.py", "def f():\n    return 1\n");
+    let edited = apply(&store, WS, directory_root(&store, &one).unwrap(), &mut rules).unwrap();
+    assert_eq!(keys(&edited), keys(&cold(&one, &policies)));
+    let matches = count("SELECT count(*) FROM slice_match");
+    assert_eq!(count("SELECT rows FROM fact_stats WHERE tbl = 'slice_match' AND col = 'c0'"), matches);
+    let distinct = count("SELECT count(DISTINCT c0) FROM slice_match");
+    assert_eq!(count("SELECT ndv FROM fact_stats WHERE tbl = 'slice_match' AND col = 'c0'"), distinct);
+    // Unchanged statistics keep their compiled gates.
+    assert_eq!(count("SELECT count(*) FROM compiled_plans"), plans);
+    assert!(count("SELECT max(samples) FROM plan_feedback") >= 2);
+}

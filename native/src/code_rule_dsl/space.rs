@@ -158,7 +158,6 @@ impl NodeSet {
         self.difference_with(&mask);
     }
 
-    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.words.iter().map(|word| word.count_ones() as usize).sum()
     }

@@ -243,7 +243,12 @@ pub(super) fn select(
     let program = crate::code_rule_dsl::prof::time("sets.lower", || Program::lower(plans));
     let regexes = program.regexes();
     let lang = i64::from(lang);
-    let (space, leaves) = store.candidate_transaction(!regexes.is_empty(), |db| {
+    // The gates write compiled plans, so the transaction always writes.
+    let (space, leaves, gated) = store.candidate_transaction(true, |db| {
+        let gated = {
+            let _stage = crate::code_rule_dsl::prof::Stage::start("sets.gates");
+            super::gates::select(db, lang as u32, plans, files)?
+        };
         // The vocabulary's terms for each regex, as the SQL's vocabulary stages fill them.
         if !regexes.is_empty() {
             let _stage = crate::code_rule_dsl::prof::Stage::start("sets.vocabulary");
@@ -295,7 +300,8 @@ pub(super) fn select(
             let mut kinds = db.prepare_cached("SELECT kind, postings FROM tape_kind_counts WHERE tape_id=?1")?;
             let mut missing = db.prepare_cached("SELECT missing FROM term_coverage WHERE tape_id=?1 AND length(missing)>0")?;
             for (at, &file) in files.iter().enumerate() {
-                if space.count(at) == 0 {
+                // A file no plan's gate holds has no candidates: its postings are not read.
+                if space.count(at) == 0 || gated.any.as_ref().is_some_and(|any| !any.contains(&file)) {
                     continue;
                 }
                 let base = space.base(at);
@@ -360,14 +366,30 @@ pub(super) fn select(
             };
             leaves.insert(id, leaf);
         }
-        Ok((space, leaves))
+        Ok((space, leaves, gated))
     })?;
     let _stage = crate::code_rule_dsl::prof::Stage::start("sets.evaluate");
-    let outputs = match device {
+    let started = std::time::Instant::now();
+    let mut outputs = match device {
         Device::Cpu => evaluate(&program, &space, leaves),
         #[cfg(target_os = "macos")]
         Device::Metal => evaluate_metal(&program, &space, &leaves)?,
     };
+    // Each plan keeps its gated files' nodes only.
+    for (set, gate) in outputs.iter_mut().zip(&gated.plans) {
+        let Some(gate) = gate else { continue };
+        let mut kept = NodeSet::empty(&space);
+        files.iter().enumerate().filter(|(_, file)| gate.contains(file)).for_each(|(at, _)| kept.fill(space.range(at)));
+        set.intersect_with(&kept);
+    }
+    let ns_per_plan = started.elapsed().as_nanos() as f64 / outputs.len().max(1) as f64;
+    let candidates = outputs.iter().map(NodeSet::len).collect::<Vec<_>>();
+    let backend = match device {
+        Device::Cpu => "cpu",
+        #[cfg(target_os = "macos")]
+        Device::Metal => "metal",
+    };
+    store.candidate_transaction(true, |db| super::gates::observe(db, &gated, &candidates, space.len(), backend, ns_per_plan))?;
     Ok((space, outputs))
 }
 
