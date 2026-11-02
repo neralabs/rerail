@@ -37,6 +37,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O42 | Phase 4 / 10 | Three-valued semantic labels: `binds` is unknown at 36 fixture nodes; a set label under `not` reads unknown as false (t15) | open |
 | O43 | Phase 4 / 10 | Capture-dependent semantic filters as joins: `binds.bindings.within` reads a capture's range (SIM113) (t15) | open |
 | O44 | Phase 2 / 4 | Semantic rows as derivations: per path, table reading and module path; not registered in `facts/families.rs` (t15) | open |
+| O45 | Phase 4 / 10 | Producers for `value`, `arguments`, `resolves.binding`, `parse` (and `capture`), `formatArgs`, `layout`: 91 refused clauses still lack rows (t15) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -933,3 +934,13 @@ deferred from 3.14, typing modules), the stub flag (from the host's path), and t
 derivation keyed by those inputs, reading the tape name. Its output is the rows' digest, so an
 edit that keeps them (a comment, a literal) rebinds no reader. Validated by an edit that keeps the
 rows and leaves their labels' readers unrun.
+
+## O45. Producers for the remaining semantic predicates
+
+**Requirement.** Of S1's 177 refused clauses that read a semantic predicate, 86 are fed by the
+`resolves` and `binds` producers. The other 91 also read leaves no producer answers. By clause:
+`value` 35, `arguments` 32, `resolves.binding` 20, `parse` 17, `capture` (inside `parse`) 9,
+`formatArgs` 6, `layout` 3. With every semantic leaf a label, 111 clauses lower beyond today's
+87; with these two producers, 60. **Closure:** a producer per predicate, in that order, each
+exact against W on every fixture as t15's gates are. `arguments` and `parse` bind captures, so
+their rows carry capture columns for the joins.
