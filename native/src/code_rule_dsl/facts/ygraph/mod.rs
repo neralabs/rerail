@@ -61,7 +61,11 @@ fn arg(args: &[String], name: &str) -> Option<String> {
 
 pub fn main(args: Vec<String>) {
     match args.get(2).map(String::as_str) {
-        Some("parity") => run_big(move || parity(&args)),
+        Some("parity") => {
+            if !run_big(move || parity(&args)) {
+                std::process::exit(1);
+            }
+        }
         Some("replay") => run_big(move || replay::run(&args)),
         _ => {
             eprintln!("usage: facts-b ygraph parity|replay [...]");
@@ -71,7 +75,8 @@ pub fn main(args: Vec<String>) {
 }
 
 /// `ygraph parity`: the base builder on the 2b1504adc corpus against native's reference graph.
-fn parity(args: &[String]) {
+/// Whether no edge is missing or extra.
+fn parity(args: &[String]) -> bool {
     let b = bench().join("phase-2/s3-crossfile");
     let members = PathBuf::from(arg(args, "--members").unwrap_or_else(|| b.join("exports/oracle-b6-jobs.tsv").display().to_string()));
     let exports = PathBuf::from(arg(args, "--exports").unwrap_or_else(|| b.join("exports/w6/oracle-dead-code.jsonl").display().to_string()));
@@ -119,8 +124,22 @@ fn parity(args: &[String]) {
     });
     std::fs::write(out_dir.join("parity.json"), serde_json::to_string_pretty(&res).unwrap()).unwrap();
     println!("{}", serde_json::to_string_pretty(&res).unwrap());
-    if !missing.is_empty() || !extra.is_empty() {
-        std::process::exit(1);
+    missing.is_empty() && extra.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    /// Y1's parity (facts-engine `facts-b ygraph parity`, report explore-y1-graph.md): the
+    /// reference graph built from the X6 exports of the oracle tree `2b1504adc` = native's
+    /// `reference_edges` (145,431 edges). Ignored: the inputs are outside the repository
+    /// (`~/rerail-bench/facts/phase-2/s3-crossfile`); `RERAIL_YGRAPH_PARITY_OUT` is the run
+    /// directory (default: a temporary one).
+    #[test]
+    #[ignore = "Y1's parity on the oracle tree; data outside the repository"]
+    fn the_base_graph_equals_natives_reference_edges() {
+        let out = std::env::var("RERAIL_YGRAPH_PARITY_OUT").map_or_else(|_| std::env::temp_dir().join(format!("rerail-ygraph-parity-{}", std::process::id())), std::path::PathBuf::from);
+        let args = vec![String::new(), String::new(), "parity".into(), "--out".into(), out.display().to_string()];
+        assert!(super::run_big(move || super::parity(&args)), "missing or extra edges: see parity.json");
     }
 }
 
