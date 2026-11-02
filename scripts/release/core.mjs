@@ -159,6 +159,40 @@ export function newChangelogEntries(before, after) {
   return changelogEntries(section.body).filter((entry) => before === null || !before.includes(entry));
 }
 
+/**
+ * The entries a pull request writes into `after`'s first section (CHANGELOG.md) by hand rather than in
+ * CHANGELOG_ENTRIES: every one of newChangelogEntries, under `## Unreleased` or under a dated heading (main's top
+ * section right after a release), except on the Release pull request, whose first section is a dated heading the
+ * base's (`before`, or null) does not open with and holds the entries it moved out of CHANGELOG_ENTRIES.
+ */
+export function handWrittenChangelogEntries(before, after) {
+  const section = firstChangelogSection(after);
+  if (section === null) return [];
+  if (section.released && firstChangelogSection(before ?? "")?.heading !== section.heading) return [];
+  return newChangelogEntries(before, after);
+}
+
+/**
+ * The whole entries of `text`'s first section (CHANGELOG.md, or null) when it is unreleased, where entries waited
+ * before CHANGELOG_ENTRIES held them; `[]` when that section is dated or there is none.
+ */
+export function unreleasedChangelogEntries(text) {
+  const section = text === null ? null : firstChangelogSection(text);
+  return section === null || section.released ? [] : changelogEntries(section.body);
+}
+
+/**
+ * Why `text`, a file in CHANGELOG_ENTRIES, is no entry the Release pull request can add, or null: it is empty, or it
+ * opens with a list marker, which releaseNoteEntry would nest under the bullet it adds (`- - …`).
+ */
+export function changelogEntryFileRefusal(text) {
+  const trimmed = text.trim();
+  if (trimmed === "") return "is empty: write what changed for the person upgrading";
+  const marker = /^([-*+])\s/u.exec(trimmed);
+  if (marker === null) return null;
+  return `starts with \`${marker[1]} \`: write the entry's text alone, which the Release pull request adds to the notes under a bullet of its own (${CHANGELOG_ENTRIES}/README.md)`;
+}
+
 /** `package.json`'s text with its own `version` set to `version`, and nothing else changed. */
 export function setPackageVersion(text, version) {
   const updated = text.replace(/^( {2}"version": ")[^"]*(")/mu, `$1${version}$2`);

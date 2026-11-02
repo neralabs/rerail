@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 // Core's release notes are written for the person upgrading (docs/release.md, "Release notes"). On a pull request,
-// each entry it adds or changes in .changelog/ (one file each) stays at a sentence or two and names no ticket, pull
-// request or commit, and no entry is written into CHANGELOG.md's unreleased section, where every pull request would
-// edit the same lines. On the Release pull request, whose first section is dated and holds the entries it moved out of
-// .changelog/ (checked when they were added), the section leads with a paragraph for the people who upgrade, written
-// under `## Unreleased` on main. ci.yml's lint job runs it.
+// each entry it adds or changes in .changelog/ (one file each) stays at a sentence or two, names no ticket, pull
+// request or commit, and is the entry's text alone, without the bullet the Release pull request adds; and no entry is
+// written into CHANGELOG.md's first section, unreleased or dated, where every pull request would edit the same lines
+// (or a published release's notes). On the Release pull request, whose first section is a dated heading new against
+// the base and holds the entries it moved out of .changelog/ (checked when they were added), the section leads with a
+// paragraph for the people who upgrade, written under `## Unreleased` on main. ci.yml's lint job runs it.
 //
 //   node scripts/release/core-changelog-check.mjs BASE   (BASE: the base branch's tip, `origin/main`, fetched)
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CHANGELOG_ENTRIES, changelogLead, changelogLeadRefusal, firstChangelogSection, newChangelogEntries, readChangelogEntries } from "./core.mjs";
+import { CHANGELOG_ENTRIES, changelogEntryFileRefusal, changelogLead, changelogLeadRefusal, firstChangelogSection, handWrittenChangelogEntries, readChangelogEntries, unreleasedChangelogEntries } from "./core.mjs";
 import { releaseNoteRefusal } from "./release-notes.mjs";
 import { ROOT } from "./packs.mjs";
 
@@ -41,22 +42,23 @@ if (section !== null) {
   if (missingLead !== null) failures.push({ file: "CHANGELOG.md", title: "Release notes need a lead", text: missingLead });
   const leadRefusal = lead === "" ? null : releaseNoteRefusal(lead, null);
   if (leadRefusal !== null) failures.push({ file: "CHANGELOG.md", title: "Release notes lead", text: `CHANGELOG.md's ${section.heading} lead ${leadRefusal}` });
-  if (!section.released) {
-    for (const entry of newChangelogEntries(before, after)) {
-      const refusal = `is written in CHANGELOG.md's ${section.heading} section: write it in a file of its own in ${CHANGELOG_ENTRIES}/, which the Release pull request adds to the release's notes (${CHANGELOG_ENTRIES}/README.md)`;
-      failures.push({ file: "CHANGELOG.md", title: "Changelog entry", text: `the entry ${quote(entry)} ${refusal}` });
-    }
+  for (const entry of handWrittenChangelogEntries(before, after)) {
+    const refusal = `is written in CHANGELOG.md's ${section.heading} section: write it in a file of its own in ${CHANGELOG_ENTRIES}/, which the Release pull request adds to the release's notes (${CHANGELOG_ENTRIES}/README.md)`;
+    failures.push({ file: "CHANGELOG.md", title: "Changelog entry", text: `the entry ${quote(entry)} ${refusal}` });
   }
 }
 
-// An entry the base holds already, in its file or in CHANGELOG.md (moved out of it), is not this pull request's.
+// An entry the base holds already, in its file or as a whole entry of CHANGELOG.md's unreleased section (moved out of
+// it), is not this pull request's.
+const moved = unreleasedChangelogEntries(before);
 for (const { path, text, entry } of readChangelogEntries(ROOT)) {
   if (atBase(path) === text) continue;
-  if (text.trim() === "") {
-    failures.push({ file: path, title: "Changelog entry", text: `${path} is empty: write what changed for the person upgrading` });
+  const fileRefusal = changelogEntryFileRefusal(text);
+  if (fileRefusal !== null) {
+    failures.push({ file: path, title: "Changelog entry", text: `${path} ${fileRefusal}` });
     continue;
   }
-  if (before?.includes(entry)) continue;
+  if (moved.includes(entry)) continue;
   const refusal = releaseNoteRefusal(entry);
   if (refusal !== null) failures.push({ file: path, title: "Changelog entry", text: `${path} ${quote(entry)} ${refusal}` });
 }

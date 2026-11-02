@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
 import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, newChangelogEntries, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
+import { NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogEntryFileRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, newChangelogEntries, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 
@@ -179,6 +179,31 @@ describe("release notes: the lead, the entries, and what a note may say", () => 
     expect(newChangelogEntries("# Changelog\n\n## Unreleased\n\n- An old entry.\n", unreleased)).toEqual(["- A new entry."]);
     expect(newChangelogEntries(null, unreleased)).toEqual(["- A new entry.", "- An old entry."]);
     expect(newChangelogEntries("", "# Changelog\n")).toEqual([]);
+  });
+
+  it("refuses an entry written into CHANGELOG.md by hand, under a dated heading too, but not the Release pull request's", () => {
+    const dated = "# Changelog\n\n## 0.1.1 (2026-11-02)\n\nA lead.\n\n- A released entry.\n";
+    const addedToDated = dated.replace("- A released entry.", "- A released entry.\n- A hand-written entry.");
+    expect(handWrittenChangelogEntries(dated, addedToDated)).toEqual(["- A hand-written entry."]);
+    expect(handWrittenChangelogEntries("# Changelog\n\n## Unreleased\n\n- An old entry.\n", unreleased)).toEqual(["- A new entry."]);
+    const releasePr = releaseChangelog("# Changelog\n\n## Unreleased\n\nA lead.\n", "0.1.1", "2026-11-02", ["- A moved entry."]).text;
+    expect(handWrittenChangelogEntries("# Changelog\n\n## Unreleased\n\nA lead.\n", releasePr)).toEqual([]);
+    const nextRelease = releaseChangelog(dated, "0.1.2", "2026-11-09", ["- A moved entry."]).text;
+    expect(handWrittenChangelogEntries(dated, nextRelease)).toEqual([]);
+  });
+
+  it("reads the whole entries of an unreleased first section only, as moved out of it", () => {
+    expect(unreleasedChangelogEntries("# Changelog\n\n## Unreleased\n\n- A pending entry.\n\n## 0.1.0 (2026-10-27)\n\n- A released entry.\n")).toEqual(["- A pending entry."]);
+    expect(unreleasedChangelogEntries(released)).toEqual([]);
+    expect(unreleasedChangelogEntries(null)).toEqual([]);
+  });
+
+  it("refuses an entry file that is empty or opens with a list marker, which the Release pull request would nest", () => {
+    expect(changelogEntryFileRefusal("The dashboard says less.\n")).toBeNull();
+    expect(changelogEntryFileRefusal("Rules read `-1` and `*` as written.\n")).toBeNull();
+    expect(changelogEntryFileRefusal(" \n")).toBe("is empty: write what changed for the person upgrading");
+    expect(changelogEntryFileRefusal("- The dashboard says less.\n")).toContain("starts with `- `");
+    expect(changelogEntryFileRefusal("\n* The dashboard says less.\n")).toContain("starts with `* `");
   });
 
   // The ticket id is spelled in pieces: check-internal-refs.mjs refuses it written out in any tracked file.
