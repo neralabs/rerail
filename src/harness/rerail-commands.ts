@@ -15,7 +15,7 @@ export type RerailCommandName =
   | "rerail-uninstall"
   | "rerail-help"
   | "rerail-show-me"
-  | "rerail-support-bundle";
+  | "rerail-bug-report";
 
 export interface RerailCommand {
   name: RerailCommandName;
@@ -36,7 +36,7 @@ export const RERAIL_COMMANDS: readonly RerailCommand[] = [
   // An alias of `/rerail`: the same summary and command list.
   { name: "rerail-help", description: "Show a list of Rerail commands", summary: "show a list of commands" },
   { name: "rerail-show-me", description: "See Rerail catch a broken rule in this repo and steer the fix, then clean up", summary: "see Rerail catch and fix a broken rule" },
-  { name: "rerail-support-bundle", description: "Write a file of Rerail's diagnostics to attach to an issue, and check it with you first", summary: "get diagnostics for an issue" },
+  { name: "rerail-bug-report", description: "Work out what went wrong with Rerail, then fix your own rule or report a Rerail bug in an issue", summary: "diagnose a bug, then fix or report it" },
 ];
 
 /** How a coding agent invokes a command: Codex runs skills as `$name`, every other agent as `/name`. */
@@ -233,55 +233,46 @@ export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInpu
   ].join("\n");
 }
 
+export interface BugReportInstructionsInput {
+  /** The shell-quoted launcher the agent runs, e.g. `'/usr/bin/node' '/home/me/.rerail/current/dist/cli/cli.js'`. */
+  cli: string;
+  /** Where the installed package keeps the rerail-bug-report skill (`skills/rerail-bug-report/`). */
+  packageRoot: string;
+  /** The person's words; a placeholder such as `$ARGUMENTS` when the coding agent substitutes it. */
+  request: string;
+}
+
+/** The skill `/rerail-bug-report` follows, inside the installed package. */
+export function bugReportSkillPath(packageRoot: string): string {
+  return `${packageRoot}/skills/rerail-bug-report/SKILL.md`;
+}
+
 /**
- * `/rerail-support-bundle`: `rerail support-bundle` writes the file by allowlist and scrubs its free text; the agent
- * reads it with the person, since patterns cannot catch every secret or know what is private to them. The person
- * attaches it: an issue is public, and sending it is theirs to do.
+ * `/rerail-bug-report`: work out whether a problem is an engine bug, a shipped rule's or the person's own rule's. The skill
+ * in the package holds the steps; this keeps the commands and the promise that matters in the command itself: an issue is
+ * public, so sending anything is the person's to decide.
  */
-export function supportBundleInstructions(cli: string): string {
+export function bugReportInstructions({ cli, packageRoot, request }: BugReportInstructionsInput): string {
   return [
-    "Write a support bundle: a file of Rerail's diagnostics the person attaches to an issue, so a maintainer can help",
-    "without seeing their computer. Check it with them before they attach it, because the issue is public.",
+    `Work out what went wrong with Rerail, then fix it or report it. The person's words: ${request}`,
     "",
-    "1. Run exactly this and read its JSON output:",
+    `Read ${bugReportSkillPath(packageRoot)} and follow it.`,
+    `Wherever it says \`rerail\`, run \`${cli}\`.`,
+    "",
+    "- An engine bug, or a bug in a rule that ships with Rerail: offer to report it in an issue on neralabs/rerail.",
+    "- A bug in the person's own rule: help them fix it.",
+    "",
+    "The commands it uses:",
     "",
     "```sh",
     `${cli} support-bundle --json`,
-    "```",
-    "",
-    "   It reports this repository's latest session. If the problem was in an earlier one, ask for its id, which is in its",
-    `   dashboard address (\`sessionId=…\`), and run \`${cli} support-bundle --json --session <id>\` instead.`,
-    "   If it fails, show its message and stop.",
-    "",
-    "2. Read the file the output's `path` names. Prompts, replies, tool input and output, source code and rule text are",
-    "   left out by design, and known secrets and paths are replaced. Patterns cannot catch everything, so look through what",
-    "   is still free text, and whatever else could identify someone:",
-    "",
-    "   - `session.steers[].text`: a steer can quote the person's code.",
-    "   - `daemonLog` and `problems`: log lines and errors can hold names, addresses or values Rerail doesn't know are private.",
-    "   - `session.audits[].violations[].path` and `failures[]`: a file path can name a client or a project.",
-    "   - `repository.rules`: the ids in the output's `ownRules` were written by the person's team.",
-    "   - `session.timeline[].tool`: an MCP tool's name can name an internal server.",
-    "",
-    "   Look for secrets (tokens, keys, passwords, connection strings), personal data (names, emails, usernames, IP",
-    "   addresses), and anything private to their work (client and project names, internal hostnames and URLs, proprietary code).",
-    "",
-    "3. Tell the person, briefly: what the file holds, and each thing you found, quoted, with where it is. Say plainly if you",
-    "   found nothing, and that they should still read it themselves. If they want something out, replace that value in the",
-    "   file with `<redacted>`, keep the JSON valid, and remove nothing else: a maintainer reads the rest.",
-    "",
-    "4. Then reply with this, filled in:",
-    "",
-    "```text",
-    "● Support bundle ready. Nothing has been sent anywhere.",
-    "  File      <path>",
-    "  Holds     versions, Rerail's state, <events> session events, <steers> steers, <violations> violations, <logLines> log lines",
-    "  Read it   before you attach it; issues are public",
-    "  Attach    drag it into your issue: https://github.com/neralabs/rerail/issues/new/choose",
+    `${cli} support-bundle --json --session <id>`,
+    `${cli} update check`,
+    `${cli} rules test <draft.json> --json`,
     "```",
     "",
     "If this is a security vulnerability, it does not go in an issue: tell the person to follow SECURITY.md instead.",
-    "Never upload, post, send or paste the file or its contents anywhere, and never open the issue yourself, unless the person asks you to in this session.",
-    "Never put in the file anything the command did not write.",
+    "Never upload, post, send or paste the support bundle or its contents anywhere, and never open the issue yourself, unless the person asks you to in this session.",
+    "Never put in the bundle anything the command did not write.",
   ].join("\n");
 }
