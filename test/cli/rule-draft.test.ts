@@ -438,7 +438,7 @@ describe("rerail rules test", () => {
     const { exit, report, stdout } = await testReportText(file, repo);
 
     expect(exit).toBe(0);
-    expect(report).toMatchObject({ valid: true, cases: [], repository: { matches: 1 } });
+    expect(report).toMatchObject({ valid: true, cases: [], repository: { matches: [{ path: "src/a.ts", line: 1 }] } });
     expect(stdout).toContain("● No cases to run; only the repo was checked.");
     const { exit: added, stderr } = await run("add", [file, "--repo", repo]);
     expect(added).toBe(1);
