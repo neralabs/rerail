@@ -694,3 +694,30 @@ fn s8_measures_the_targets_on_s7s_sample() {
     }
     eprintln!("S8 peak footprint: {} MB", crate::code_rule_dsl::prof::max_footprint_mb());
 }
+
+/// A push that crashed after observing its root (names rebound, nothing derived, the push marker
+/// set) is finished by the next run (O1): the edited file's derivations re-run, it is evaluated,
+/// and the findings equal a cold audit's of the edited snapshot.
+#[test]
+fn a_run_after_a_crashed_push_recovers_it() {
+    let dir = temp("crash-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    write(&dir, "a.py", "import os\nos.chmod('f', 0o777)\n");
+    write(&dir, "b.py", "def f():\n    return 1\n");
+    let policies = policies();
+    let store = ContentStore::open(&temp("crash").with_extension("sqlite")).unwrap();
+    let mut rules = Rules::lower(&policies, ExecutionBackend::CpuJit).unwrap();
+    let before = keys(&audit(&store, WS, directory_root(&store, &dir).unwrap(), &mut rules).unwrap());
+    write(&dir, "b.py", "def f():\n    assert x\n    return 1\n");
+    let root = directory_root(&store, &dir).unwrap();
+    // The crash: the push began and observed the root, and stopped there.
+    store.begin_push().unwrap();
+    crate::code_rule_dsl::facts::observe::observe_root(&store, WS, root).unwrap();
+    assert!(!store.push_clean().unwrap() && !store.invalid_derivations().unwrap().is_empty());
+    let run = apply(&store, WS, root, &mut rules).unwrap();
+    assert!(store.push_clean().unwrap() && store.invalid_derivations().unwrap().is_empty());
+    assert_eq!(run.evaluated, ["b.py"]);
+    let after = keys(&run);
+    assert_ne!(after, before, "the edit adds a finding");
+    assert_eq!(after, keys(&cold(&dir, &policies)));
+}

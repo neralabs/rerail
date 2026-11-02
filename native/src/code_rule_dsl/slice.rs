@@ -138,9 +138,15 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
         spill: store.database_path().with_extension("overlay"),
         background: true,
     };
+    let mut families = Families::default();
+    // A push that did not end (a crash, its writes behind the overlay's writer) is finished first
+    // (open-items O1): its invalid derivations re-run and propagate, then the marker clears.
+    prof::time("slice.recover", || {
+        crate::code_rule_dsl::facts::observe::recover(store, PUSH_WAVES, |frontier| families.recompute(store, frontier))
+    })?;
     let ingested = prof::time("slice.push", || {
         crate::code_rule_dsl::facts::overlay::Overlay::scoped(store, limits, |overlay| {
-            Families::default().push(overlay, scope, root, PUSH_WAVES, |_| Ok(Vec::new()))
+            families.push(overlay, scope, root, PUSH_WAVES, |_| Ok(Vec::new()))
         })
     })?;
     let changes = store.tree_changes_since(old, root)?;
