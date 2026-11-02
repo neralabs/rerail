@@ -103,6 +103,19 @@ describe("/rerail", () => {
     expect(notice?.message).not.toContain("rerail-test");
   });
 
+  it("links rules waiting for approval to the dashboard's Waiting for approval page", async () => {
+    mocks.presentation.mockResolvedValue({
+      status: "on", text: "", url: null, parts: [],
+      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 0, awaitingApproval: 2 },
+    });
+    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#rules", reason: null });
+    const { run, notices } = commandHarness();
+    await run("rerail");
+    expect(notices[0]?.message).toContain(
+      "  2 rules waiting for your approval → http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#approvals\n",
+    );
+  });
+
   it("answers /rerail-help exactly as /rerail", async () => {
     mocks.presentation.mockResolvedValue({
       status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],

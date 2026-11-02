@@ -98,6 +98,10 @@ describe("the transcript boundary for coding agents", () => {
     expect(agentTranscriptPayload("call", linked, root)).toEqual({ toolName: "Bash", input: WITHHELD_INPUT });
     expect(callNamesDeniedPath({ file_path: join(root, "docs", "a.md") }, root)).toBe(true);
     expect(callNamesSecretPath({ command: "cat ./docs/a.md" }, root)).toBe(true);
+    // A link at the checkout's root is resolved when it is named like a file, and a bare word is judged by its name.
+    symlinkSync(".env", join(root, "notes.txt"));
+    expect(callNamesSecretPath({ command: "cat notes.txt" }, root)).toBe(true);
+    expect(callNamesSecretPath({ command: "cat token" }, root)).toBe(true);
     const plain = { toolName: "Read", input: { file_path: join(root, "docs", "guide.md") } };
     expect(agentTranscriptPayload("call", plain, root)).toBe(plain);
     expect(callNamesDeniedPath({ command: "cat docs/missing.md" }, root)).toBe(false);

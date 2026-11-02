@@ -137,9 +137,15 @@ function realPath(path: string): string | undefined {
  * steer, a tool call's input.
  */
 export function checkoutPathBoundary(root: string, resolutions = CHECKOUT_PATH_RESOLUTIONS): CheckoutPathBoundary {
-  const realRoot = realPath(root);
+  // The root is resolved with the first path, so a judgment that resolves none reads nothing on disk.
+  let realRoot: string | undefined;
+  let rootRead = false;
   const targets = new Map<string, string | undefined>();
   const leadsTo = (path: string): string | undefined => {
+    if (!rootRead) {
+      realRoot = realPath(root);
+      rootRead = true;
+    }
     if (realRoot === undefined) return undefined;
     if (targets.has(path)) return targets.get(path);
     if (targets.size >= resolutions) return undefined;

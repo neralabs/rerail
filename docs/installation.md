@@ -543,8 +543,9 @@ in repositories that add them (see [Rule scoping](rule-scoping.md)).
 the version now active, to put back by hand if you need it (see
 [Database compatibility](#database-compatibility));
 `rerail rules export [--output <file>]` and `rerail rules import <file>` move
-your rules and each repository's configuration by hand. `rerail seed` fills the
-database with mock rules to work against.
+your rules and each repository's configuration by hand; `--approve` approves the
+imported rules as they are imported, so a dump of your own rules runs at once.
+`rerail seed` fills the database with mock rules to work against.
 
 Policy evaluation caches parsed files and results in a content store. Which
 one a Rerail uses depends on where its package lives, not on a flag: the

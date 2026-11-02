@@ -8,15 +8,17 @@
  * An approval binds to the rule's content digest (`ruleContentDigest`: everything but `mode` and `revision`, which are
  * settings) and keeps the approved content itself (`rule_approvals`). Every read recomputes the digest from the stored
  * content, so a row that merely claims an approval approves nothing. Writes through `/api` are a person's own and
- * approve what they store; the CLI and coding agents (MCP) only propose, and a person approves in the dashboard or
- * with `rerail rules approve <id>`.
+ * approve what they store; the CLI and coding agents (MCP) only propose, and a person approves in the dashboard, with
+ * `rerail rules approve <id>`, or by importing their own dump with `rerail rules import <file> --approve`.
  */
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
 import { libraryRules, ruleApprovals, ruleAttachments, ruleSettings, type RuleApprovalOwner } from "../storage/schema.js";
 import { compareDeterministicStrings, ruleContentDigest } from "../stable-json.js";
+import type { CodeRule } from "../code-rule/code-rule-schema.js";
 import type { RuleApprovalStatus, RuleCatalog } from "./repository-model.js";
 import { readStoredDocument } from "./rule-quarantine.js";
+import type { ConversationRule } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
 
 type Queries = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -187,6 +189,36 @@ export function pendingRules(db: RerailDatabase, ruleCatalog: RuleCatalog): Pend
   }
   return pending.sort((left, right) => compareDeterministicStrings(left.document.rule.id, right.document.rule.id)
     || compareDeterministicStrings(left.owner, right.owner));
+}
+
+/** A rule waiting for approval as `rule_approvals_list` and `rerail rules list --json` report it. */
+export type PendingRuleRecord = {
+  readonly owner: RuleApprovalOwner;
+  readonly id: string;
+  readonly packId: string | null;
+  readonly revision: number;
+  readonly contentHash: string;
+  readonly copiedFromRuleId: string | null;
+} & (
+  | { readonly kind: "code"; readonly rule: CodeRule; readonly approved: { readonly rule: CodeRule; readonly approvedAt: number } | null }
+  | { readonly kind: "conversation"; readonly rule: ConversationRule; readonly approved: { readonly rule: ConversationRule; readonly approvedAt: number } | null }
+);
+
+/** {@link PendingRule} as reported: the content approved before only when it is of the same kind. */
+export function pendingRuleRecord(pending: PendingRule): PendingRuleRecord {
+  const shared = {
+    owner: pending.owner,
+    id: pending.document.rule.id,
+    packId: pending.packId,
+    revision: pending.revision,
+    contentHash: pending.contentHash,
+    copiedFromRuleId: pending.copiedFromRuleId,
+  };
+  const approved = pending.approved?.document;
+  const approvedAt = pending.approved?.approvedAt ?? 0;
+  return pending.document.kind === "code"
+    ? { kind: "code", rule: pending.document.rule, approved: approved?.kind === "code" ? { rule: approved.rule, approvedAt } : null, ...shared }
+    : { kind: "conversation", rule: pending.document.rule, approved: approved?.kind === "conversation" ? { rule: approved.rule, approvedAt } : null, ...shared };
 }
 
 /** Why `approveRule` refused. */

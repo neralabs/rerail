@@ -13,7 +13,7 @@ import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, ownProcessAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/schema.js";
-import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { approvalsPageUrl, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -175,7 +175,7 @@ function onPresentation(
     { text: hud.activeRuleCount === null ? "rules unavailable" : `${hud.activeRuleCount} ${ruleNoun}`, url: rulesDashboardUrl(origin, scope) },
   ];
   const awaiting = hud.awaitingApproval ?? 0;
-  if (awaiting > 0) items.push({ text: `${awaiting} awaiting approval`, url: rulesDashboardUrl(origin, scope) });
+  if (awaiting > 0) items.push({ text: `${awaiting} awaiting approval`, url: approvalsPageUrl(rulesDashboardUrl(origin, scope)) });
   if (hud.steeringCount === null) items.push({ text: "steering unavailable", url: sessionUrl });
   else if (hud.steeringCount > 0) items.push({ text: `steered ${hud.steeringCount}×`, url: sessionUrl });
   items.push(...health.map(text => ({ text, url: null })));
