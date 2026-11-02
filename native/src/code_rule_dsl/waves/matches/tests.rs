@@ -176,6 +176,29 @@ fn the_wave_has_one_plan_identity_for_every_binding() {
     assert_ne!(fewer, plans[0], "a different wave is a different plan");
 }
 
+/// The wave as `rir` (list step 18): every program block of its dump assembles back through the
+/// verifier to the digest it is printed with, the dump does not depend on the binding, and it is
+/// the golden (`wave.rir`; `RERAIL_BLESS=1` rewrites it, deliberately).
+#[test]
+fn the_wave_dumps_as_rir_and_assembles_back() {
+    use crate::code_rule_dsl::transducer::packed::rir::{assemble_all, disassemble};
+    let (clauses, _) = clauses();
+    let dump = Wave::new(&clauses, ExecutionBackend::CpuInterpreter).unwrap().dump().unwrap();
+    let programs = assemble_all(&dump).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(programs.len(), dump.lines().filter(|line| line.starts_with("program ")).count());
+    assert!(programs.iter().all(|program| dump.contains(&disassemble(program))), "each block is its program's dump");
+    assert_eq!(dump, Wave::new(&clauses, ExecutionBackend::CpuJit).unwrap().dump().unwrap(), "one dump for every binding");
+    for section in ["wave sha256:", "\nclause 0 ", "\nplan\n", "      pack ", "\ngroup members=", "\nsetplan ops="] {
+        assert!(dump.contains(section), "{section}");
+    }
+    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/waves/matches/wave.rir");
+    if std::env::var_os("RERAIL_BLESS").is_some() {
+        std::fs::write(&golden, &dump).unwrap();
+    }
+    let expected = std::fs::read_to_string(&golden).unwrap_or_default();
+    assert!(expected == dump, "the dump differs from {} (RERAIL_BLESS=1 to accept it)", golden.display());
+}
+
 /// Chunks of one document each: a chunk's batch maps its files to its own documents.
 #[test]
 fn the_wave_runs_chunk_by_chunk() {

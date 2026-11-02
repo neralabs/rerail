@@ -734,6 +734,103 @@ impl LoweredWave {
         super::compilation::PlanId(digest.finalize().into())
     }
 
+    /// The wave as `rir` (list step 18; P `spec-tooling.md` §2.2.1): its plan identity, each
+    /// clause's root program, label table, steps and borrowed labels, the plan's passes by step
+    /// and level with the packs they fuse into, then every program once, by digest, and each
+    /// pack's fused program. `names` are the clauses' names, in order.
+    pub(in crate::code_rule_dsl) fn dump(&self, names: &[String]) -> Result<String, Error> {
+        use std::fmt::Write as _;
+        let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let domain = |domain: &Domain| match domain {
+            Domain::All => "all".to_owned(),
+            Domain::Kinds(kinds) => format!("kinds[{}]", kinds.iter().map(u16::to_string).collect::<Vec<_>>().join(" ")),
+            Domain::Label(label) => format!("L{label}"),
+        };
+        let mut programs = BTreeMap::<String, &Program>::new();
+        let mut program = |program: &'_ Program| -> String {
+            let digest = program.plain_digest().to_owned();
+            format!("sha256:{digest}")
+        };
+        let mut out = String::new();
+        let _ = writeln!(out, "wave sha256:{} clauses={} labels={}", hex(&self.identity().0), self.clauses.len(), self.labels);
+        let label = |out: &mut String, id: u16, def: &Label, program: &mut dyn FnMut(&Program) -> String| {
+            let _ = match def {
+                Label::Pattern(of, starts) => writeln!(out, "  label L{id} pattern {} domain={}", program(of), domain(starts)),
+                Label::Constrained(of, starts, constraints) => {
+                    let constraints = constraints.iter().map(|(name, label)| format!("{}=L{label}", super::rir::quote(name.as_bytes()))).collect::<Vec<_>>();
+                    writeln!(out, "  label L{id} constrained {} domain={} constraints=[{}]", program(of), domain(starts), constraints.join(" "))
+                }
+                Label::Roots(of, starts) => writeln!(out, "  label L{id} roots {} domain={}", program(of), domain(starts)),
+                Label::Targets(of, starts) => writeln!(out, "  label L{id} targets {} domain={}", program(of), domain(starts)),
+                Label::Count { program: of, domain: starts, by, min, max } => {
+                    let by = match by {
+                        Tally::Start => "start",
+                        Tally::Capture => "capture",
+                    };
+                    let max = max.map_or("-".to_owned(), |max| max.to_string());
+                    writeln!(out, "  label L{id} count {} domain={} by={by} min={min} max={max}", program(of), domain(starts))
+                }
+                Label::Complement(of) => writeln!(out, "  label L{id} complement L{of}"),
+                Label::Empty => writeln!(out, "  label L{id} empty"),
+            };
+        };
+        for (at, clause) in self.clauses.iter().enumerate() {
+            let labels = &clause.labels;
+            let name = names.get(at).map_or("-".to_owned(), |name| super::rir::quote(name.as_bytes()));
+            programs.insert(clause.program.plain_digest().to_owned(), &clause.program);
+            let _ = writeln!(out, "clause {at} {name} root={} domain={} offset={}", program(&clause.program), domain(&clause.domain), labels.offset);
+            for (index, def) in labels.defs.iter().enumerate() {
+                if let Some(of) = def.program() {
+                    programs.insert(of.plain_digest().to_owned(), of);
+                }
+                label(&mut out, LABEL_BASE + labels.offset + index as u16, def, &mut program);
+            }
+            for step in &labels.steps {
+                let recursive = step.len() > 1 || labels.recursive.values().any(|id| step.contains(id));
+                let ids = step.iter().map(|id| format!("L{id}")).collect::<Vec<_>>().join(" ");
+                let _ = writeln!(out, "  {} {ids}", if recursive { "group" } else { "step" });
+            }
+            for (recursion, id) in &labels.recursive {
+                let _ = writeln!(out, "  recursive {recursion} L{id}");
+            }
+            for id in labels.borrowed.keys() {
+                let _ = writeln!(out, "  borrowed L{id}");
+            }
+        }
+        // The plan's passes as `labelled` runs them, and the packs (`Packs::groups`).
+        let clauses = self.clauses.iter().collect::<Vec<_>>();
+        let (steps, chains) = levels(&clauses, |clause, id| Ok((clause, id)))?;
+        let at = |clause: &LoweredMatcher| self.clauses.iter().position(|c| std::ptr::eq(c, clause)).expect("a clause of the wave");
+        let mut fused = Vec::new();
+        out.push_str("plan\n");
+        for (number, ((recursive, levels), (kinds, siblings))) in steps.iter().zip(&chains).enumerate() {
+            if *recursive {
+                let kinds = kinds.as_ref().map_or("any".to_owned(), |kinds| format!("[{}]", kinds.iter().map(u16::to_string).collect::<Vec<_>>().join(" ")));
+                let _ = writeln!(out, "  step {number} recursive kinds={kinds} siblings={}", u8::from(*siblings));
+            } else {
+                let _ = writeln!(out, "  step {number} single");
+            }
+            for (level, passes) in levels.iter().enumerate() {
+                let members = passes.iter().map(|&(clause, id)| format!("c{}:L{id}", at(clause))).collect::<Vec<_>>();
+                let _ = writeln!(out, "    level {level} {}", members.join(" "));
+                for (targets, group) in Packs::groups(passes) {
+                    let members = group.iter().map(|&index| passes[index].0.labels.def(passes[index].1).program()).collect::<Option<Vec<_>>>();
+                    let Some(pack) = members.as_deref().and_then(super::fusion::Fused::of) else { continue };
+                    let names = group.iter().map(|&index| format!("c{}:L{}", at(passes[index].0), passes[index].1)).collect::<Vec<_>>();
+                    let _ = writeln!(out, "      pack {} [{}] sha256:{}", if targets { "targets" } else { "roots" }, names.join(" "), pack.program.plain_digest());
+                    fused.push((pack, members.expect("packed members")));
+                }
+            }
+        }
+        for program in programs.values() {
+            out.push_str(&super::rir::disassemble(program));
+        }
+        for (pack, members) in &fused {
+            out.push_str(&super::rir::fused(pack, members));
+        }
+        Ok(out)
+    }
+
     /// `active` (per clause, per tape) with each clause's labels also where a clause reading them
     /// is active.
     fn spread(&self, active: &[Vec<bool>]) -> Vec<Vec<bool>> {

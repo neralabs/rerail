@@ -116,6 +116,15 @@ impl Wave {
         &self.lowered
     }
 
+    /// The wave as `rir` (list step 18): the lowered wave (`LoweredWave::dump`) and its
+    /// candidates' set plan (`prefilter::sets::dump`).
+    pub(in crate::code_rule_dsl) fn dump(&self) -> StoreResult<String> {
+        let mut out = self.lowered.dump(&self.names).map_err(invalid)?;
+        let plans = self.plans.iter().map(|plan| plan.as_ref()).collect::<Vec<_>>();
+        out.push_str(&crate::code_rule_dsl::prefilter::sets::dump(&plans));
+        Ok(out)
+    }
+
     /// The wave program: the planner's step that reads the chunk's batch into `match`.
     /// File-local, so one wave per chunk. A batch holds at least one match per clause, the
     /// terminal input's estimate; a chunk has documents in the hundreds at most.

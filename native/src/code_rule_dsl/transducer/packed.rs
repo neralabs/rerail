@@ -247,6 +247,8 @@ mod packed_workspace;
 mod scheduler;
 pub(in crate::code_rule_dsl) mod set_mode;
 pub(in crate::code_rule_dsl) mod fusion;
+// `rir`, the IR's text form: dumps and the assembler (list step 18).
+pub(in crate::code_rule_dsl) mod rir;
 mod value;
 mod value_packing;
 mod value_prefix;

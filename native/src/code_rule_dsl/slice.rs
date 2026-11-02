@@ -63,6 +63,11 @@ impl Rules {
         Ok(Self { wave: Wave::new(&clauses, backend)?, digest: layer.digest(), layer, backing: Backing::default() })
     }
 
+    /// The lowered rules as `rir` (list step 18): the wave's programs, labels, packs and set plan.
+    pub(in crate::code_rule_dsl) fn dump(&self) -> StoreResult<String> {
+        self.wave.dump()
+    }
+
     /// How many clauses lowered.
     pub(in crate::code_rule_dsl) fn clauses(&self) -> usize {
         self.layer.shapes().len()

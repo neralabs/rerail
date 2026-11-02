@@ -68,6 +68,13 @@ impl CodeRuleSlice {
         self.rules.clauses() as u32
     }
 
+    /// The lowered rules as `rir` (list step 18, `rerail engine dump`): programs, label tables,
+    /// fused packs and the set plan.
+    #[napi]
+    pub fn dump(&self) -> Result<String> {
+        self.rules.dump().map_err(failed)
+    }
+
     /// A cold audit of `scope` at `directory`, as `observer` sees it: `"directory"` (the default,
     /// the working tree's snapshot, with `buffers` over it) or `"head"` (the `HEAD` tree of its
     /// Git checkout).
@@ -86,6 +93,15 @@ impl CodeRuleSlice {
         let run = apply(&self.store, &scope, root, &mut self.rules).map_err(failed)?;
         Ok(report(&run))
     }
+}
+
+/// `rir` assembled (list step 18, `rerail engine asm`): every `program` block of `text` through
+/// the verifier, returned as its dump, or the first refusal.
+#[napi]
+#[cfg_attr(test, allow(dead_code))]
+pub fn assemble_rir(text: String) -> Result<String> {
+    let programs = crate::code_rule_dsl::transducer::packed::rir::assemble_all(&text).map_err(Error::from_reason)?;
+    Ok(programs.iter().map(crate::code_rule_dsl::transducer::packed::rir::disassemble).collect())
 }
 
 impl CodeRuleSlice {
