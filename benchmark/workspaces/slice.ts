@@ -7,7 +7,7 @@
 // error and ends that workspace (the slice's failures are measurements here). `--findings-out` writes the cold audit's
 // and the last edit's findings and coverage for `compare-findings`, and the output names the clauses that lowered.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { cpus, loadavg, release, tmpdir } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -26,6 +26,11 @@ export interface SliceRunOptions {
   edits: number;
   /** One content store for every workspace of the run, kept; else each workspace has its own, removed after it. */
   storePath: string | undefined;
+  /**
+   * Native's `--sample`: the files whose path it keeps (`inSample`) are copied, at their paths, to a directory of their
+   * own (untimed), and the slice reads that directory; the edits pick from its Python files, as native's from its sample.
+   */
+  sample: { percent: number; keeps: (path: string) => boolean } | undefined;
   output: string;
   findingsOut: string | undefined;
   addon: { path: string; sha256: string };
@@ -99,8 +104,9 @@ function loadPolicies(directories: readonly string[], capabilities: string) {
 
 /**
  * The clauses the slice lowers, as (rule id, clause id) with how many of the clause's Python matchers lowered. The napi
- * slice reports only a count, so each policy is lowered alone, and a policy with more than one clause is lowered once
- * per clause with its other clauses left out; the per-clause counts must sum to the policy's.
+ * slice reports only a count, so each policy is lowered alone, and a policy with more than one `forbid` clause is
+ * lowered once per `forbid` clause, its other clauses but the rest of the `forbid`s kept (a `define` is used by
+ * others, and only `forbid`s lower); the per-clause counts must sum to the policy's.
  */
 function loweredClauses(policies: ReadonlyArray<NativeSlicePolicy & { id: string }>, capabilities: string) {
   const binding = loadNativeBinding();
@@ -111,12 +117,13 @@ function loweredClauses(policies: ReadonlyArray<NativeSlicePolicy & { id: string
     for (const policy of policies) {
       const whole = new binding.CodeRuleSlice(store, [policy], capabilities, "cpu").clauses();
       if (whole === 0) continue;
-      const document = JSON.parse(policy.source) as { clauses: Array<{ id: string }> };
+      const document = JSON.parse(policy.source) as { clauses: Array<{ id: string; forbid?: unknown }> };
+      const forbids = document.clauses.filter(clause => clause.forbid !== undefined);
       let sum = 0;
-      for (const clause of document.clauses) {
-        const alone = { ...policy, source: JSON.stringify({ ...document, clauses: [clause] }) };
-        const matchers = document.clauses.length === 1 ? whole : new binding.CodeRuleSlice(store, [alone], capabilities, "cpu").clauses();
-        if (matchers > 0) lowered.push({ rule: policy.id, clause: clause.id, matchers });
+      for (const forbid of forbids) {
+        const alone = { ...policy, source: JSON.stringify({ ...document, clauses: document.clauses.filter(clause => clause === forbid || clause.forbid === undefined) }) };
+        const matchers = forbids.length === 1 ? whole : new binding.CodeRuleSlice(store, [alone], capabilities, "cpu").clauses();
+        if (matchers > 0) lowered.push({ rule: policy.id, clause: forbid.id, matchers });
         sum += matchers;
       }
       if (sum !== whole) throw new Error(`${policy.id}: its clauses lower ${sum} matchers alone, ${whole} together`);
@@ -133,9 +140,9 @@ interface PythonFile {
   sourceBytes: number;
 }
 
-/** The workspace's Python files, walked as native's harness walks it (its ignored directories, `.git` left out). */
-function pythonFiles(root: string): PythonFile[] {
-  const files: PythonFile[] = [];
+/** The files under `root` as native's harness walks it (its ignored directories and `.git` left out), by path. */
+function walk(root: string): Array<{ path: string; absolute: string }> {
+  const files: Array<{ path: string; absolute: string }> = [];
   const pending = [root];
   while (pending.length > 0) {
     const directory = pending.pop()!;
@@ -143,8 +150,8 @@ function pythonFiles(root: string): PythonFile[] {
       const absolute = join(directory, entry.name);
       if (entry.isDirectory()) {
         if (entry.name !== ".git" && !IGNORED_DIRECTORIES.has(entry.name)) pending.push(absolute);
-      } else if (entry.isFile() && entry.name.endsWith(".py")) {
-        files.push({ path: relative(root, absolute).split(sep).join("/"), absolute, sourceBytes: statSync(absolute).size });
+      } else if (entry.isFile()) {
+        files.push({ path: relative(root, absolute).split(sep).join("/"), absolute });
       }
     }
   }
@@ -207,10 +214,20 @@ async function measureWorkspace(
   const snapshot = (phase: string) => {
     memory[phase] = { rss: process.memoryUsage.rss(), native: JSON.parse(binding.nativeMemoryProfile()) as unknown };
   };
-  const files = pythonFiles(root);
+  const sampled = options.sample === undefined ? undefined : mkdtempSync(join(tmpdir(), `rerail-slice-sample-${name}-`));
+  if (sampled !== undefined)
+    for (const file of walk(root).filter(file => options.sample!.keeps(file.path))) {
+      mkdirSync(dirname(join(sampled, file.path)), { recursive: true });
+      copyFileSync(file.absolute, join(sampled, file.path));
+    }
+  const directory = sampled ?? root;
+  const files = walk(directory)
+    .filter(file => file.path.endsWith(".py"))
+    .map(file => ({ ...file, sourceBytes: statSync(file.absolute).size }));
   const result: Record<string, unknown> = {
     name,
     root,
+    ...(sampled === undefined ? {} : { sampled }),
     pythonFiles: files.length,
     pythonBytes: files.reduce((sum, file) => sum + file.sourceBytes, 0),
   };
@@ -227,7 +244,7 @@ async function measureWorkspace(
     snapshot("afterLower");
 
     phase = "cold";
-    const cold = timed(() => slice!.audit(name, root, options.observer));
+    const cold = timed(() => slice!.audit(name, directory, options.observer));
     result.cold = { wallMs: cold.wallMs, cpuMs: cold.cpuMs, ...summary(cold.report) };
     phases.cold = sampler.phase();
     snapshot("afterCold");
@@ -235,7 +252,7 @@ async function measureWorkspace(
     process.stderr.write(`rerail-workspaces: slice ${name}: cold ${(cold.wallMs / 1000).toFixed(1)} s wall, ${(cold.cpuMs / 1000).toFixed(1)} s CPU, ${cold.report.findings.length} findings, peak ${(phases.cold / MIB).toFixed(0)} MiB\n`);
 
     phase = "unchanged";
-    const unchanged = timed(() => slice!.apply(name, root, "directory"));
+    const unchanged = timed(() => slice!.apply(name, directory, "directory"));
     result.unchanged = { wallMs: unchanged.wallMs, cpuMs: unchanged.cpuMs, ...summary(unchanged.report) };
     phases.unchanged = sampler.phase();
 
@@ -248,7 +265,7 @@ async function measureWorkspace(
       const target = targets[iteration % targets.length]!;
       buffers.set(target.path, `${readFileSync(target.absolute, "utf8")}\n# rerail benchmark edit ${iteration}\n`);
       const edited: NativeSliceBuffer[] = [...buffers].map(([path, source]) => ({ path, source }));
-      const edit = timed(() => slice!.apply(name, root, "directory", edited));
+      const edit = timed(() => slice!.apply(name, directory, "directory", edited));
       last = edit.report;
       samples.push({ bucket: target.bucket, path: target.path, sourceBytes: target.sourceBytes, wallMs: edit.wallMs, cpuMs: edit.cpuMs, ...summary(edit.report) });
     }
@@ -280,6 +297,7 @@ async function measureWorkspace(
       .reduce((sum, entry) => sum + statSync(join(entry.parentPath, entry.name)).size, 0);
     result.store = { path: storePath, bytes };
     if (stores !== undefined) rmSync(stores, { recursive: true, force: true });
+    if (sampled !== undefined) rmSync(sampled, { recursive: true, force: true });
   }
   return { ...result, ...(failed === undefined ? {} : { failed }), rss: { peak: Math.max(...Object.values(phases)), peakByPhase: phases }, memory };
 }
@@ -308,6 +326,7 @@ export async function runSlice(options: SliceRunOptions, sampler: PhaseSampler):
     observer: options.observer,
     edits: options.edits,
     storePath: options.storePath,
+    sample: options.sample?.percent ?? 100,
     addon: options.addon,
     rules: { directories: options.rules, count: policies.length, sha256, rejected },
     lowered,

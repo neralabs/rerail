@@ -5,7 +5,8 @@
 //   setup --data-layer <nera-data-layer clone> --workspaces <dir>   adds SUBSET's checkouts under <dir>
 //   run --engine native --rules <dir> [--rules <dir> …] --workspaces <dir> --output <file.json>
 //   run --engine slice --rules <dir> … [--backend cpu|metal] [--observer directory|head] [--store-path <file>]
-//                                                                   the first slice over the same workspaces (slice.ts)
+//                                                                   the first slice over the same workspaces (slice.ts);
+//                                                                   --sample copies native's sample to a directory
 //   compare <left.json> <right.json>                                prints the two runs side by side
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -591,7 +592,7 @@ async function run(argv: readonly string[]): Promise<void> {
   const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--passes", "--reapply", "--sample", "--edits", "--idle-ms", "--only", "--first", "--findings-out", "--backend", "--observer", "--store-path"]);
   const engine = option(values, "--engine");
   if (engine !== "native" && engine !== "slice") throw new UsageError("--engine takes native or slice");
-  const others = engine === "slice" ? ["--passes", "--reapply", "--sample", "--idle-ms"] : ["--backend", "--observer", "--store-path"];
+  const others = engine === "slice" ? ["--passes", "--reapply", "--idle-ms"] : ["--backend", "--observer", "--store-path"];
   for (const other of others) if (values.has(other)) throw new UsageError(`${other} is not an option of --engine ${engine}`);
   const ruleDirectories = (values.get("--rules") ?? []).map(directory => resolve(directory));
   if (ruleDirectories.length === 0) throw new UsageError("--rules <dir> is required");
@@ -615,6 +616,8 @@ async function run(argv: readonly string[]): Promise<void> {
     if (backend !== "cpu" && backend !== "metal") throw new UsageError("--backend takes cpu or metal");
     const observer = option(values, "--observer") ?? "directory";
     if (observer !== "directory" && observer !== "head") throw new UsageError("--observer takes directory or head");
+    // A sample is a directory of its own, not a Git checkout.
+    if (sample < 100 && observer === "head") throw new UsageError("--sample needs --observer directory");
     const storePath = option(values, "--store-path");
     const sampler = new RssSampler();
     await runSlice(
@@ -626,6 +629,7 @@ async function run(argv: readonly string[]): Promise<void> {
         observer,
         edits: count("--edits", option(values, "--edits"), 20, 0),
         storePath: storePath === undefined ? undefined : resolve(storePath),
+        sample: sample < 100 ? { percent: sample, keeps: path => inSample(path, sample) } : undefined,
         output: resolve(output),
         findingsOut: findingsOut === undefined ? undefined : resolve(findingsOut),
         addon: { path: addonPath, sha256: `sha256:${createHash("sha256").update(readFileSync(addonPath)).digest("hex")}` },
