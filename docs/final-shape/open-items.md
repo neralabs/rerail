@@ -33,6 +33,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | closed (2026-10-31, decision 0022): S7's engine-only footprint peak is 477 MB on Metal (was 0.99 GB) and 447 MB on the CPU backend (was 575–607), measured as `phys_footprint_peak` after the audit. Freed heap pages are returned at stage ends; SQLite allocates from jemalloc; the GPU's label prefix, scratch and counts are sized by the run; roots stream into rows with digested structure keys. Left: the driver's fixed ~170 MB per GPU execution, and sparse host labels if the corpus grows |
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
+| O41 | Phase 4 / 10 | Producer labels in the lowering: `match_tree` reads a semantic leaf a producer answers as a label (O24, t15) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -887,3 +888,15 @@ join scope and inner on their shared parent. On the 63 batches: 2.21 G → 0.091
 0.285 G), execute CPU 57 s → 2.3 s, rows identical (1,312,845);
 `the_sql_fallback_relates_on_the_tape_exactly` still holds the eleven relation rules to the matcher.
 
+## O41. Producer labels in the lowering
+
+**Requirement.** The `resolves` and `binds` producers (`transducer::semantic_facts`, t15) give
+every form of their predicate in the Python pack as a node label, exact against W's matcher on
+every fixture. The lowering does not read them yet. `match_tree` still refuses each leaf by name,
+which keeps 60 clauses from lowering that would lower with the labels (t15's coverage).
+**Closure:** `Lowering::tree` lowers an admitted leaf as a label (`MatchTree`), and
+`LoweredMatcher` runs it as a pass whose nodes are the producer's `label` on the tape's document.
+Decision 0011's label sources gain "a producer's rows". A `binds` leaf's sub-rules are lowered
+as labels of their own and joined at the binding's nodes. Validated by S1's gate with the 60
+clauses lowered. Hot zones (`matcher/lower.rs`, `transducer/packed/compile`), so it is left to
+their owner. t15 sketches the change.
