@@ -116,7 +116,7 @@ describe("Rerail steer text", () => {
     const note = sessionStartNote(DASHBOARD, "codex", "thread 1", { setUp: true, ruleCount: 26 });
     expect(note).toContain("Rerail is on in this repo: 26 rules are on.");
     expect(note).toContain("message starting \"Rerail found\" that lists each problem with its location, what to do, and the rule id in brackets.");
-    expect(note).toContain("if you decide not to follow it, tell the user in one line why, record that line with `rerail feedback <rule-id> '<that line>'`, and carry on.");
+    expect(note).toContain("if you decide not to follow it, tell the user in one line why, record that line with `rerail feedback <rule-id> '<that line>'` (a line with a ' in it: `rerail feedback <rule-id> - <<'LINE'`, the line, then `LINE`), and carry on.");
     expect(note).toContain("answer from that message: the rule id and what it matched. The user can open the rule from the why? link on their own line.");
     expect(note).toContain("name the rule and ask the user: Off, Log (kept on record, you are not told), or leave it.");
     expect(note).toContain("$rerail-stop is the user's own command");

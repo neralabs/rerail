@@ -223,7 +223,7 @@ const RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set(["node_modules", "
  * `.old` a write cut short leaves beside it.
  */
 const RERAIL_HOME_ENTRY =
-  /^(?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\.json|daemon\.log.*|(?:harness|rerail)\.sqlite.*|(?:start|update)\.lock|bin|current|versions|packs|profiles|active-profile|device-secrets)(?:\.\d+(?:\.[0-9a-f-]+)?\.(?:tmp|old))?$/u;
+  /^(?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\.json|(?:daemon|feedback-flush)\.log.*|(?:harness|rerail)\.sqlite.*|(?:start|update)\.lock|bin|current|versions|packs|profiles|active-profile|device-secrets)(?:\.\d+(?:\.[0-9a-f-]+)?\.(?:tmp|old))?$/u;
 
 /**
  * The command that finishes removing `path` by hand. PowerShell: single quotes expand nothing, and `-LiteralPath` reads

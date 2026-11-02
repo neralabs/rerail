@@ -52,11 +52,17 @@ function steerLead(trigger: SteerTrigger, count: number): string {
   }
 }
 
-/** A rule id that stands in a shell command as it is; any other is left to the agent to quote. */
+/** A rule id that stands in a shell command as it is; the command shows `<rule-id>` for any other. */
 const SHELL_SAFE_RULE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]*$/u;
 
-/** The command that records a declined steer's reason: single-quoted, so the agent's own sentence is never run by its shell. */
+/**
+ * The command that records a declined steer's reason. Single quotes keep `$`, backticks and `"` in the agent's own
+ * sentence out of its shell; a `'` in the sentence ends them, so the session-start note names the stdin form for it.
+ */
 export const FEEDBACK_COMMAND_HINT = "rerail feedback <rule-id> '<that line>'";
+
+/** The form that takes the line on stdin, for a line with a `'` in it: nothing of it is read by the shell. */
+export const FEEDBACK_STDIN_HINT = "rerail feedback <rule-id> - <<'LINE'";
 
 /**
  * What the agent may do about it: fix it (follow it, for a tool call's guidance) or say why not, and record that line
@@ -233,7 +239,7 @@ export function sessionStartNote(origin: string | undefined, host: RerailHost, s
   return [
     `Rerail is on in this repo${rules.ruleCount === null ? "" : `: ${rulesOn(rules.ruleCount)}`}. It checks your work against this repo's rules and stays silent until one is broken.`,
     `When one is, you get a message starting "Rerail found" that lists each problem with its location, what to do, and the rule id in brackets.`,
-    `A steer is advice. Fix it and carry on, or, if you decide not to follow it, tell the user in one line why, record that line with \`${FEEDBACK_COMMAND_HINT}\`, and carry on.`,
+    `A steer is advice. Fix it and carry on, or, if you decide not to follow it, tell the user in one line why, record that line with \`${FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`), and carry on.`,
     "If the user asks why Rerail flagged something, answer from that message: the rule id and what it matched. The user can open the rule from the why? link on their own line.",
     "Before you turn a Rerail rule off or change its mode, name the rule and ask the user: Off, Log (kept on record, you are not told), or leave it.",
     `Never turn a rule off or stop Rerail on your own to get past a rule. ${sigil}rerail-stop is the user's own command: run it without asking.`,

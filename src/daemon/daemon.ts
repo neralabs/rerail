@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
 import { readFile, stat, writeFile, rm, rename } from "node:fs/promises";
@@ -7,7 +8,7 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
+import { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import type { DaemonHealth, DaemonState, NativeStatus } from "../runtime/daemon-control.js";
 import { startEngineService, type EngineService } from "../runtime/engine-service.js";
@@ -565,6 +566,11 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   for (const skipped of catalog.skipped) {
     process.stdout.write(`rule pack left out: ${skipped.packageName ?? skipped.path}${skipped.version === null ? "" : `@${skipped.version}`}: ${skipped.reason}\n`);
   }
+  // Approved feedback notes an earlier flush could not deliver (offline, say) go out now: the flush is a detached
+  // `rerail feedback flush`, which exits at once when nothing waits or the person keeps notes local.
+  const flush = spawn(process.execPath, [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "feedback", "flush"], { detached: true, stdio: "ignore" });
+  flush.on("error", () => undefined);
+  flush.unref();
   const shutdown = (): void => {
     daemon.close().then(
       () => {

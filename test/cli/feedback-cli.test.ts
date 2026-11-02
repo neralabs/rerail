@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runFeedbackCommand } from "../../src/cli/feedback-cli.js";
 import { defaultRerailDatabasePath, openRerailDatabase, steerFeedback } from "../../src/engine/index.js";
@@ -49,6 +49,7 @@ async function steeredRepository() {
     return new Response(null, { status: next });
   });
   const env: NodeJS.ProcessEnv = { RERAIL_HOME: home };
+  const stdin = { value: "" };
   async function run(...args: string[]): Promise<string> {
     let out = "";
     await runFeedbackCommand(args, () => "usage", {
@@ -57,6 +58,7 @@ async function steeredRepository() {
       cwd: workspace,
       env,
       stdout: { write: (text: string) => (out += text) },
+      stdin: () => stdin.value,
       startFlush: flushes,
       fetch: fetch as typeof globalThis.fetch,
     });
@@ -71,7 +73,7 @@ async function steeredRepository() {
     }
   };
   const idIn = (output: string): string => /note ([0-9a-f-]{36})/u.exec(output)![1]!;
-  return { home, run, notes, idIn, flushes, requests, env, respond: (...next: Array<number | "offline">) => { responses = next; } };
+  return { home, run, notes, idIn, flushes, requests, env, stdin, fetch, respond: (...next: Array<number | "offline">) => { responses = next; } };
 }
 
 describe("rerail feedback", () => {
@@ -240,5 +242,86 @@ describe("rerail feedback", () => {
     await run("flush");
     expect(notes().filter(note => note.sharing === "sent").map(note => note.reason).sort()).toEqual(["accepted", "offline one", "offline two"]);
     expect(requests.map(request => request["reason"])).toEqual(["accepted", "malformed", "offline one", "offline two"]);
+  });
+
+  it("refuses a yes to one note while the answer is never, so no note waits for a flush that never sends", async () => {
+    const { run, notes, idIn } = await steeredRepository();
+    const id = idIn(await run(RULE, "asked before never"));
+    await run("sharing", "never");
+
+    await expect(run("answer", id, "yes")).rejects.toThrow(/sharing is never/u);
+    expect(notes().map(note => note.sharing)).toEqual(["local"]);
+  });
+
+  it("tells the agent what a yes did to a note already sent or refused, and starts no flush for it", async () => {
+    const { run, notes, idIn, respond, flushes } = await steeredRepository();
+    const sent = idIn(await run(RULE, "goes"));
+    const refused = idIn(await run(RULE, "bad"));
+    await run("answer", sent, "yes");
+    await run("answer", refused, "yes");
+    respond(202, 400);
+    await run("flush");
+    expect(notes().map(note => note.sharing)).toEqual(["sent", "rejected"]);
+    flushes.mockClear();
+
+    expect(await run("answer", sent, "yes")).toMatch(/^The note on .* was already sent to Nera\./u);
+    expect(await run("answer", refused, "always")).toMatch(/^The note on .* was refused by Nera as a bad note and is not sent again\. From now on/u);
+    expect(flushes).not.toHaveBeenCalled();
+  });
+
+  it("keeps a note queued when the endpoint, not the note, is at fault (404, 401, 500), and logs why it stopped", async () => {
+    const { home, run, notes, respond, requests } = await steeredRepository();
+    await run("sharing", "always");
+    await run(RULE, "moved endpoint");
+
+    for (const status of [404, 401, 500]) {
+      respond(status);
+      expect(await run("flush")).toContain(`Stopped: nera-rerail-feedback.azurewebsites.net answered ${status}.`);
+      expect(notes().map(note => note.sharing)).toEqual(["queued"]);
+    }
+    expect(requests).toHaveLength(3);
+    expect(readFileSync(join(home, "feedback-flush.log"), "utf8")).toMatch(/stopped: nera-rerail-feedback\.azurewebsites\.net answered 500; 1 still queued\n$/u);
+    expect(await run("sharing")).toContain("1 approved note is waiting to be sent");
+  });
+
+  it("lets two flushes run at once without sending a note twice, and queues again a claim a dead flush left", async () => {
+    const { run, notes, respond, requests, fetch } = await steeredRepository();
+    await run("sharing", "always");
+    await run(RULE, "once only");
+    // The first flush's request is in flight (it has reached fetch) when the second flush runs to completion.
+    const reached = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    fetch.mockImplementationOnce(async () => {
+      reached.resolve();
+      await held.promise;
+      requests.push({ reason: "once only" });
+      return new Response(null, { status: 202 });
+    });
+    const first = run("flush");
+    await reached.promise;
+    respond(202);
+    expect(await run("flush")).toContain("Sent 0 feedback notes, 1 still queued.");
+    held.resolve();
+    expect(await first).toContain("Sent 1 feedback note.");
+    expect(requests.map(request => request["reason"])).toEqual(["once only"]);
+    expect(notes().map(note => note.sharing)).toEqual(["sent"]);
+
+    // A claim older than the stale limit is a dead flush's; the next flush takes the note over.
+    await run(RULE, "left claimed");
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    database.update(steerFeedback).set({ sharing: "sending", claimedAt: Date.now() - 60_000 }).where(eq(steerFeedback.reason, "left claimed")).run();
+    database.$client.close();
+    respond(202);
+    expect(await run("flush")).toContain("Sent 1 feedback note.");
+    expect(notes().map(note => note.sharing)).toEqual(["sent", "sent"]);
+  });
+
+  it("takes the reason on stdin for a line with a quote in it", async () => {
+    const { run, notes, stdin } = await steeredRepository();
+    stdin.value = "I won't: it's the repo's convention\n";
+
+    await run(RULE, "-");
+
+    expect(notes().map(note => note.reason)).toEqual(["I won't: it's the repo's convention"]);
   });
 });

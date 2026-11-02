@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { RerailHost } from "../engine/adapter-contract.js";
@@ -16,7 +17,8 @@ import { readConsent, updateConsent, type FeedbackSharingAnswer } from "./consen
  * tuning the rule. Nothing leaves the computer until the person says yes: once (`answer <id> yes`), or for every note
  * (`always`); `no` keeps every note local from then on, the ones already waiting to go included. An approved note goes
  * to Nera's feedback API from a detached `rerail feedback flush`, so the agent's command returns at once; a note the
- * API did not take stays queued for the next flush, and no flush sends anything once the answer is `never`.
+ * API did not take stays queued for the next flush (the daemon's start, the next note or the next answer), and no
+ * flush sends anything once the answer is `never`.
  */
 
 /** Nera's feedback API (the `nera-rerail-feedback` Azure Function); `RERAIL_FEEDBACK_URL` points a test elsewhere. */
@@ -44,12 +46,17 @@ export interface FeedbackContext {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   stdout?: { write(text: string): unknown };
+  /** The whole of standard input, for a reason given as `-`. */
+  stdin?: () => string;
   fetch?: typeof fetch;
   /** Send the queued notes without holding the caller: a detached `rerail feedback flush`. */
   startFlush?: () => void;
 }
 
-/** `rerail feedback <rule-id> <reason>`, `answer <id> yes|always|no`, `sharing [ask|always|never]`, and the internal `flush`. */
+/**
+ * `rerail feedback <rule-id> <reason>` (or `-`, the reason on stdin), `answer <id> yes|always|no`,
+ * `sharing [ask|always|never]`, and the internal `flush`.
+ */
 export async function runFeedbackCommand(args: readonly string[], usage: () => string, context: FeedbackContext): Promise<number> {
   const [first, ...rest] = args;
   if (first === undefined) throw new Error(`rerail feedback needs a rule id and your reason\n\n${usage()}`);
@@ -59,7 +66,9 @@ export async function runFeedbackCommand(args: readonly string[], usage: () => s
     if (rest.length > 0) throw new Error("rerail feedback flush takes no arguments");
     return await withDatabase(context, database => flush(database, context));
   }
-  return await withDatabase(context, database => record(database, first, rest, context));
+  // `-` takes the line on stdin, so a `'` in it needs no shell quoting (a heredoc with a quoted delimiter).
+  const words = rest.length === 1 && rest[0] === "-" ? [context.stdin?.() ?? readFileSync(0, "utf8")] : rest;
+  return await withDatabase(context, database => record(database, first, words, context));
 }
 
 async function withDatabase(context: FeedbackContext, run: (database: RerailDatabase) => number | Promise<number>): Promise<number> {
@@ -189,11 +198,27 @@ function record(database: RerailDatabase, ruleId: string, words: readonly string
   return 0;
 }
 
-/** The answer is never: keep every note that was waiting to go, and ask no more. */
+/** The answer is never: keep every note that was waiting to go (claimed ones included), and ask no more. */
 function keepEverythingLocal(database: RerailDatabase, home: string, answeredAt: string): number {
-  const kept = database.update(steerFeedback).set({ sharing: "local" }).where(inArray(steerFeedback.sharing, ["ask", "queued"])).run().changes;
+  const kept = database.update(steerFeedback).set({ sharing: "local", claimedAt: null })
+    .where(inArray(steerFeedback.sharing, ["ask", "queued", "sending"])).run().changes;
   updateConsent(home, consent => ({ ...consent, feedback: { sharing: "never", answeredAt } }));
   return kept;
+}
+
+/** What a yes does to a note in each state, as the agent is told; `queued` and `sending` are already on their way. */
+function yesOutcome(sharing: SteerFeedbackSharing, ruleId: string, to: string): string {
+  switch (sharing) {
+    case "ask":
+    case "local":
+    case "queued":
+    case "sending":
+      return `Sending the note on ${ruleId} to ${to}.`;
+    case "sent":
+      return `The note on ${ruleId} was already sent to ${to}.`;
+    case "rejected":
+      return `The note on ${ruleId} was refused by ${to} as a bad note and is not sent again.`;
+  }
 }
 
 function answer(database: RerailDatabase, args: readonly string[], usage: () => string, context: FeedbackContext): number {
@@ -213,14 +238,18 @@ function answer(database: RerailDatabase, args: readonly string[], usage: () => 
     write(context, `${this_}, and Rerail will not ask again. \`rerail feedback sharing ask\` turns asking back on.`);
     return 0;
   }
+  // Under never no flush sends, so a yes would leave the note queued until the answer changed: refuse it instead.
+  if (choice === "yes" && readConsent(context.home).feedback?.sharing === "never") {
+    throw new Error("The user keeps feedback notes on this computer (sharing is never); the note stays here. `rerail feedback sharing ask` turns asking back on first.");
+  }
   if (note.sharing === "ask" || note.sharing === "local") {
     database.update(steerFeedback).set({ sharing: "queued" }).where(eq(steerFeedback.id, id)).run();
   }
   if (choice === "always") updateConsent(context.home, consent => ({ ...consent, feedback: { sharing: "always", answeredAt } }));
   if (note.sharing !== "sent" && note.sharing !== "rejected") startFlush(context);
-  write(context, choice === "always"
-    ? `Sending the note on ${note.ruleId} to ${to}. From now on Rerail sends every note without asking; \`rerail feedback sharing ask\` turns that off.`
-    : `Sending the note on ${note.ruleId} to ${to}. Rerail will ask again about the next one.`);
+  write(context, `${yesOutcome(note.sharing, note.ruleId, to)} ${choice === "always"
+    ? "From now on Rerail sends every note without asking; `rerail feedback sharing ask` turns that off."
+    : "Rerail will ask again about the next one."}`);
   return 0;
 }
 
@@ -243,7 +272,11 @@ function sharing(database: RerailDatabase, args: readonly string[], usage: () =>
         setting === "ask" ? others : { ...others, feedback: { sharing: "always", answeredAt } });
     }
   }
-  write(context, SHARING_TEXT[readConsent(context.home).feedback?.sharing ?? "ask"]);
+  const standing = readConsent(context.home).feedback?.sharing ?? "ask";
+  const waiting = waitingCount(database);
+  const queue = standing === "never" || waiting === 0 ? "" : ` ${waiting} approved ${waiting === 1 ? "note is" : "notes are"} waiting to be sent (see ${join(context.home, FEEDBACK_FLUSH_LOG)} if they stay).`;
+  write(context, `${SHARING_TEXT[standing]}${queue}`);
+  if (waiting > 0 && standing !== "never") startFlush(context);
   return 0;
 }
 
@@ -261,11 +294,38 @@ function startFlush(context: FeedbackContext): void {
   child.unref();
 }
 
+/** A claim older than this belongs to a flush that died mid-send; its note is queued again. */
+const STALE_CLAIM_MS = 3 * SEND_TIMEOUT_MS;
+
+/** Statuses that mean this note is bad and would be refused again; any other refusal is the endpoint's, so the note waits. */
+const BAD_NOTE_STATUSES = new Set([400, 413, 422]);
+
+/** In the Rerail home: what each flush did, since a detached flush has no one to tell. Owner-readable only. */
+export const FEEDBACK_FLUSH_LOG = "feedback-flush.log";
+
+function logFlush(home: string, line: string): void {
+  try {
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    appendFileSync(join(home, FEEDBACK_FLUSH_LOG), `${new Date().toISOString()} ${line}\n`, { mode: 0o600 });
+  } catch {
+    // A log that cannot be written must not stop a send.
+  }
+}
+
+/** `queued` plus `sending`: the notes approved and not yet accepted. */
+function waitingCount(database: RerailDatabase): number {
+  return database.select({ count: sql<number>`count(*)` }).from(steerFeedback)
+    .where(inArray(steerFeedback.sharing, ["queued", "sending"])).get()?.count ?? 0;
+}
+
 /**
- * Send every queued note, oldest first, unless the answer is now never. Accepted notes are `sent`; a note the API
- * refuses as malformed is `rejected` and never retried; anything else (offline, a timeout, a server error) stops the
- * run and leaves the rest queued. Each note's state is read again just before it goes, so a `no` given while a flush
- * runs still holds it back.
+ * Send every queued note, oldest first, unless the answer is now never. A flush claims each note (`sending`) before
+ * it posts, so two flushes started close together never send one note twice; a claim a dead flush left behind is
+ * queued again. Accepted notes are `sent`; a note the API refuses as a bad note (400, 413, 422) is `rejected` and
+ * never retried; any other answer (offline, a timeout, a server error, an endpoint fault such as 404) stops the run
+ * and leaves the rest queued for the next flush, which `rerail daemon start`, the next note or the next answer
+ * begins. A `no` while a note is out demotes it to `local`, so the claim's outcome is not written; the request that
+ * was already out still lands.
  */
 async function flush(database: RerailDatabase, context: FeedbackContext): Promise<number> {
   if (readConsent(context.home).feedback?.sharing === "never") {
@@ -274,17 +334,21 @@ async function flush(database: RerailDatabase, context: FeedbackContext): Promis
   }
   const url = feedbackUrl(context);
   const send = context.fetch ?? fetch;
+  database.update(steerFeedback).set({ sharing: "queued", claimedAt: null })
+    .where(and(eq(steerFeedback.sharing, "sending"), sql`${steerFeedback.claimedAt} < ${Date.now() - STALE_CLAIM_MS}`)).run();
   const queued = database.select().from(steerFeedback).where(eq(steerFeedback.sharing, "queued"))
     .orderBy(asc(steerFeedback.recordedAt), sql`rowid`).all();
   let sent = 0;
   let rejected = 0;
-  let withheld = 0;
+  let stopped: string | undefined;
   for (const note of queued) {
-    const current = database.select({ sharing: steerFeedback.sharing }).from(steerFeedback).where(eq(steerFeedback.id, note.id)).get();
-    if (current?.sharing !== "queued") {
-      withheld += 1;
-      continue;
-    }
+    const claimed = database.update(steerFeedback).set({ sharing: "sending", claimedAt: Date.now() })
+      .where(and(eq(steerFeedback.id, note.id), eq(steerFeedback.sharing, "queued"))).run().changes === 1;
+    if (!claimed) continue;
+    const settle = (sharing: SteerFeedbackSharing, sentAt: number | null = null): void => {
+      database.update(steerFeedback).set({ sharing, sentAt, claimedAt: null })
+        .where(and(eq(steerFeedback.id, note.id), eq(steerFeedback.sharing, "sending"))).run();
+    };
     // Never the session, the repository or anything else Rerail records about the note.
     const body = {
       id: note.id,
@@ -308,23 +372,27 @@ async function flush(database: RerailDatabase, context: FeedbackContext): Promis
       });
       status = response.status;
       await response.body?.cancel();
-    } catch {
+    } catch (error) {
+      settle("queued");
+      stopped = `${url.host} unreachable: ${error instanceof Error ? error.message : String(error)}`;
       break;
     }
     if (status >= 200 && status < 300) {
-      // Still queued only if no `no` arrived while the request was out.
-      database.update(steerFeedback).set({ sharing: "sent", sentAt: Date.now() })
-        .where(and(eq(steerFeedback.id, note.id), eq(steerFeedback.sharing, "queued"))).run();
+      settle("sent", Date.now());
       sent += 1;
-    } else if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
-      database.update(steerFeedback).set({ sharing: "rejected" })
-        .where(and(eq(steerFeedback.id, note.id), eq(steerFeedback.sharing, "queued"))).run();
+    } else if (BAD_NOTE_STATUSES.has(status)) {
+      settle("rejected");
       rejected += 1;
+      logFlush(context.home, `note ${note.id} on ${note.ruleId} refused by ${url.host} as a bad note (${status}); not retried`);
     } else {
+      settle("queued");
+      stopped = `${url.host} answered ${status}`;
       break;
     }
   }
-  const left = queued.length - sent - rejected - withheld;
-  write(context, `Sent ${sent} feedback ${sent === 1 ? "note" : "notes"}${rejected > 0 ? `, ${rejected} refused by the API` : ""}${left > 0 ? `, ${left} still queued` : ""}.`);
+  const left = waitingCount(database);
+  const summary = `Sent ${sent} feedback ${sent === 1 ? "note" : "notes"}${rejected > 0 ? `, ${rejected} refused by the API` : ""}${left > 0 ? `, ${left} still queued` : ""}.`;
+  if (stopped !== undefined) logFlush(context.home, `stopped: ${stopped}; ${left} still queued`);
+  write(context, stopped === undefined ? summary : `${summary} Stopped: ${stopped}.`);
   return 0;
 }
