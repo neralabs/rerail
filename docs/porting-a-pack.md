@@ -15,6 +15,9 @@ It does not repeat the reference documents. Read these as you need them:
 | [upstream.md](upstream.md) | Upstream snapshots, the generators, samples and their licences, the publish workflow, bumps |
 | [writing-rules.md](writing-rules.md), [code-rule DSL reference](code-rule-dsl-reference.html) | How a rule document is written |
 
+In commands and paths below, `<id>` is the pack (`packs/<id>/`), `<tool>` the upstream tool, and `<rule>` the Rerail
+rule id (`ruff-f401-unused-import`); "upstream rule" is the tool's own name for it (`F401`).
+
 Who may push a branch here and how a change from a fork comes in is
 [CONTRIBUTING.md, "How contribution works"](../CONTRIBUTING.md#how-contribution-works). Everything below applies to
 both; a fork's pull request gets no CI, so it states what was run by hand.
@@ -51,7 +54,7 @@ flowchart LR
   D --> A
 ```
 
-**Candidate.** The document is at `candidates/rules/<id>.json`, `conformance.json` has a port entry whose `policy`
+**Candidate.** The document is at `candidates/rules/<rule>.json`, `conformance.json` has a port entry whose `policy`
 names it, and `pack.json` does not list it. Every check scores and judges it and the pull request's **Conformance**
 comment reports it. It never blocks CI and never ships
 ([Candidates and promotion](../conformance/README.md#candidates-and-promotion)).
@@ -59,7 +62,7 @@ comment reports it. It never blocks CI and never ships
 **Ready to promote.** The candidate passes every check. This is necessary, not sufficient: a reviewer reads the
 evidence and decides ([Who decides what ships](#who-decides-what-ships)).
 
-**Shipped.** The document is at `rules/<id>.json` and `pack.json` lists it. It starts on when `upstream-status` holds
+**Shipped.** The document is at `rules/<rule>.json` and `pack.json` lists it. It starts on when `upstream-status` holds
 (the pinned release has the rule, it is not deprecated, an approved configuration turns it on), otherwise it ships
 with `"on": false`. From now on, a failing blocking check fails CI on every pull request, including one that only adds
 test data.
@@ -73,13 +76,13 @@ The layout is [pack-format.md, "Layout"](pack-format.md#layout). For each ported
 
 | File | What to add |
 | --- | --- |
-| `candidates/rules/<id>.json` (later `rules/<id>.json`) | The rule document, `rerail.policy/v1`. `<id>` is `<tool>-<rule>` in lowercase, and the same string in the file name, the document, `pack.json` and the port entry ([rule ids](pack-format.md#packjson)). Each violation reports the upstream rule's code and carries the tool's suppression key (`noqa.codes`, `eslint.rules`, …: the table under [check 4](pack-format.md#the-validation-contract)). The `description` meets the [description criteria](pack-format.md#description). |
+| `candidates/rules/<rule>.json` (later `rules/<rule>.json`) | The rule document, `rerail.policy/v1`. `<rule>` is `<tool>-<upstream rule>` in lowercase, and the same string in the file name, the document, `pack.json` and the port entry ([rule ids](pack-format.md#packjson)). Each violation reports the upstream rule's code and carries the tool's suppression key (`noqa.codes`, `eslint.rules`, …: the table under [check 4](pack-format.md#the-validation-contract)). The `description` meets the [description criteria](pack-format.md#description). |
 | `conformance.json`, `rules[]` | The port entry: `id`, `upstream: { tool, rule }`, `policy`, `match` (`line` or `line+column`), `capabilities` ([schema](pack-format.md#conformancejson-divergencesjson-upstream)). A candidate's `examples` pair lives here; it moves to `pack.json` when the rule ships. |
 | `upstream/<tool>/gates.yaml`, `rules` | One entry per upstream rule: `deprecated` (upstream's message or `null`) and `recommended` (the first approved configuration that turns it on, with its option values, or `null`). No entry means the rule fails `upstream-rule` and can never start on. Derive the values from upstream's rule table and default settings at the pinned release, and say how in the pull request ([Declared upstream facts](../conformance/README.md#declared-upstream-facts-gatesyaml)). |
 | `licenses/<project>/UPSTREAM.md`, `upstream/<tool>/UPSTREAM.md` | Provenance. Per upstream repository: licence, `Source` row, `Taken from it` globs, `Not copied` lines. Per tool: one row for each case Rerail wrote ([UPSTREAM.md](pack-format.md#upstreammd)). |
 | `divergences.json` | One entry per line where the rule and the tool disagree on purpose: kind and evidence ([Divergences](../conformance/README.md#divergences)). Add an entry only after checking the tool's answer on that line. |
 | The generator's case table (Ruff `NOQA`, Bandit `NOSEC`) | A suppression case for the rule. These generators refuse to derive while a shipped rule has none. CI does not catch a missing case; the next derive does. |
-| `candidates/README.md` (later `README.md`) | A `### \`<id>\`` section under `## Rule details`: what the rule matches beyond its description, its settings, and, while it is a candidate, what it waits on. A heading names only rules on its file's side (check 5). |
+| `candidates/README.md` (later `README.md`) | A `### \`<rule>\`` section under `## Rule details`: what the rule matches beyond its description, its settings, and, while it is a candidate, what it waits on. A heading names only rules on its file's side (check 5). |
 | `.changeset/*.md` | A changeset, only when the pull request changes what the pack publishes (`rules/`, `pack.json`, `README.md`, …). A candidate alone needs none ([.changeset/README.md](../.changeset/README.md)). |
 
 A rule upstream tests under several option sets becomes several documents, one per set, each scored on its own tests
@@ -103,8 +106,8 @@ CI keeps one **Conformance** comment on a same-repository pull request
 
   ```sh
   npm run conformance:languages -- --check --pack <id>
-  npm run conformance:languages -- --pack <id> --rule <id>     # every false positive and miss
-  npm run conformance:languages -- --pack <id> --rule <id> --samples   # the samples too
+  npm run conformance:languages -- --pack <id> --rule <rule>     # every false positive and miss
+  npm run conformance:languages -- --pack <id> --rule <rule> --samples   # the samples too
   ```
 
 Read the pack's own scoring errors first (an engine failure, a finding on a clean sample, a stale divergence, a test
@@ -145,7 +148,7 @@ flowchart LR
    with each unit's upstream origin, then the provenance
    ([What the generators write](upstream.md#what-the-generators-write)). Which tests it reads per rule is what
    `gates.yaml` `watch.tests` names: a path convention (`test/{rule}.js`), or a hand-kept list beside the generator
-   (`fixtures.json`: `{ "rules": { "<rule>": ["<upstream path>", …] } }`).
+   (`fixtures.json`: `{ "rules": { "<upstream rule>": ["<upstream path>", …] } }`).
 
 2. **Derive.** The derive runs upstream's code, so run it in a sandbox with no AWS or GitHub credentials, on the
    pinned runtime ([Derive in a sandbox](upstream.md#derive-in-a-sandbox)).
@@ -206,8 +209,8 @@ Promote from the judged commit's `summary.json` `promotable` list, and confirm `
 3. **`pack.json`.** Add `id`, `document`, `title`, `group`. Add `"on": false` when the comment's **Starts** column
    says off. Add `"mode": "log"` only when upstream's recommended configuration warns rather than errors
    ([pack.json](pack-format.md#packjson)). Keep the pack's order: sorted packs stay sorted, grouped packs take the rule
-   after its group. The title follows the pack's pattern, `<Tool> <rule>: <upstream's one-line description>`, taken
-   from upstream's rule metadata at the pinned version.
+   after its group. The title follows the pack's pattern, `<Tool> <upstream rule>: <upstream's one-line description>`,
+   taken from upstream's rule metadata at the pinned version.
 
 4. **README sections.** Move the rule's `### \`<rule>\`` section from `candidates/README.md` to `README.md` and drop its
    "waits on" sentence. Check 5 fails a heading that names a rule on the wrong side.
@@ -295,7 +298,7 @@ npm run conformance:languages -- --check --pack <id>
 npm run check              # metric #3 is red by design while publish/ is tracked; the chain stops there, so also:
 npm run check:windows-paths && npm run check:internal-refs && npm run check:pins
 npm run check:native       # a shorter rules/ path in an include_str! needs cargo fmt
-cargo test --lib -- code_rule_dsl::matcher::anchors
+cargo test --manifest-path Cargo.toml -p rerail-engine anchors::tests
 ```
 
 Then grep for stale counts (table rows included) and for moved rule details that still say "candidate".
