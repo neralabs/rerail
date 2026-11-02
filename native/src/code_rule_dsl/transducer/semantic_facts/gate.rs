@@ -3,8 +3,10 @@
 //! node, the label a producer's rows give equals W's verdicts for that form, under no module path
 //! and inside a package. A form the rows do not answer is counted as refused, by name.
 
+use super::binds::{self, Verdict};
 use super::harness::{
-    file_evaluation, fixtures, modules, policies, python_matchers, semantic_leaves, verdicts,
+    clause_of, file_evaluation, fixtures, modules, policies, python_matchers, semantic_leaves,
+    verdict_at, verdicts,
 };
 use super::resolves::{self, Kinds};
 use super::scopes::{Scopes, reading};
@@ -223,5 +225,127 @@ fn the_resolves_gate_catches_rows_that_forget_shadowing() {
     assert!(
         !tally.differences.is_empty(),
         "the gate passed rows that forget shadowing"
+    );
+}
+
+fn gate_binds(step: usize, mutate: &dyn Fn(&mut binds::BindsRows)) -> Tally {
+    // A leaf's sub-rules tell its forms apart: every leaf is a form of its own.
+    let forms = forms(
+        |leaf| match leaf {
+            Semantic::Binds(form) => Some(form.clone()),
+            _ => None,
+        },
+        |form| format!("{:p}", &**form),
+    );
+    let mut tally = Tally {
+        forms: forms.len(),
+        ..Tally::default()
+    };
+    let admitted = forms
+        .iter()
+        .filter(|(_, form, _)| match binds::admits(form) {
+            Ok(()) => true,
+            Err(refused) => {
+                *tally.refused.entry(refused.0).or_default() += 1;
+                false
+            }
+        })
+        .collect::<Vec<_>>();
+    let tapes = fixtures(step);
+    for (path, tape) in &tapes {
+        for module in modules() {
+            let _evaluation = file_evaluation(tape, module.as_ref());
+            let root = Root::doc(tape.clone());
+            tally.nodes += tape.transducer_len();
+            let mut produced: Vec<(Reading, binds::BindsRows)> = Vec::new();
+            for (clause, form, grammar) in &admitted {
+                let reading = reading(form.python.as_deref(), false);
+                if !produced.iter().any(|(known, _)| *known == reading) {
+                    let started = Instant::now();
+                    let scopes =
+                        Scopes::build(&root, reading, module.as_ref(), usize::MAX, &|| false)
+                            .expect("the fixture's table builds");
+                    let mut rows = binds::rows(&root, &scopes);
+                    mutate(&mut rows);
+                    tally.produce += started.elapsed();
+                    tally.rows += rows.len();
+                    tally.documents += 1;
+                    produced.push((reading, rows));
+                }
+                let rows = &produced
+                    .iter()
+                    .find(|(known, _)| *known == reading)
+                    .expect("produced")
+                    .1;
+                // The sub-rules' labels, read where the join reaches them: W's verdicts there.
+                let mut sub_rules = Vec::<(*const AstMatcher, _)>::new();
+                let mut oracle = Duration::ZERO;
+                let mut sub_rule = |rule: &AstMatcher, node: u32| {
+                    let started = Instant::now();
+                    let at = match sub_rules
+                        .iter()
+                        .position(|(known, _)| std::ptr::eq(*known, rule))
+                    {
+                        Some(at) => at,
+                        None => {
+                            sub_rules.push((rule as *const _, clause_of(grammar, rule)));
+                            sub_rules.len() - 1
+                        }
+                    };
+                    let verdict = match verdict_at(&sub_rules[at].1, &root, node) {
+                        Some(true) => Verdict::True,
+                        Some(false) => Verdict::False,
+                        None => Verdict::Unknown,
+                    };
+                    oracle += started.elapsed();
+                    verdict
+                };
+                let started = Instant::now();
+                let (actual, actual_unknown) =
+                    binds::label(form, rows, &mut sub_rule, &|_| None).expect("admitted");
+                tally.label += started.elapsed() - oracle;
+                tally.oracle += oracle;
+                let started = Instant::now();
+                let rule = AstMatcher::Semantic(Semantic::Binds(form.clone()));
+                let (expected, unknown) = verdicts(grammar, &rule, &root);
+                tally.oracle += started.elapsed();
+                tally.checked += 1;
+                tally.unknown += unknown.len();
+                let what = format!(
+                    "{clause} on {} (module {:?})",
+                    path.display(),
+                    module.as_ref().map(|module| module.text())
+                );
+                tally.compare(&what, &expected, &actual);
+                tally.compare(&format!("{what}, unknown"), &unknown, &actual_unknown);
+            }
+        }
+    }
+    tally.report("binds", tapes.len());
+    tally
+}
+
+#[test]
+fn binds_rows_give_ws_verdicts_on_a_sample() {
+    exact(&gate_binds(8, &|_| {}));
+}
+
+#[test]
+#[ignore = "every fixture: run with --ignored"]
+fn binds_rows_give_ws_verdicts_on_every_fixture() {
+    exact(&gate_binds(1, &|_| {}));
+}
+
+/// Rows that read every binding as its name's latest must fail the gate.
+#[test]
+fn the_binds_gate_catches_rows_that_forget_rebinding() {
+    let tally = gate_binds(32, &|rows| {
+        rows.bindings
+            .values_mut()
+            .for_each(|binding| binding.latest = true)
+    });
+    assert!(
+        !tally.differences.is_empty(),
+        "the gate passed rows that forget rebinding"
     );
 }
