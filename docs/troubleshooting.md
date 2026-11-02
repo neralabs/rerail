@@ -335,6 +335,34 @@ Set-up run in WSL for a repository on the Windows drive says so, and goes on:
   Repos on the Windows drive are slow from WSL; a clone in the Linux file system (under ~) is faster.
 ```
 
+## Reporting a problem
+
+A dashboard link only opens on your computer, so a maintainer can't follow one. To give them what they need, write a
+support bundle and attach it to [your issue](https://github.com/neralabs/rerail/issues/new/choose): in a coding agent
+run `/rerail-support-bundle`, which also checks the file with you, or in a terminal, inside the repository:
+
+```sh
+rerail support-bundle
+```
+
+It writes `~/rerail-support-bundle.json` (`--output <file>` for elsewhere), readable by your user only, and sends
+nothing. It reports the repository's latest session; `--session <id>` names another, whose id is in its dashboard
+address. It works where Rerail won't start or set-up never finished, and says which parts it could not read.
+
+| In the file | Left out |
+| --- | --- |
+| Rerail, Node and OS versions; whether the daemon and engine are healthy; the coding agents connected | Your prompts and the agent's replies |
+| The repository's state, packs, and rule ids with their modes | Tool input and output, and source code |
+| The session's timeline: event kinds, tool names, times, what it dropped or could not check | Rule text and a finding's message, captures and fix |
+| Steers as the agent got them, and findings by rule, file and line | Absolute paths, repository names and session ids, which are replaced |
+| The last 200 lines of `daemon.log`, scrubbed | Capabilities, tokens, and paths named like secrets |
+
+Read it before you attach it: issues are public. Known values are replaced and common secret shapes are taken out, but
+patterns cannot catch everything. A steer can quote your code, and a file path or your own rule's id can name a project;
+replace anything you'd rather not post with `<redacted>`. A vulnerability goes through [SECURITY.md](../SECURITY.md)
+instead. A support bundle is diagnostic context for a report, for maintainers; it is not meant for showing other people
+what Rerail did.
+
 ## Removing Rerail completely
 
 `rerail install --remove` disconnects every coding agent, takes `~/.rerail/bin` off `PATH` (and deletes the

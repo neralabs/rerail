@@ -75,6 +75,17 @@ program running as you can read that file, as it can read your files; the capabi
 A daemon started with `--allow-remote` or `--public-host` can be reached from other machines and makes a fresh
 capability on each start.
 
+## Support bundles
+
+`rerail support-bundle` writes one file for you to attach to an issue, and only when you run it; it sends nothing
+(`src/cli/support-bundle.ts`). What goes in is an allowlist: versions, Rerail's state, rule ids and modes, a session's
+timeline by event kind and tool name, its steers as delivered, its findings by rule and line, and the end of the
+daemon's log. Your prompts, the agent's replies, tool input and output, source code and rule text are never read into
+it. Known secrets and paths are replaced, and what looks like a secret or an email address is taken out, but patterns
+cannot catch everything, and steer text can quote your code, so read the file before you attach it. Issues are public.
+`/rerail-support-bundle` has your coding agent read the file with you, so it goes to the agent's provider like the
+rest of your session ([above](#your-coding-agents-provider)).
+
 ## Deleting your data
 
 - `rerail reset`, run inside a repository, deletes that repository's recorded history (sessions, events, audits) from
