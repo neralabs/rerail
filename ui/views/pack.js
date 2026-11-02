@@ -3,13 +3,12 @@
  * pack at its right (an outline button; it asks first, in the counts line), what the pack covers, then how many of its
  * rules are on (or shown, under a search or filter) and its share of the violations logged. Then Search, Filter and
  * Sort with the whole-pack switch at the right end, on the On/off column, and the rule table. No primary button: the
- * switches are the page's action. The page's rules that run nowhere until a person approves them follow, under
- * Waiting for approval, with the way to approve them. A page with nothing to list keeps its own.
+ * switches are the page's action. A page with nothing to list keeps its own.
  */
 import { h, setAttr, setClass, setContent, setText, icon } from "../dom.js";
 import { fmt } from "../format.js";
-import { data, ui, packById, packRuleOf, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../state.js";
-import { APPROVALS_HASH, awaitingOnPage, waitingTitle } from "../approval-model.js";
+import { isWorktreePack } from "../derive.js";
+import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../state.js";
 import { writes } from "../shell.js";
 import { pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
 import { CREATE_COMMAND, renderRuleTable } from "../render/rules.js";
@@ -30,47 +29,15 @@ function build() {
   const packAll = h("div.packall", null, packAllText, h("button.sw", { role: "switch", "data-act": "ptoggle" }));
   const controls = h("div");
   const table = h("div");
-  const waiting = h("div");
-  page = { root: h("div.ppage", null, head, controls, table, waiting), title, removeButton, count, share, ask, pitch, packAll, controls, table, waiting };
+  page = { root: h("div.ppage", null, head, controls, table), title, removeButton, count, share, ask, pitch, packAll, controls, table };
   notice = h("div.ppage");
 }
 
-/** The page's rules that run nowhere until approved (`awaitingOnPage`), each with its title. */
-function waitingRules() {
-  const packIdOf = id => packRuleOf(id)?.pack.id;
-  return awaitingOnPage(data.awaiting, pageKey(ui.view, ui.pack), data.approvals, packIdOf)
-    .map(reference => ({ ...reference, title: waitingTitle(reference, data.approvals, id => packRuleOf(id)?.rule.title) }));
-}
-
-/** Waiting for approval: one row per rule, which opens the list where a person reads the rule and approves it. */
-function waitingBlock(waiting) {
-  if (waiting.length === 0) return null;
-  return h("section.waiting", null,
-    h("div.ghead", null, h("h2", null, "Waiting for approval", h("span.n2", null, fmt(waiting.length))),
-      h("p", null, "These rules run nowhere until you read and approve them."),
-      h("div.act", null, h("button.btn.sm.ghost.link", { "data-act": "nav", "data-i": APPROVALS_HASH }, "Read and approve"))),
-    h("div.list", null, waiting.map(r => h("div.row", null, h("div.rmain", null,
-      h("div.rtitle", null, h("button.t", { "data-act": "nav", "data-i": APPROVALS_HASH, title: r.title }, r.title)),
-      h("div.rmeta", null, h("span.badge.wait", null, "Waits for approval"), h("span.mono", null, r.id),
-        r.folders.every(f => f === "") ? null : h("span.mono", { title: "Added at" }, r.folders.filter(f => f !== "").join(", "))))))));
-}
-
-/** A page whose rules all wait for approval: its name, what the pack covers, and the rules waiting. */
-function waitingPage(waiting) {
-  const pack = ui.view === "created" ? null : packById(ui.pack);
-  return [h("div.ghead.pk", null, h("div.pkh", null, h("h2", null, pack?.name ?? CREATED)), pack ? h("p.pitch", null, pack.covers) : null),
-    waitingBlock(waiting)];
-}
-
 /** The pack is not added here, not one Rerail knows, nothing is created yet, or the rules are still loading. */
-function renderNotice(root, waiting) {
+function renderNotice(root) {
   if (notice.parentNode !== root) root.replaceChildren(notice);
   const created = ui.view === "created", pack = created ? null : packById(ui.pack), repo = repoName() || "this repo";
   const added = pack ? isAttached(pack) : false;
-  if (data.loaded && waiting.length > 0) {
-    setContent(notice, JSON.stringify(["waiting", ui.view, ui.pack, pack?.name, waiting]), () => waitingPage(waiting));
-    return;
-  }
   setContent(notice, JSON.stringify([data.loaded, ui.view, ui.pack, pack?.name, added, ui.removeAsk, repo]), () => h("div.list", null, h("div.empty", null,
     !data.loaded ? h("h3", null, "Loading…")
       : created ? [h("h3", null, "No rules of your own yet"),
@@ -91,9 +58,10 @@ function renderHead(all, shown, pack) {
   setAttr(page.share, "hidden", total === 0);
   setText(page.share, `${fmt(n)} of ${fmt(total)} violations logged`);
   setAttr(page.share, "title", `Violations logged by these rules, of all violations ${rangeLabel()}`);
-  // Remove pack sits at the title's right; once clicked, its question takes the counts line and the button goes.
+  // Remove pack sits at the title's right; once clicked, its question takes the counts line and the button goes. The
+  // worktree's own rules are no attachment to remove: the files in its `.rerail/rules` decide them.
   const asking = pack ? ui.removeAsk === pack.id : false;
-  setContent(page.removeButton, JSON.stringify([pack?.id, asking]), () => (pack && !asking
+  setContent(page.removeButton, JSON.stringify([pack?.id, asking]), () => (pack && !asking && !isWorktreePack(pack)
     ? h("button.btn.sm.danger.outline", { "data-act": "removepack", "data-i": pack.id, title: "Its rules go off and the pack returns to Rule packs" }, "Remove pack")
     : null));
   setContent(page.ask, JSON.stringify([pack?.id, asking, repoName()]), () => (asking ? removePackControl(pack) : null));
@@ -112,8 +80,7 @@ function renderPackAll(all, name) {
 export function render(root) {
   if (page === null) build();
   const all = pageRules(pageKey(ui.view, ui.pack));
-  const waiting = waitingRules();
-  if (all === null || all.length === 0) { renderNotice(root, waiting); return; }
+  if (all === null || all.length === 0) { renderNotice(root); return; }
   if (page.root.parentNode !== root) root.replaceChildren(page.root);
   const pack = ui.view === "created" ? null : packById(ui.pack), shown = shownRules(all);
   renderHead(all, shown, pack);
@@ -122,7 +89,6 @@ export function render(root) {
   if (page.packAll.parentNode !== controls.slot) controls.slot.replaceChildren(page.packAll);
   renderPackAll(all, pack?.name ?? CREATED);
   renderRuleTable(page.table, shown);
-  setContent(page.waiting, JSON.stringify(waiting), () => waitingBlock(waiting));
 }
 
 /** The whole-pack switch: a mixed or all-off page turns every rule on, an all-on page turns them all off. */

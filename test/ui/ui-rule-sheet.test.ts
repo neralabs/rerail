@@ -5,7 +5,7 @@ import { createSuggestions } from "../../ui/views/create.js";
 const RULE = { id: "lib:no-raw-fetch", title: "No raw fetch", scope: "src/**/*.ts", mode: "Steer" };
 
 const folderState = (folder: string, kind: string, id: string) => ({ folder, on: true, mode: "steer", source: { kind, id } });
-const stored = (origin: "user" | "rerail", states: object[]) => ({ origin, folderStates: states });
+const stored = (origin: "user" | "pack", states: object[]) => ({ origin, folderStates: states });
 
 describe("the Edit with coding agent prompts", () => {
   it("offers one prompt per chip, each asking Rerail about the rule by id", () => {
@@ -42,10 +42,10 @@ describe("the What the agent sees hint", () => {
   const copy = "Saved as your copy. This one turns off.";
 
   it.each([
-    [{ byRerail: false, log: false }, reaches],
-    [{ byRerail: false, log: true }, LOG_NOTE],
-    [{ byRerail: true, log: false }, `${copy} ${reaches}`],
-    [{ byRerail: true, log: true }, `${copy} ${LOG_NOTE}`],
+    [{ fromPack: false, log: false }, reaches],
+    [{ fromPack: false, log: true }, LOG_NOTE],
+    [{ fromPack: true, log: false }, `${copy} ${reaches}`],
+    [{ fromPack: true, log: true }, `${copy} ${LOG_NOTE}`],
   ])("for %j says what saving does", (rule, hint) => {
     expect(agentSeesHint(rule)).toBe(hint);
   });
@@ -69,8 +69,8 @@ describe("Delete on the sheet", () => {
   });
 
   it("is not offered for a rule that comes from a pack", () => {
-    expect(canDelete(stored("rerail", [folderState("", "pack", "typescript")]))).toBe(false);
-    expect(canDelete(stored("rerail", [folderState("", "rerail_rule", "typescript:no-any")]))).toBe(false);
+    expect(canDelete(stored("pack", [folderState("", "pack", "typescript")]))).toBe(false);
+    expect(canDelete(stored("pack", [folderState("", "rerail_rule", "typescript:no-any")]))).toBe(false);
   });
 
   it("removes the rule at every folder it is added at, and only its library attachments", () => {

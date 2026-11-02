@@ -329,8 +329,8 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
   runs it).
 - A change to a pack under `packs/` adds a changeset ([.changeset/README.md](.changeset/README.md)), and stages the
   pack data it adds, changes or removes ([Adding or changing a pack](#adding-or-changing-a-pack)).
-- A change to what the core package ships adds an entry under `## Unreleased` in `CHANGELOG.md`
-  ([release notes](docs/release.md#release)).
+- A change to what the core package ships adds an entry as a file of its own in `.changelog/`
+  ([.changelog/README.md](.changelog/README.md)), never under `## Unreleased` in `CHANGELOG.md`.
 - A changeset summary or changelog entry is a release note, and goes out as it is on the GitHub Release: it says what
   changed for the person upgrading, in plain language, in a sentence or two (at most 60 words), and leaves out commit
   hashes, ticket ids, pull request numbers and repository-internal maintenance; CI fails a pull request whose entry or

@@ -29,9 +29,9 @@ export const agentSeesPrompt = (id, text) =>
 /** Why a rule on Log's message goes nowhere: under the message, and under its draft. */
 export const LOG_NOTE = "Not sent while this rule is on Log.";
 
-/** What saving a new message does: a By Rerail rule's edit is a library copy, and on Log nothing reaches the agent. */
-export const agentSeesHint = ({ byRerail, log }) => [
-  ...(byRerail ? ["Saved as your copy. This one turns off."] : []),
+/** What saving a new message does: a pack rule's edit is a library copy, and on Log nothing reaches the agent. */
+export const agentSeesHint = ({ fromPack, log }) => [
+  ...(fromPack ? ["Saved as your copy. This one turns off."] : []),
   log ? LOG_NOTE : "Reaches open sessions once your agent saves it.",
 ].join(" ");
 

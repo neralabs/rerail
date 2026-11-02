@@ -22,7 +22,6 @@ describe("a hash", () => {
     ["#sessions?filter=in-progress", { view: "sessions", sessionFilter: "open" }],
     ["#sessions?filter=nonsense", { view: "sessions" }],
     ["#settings", { view: "settings" }],
-    ["#approvals", { view: "approvals" }],
     ["#pack/typescript", { view: "pack", pack: "typescript" }],
     ["#somewhere-else", { view: "overview" }],
   ])("%s names its view", (hash, route) => {
@@ -67,7 +66,6 @@ describe("a hash", () => {
     { view: "sessions", sessionFilter: "corr" },
     { view: "sessions", sessionFilter: "open" },
     { view: "settings" },
-    { view: "approvals" },
   ])("written back for %o, reads as the same route", route => {
     expect(parseRoute(hashOf(route))).toEqual(route);
   });

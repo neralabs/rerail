@@ -244,13 +244,6 @@ export function sessionPageUrl(origin: string, host: string, sessionId: string):
   return url.href;
 }
 
-/** The dashboard's Waiting for approval page, keeping the repository and checkout `dashboard` names. */
-export function approvalsPageUrl(dashboard: string): string {
-  const url = new URL(dashboard);
-  url.hash = "approvals";
-  return url.href;
-}
-
 /** The `customType` OMP and Pi record the hidden session-start note under. */
 export const SESSION_NOTE_MESSAGE_TYPE = "rerail.session-note";
 

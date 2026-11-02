@@ -203,7 +203,6 @@ export {
 } from "./engine/catalog/repository-registry.js";
 export { addAttachment, listRepositoryRules, removeAttachment, setRuleSetting, setUpRepository } from "./engine/catalog/rule-configuration.js";
 export { copyRerailRuleToLibrary, getLibraryRule, listLibraryRules, removeLibraryRule, upsertLibraryRule } from "./engine/catalog/rule-library.js";
-export { approveRule, pendingRules, RuleApprovalError, type PendingRule, type RuleApproval } from "./engine/catalog/rule-approval.js";
 export {
   CALLER_CWD_HEADER,
   folderContains,
@@ -218,7 +217,6 @@ export {
   type RepositoryKey,
   type RepositoryRecord,
   type RepositoryStartState,
-  type RuleApprovalStatus,
   type RuleAttachment,
   type RuleSetting,
 } from "./engine/catalog/repository-model.js";

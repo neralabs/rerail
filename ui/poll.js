@@ -2,15 +2,13 @@
  * Fetch orchestration: one conditional GET per resource every 5 s (`If-None-Match`; 304 means
  * nothing changed), backing off to 30 s while the daemon is unreachable, and paused while the tab is hidden.
  * Data lands in the store; the caller re-renders and reconciles in place. Every poll reads the repository
- * list, the daemon's health and the rules waiting for approval, and with a repository in scope its context; beyond
- * that only the needs the page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from
- * `views/index.js`). Long lists are paged with a cursor: a poll refreshes their first page and keeps the further
- * pages the person loaded.
+ * list and the daemon's health, and with a repository in scope its context; beyond that only the needs the
+ * page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from `views/index.js`). Long lists
+ * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
  */
 import { get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { historyRuleId } from "./history-model.js";
-import { awaitingReferences } from "./approval-model.js";
 import { failed } from "./format.js";
 
 const INTERVAL = 5_000;
@@ -158,14 +156,6 @@ async function loadContext() {
   return true;
 }
 
-/** Every rule waiting for a person's approval: machine-wide, so read on every page, for the count the frame shows. */
-async function loadApprovals() {
-  const body = await fetchFresh("/api/rule-approvals", "approvals");
-  if (body === undefined) return false;
-  data.approvals = body.rules;
-  return true;
-}
-
 /**
  * One row per rule id, in the renderers' shape: on (`enabled`, the switch) only where it is on in every folder it is
  * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode,
@@ -194,7 +184,7 @@ export function toStoredRules(entries) {
       kind: entry.kind,
       rule: { ...entry.rule, mode: entry.mode },
       enabled: entry.on,
-      origin: entry.source.kind === "library_rule" ? "user" : "rerail",
+      origin: entry.source.kind === "library_rule" ? "user" : "pack",
       source: entry.source,
       folders: [entry.folder],
       folderStates: [folderState(entry)],
@@ -206,9 +196,10 @@ export function toStoredRules(entries) {
       config: entry.config,
       configSource: entry.configSource,
       configError: entry.configError ?? null,
-      approval: entry.approval,
       revision: entry.revision,
       addedAt: entry.addedAt ?? null,
+      // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
+      approval: entry.approval ?? null,
       updatedAt: entry.updatedAt ?? null,
     });
   }
@@ -246,15 +237,16 @@ async function loadRules() {
   if (body === undefined) return false;
   data.rules = toStoredRules(body.rules);
   data.attachedPacks = attachedPacksOf(body.rules, body.unavailable);
-  data.awaiting = awaitingReferences(body.unavailable);
-  data.awaitingApproval = body.awaitingApproval;
   return true;
 }
 
+/** The installed packs, and the scoped checkout's own rules (`.rerail/rules`) as the pack `worktree`. */
 async function loadPacks() {
-  const body = await fetchFresh("/api/rule-packs", "packs");
+  const checkout = ui.scope?.checkout;
+  const body = await fetchFresh(checkout === undefined ? "/api/rule-packs" : `/api/rule-packs?${new URLSearchParams({ checkout })}`, "packs");
   if (body === undefined) return false;
   data.packs = body.packs;
+  data.packsSkipped = body.skipped;
   return true;
 }
 
@@ -548,7 +540,7 @@ function pumpTitles() {
  * What a page can ask a poll for, by name; each loads with the range's `since`. A view declares the names it shows
  * (`needs` in its module) and the poll loads each name once, whoever else asked for it.
  * - `rules`: the repository's rules (`data.rules`, `attachedPacks`).
- * - `packs`: every rule pack that comes with Rerail (`data.packs`).
+ * - `packs`: every rule pack installed on this machine, and the scoped checkout's own rules (`data.packs`).
  * - `activity`: each rule's activity in the range and since install (`data.activity`, `activityAll`, their sessions).
  * - `recentSessions`: the range's five newest sessions and how many started in it (`data.recentSessions`).
  * - `findings`: History's shown rule's violations in the range (`data.findings`, owner = rule id); nothing without one.
@@ -603,7 +595,7 @@ async function poll() {
   const since = sinceFor();
   const started = generation;
   try {
-    const shared = [loadRepositories(), loadHealth(), loadApprovals()];
+    const shared = [loadRepositories(), loadHealth()];
     const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
     if (started !== generation) return;
     if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
@@ -676,7 +668,7 @@ export function changeScope(scope) {
   ui.selectedSession = null;
   ui.sessRule = null;
   Object.assign(data, {
-    repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), awaiting: [], awaitingApproval: 0, activity: {}, activityAll: {},
+    repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
     sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
   });

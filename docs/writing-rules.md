@@ -12,10 +12,9 @@ The short version is to type `/rerail-create` in your coding agent (`$rerail-cre
 | `/rerail-create use our logger, not console.log` | The agent writes that rule |
 | `/rerail-create the no-sync rule keeps telling you to use fs/promises in our CLI` | The agent tunes that rule, or offers to switch it to Log |
 
-Every path ends the same way. The agent tests the draft, reads it back to you, and adds it only after you say yes. The rule
-then waits for your approval: the agent audits what it added, tells you what it found, and you decide. The agent follows the
-skill in [`skills/rerail-create/`](../skills/rerail-create/SKILL.md), which ships in the package. Its references are the
-detailed guide to everything on this page.
+Every path ends the same way. The agent tests the draft, reads it back to you, and adds it only after you say yes. The agent
+follows the skill in [`skills/rerail-create/`](../skills/rerail-create/SKILL.md), which ships in the package. Its references are
+the detailed guide to everything on this page.
 
 ## Which rules are worth having
 
@@ -88,9 +87,8 @@ A draft is the rule plus the cases it must catch and let through:
 
 ```sh
 rerail rules test draft.json            # validate, run the cases, count matches across the repo; writes nothing
-rerail rules add draft.json             # store it in your library and add it to this repo; it runs once you approve it
-rerail rules list                       # the rules that wait for your approval
-rerail rules approve <id>               # print the content that waits, then approve it
+rerail rules add draft.json             # store it in your library and add it, on, to this repo
+rerail rules approve <id>               # after reading it: it steers instead of running in Log
 rerail rules export --output rules.json # your rules, to read or edit one
 ```
 
@@ -107,46 +105,62 @@ out, without names. See [Reference](reference.md#scan-and-settings-controls) for
 [Rule quality](../skills/rerail-create/references/rule-quality.md) has the gates, the five kinds of harmful steering, and
 the fix ladder for a rule that misfires.
 
-## Approving a rule
-
-A rule runs only with content a person approved. Content is the whole rule except its `mode` and `revision`, so changing
-only those needs no approval.
-
-- **Nera's rules need none.** The rules of packs installed from the npm registry (by set-up, or `rerail packs add <id>`) run
-  as shipped.
-- **What you save in the dashboard is approved as you save it.**
-- **Everything else waits for your approval:**
-  - a new rule created by you that `/rerail-create`, `rerail rules add`, `rerail rules import` (without `--approve`) or a
-    coding agent stores, and every change to such a rule's content;
-  - the rules of a pack added from a folder or a tarball (`rerail packs add <folder>`), and every rule an update of such a
-    pack adds or changes.
-
-While a rule waits:
-
-- **A new rule runs nowhere.** Where it is added, the repository lists it as unavailable, awaiting approval.
-- **A changed rule keeps running the content you approved last.** The change runs once you approve it.
-- **A coding agent's edited copy of a By Rerail rule** is added where the original is, but the original stays on there. The
-  original is switched off only when you approve the copy.
-
-To approve a rule:
-
-- **In the dashboard**, which shows the rules that wait.
-- **With `rerail rules approve <id>`.** It prints the content that waits, and the approved content it replaces, then approves
-  it. It asks nothing itself. Rerail does not pre-approve it in Claude Code, Cursor or Codex, so they ask you before a coding
-  agent runs it. `rerail rules list` shows what waits.
-
-A coding agent cannot approve a rule through Rerail's tools: the MCP tool `rule_approvals_approve` refuses it. Before it asks
-you, `/rerail-create` audits the rule and gives a verdict. It flags text that tells the agent more than the rule, commands or
-URLs, hidden or encoded text, mentions of secrets, anything that weakens other rules or Rerail, and anything unrelated to
-the rule's purpose.
-
-An approval holds for the content you read: when the rule changed after you read it, the approval is refused and you read it
-again. Upgrading to a Rerail with approval approved every rule created by you as it stood, so nothing that ran before stops.
-
 ## Steer or Log
 
 - **Steer (`steer`)** tells the agent in the session. Use it for a rule you are sure of.
 - **Log (`log`)** keeps a record and tells no one. Use it for a rule you are trying out, or one the existing code breaks too
   often to steer on.
 
-A rule from `/rerail-create` is never `block`, and belongs to the repository it was made in.
+A rule from `/rerail-create` is never `block`, and belongs to the repository it was made in, unless you keep it to one worktree.
+
+## Approving a rule
+
+A rule you add with `rerail rules add`, or a coding agent writes, runs in Log until you approve what it says: a steer is text
+every coding agent in the repository acts on, so a person reads it first. `/rerail-create` asks after its read-back and runs
+`rerail rules approve <id>` on your yes; you can also approve on the rule's page in the dashboard. An edit waits again. The
+same holds for a worktree's own rules and for packs Rerail does not publish ([approval](rule-scoping.md#approval)).
+
+## A rule for one worktree only
+
+A rule can belong to one worktree instead of the whole repository: an experiment on a branch, a migration in progress, a
+convention you are trying out before the rest of the team. Put its rule document (the draft's `rule`, without the cases) in a
+JSON file in the worktree's `.rerail/rules/` folder:
+
+```text
+feature/                  a linked worktree of the repository
+└── .rerail/
+    └── rules/
+        ├── no-legacy-client.json
+        └── use-new-logger.json
+```
+
+Each file is one rule, on, in its own mode. Rerail runs them in that worktree only, for every folder in it; the repository's
+main checkout and its other worktrees never see them. An edit to a file applies at the agent's next edit, with nothing else
+to do. There is nothing to install or add, but the worktree must be started and its repository set up, as for any rule, and
+each rule runs in Log until you approve it (`rerail rules approve <id>` in the worktree), again after each edit.
+
+`/rerail-create` writes a rule there when you ask for this worktree only, or pick it under **Change something** in the
+read-back. To check a file you wrote yourself, `rerail rules test .rerail/rules/<name>.json` validates it and counts its
+matches across the repo, as it does a draft; it has no cases to run, so a draft with cases is still the way to prove a rule.
+
+To see what Rerail loaded, whether it runs, and why a file was left out (invalid, an id another rule already has, a rule the
+engine cannot run), run `rerail packs list` in the worktree:
+
+```text
+This worktree's own rules, in /src/acme-web-feature/.rerail/rules (pack worktree, here only): 2
+  Not running: this repo is not set up yet, so no rule runs here. `rerail start` sets it up.
+  local:no-legacy-client (code, steer)
+    waiting for approval, runs in Log until then: rerail rules approve local:no-legacy-client
+  local:use-new-logger (code, log)
+  left out: draft.json: clauses Too small: expected array to have >=1 items
+```
+
+The `Not running` line shows only while Rerail is off in the worktree or the repo is not set up.
+
+The dashboard, opened for the worktree (`rerail manage`), shows them as the pack **This worktree**. Turning the pack or one of
+its rules on or off there changes this worktree only. Its Overview names every file that was left out, with why, until the
+file is fixed or removed.
+
+**Keep the folder out of Git** unless you mean to share it: a committed `.rerail/rules/` runs in every checkout of that branch
+that has Rerail started, and its messages reach the coding agent there. Add `.rerail/rules/` to `.git/info/exclude` to keep it
+local. [A worktree's own rules](rule-packs.md#a-worktrees-own-rules) has every check Rerail makes.
