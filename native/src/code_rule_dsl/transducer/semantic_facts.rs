@@ -96,6 +96,8 @@ pub(crate) mod binds;
 pub(crate) mod resolves;
 pub(crate) mod scopes;
 #[cfg(test)]
+mod coverage;
+#[cfg(test)]
 mod gate;
 #[cfg(test)]
 mod harness;
