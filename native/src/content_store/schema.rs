@@ -528,6 +528,142 @@ CREATE TABLE IF NOT EXISTS vocabulary_pending (
 CREATE TRIGGER IF NOT EXISTS vocabulary_added AFTER INSERT ON term_freq BEGIN
     INSERT OR IGNORE INTO vocabulary_pending VALUES(NEW.lang, NEW.term);
 END;
+
+-- The cross-file families' per-content inputs (xinputs.rs, from code_rule_dsl::facts::xinputs): what
+-- Y1's reference graph and the dead-code symbol table read of a content, produced from its tape
+-- and dying with it. One set per tape (its producer and rows digest; `failure` when the producer
+-- could not read the content); one narrow table per relation, rows by ordinal. Texts are atoms.
+-- `variant` is the call summary's symbolic module: 0 module, 1 init, 2 unpackaged. Additive: older
+-- binaries never read these tables.
+CREATE TABLE IF NOT EXISTS xinput_sets (
+    tape_id INTEGER PRIMARY KEY REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
+    producer BLOB NOT NULL CHECK(length(producer) = 32),
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    failure TEXT
+) STRICT;
+CREATE TABLE IF NOT EXISTS xinput_cgn_defs (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    variant INTEGER NOT NULL, ord INTEGER NOT NULL,
+    name INTEGER NOT NULL, start_byte INTEGER NOT NULL, end_byte INTEGER NOT NULL, flags INTEGER NOT NULL,
+    PRIMARY KEY (tape_id, variant, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_cgn_edges (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    variant INTEGER NOT NULL, ord INTEGER NOT NULL,
+    def INTEGER NOT NULL, name INTEGER NOT NULL,
+    PRIMARY KEY (tape_id, variant, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_cgn_aliases (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    variant INTEGER NOT NULL, ord INTEGER NOT NULL,
+    key INTEGER NOT NULL, target INTEGER NOT NULL,
+    PRIMARY KEY (tape_id, variant, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_cgn_opaque (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    variant INTEGER NOT NULL, ord INTEGER NOT NULL,
+    name INTEGER NOT NULL,
+    PRIMARY KEY (tape_id, variant, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_cgn_modules (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    variant INTEGER NOT NULL, ord INTEGER NOT NULL,
+    name INTEGER NOT NULL,
+    PRIMARY KEY (tape_id, variant, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_cgn_open (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    variant INTEGER NOT NULL, ord INTEGER NOT NULL,
+    open INTEGER NOT NULL,
+    PRIMARY KEY (tape_id, variant, ord)
+) STRICT, WITHOUT ROWID;
+-- The `cgn_reference_alias` rows Y1 reads: those whose key holds `.<base-slot>.`.
+CREATE TABLE IF NOT EXISTS xinput_cgn_base_slots (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    variant INTEGER NOT NULL, ord INTEGER NOT NULL,
+    key INTEGER NOT NULL, target INTEGER NOT NULL,
+    PRIMARY KEY (tape_id, variant, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_functions (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    start_byte INTEGER NOT NULL, end_byte INTEGER NOT NULL, name INTEGER, class_name INTEGER,
+    return_annotation INTEGER, class_start INTEGER, body_start INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_classes (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    start_byte INTEGER NOT NULL, end_byte INTEGER NOT NULL, name INTEGER, body_start INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_decorators (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    name INTEGER, owner INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_parameters (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    start_byte INTEGER NOT NULL, end_byte INTEGER NOT NULL, annotation INTEGER, name INTEGER, owner INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_parameter_annotations (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    name INTEGER, parameter INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_return_annotations (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    name INTEGER, owner INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_imports (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    start_byte INTEGER NOT NULL, base INTEGER, items INTEGER, top INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_bases (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    start_byte INTEGER NOT NULL, name INTEGER, owner INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_all (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    start_byte INTEGER NOT NULL, array INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_all_names (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    name INTEGER, owner INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+-- `dc__module_names`' names of the content (the stage's filter applied; distinct).
+CREATE TABLE IF NOT EXISTS xinput_module_names (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    name INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_dynamic_imports (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    entry INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS xinput_execution_calls (
+    tape_id INTEGER NOT NULL REFERENCES xinput_sets(tape_id) ON DELETE CASCADE,
+    ord INTEGER NOT NULL,
+    name INTEGER, owner INTEGER,
+    PRIMARY KEY (tape_id, ord)
+) STRICT, WITHOUT ROWID;
 "#;
 
 impl ContentStore {
