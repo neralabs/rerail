@@ -390,7 +390,7 @@ These are not reopened:
   - ERROR/MISSING spans are kept as tree-sitter emits them;
   - several trees per file range (injections) are documents with an origin seam (main's embedded-program documents).
 - **Pure-SQL fallback and outer SQL:**
-  - the same plan lowers to SQLite over a tape table-valued function;
+  - the same plan lowers to SQLite over a tape table-valued function (`nera_tree` over the store's tapes; relations exact, `prefilter::fallback`);
   - the transducer appears in SQL as the `demand` vtab;
   - lower priority.
 - **Resources and tooling** (`spec-tooling.md`):

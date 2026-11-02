@@ -26,11 +26,12 @@ pub(crate) mod probes;
 #[path = "prefilter/lower/audit.rs"]
 mod audit;
 pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;
-// P's incremental BLOB reader and `nera_tree`, for the §17 pure-SQL fallback.
+// P's incremental BLOB reader and `nera_tree`, for the §17 pure-SQL fallback; `tapes` is the
+// store's tapes as `nera_tree` reads them.
 #[allow(dead_code)]
 mod reader;
 pub(in crate::code_rule_dsl) mod sets;
-#[allow(dead_code)]
+pub(crate) mod tapes;
 mod tree;
 mod values;
 
@@ -191,6 +192,37 @@ pub(in crate::code_rule_dsl) fn select_indexed_sql(
     }
     crate::code_rule_dsl::prof::count("select.rows", rows.iter().map(Vec::len).sum());
     Ok(rows)
+}
+
+/// The pure-SQL fallback (03 §17): the same plans lowered to SQL alone, relations read from the
+/// tape (`nera_tree`), over `tapes`. Per plan, its (index in `tapes`, preorder) rows and whether
+/// they are exactly its rule's roots; where not, they are a superset, as `select`'s.
+#[cfg_attr(not(test), allow(dead_code, reason = "the fallback's driver is list step 20 (`logic::sql`)"))]
+pub(in crate::code_rule_dsl) fn fallback(
+    store: &ContentStore,
+    lang: u32,
+    plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
+    tapes: &[TapeId],
+) -> StoreResult<Vec<(Vec<(u32, u32)>, bool)>> {
+    let files = tapes.iter().map(|tape| tape.row()).collect::<Vec<_>>();
+    let statistics = store.candidate_transaction(false, |db| {
+        crate::code_rule_dsl::stats::inputs::Statistics::read(db, plans.iter().map(|plan| (lang, *plan)))
+    })?;
+    let statement = lower::fallback(plans, lang, &files, &statistics);
+    let index = files.iter().enumerate().map(|(file, &row)| (row, file as u32)).collect::<std::collections::HashMap<_, _>>();
+    let mut rows = vec![Vec::new(); plans.len()];
+    let mut outside = None;
+    execute::candidates(store, &statement, |plan, tape, pre| match index.get(&tape) {
+        Some(&file) => rows[plan].push((file, pre as u32)),
+        None => outside = Some(tape),
+    })?;
+    if let Some(tape) = outside {
+        return Err(StoreError::Corrupt(format!("candidate of tape {tape} outside the chunk")));
+    }
+    Ok(rows.into_iter().zip(statement.exact).map(|(mut rows, exact)| {
+        rows.sort_unstable();
+        (rows, exact)
+    }).collect())
 }
 
 #[cfg(test)]

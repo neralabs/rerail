@@ -1483,6 +1483,11 @@ impl TapeImage {
         self.code.len() / 2
     }
 
+    /// Node `i`'s subtree size, itself included (the `size` column).
+    pub(super) fn subtree_size(&self, i: usize) -> u32 {
+        self.size_at(i)
+    }
+
     pub(super) fn estimated_bytes(&self) -> usize {
         self.code.capacity()
             + self.size.capacity()

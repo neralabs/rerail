@@ -6,7 +6,13 @@
 //! node properties (parents, ends, fields, spans) into SQL tables to evaluate relations, pattern
 //! parent hops and uncovered text exactly; here nothing is decoded (03 §7: transducers decode),
 //! so each of those becomes a sound superset — the requirement narrowed to the tapes where it can
-//! hold — and is marked inexact, so a negation never subtracts it. Tape-level filters composed
+//! hold — and is marked inexact, so a negation never subtracts it.
+//!
+//! The pure-SQL fallback (03 §17, `fallback`) lowers the same plans with relations exact: each
+//! relation reads the tape's structure through `nera_tree` and `nera_size` (`tapes.rs`), only at
+//! the scope's nodes, so nothing is decoded into tables (ast-index-spike Representation rule 3).
+//! Pattern parent hops and uncovered text stay supersets; `Statement::exact` names the plans
+//! whose rows are exactly their matches' roots. Tape-level filters composed
 //! into the candidate set were good enough for word containment in ast-index-spike (history index
 //! l.404, S192–S193), and each rule's sets stay scoped to its own candidate tapes (T2, S149).
 use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
@@ -43,6 +49,8 @@ pub(super) struct Admission {
 }
 pub(super) struct Statement {
     pub admissions: Vec<Admission>,
+    /// Per plan, whether its rows are exactly its rule's roots (the fallback's relations exact).
+    pub exact: Vec<bool>,
     pub graph: Vec<String>,
     pub language: u32,
     pub files: Vec<i64>,
@@ -117,6 +125,8 @@ struct Lower {
     utilities: HashMap<(usize, String), Set>,
     /// The tape tag (`language::tape_tag`): kind atoms are `lang * LANG_STRIDE + code`.
     lang: u32,
+    /// Relations read the tape (`nera_tree`) and are exact: the §17 fallback.
+    tree: bool,
     roots: HashMap<BTreeSet<u16>, Set>,
     limit: usize,
     indexed: BTreeSet<String>,
@@ -161,6 +171,7 @@ impl Lower {
             parameters: Vec::new(),
             utilities: HashMap::new(),
             lang,
+            tree: false,
             roots: HashMap::new(),
             limit: 256,
             indexed: BTreeSet::new(),
@@ -611,6 +622,7 @@ impl Lower {
                 self.utilities.insert(key, selected.clone());
                 Ok(selected)
             }
+            Condition::Relation { inner, direction, recursive } if self.tree => self.related_on_tape(scope, inner, *direction, *recursive),
             Condition::Relation { inner, .. } => self.related(scope, inner),
         }?;
         selected.exact &= plan.exact;
@@ -632,6 +644,36 @@ impl Lower {
         let all = self.all();
         let inner = self.plan(inner, all)?;
         self.within_tapes(scope, &[inner])
+    }
+
+    /// The fallback's relation: `scope`'s nodes related to a node of `inner` as the matcher relates
+    /// them (`matcher::anchors::relation_selection`), read from the tape at each scope node:
+    /// children and the parent from `nera_tree`, descendants and ancestors by interval
+    /// (`nera_size`), siblings as the parent's children. Exact when both sides are.
+    fn related_on_tape(&mut self, scope: Set, inner: &AnchorPlan, direction: crate::code_rule_dsl::matcher::Direction, recursive: bool) -> Result<Set, ()> {
+        use crate::code_rule_dsl::matcher::Direction;
+        if !anchored(inner) {
+            return self.related(scope, inner);
+        }
+        let all = self.all();
+        let inner = self.plan(inner, all)?;
+        let i = &inner.name;
+        let test = match (direction, recursive) {
+            (Direction::Has, false) => format!("SELECT 1 FROM nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE t.fid=s.fid AND t.node=s.pre AND t.axis=0"),
+            (Direction::Has, true) => format!("SELECT 1 FROM {i} i WHERE i.fid=s.fid AND i.pre>s.pre AND i.pre<s.pre+nera_size(s.fid,s.pre)"),
+            (Direction::Inside, false) => format!("SELECT 1 FROM nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE t.fid=s.fid AND t.node=s.pre AND t.axis=2"),
+            (Direction::Inside, true) => format!("SELECT 1 FROM nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE t.fid=s.fid AND t.node=s.pre AND t.axis=1"),
+            // The next sibling starts where the node's subtree ends, inside the parent's.
+            (Direction::Precedes, false) => format!("SELECT 1 FROM nera_tree p JOIN {i} i ON i.fid=s.fid AND i.pre=s.pre+nera_size(s.fid,s.pre) WHERE p.fid=s.fid AND p.node=s.pre AND p.axis=2 AND i.pre<p.pre+p.size"),
+            (Direction::Precedes, true) => format!("SELECT 1 FROM nera_tree p, nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE p.fid=s.fid AND p.node=s.pre AND p.axis=2 AND t.fid=s.fid AND t.node=p.pre AND t.axis=0 AND t.pre>s.pre"),
+            // The previous sibling's subtree ends where the node starts.
+            (Direction::Follows, false) => format!("SELECT 1 FROM nera_tree p, nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE p.fid=s.fid AND p.node=s.pre AND p.axis=2 AND t.fid=s.fid AND t.node=p.pre AND t.axis=0 AND t.pre+t.size=s.pre"),
+            (Direction::Follows, true) => format!("SELECT 1 FROM nera_tree p, nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE p.fid=s.fid AND p.node=s.pre AND p.axis=2 AND t.fid=s.fid AND t.node=p.pre AND t.axis=0 AND t.pre<s.pre"),
+        };
+        let exact = scope.exact && inner.exact;
+        let body = format!("SELECT s.fid,s.pre FROM {} s WHERE s.fid IN (SELECT fid FROM {i}) AND EXISTS({test})", scope.name);
+        let selected = self.relation(body, exact)?;
+        Ok(self.narrowed(selected, &scope))
     }
 
     /// `scope`'s nodes in tapes where every set in `sets` has a node: a superset.
@@ -700,7 +742,12 @@ impl Lower {
 /// The candidate sets of `plans`, over the requested tapes of language `lang` (a tape tag) that
 /// have prefilter rows: `execute::request` fills `request_file`.
 pub(super) fn batch(plans: &[&AnchorPlan], lang: u32, files: &[i64], statistics: &Statistics) -> Statement {
-    batch_scope(plans, lang, files, statistics)
+    batch_scope(plans, lang, files, statistics, false)
+}
+
+/// `batch` for the pure-SQL fallback (03 §17): relations read the tape and are exact.
+pub(super) fn fallback(plans: &[&AnchorPlan], lang: u32, files: &[i64], statistics: &Statistics) -> Statement {
+    batch_scope(plans, lang, files, statistics, true)
 }
 
 /// The vocabulary's stages after the regex predicates are registered (`vocabulary_predicate`,
@@ -715,8 +762,9 @@ pub(super) const VOCABULARY: [(&str, &str); 4] = [
     ("vocabulary_release", "DELETE FROM vocabulary_pending"),
 ];
 
-fn scope(lang: u32, statistics: &Statistics) -> Lower {
+fn scope(lang: u32, statistics: &Statistics, tree: bool) -> Lower {
     let mut lower = Lower::new(lang);
+    lower.tree = tree;
     lower.statistics = statistics.clone();
     let lang_parameter = lower.parameter(i64::from(lang));
     lower.ctes.push(format!(
@@ -742,7 +790,8 @@ pub(super) fn anchored(plan: &AnchorPlan) -> bool {
             | Condition::Relation { .. } => false,
         }
 }
-fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Statistics) -> Statement {
+fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Statistics, tree: bool) -> Statement {
+    let mut exact = Vec::with_capacity(plans.len());
     use super::graph::program::Program;
     let mut program = Program::default();
     let mut roots: Vec<Root> = Vec::new();
@@ -752,7 +801,7 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Stat
     for (qid, plan) in plans.iter().enumerate() {
         // Admission belongs to the individual plan. Another consumer's cached
         // producers cannot expand or shrink this plan's existing 256-node allowance.
-        let mut lower = scope(lang, statistics);
+        let mut lower = scope(lang, statistics, tree);
         let checkpoint = lower.ctes.len();
         lower.limit = checkpoint + 256;
         let attempted = lower.plan(plan, lower.all());
@@ -761,12 +810,13 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Stat
             generated: lower.ctes.len() - checkpoint,
             broadened: attempted.is_err(),
         });
+        exact.push(attempted.as_ref().is_ok_and(|selected| selected.exact));
         let selected = match attempted {
             Ok(selected) => selected,
             Err(()) => {
                 // Discard the entire failed fragment, including predicates, parameters
                 // and reuse state. Earlier fragments already belong to the shared program.
-                lower = scope(lang, statistics);
+                lower = scope(lang, statistics, tree);
                 lower.limit = lower.ctes.len() + 256;
                 match &plan.root_kinds {
                     Some(kinds) => lower.kinds(kinds).unwrap_or_else(|_| lower.all()),
@@ -886,6 +936,7 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Stat
         .collect();
     let mut statement = prepare(layout.ctes, queries, layout.parameters, indexed);
     statement.admissions = admissions;
+    statement.exact = exact;
     if !values.is_empty() {
         let stages = [
             (
@@ -1021,6 +1072,7 @@ fn prepare(
     };
     Statement {
         admissions: Vec::new(),
+        exact: Vec::new(),
         graph,
         language: 0,
         files: Vec::new(),

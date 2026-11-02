@@ -314,6 +314,63 @@ fn candidates_contain_every_match_and_kind_and_term_postings_are_exact() {
     assert!(candidates.is_empty(), "no foo call in the class tape");
 }
 
+/// The pure-SQL fallback (03 §17): relations read the tape through `nera_tree`, so a relation over
+/// exact sides is exact. Every rule's rows contain its matches, a plan reported exact has exactly
+/// its matches, and each relation direction, with and without `stopBy: end`, is exact.
+#[test]
+fn the_sql_fallback_relates_on_the_tape_exactly() {
+    let store = store();
+    let lang = GrammarDialect::TypeScript;
+    let tapes: Vec<_> = [
+        "const a = foo(1); const b = bar(2); const c = foo(3);",
+        "function f(x) { if (x) { return foo(x); } return 0; }\nlet s = 'foo';",
+        "class K { m() { return this.n; } }",
+        "const broken = foo(;",
+        "g(h(1), h(2)); if (a) { if (b) { return; } } k(); k(); k();",
+    ]
+    .iter()
+    .map(|source| put(&store, source, lang))
+    .collect();
+    let rules = [
+        json!({"kind": "variable_declarator", "has": {"kind": "call_expression"}}),
+        json!({"kind": "lexical_declaration", "has": {"kind": "call_expression", "stopBy": "end"}}),
+        json!({"kind": "call_expression", "inside": {"kind": "variable_declarator"}}),
+        json!({"kind": "return_statement", "inside": {"kind": "if_statement", "stopBy": "end"}}),
+        json!({"kind": "expression_statement", "precedes": {"kind": "expression_statement"}}),
+        json!({"kind": "expression_statement", "precedes": {"kind": "expression_statement", "stopBy": "end"}}),
+        json!({"kind": "expression_statement", "follows": {"kind": "expression_statement"}}),
+        json!({"kind": "expression_statement", "follows": {"kind": "expression_statement", "stopBy": "end"}}),
+        json!({"kind": "call_expression", "not": {"inside": {"kind": "call_expression", "stopBy": "end"}}}),
+        json!({"kind": "if_statement", "has": {"kind": "if_statement", "stopBy": "end"}}),
+        json!({"kind": "call_expression", "has": {"kind": "arguments", "has": {"kind": "number"}}}),
+        json!({"pattern": "foo($A)"}),
+    ];
+    let matchers: Vec<_> = rules.iter().map(|rule| matcher(rule, lang)).collect();
+    let plans: Vec<_> = matchers.iter().map(AnchorPlan::compile).collect();
+    let refs: Vec<_> = plans.iter().collect();
+    let ids: Vec<_> = tapes.iter().map(|(tape, _)| *tape).collect();
+    let tag = u32::from(language::tape_tag(lang).unwrap());
+    let selected = super::super::fallback(&store, tag, &refs, &ids).unwrap();
+    for (number, ((rows, exact), (rule, matcher))) in selected.iter().zip(rules.iter().zip(&matchers)).enumerate() {
+        for (file, (_, doc)) in tapes.iter().enumerate() {
+            let candidates = rows.iter().filter(|(f, _)| *f as usize == file).map(|(_, pre)| *pre).collect::<Vec<_>>();
+            let matched = matches(doc, matcher);
+            for pre in &matched {
+                assert!(candidates.binary_search(pre).is_ok(), "{rule} misses match {pre} of tape {file}");
+            }
+            if *exact {
+                assert_eq!(candidates, matched, "{rule} reported exact on tape {file}");
+            }
+        }
+        // Every rule but the pattern (its parent hops stay a superset) is exact.
+        assert_eq!(*exact, number != rules.len() - 1, "{rule}");
+    }
+    // Each relation finds something in the sample, so the equalities above are not vacuous.
+    for ((rows, _), rule) in selected.iter().zip(&rules) {
+        assert!(!rows.is_empty(), "{rule} selects nothing");
+    }
+}
+
 #[test]
 fn regex_vocabulary_fills_once_follows_new_terms_and_dies_with_its_terms() {
     let store = store();
