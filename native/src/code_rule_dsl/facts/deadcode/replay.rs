@@ -422,6 +422,9 @@ impl Inputs for Oracle {
     fn symbol_rows(&self, _: u32) -> Option<Vec<(Tab, Box<[Val]>)>> {
         None
     }
+    fn members(&self, _: u32, _: Family) -> Vec<(String, String)> {
+        unreachable!("the oracle tree takes no edit")
+    }
 }
 
 #[test]

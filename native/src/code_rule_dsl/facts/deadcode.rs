@@ -116,6 +116,9 @@ pub(crate) trait Inputs {
     fn symbols(&mut self, w: u32, edits: &[&PathEdit]) -> (Vec<Change>, sym::Work);
     /// Every symbol-table row of `w` from scratch, for the digest check (None: not kept).
     fn symbol_rows(&self, w: u32) -> Option<Vec<(Tab, Box<[Val]>)>>;
+    /// The membership (path, content) `f`'s state of `w` holds (`Xref`: Y1's, `Symbols`: the
+    /// table's), from which a step's delta is rebuilt when the push's is not at hand.
+    fn members(&self, w: u32, f: Family) -> Vec<(String, String)>;
 }
 
 impl Inputs for World {
@@ -138,9 +141,20 @@ impl Inputs for World {
     fn symbol_rows(&self, w: u32) -> Option<Vec<(Tab, Box<[Val]>)>> {
         Some(self.wts[&w].top.sym.all_rows(&self.sh.sym))
     }
+    fn members(&self, w: u32, f: Family) -> Vec<(String, String)> {
+        let wt = &self.wts[&w];
+        match f {
+            Family::Xref => {
+                let it = &self.sh.y1.it;
+                wt.top.y1.members(&below(&self.layers, wt.layer)).into_iter().map(|(p, r)| (it.str(p).to_owned(), it.str(r.content).to_owned())).collect()
+            }
+            _ => wt.top.members.iter().map(|(p, c)| (string(*p), string(*c))).collect(),
+        }
+    }
 }
 
-/// What a step hands to the next family's run.
+/// What a step hands to the next family's run. The path edits are a cache: a family uses them
+/// only when they turn the membership its state holds into the one bound now (`delta`).
 #[derive(Default)]
 struct Pending {
     xref: Vec<PathEdit>,
@@ -158,6 +172,9 @@ struct Wt {
     reach: LWt,
     findings: FxHashMap<u32, Vec<Finding>>,
     tree: SetDigest,
+    /// The membership digests Y1's and the symbol table's states hold (each `tree` after a run).
+    xref_tree: SetDigest,
+    sym_tree: SetDigest,
     graph: SetDigest,
     reached: SetDigest,
     found: SetDigest,
@@ -187,6 +204,8 @@ pub(crate) struct Step {
     pub digest_ms: f64,
     /// Runs per family (xref, symbols, graph, reached, findings).
     pub runs: [u32; 5],
+    /// Xref or symbols runs whose delta was rebuilt from the store's bindings (no push's edits).
+    pub rebuilt: u32,
 }
 
 /// Dead code over a set of worktrees, behind `propagate`.
@@ -327,7 +346,7 @@ impl<I: Inputs> DeadCode<I> {
             bindings.push(Binding { name: path_name(&scope, &p), digest: content_digest(Some(&c)) });
         }
         bindings.push(Binding { name: tree_name(&scope, ""), digest: tree.bytes() });
-        self.wts.insert(w, Wt { scope, reach, findings, tree, graph: g, reached: r, found, pending: Pending::default() });
+        self.wts.insert(w, Wt { scope, reach, findings, tree, xref_tree: tree, sym_tree: tree, graph: g, reached: r, found, pending: Pending::default() });
         let records: Vec<DerivationRecord> = FAMILIES.into_iter().map(|f| self.record(w, f, 0)).collect();
         graph.begin_push()?;
         graph.bind_names(&bindings)?;
@@ -342,9 +361,23 @@ impl<I: Inputs> DeadCode<I> {
         if edits.is_empty() {
             return Ok(Work::default());
         }
+        graph.begin_push()?;
+        let changed = self.observe(graph, w, &edits)?;
+        let wt = self.wts.get_mut(&w).expect("observed");
+        wt.pending.xref.extend(edits.iter().cloned());
+        wt.pending.symbols.extend(edits);
+        let work = propagate(graph, changed, max_waves, |frontier| self.recompute(graph, frontier))?;
+        graph.end_push()?;
+        Ok(work)
+    }
+
+    /// The observer's half of a push: `edits` (which change content) bound as `w`'s path names
+    /// and membership digest; the names whose digest changed. The producers are not told: a push
+    /// hands them the edits as a cache, and a recovery finds the delta from these bindings.
+    pub(crate) fn observe(&mut self, graph: &(impl Graph + ?Sized), w: u32, edits: &[PathEdit]) -> StoreResult<Vec<String>> {
         let wt = self.wts.get_mut(&w).ok_or_else(|| StoreError::Invalid(format!("worktree {w} unknown")))?;
         let mut bindings = Vec::with_capacity(edits.len() + 1);
-        for (p, o, n) in &edits {
+        for (p, o, n) in edits {
             if let Some(o) = o {
                 digest::member_bytes(p, o, &mut self.buf);
                 wt.tree.remove(&self.buf);
@@ -356,17 +389,64 @@ impl<I: Inputs> DeadCode<I> {
             bindings.push(Binding { name: path_name(&wt.scope, p), digest: content_digest(n.as_deref()) });
         }
         bindings.push(Binding { name: tree_name(&wt.scope, ""), digest: wt.tree.bytes() });
-        wt.pending.xref.extend(edits.iter().cloned());
-        wt.pending.symbols.extend(edits);
-        graph.begin_push()?;
-        let changed = graph.bind_names(&bindings)?;
-        let work = propagate(graph, changed, max_waves, |frontier| self.recompute(frontier))?;
-        graph.end_push()?;
-        Ok(work)
+        graph.bind_names(&bindings)
+    }
+
+    /// The edits that turn the membership family `f`'s state of `w` holds (digest `applied`) into
+    /// the one bound now (O39): none when they agree; the push's edits when they turn the one into
+    /// the other; else the difference between `f`'s membership and the path names bound under
+    /// the scope (read from SQLite: after a crash, before any push). With the new digest.
+    fn delta(&mut self, graph: &(impl Graph + ?Sized), w: u32, f: Family, cached: Vec<PathEdit>) -> StoreResult<(Vec<PathEdit>, SetDigest)> {
+        let wt = &self.wts[&w];
+        let applied = if f == Family::Xref { wt.xref_tree } else { wt.sym_tree };
+        let bound = graph.binding(&tree_name(&wt.scope, ""))?.unwrap_or(ABSENT);
+        if applied.bytes() == bound {
+            return Ok((Vec::new(), applied));
+        }
+        let mut d = applied;
+        for (p, o, n) in &cached {
+            if let Some(o) = o {
+                digest::member_bytes(p, o, &mut self.buf);
+                d.remove(&self.buf);
+            }
+            if let Some(n) = n {
+                digest::member_bytes(p, n, &mut self.buf);
+                d.add(&self.buf);
+            }
+        }
+        if d.bytes() == bound {
+            return Ok((cached, d));
+        }
+        self.step.rebuilt += 1;
+        let prefix = path_name(&wt.scope, "");
+        let mut stored: BTreeMap<String, String> = BTreeMap::new();
+        for (name, digest) in graph.store().bindings_with_prefix(&prefix)? {
+            if digest != ABSENT {
+                stored.insert(name[prefix.len()..].to_owned(), digest.iter().map(|b| format!("{b:02x}")).collect());
+            }
+        }
+        let held: BTreeMap<String, String> = self.inputs.members(w, f).into_iter().collect();
+        let mut edits = Vec::new();
+        for (p, c) in &stored {
+            if held.get(p) != Some(c) {
+                edits.push((p.clone(), held.get(p).cloned(), Some(c.clone())));
+            }
+        }
+        for (p, c) in &held {
+            if !stored.contains_key(p) {
+                edits.push((p.clone(), Some(c.clone()), None));
+            }
+        }
+        let mut d = SetDigest::default();
+        for (p, c) in &stored {
+            digest::member_bytes(p, c, &mut self.buf);
+            d.add(&self.buf);
+        }
+        Ok((edits, d))
     }
 
     /// One wave's frontier, each derivation re-run by its family, readers after what they read.
-    pub(crate) fn recompute(&mut self, frontier: &[Derivation]) -> StoreResult<Vec<DerivationRecord>> {
+    pub(crate) fn recompute(&mut self, graph: &(impl Graph + ?Sized), frontier: &[Derivation]) -> StoreResult<Vec<DerivationRecord>> {
         let mut jobs = Vec::with_capacity(frontier.len());
         for d in frontier {
             let (scope, f) = Family::of(&d.output).ok_or_else(|| StoreError::Invalid(format!("not a dead-code derivation: {}", d.output)))?;
@@ -380,31 +460,39 @@ impl<I: Inputs> DeadCode<I> {
         let mut records = Vec::with_capacity(jobs.len());
         for (w, f) in jobs {
             let t = Instant::now();
-            self.run(w, f)?;
+            self.run(graph, w, f)?;
             records.push(self.record(w, f, t.elapsed().as_micros() as i64));
         }
         Ok(records)
     }
 
-    fn run(&mut self, w: u32, f: Family) -> StoreResult<()> {
+    fn run(&mut self, graph: &(impl Graph + ?Sized), w: u32, f: Family) -> StoreResult<()> {
+        let cached = match f {
+            Family::Xref => Some(std::mem::take(&mut self.wts.get_mut(&w).unwrap().pending.xref)),
+            Family::Symbols => Some(std::mem::take(&mut self.wts.get_mut(&w).unwrap().pending.symbols)),
+            _ => None,
+        };
+        let delta = cached.map(|c| self.delta(graph, w, f, c)).transpose()?;
         let DeadCode { inputs, base, mode, wts, tmp, buf, step, .. } = self;
         let wt = wts.get_mut(&w).unwrap();
         step.runs[f as usize] += 1;
         match f {
             Family::Xref => {
-                let edits = std::mem::take(&mut wt.pending.xref);
+                let (edits, tree) = delta.unwrap();
                 let refs: Vec<&PathEdit> = edits.iter().collect();
                 let x = inputs.xref(w, &refs);
+                wt.xref_tree = tree;
                 step.y1_ms += x.y1.ms;
                 step.refs_ms += x.refs_ms;
                 step.refs_changes += x.refs.len();
                 wt.pending.refs.extend(x.refs);
             }
             Family::Symbols => {
-                let edits = std::mem::take(&mut wt.pending.symbols);
+                let (edits, tree) = delta.unwrap();
                 let refs: Vec<&PathEdit> = edits.iter().collect();
                 let t = Instant::now();
                 let (sc, _) = inputs.symbols(w, &refs);
+                wt.sym_tree = tree;
                 step.sym_ms += t.elapsed().as_secs_f64() * 1e3;
                 step.sym_changes += sc.len();
                 wt.pending.sym.extend(sc);
@@ -488,10 +576,12 @@ impl<I: Inputs> DeadCode<I> {
     fn record(&self, w: u32, f: Family, cost: i64) -> DerivationRecord {
         let wt = &self.wts[&w];
         let input = |name: String, digest: [u8; 32]| DerivationInput { name: Some(name), digest };
-        let tree = || input(tree_name(&wt.scope, ""), wt.tree.bytes());
+        // What Y1 and the table read is the membership their states hold.
+        let tree = |d: SetDigest| input(tree_name(&wt.scope, ""), d.bytes());
         let of = |g: Family| input(g.name(&wt.scope), self.digest(w, g));
         let inputs = match f {
-            Family::Xref | Family::Symbols => vec![tree()],
+            Family::Xref => vec![tree(wt.xref_tree)],
+            Family::Symbols => vec![tree(wt.sym_tree)],
             Family::Graph => vec![of(Family::Xref), of(Family::Symbols)],
             Family::Reached => vec![of(Family::Graph)],
             Family::Findings => vec![of(Family::Xref), of(Family::Symbols), of(Family::Reached)],
@@ -511,6 +601,9 @@ impl<I: Inputs> DeadCode<I> {
         let tree = tree_name(&wt.scope, "");
         if graph.binding(&tree)? != Some(wt.tree.bytes()) {
             out.push(format!("{tree}: bound digest differs"));
+        }
+        if wt.xref_tree != wt.tree || wt.sym_tree != wt.tree {
+            out.push(format!("{tree}: Y1's or the table's membership is not the bound one"));
         }
         for f in FAMILIES {
             let name = f.name(&wt.scope);
