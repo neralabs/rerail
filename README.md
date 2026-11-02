@@ -124,7 +124,7 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 | `/rerail-start`, `/rerail-stop` | Start or stop Rerail in this checkout and the worktrees inside it; rules and history are kept |
 | `/rerail-create` | Create a rule in your own words |
 | `/rerail-show-me` | See Rerail catch a broken rule in this repository and steer the fix, then clean up |
-| `/rerail-support-bundle` | Write a file of Rerail's diagnostics to attach to an issue, and check it with you first |
+| `/rerail-bug-report` | Work out what went wrong: fix your own rule, or report a Rerail bug in an issue |
 | `/rerail-manage` | Open the dashboard |
 | `/rerail-update` | Update Rerail to the newest version |
 | `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
@@ -199,7 +199,7 @@ npm run test:all
 
 ## Feedback
 
-Found a false positive, a missed violation or a confusing steer? [Open an issue](https://github.com/neralabs/rerail/issues/new/choose) with the rule id, and attach a support bundle: a dashboard link only opens on your computer, so run `/rerail-support-bundle` for a file of Rerail's diagnostics, with no prompts, replies or code in it ([what it holds](docs/troubleshooting.md#reporting-a-problem)). To report a vulnerability, follow [SECURITY.md](SECURITY.md) instead.
+Found a bug, a false positive, a missed violation or a confusing steer? Run `/rerail-bug-report`. It works out whether it is Rerail, a rule that ships with Rerail or your own rule, helps you fix your own, and offers to report the others in [an issue](https://github.com/neralabs/rerail/issues/new/choose) with a support bundle: a file of Rerail's diagnostics, with no prompts, replies or code in it ([what it holds](docs/troubleshooting.md#reporting-a-problem)), since a dashboard link only opens on your computer. To report a vulnerability, follow [SECURITY.md](SECURITY.md) instead.
 
 ## License
 
