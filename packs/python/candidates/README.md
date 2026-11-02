@@ -7,14 +7,14 @@ gated and never shipped. This file is not published; the pack's [README](../READ
 
 What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
 
-The 77 Ruff candidates come from the stable-rules port (#191). 43 report something Ruff does not on its fixtures or
-Rerail's probes, 14 miss something Ruff reports, and one (SIM116) reports on a real-code sample labelled clean, each
+Of the 77 Ruff candidates, 30 come from the stable-rules port (#191) and the rest from the first port. 43 report
+something Ruff does not on its fixtures or Rerail's probes, 14 miss something Ruff reports, and one (SIM116) reports on a real-code sample labelled clean, each
 outside any declared divergence; 11 (B911, B912, FA100, FA102, RUF053, UP017, UP040, UP042, UP044, UP046 and UP047)
 have no fixture finding to show they catch anything; four (B024, B027, E741 and INP001) do not apply to a file type
 `gates.yaml` says Ruff lints; and four (RET503, SIM110, SIM114 and SIM911) fail the compact check. Three rules #326
-promoted went back because they disagree with Ruff on this port's larger fixture set; their sections say where. The 26
-Bandit candidates each disagree with Bandit on its tests. A pull request's Conformance comment names the check each
-candidate stops at.
+promoted went back because they disagree with Ruff on this port's larger fixture set; their sections say where. Of the 26
+Bandit candidates, 22 disagree with Bandit on its tests and four miss a labelled line on its real-code samples. A pull
+request's Conformance comment names the check each candidate stops at.
 
 ### `bandit-b104-hardcoded-bind-all-interfaces`
 
