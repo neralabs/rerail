@@ -7,7 +7,7 @@
   and audits
 - [distribution-model.md](distribution-model.md): how the package is distributed and updated
 - [writing-rules.md](writing-rules.md): which rules are worth having, and suggesting, writing, testing and tuning one
-  with `/rerail-create` and `rerail rules evidence|test|add`
+  with `/rerail-create` and `rerail rules evidence|test|add`, and keeping a rule to one worktree with `.rerail/rules/`
 - [rule-scoping.md](rule-scoping.md): global, project and repository rules
 - [tool-call-rules.md](tool-call-rules.md): writing rules over the commands an agent runs
 - [path-and-text-rules.md](path-and-text-rules.md): writing code rules over files' text and paths, which files they
@@ -20,7 +20,7 @@
   surfaces
 
 ## Rules, packs and languages
-- [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, and the shipped packs
+- [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, the shipped packs, and a worktree's own rules
 - [pack-format.md](pack-format.md): the pack layout, its pack data and provenance records, and its validation contract
 - [upstream.md](upstream.md): upstream snapshots and pack data: samples and their licences, new snapshots, the
   publish workflow, upstream releases and bumps, and CI

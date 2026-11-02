@@ -67,12 +67,13 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 - **Runtime steering.** Violations go back into the live session while the change is still being made, not later in review.
 - **Rules belong to the repository.** Every clone and worktree of a remote shares its rules. Turn a rule or pack on, off or to log-only per repository, folder or checkout, and choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence it; changes apply on the next tool call. See [Rule scoping](docs/rule-scoping.md).
 - **Rules in your own words.** `/rerail-create` has your coding agent draft a rule, test it with `rerail rules test`, and add it with `rerail rules add` after you confirm. `rerail rules evidence` shows what recent sessions suggest a rule for.
+- **You approve what steers.** A rule Rerail did not publish (one you or a coding agent wrote, a worktree's own, a third party's pack) runs in Log until you approve what it says, with `rerail rules approve` or in the dashboard, and again after each edit or new version. See [Approval](docs/rule-scoping.md#approval).
 - **Local and multi-agent.** One daemon serves Claude Code, Codex, Cursor, OMP and Pi, with a dashboard on your own machine.
 - **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it.
 
 ## Rule packs
 
-Core ships no rules. A rule pack is a set of rules published as its own npm package, `@neralabs/rerail-pack-<id>`. Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend`.
+Core ships no rules. A rule pack is a set of rules published as its own npm package: Rerail's are `@neralabs/rerail-pack-<id>`, and anyone can publish one as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, which Rerail has not reviewed ([rule packs](docs/rule-packs.md#third-parties-packs)). Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend`.
 
 To add a pack after set-up:
 
@@ -101,6 +102,8 @@ rerail manage                 # Rule packs page: add it to this repository
 
 A ported rule ships only once it passes the conformance check: it is scored against the original tool's own findings on the tool's tests, at the exact release the pack pins, and on real-code samples. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md), the [pack format](docs/pack-format.md) and [the conformance check](conformance/README.md#the-gate).
 
+A worktree can also carry rules of its own: each rule document in its `.rerail/rules/` folder runs in that worktree only, with nothing to install or add, and `rerail packs list` there shows what loaded ([a rule for one worktree only](docs/writing-rules.md#a-rule-for-one-worktree-only)). `/rerail-create` writes a rule there when you ask for this worktree only.
+
 Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
 
 ## Supported coding agents
@@ -124,7 +127,7 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 | `/rerail-start`, `/rerail-stop` | Start or stop Rerail in this checkout and the worktrees inside it; rules and history are kept |
 | `/rerail-create` | Create a rule in your own words |
 | `/rerail-show-me` | See Rerail catch a broken rule in this repository and steer the fix, then clean up |
-| `/rerail-support-bundle` | Write a file of Rerail's diagnostics to attach to an issue, and check it with you first |
+| `/rerail-bug-report` | Work out what went wrong: fix your own rule, or report a Rerail bug in an issue |
 | `/rerail-manage` | Open the dashboard |
 | `/rerail-update` | Update Rerail to the newest version |
 | `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
@@ -199,7 +202,7 @@ npm run test:all
 
 ## Feedback
 
-Found a false positive, a missed violation or a confusing steer? [Open an issue](https://github.com/neralabs/rerail/issues/new/choose) with the rule id, and attach a support bundle: a dashboard link only opens on your computer, so run `/rerail-support-bundle` for a file of Rerail's diagnostics, with no prompts, replies or code in it ([what it holds](docs/troubleshooting.md#reporting-a-problem)). To report a vulnerability, follow [SECURITY.md](SECURITY.md) instead.
+Found a bug, a false positive, a missed violation or a confusing steer? Run `/rerail-bug-report`. It works out whether it is Rerail, a rule that ships with Rerail or your own rule, helps you fix your own, and offers to report the others in [an issue](https://github.com/neralabs/rerail/issues/new/choose) with a support bundle: a file of Rerail's diagnostics, with no prompts, replies or code in it ([what it holds](docs/troubleshooting.md#reporting-a-problem)), since a dashboard link only opens on your computer. To report a vulnerability, follow [SECURITY.md](SECURITY.md) instead.
 
 ## License
 

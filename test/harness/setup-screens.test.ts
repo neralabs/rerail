@@ -56,9 +56,9 @@ const PACKS: RecommendedPacksInput = {
     { id: "acme-api", name: "acme-api", ruleCount: 92, reason: "matches the acme_api package", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", installed: "1.2.0" },
   ],
   available: [
-    { id: "typescript", version: "0.1.1", name: "TypeScript", reason: "matches the typescript dependency in package.json and *.ts files" },
-    { id: "acme-api", version: "1.2.0", name: "acme-api", reason: "matches the acme_api package" },
-    { id: "python", version: "0.1.2", name: "Python" },
+    { id: "typescript", packageName: "@neralabs/rerail-pack-typescript", version: "0.1.1", name: "TypeScript", reason: "matches the typescript dependency in package.json and *.ts files" },
+    { id: "acme-api", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", name: "acme-api", reason: "matches the acme_api package" },
+    { id: "python", packageName: "@neralabs/rerail-pack-python", version: "0.1.2", name: "Python" },
   ],
   agentsFound: [CLAUDE, CURSOR],
 };
@@ -294,6 +294,15 @@ describe("T4 / C4 recommended rule packs", () => {
   it("warns when a yes replaces a version every repo on this computer runs", () => {
     const text = stripAnsi(renderRecommendedPacks({ ...PACKS, packs: [{ ...PACKS.packs[1]!, installed: "1.1.0" }] }, "terminal"));
     expect(text).toContain("  △ @neralabs/rerail-pack-acme-api@1.2.0 replaces 1.1.0, which every repo on this computer uses.");
+  });
+
+  it("names a third party's pack with its publisher, and says before a yes that Rerail has not reviewed it", () => {
+    const acme = { ...PACKS.packs[0]!, id: "@acme/rerail-pack-sql", name: "Acme SQL", packageName: "@acme/rerail-pack-sql", thirdParty: "@acme" };
+    const text = stripAnsi(renderRecommendedPacks({ ...PACKS, packs: [acme, PACKS.packs[1]!] }, "terminal"));
+
+    expect(text).toMatch(/^ {2}Acme SQL \(by @acme\)\s+\d+/mu);
+    expect(text).toContain("  △ @acme/rerail-pack-sql is by @acme, not Rerail. Rerail has not reviewed it: its rules run in Log until you approve them (rerail rules approve @acme/rerail-pack-sql), then their steer text reaches the coding agent.");
+    expect(text.match(/not Rerail/gu)).toHaveLength(1);
   });
 
   it("aligns the table columns for long rule pack names", () => {
