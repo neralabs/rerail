@@ -636,3 +636,61 @@ fn the_napi_slice_audits_and_applies_as_the_slice_does() {
     let (warm, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned()).unwrap());
     assert_eq!((warm, evaluated, rerun), (keys, 0, 0));
 }
+
+/// S8 (06): the first measurements against 03's targets, on S7's sample. Each pass runs, per
+/// backend (`RERAIL_S8_BACKENDS`, default `cpu,metal`) and in a fresh store: a cold audit, a warm
+/// one-file edit and a warm whitespace-only edit, each with its CPU time (user + sys), wall time,
+/// load, documents evaluated, derivations re-run and footprint. The backends interleave within a
+/// pass; the first pass is discarded (`RERAIL_S8_PASSES`, default 3, counts it). Build with
+/// `--profile profiling`.
+#[test]
+#[ignore = "S8's measurements; run with --ignored --nocapture"]
+fn s8_measures_the_targets_on_s7s_sample() {
+    let dir = temp("s8");
+    let (paths, repo) = sample(&dir);
+    let first = dir.join(paths.iter().find(|p| p.starts_with('r')).unwrap_or(&paths[0]));
+    let source = std::fs::read_to_string(&first).unwrap();
+    let policies = policies();
+    let backends = std::env::var("RERAIL_S8_BACKENDS").unwrap_or_else(|_| "cpu,metal".to_owned());
+    let passes = std::env::var("RERAIL_S8_PASSES").ok().and_then(|n| n.parse().ok()).unwrap_or(3_usize);
+    let load = || {
+        let mut loads = [0.0_f64; 3];
+        unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
+        loads[0]
+    };
+    eprintln!("S8: {} files ({} from {repo}); edited {}", paths.len(), paths.iter().filter(|p| p.starts_with('r')).count(), first.display());
+    for pass in 0..passes {
+        for backend in backends.split(',') {
+            let execution = match backend {
+                #[cfg(target_os = "macos")]
+                "metal" => ExecutionBackend::MetalJit,
+                _ => ExecutionBackend::CpuJit,
+            };
+            std::fs::write(&first, &source).unwrap();
+            let store = ContentStore::open(&temp("s8-store").with_extension("sqlite")).unwrap();
+            let mut rules = Rules::lower(&policies, execution).unwrap();
+            let mut arm = |what: &str, cold: bool| {
+                let (load, cpu0, wall0) = (load(), cpu(), std::time::Instant::now());
+                let root = directory_root(&store, &dir).unwrap();
+                let run = if cold { audit(&store, WS, root, &mut rules) } else { apply(&store, WS, root, &mut rules) }.unwrap();
+                let (cpu, wall) = (cpu() - cpu0, wall0.elapsed());
+                let kept = if pass == 0 { " (discarded)" } else { "" };
+                eprintln!(
+                    "S8 pass {pass} {backend} {what}{kept}: {} keys, {} evaluated, {} re-run; cpu {:.3} s, wall {:.3} s, load {load:.1}; footprint {} MB",
+                    run.findings.keys.len(),
+                    run.evaluated.len(),
+                    run.ingested.push.work.rerun,
+                    cpu.as_secs_f64(),
+                    wall.as_secs_f64(),
+                    crate::code_rule_dsl::prof::footprint_mb(),
+                );
+            };
+            arm("cold", true);
+            std::fs::write(&first, format!("{source}\ng = lambda: 1\n")).unwrap();
+            arm("one-file edit", false);
+            std::fs::write(&first, format!("{source}\ng = lambda: 1 \n")).unwrap();
+            arm("whitespace edit", false);
+        }
+    }
+    eprintln!("S8 peak footprint: {} MB", crate::code_rule_dsl::prof::max_footprint_mb());
+}

@@ -88,7 +88,8 @@ impl NodeSet {
         self.words[node as usize / 64] |= 1 << (node % 64);
     }
 
-    #[cfg(test)]
+    // The contract's membership test (module docs); no caller yet.
+    #[allow(dead_code)]
     pub(in crate::code_rule_dsl) fn contains(&self, node: u32) -> bool {
         self.words[node as usize / 64] >> (node % 64) & 1 != 0
     }

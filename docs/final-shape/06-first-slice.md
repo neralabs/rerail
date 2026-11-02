@@ -470,7 +470,7 @@ Check: an edit to one file re-runs exactly that file's derivations and its claus
     12.1 s wall against the CPU's 27.0 s, and agree with W. The Metal arm stays opt-in
     (`RERAIL_S7_BACKENDS=cpu,metal`) to keep the gate's time down.
 
-### S8. First measurements against the targets
+### S8. First measurements against the targets — done (2026-11-01)
 
 On the S7 sample, with CPU time (user + sys) and the machine load noted:
 - cold audit;
@@ -479,6 +479,31 @@ On the S7 sample, with CPU time (user + sys) and the machine load noted:
 - peak RSS.
 
 Interleave the arms and discard the first pass (spike 2.18, DH L5656-5680). This gives the first real numbers for 03's targets, and the counters §10 answer 4 asks for: re-runs against actual changes.
+
+- **Built:** `slice::tests::s8_measures_the_targets_on_s7s_sample` (ignored; `--ignored
+  --nocapture`, `--profile profiling`). Each pass runs both backends, interleaved, in a fresh
+  store: a cold audit, then a warm one-file edit (a line appended to one repository file), then a
+  warm whitespace-only edit of the same file. The first of 3 passes is discarded.
+- **Measured** (S7's sample, 250 files, 1.5 MB; load 30.7–34.2; passes 1–2; CPU time = user +
+  sys):
+
+  | | Keys | Evaluated | Re-run | CPU | Wall | Footprint after |
+  |---|---|---|---|---|---|---|
+  | CPU, cold audit | 710 | 250 | 0 | 5.73–5.75 s | 2.85–2.92 s | 214–218 MB |
+  | CPU, one-file edit | 711 | 1 | 4 | 0.35 s | 0.35–0.36 s | 209–211 MB |
+  | CPU, whitespace edit | 711 | 1 | 4 | 0.34–0.35 s | 0.34–0.35 s | 210–212 MB |
+  | Metal, cold audit | 710 | 250 | 0 | 1.60–1.71 s | 1.83–1.88 s | 447–449 MB |
+  | Metal, one-file edit | 711 | 1 | 4 | 0.38 s | 0.39 s | 440–444 MB |
+  | Metal, whitespace edit | 711 | 1 | 4 | 0.37–0.39 s | 0.38–0.41 s | 442–444 MB |
+
+- **Against 03's targets:**
+  - Cold audit, 1–2 s: met on Metal (1.83–1.88 s wall). Not met on the CPU (2.85–2.92 s wall).
+  - Warm run after a small change, milliseconds: not met. 0.34–0.39 s on both backends.
+  - 500 MB: each run's footprint after it is within budget (at most 449 MB). The process's peak
+    across the bench's six stores and rule sets is 1,160 MB. Not attributed per run.
+- **Re-runs against actual changes** (§10 answer 4): a one-file edit re-runs exactly that file's
+  4 derivations (tape, core, prefilter, kinds) and evaluates only it. No over-invalidation on
+  this sample.
 
 ## What the slice decides, and what it leaves
 
