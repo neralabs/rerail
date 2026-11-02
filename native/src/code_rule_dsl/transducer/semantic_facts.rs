@@ -95,3 +95,7 @@ impl<'tree, D: Doc> Facts<'tree, D> {
 pub(crate) mod binds;
 pub(crate) mod resolves;
 pub(crate) mod scopes;
+#[cfg(test)]
+mod gate;
+#[cfg(test)]
+mod harness;
