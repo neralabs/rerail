@@ -121,10 +121,23 @@ What these numbers show:
   - It costs 0.17, 0.18, 0.24 and 0.23 s of CPU per MB of scope source, slightly superlinear.
   - On a whole worktree, a one-file edit costs 20–22 s of CPU, against native's 0.22–0.28 s with all 234 rules: 80–90×.
   - This is T13 row 12's O(scope) work, at full scale (O72).
-- **Cold (M).** The slice's cold audit uses 0.63–0.75× the CPU of native's scan. Native runs all 234 policies and the
-  slice runs 87 clauses, so this is not like for like. A like-for-like native run on only those 87 clauses
-  (`lowered-rules.py`, `NATIVE_RULES`) was started (`SH:20261102-1735*-quiet-native87-*`), but its numbers are not in
-  this note [unverified].
+- **Native on the slice's own 87 clauses (M, `SH:20261102-172945-quiet-native87-*`, quiet).** `lowered-rules.py`
+  cuts the pack to the 63 policies and 87 clauses the slice lowers. Native then finds the same violation counts as the
+  restricted whole-pack comparison above (97,486 on worktree 01, and so on).
+
+  | Scope | Native scan CPU | Native edit CPU p50 / p95 | Native peak footprint | Slice cold CPU | Slice edit CPU p50 | Slice peak footprint |
+  |---|---:|---:|---:|---:|---:|---:|
+  | 40 at 5% (315 files) | 0.6 s | 8 / 74 ms | 329 MB | 11.5 s | 0.77 s | 886 MB |
+  | 40 at 10% (704) | 1.6 s | 16 / 82 ms | 390 MB | 25.1 s | 1.85 s | 1,188 MB |
+  | 40 at 20% (1,379) | 3.5 s | 37 / 97 ms | 495 MB | 49.9 s | 4.81 s | 1,494 MB |
+  | whole 01, 08, 21, 34, 40 | 36.7–45.4 s | 145–161 / 208–250 ms | 1.60–1.67 GB | 231.7–242.7 s | 20.1–21.6 s | 2.70–2.81 GB |
+
+  Like for like, on whole worktrees (D):
+  - the slice's cold audit costs 5.3–6.6× native's CPU;
+  - its warm edit costs about 130× native's;
+  - its footprint is about 1.7× native's.
+
+  The whole-pack native numbers in the first table carry 147 more policies.
 - **Memory against the 500 MB budget (M).**
   - The slice's process peaks at 886 MB on 4.6 MB of source and at 2.7–2.8 GB on a whole worktree. That is about
     580 MB and 2.4 GB above the process right after lowering (~305 MB RSS).
