@@ -91,3 +91,6 @@ impl<'tree, D: Doc> Facts<'tree, D> {
         self.push(slot::GATE, 0, flag, target)
     }
 }
+
+pub(crate) mod resolves;
+pub(crate) mod scopes;
