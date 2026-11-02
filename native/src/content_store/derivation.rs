@@ -115,6 +115,22 @@ impl ContentStore {
             .transpose()
     }
 
+    /// Every name starting with `prefix` and its digest, by name (`atoms_by_value` ranges them):
+    /// what an observer bound under a scope, for a producer that rebuilds its delta from the
+    /// bindings rather than from the push that made them (open item O39).
+    pub fn bindings_with_prefix(&self, prefix: &str) -> StoreResult<Vec<(String, [u8; 32])>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT a.value,b.digest FROM atoms a JOIN name_bindings b ON b.name_atom=a.atom WHERE a.value>=?1 AND a.value<?2 ORDER BY a.value",
+        )?;
+        let rows = statement.query_map(rusqlite::params![prefix, format!("{prefix}\u{10FFFF}")], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))?;
+        rows.map(|row| {
+            let (name, bytes) = row?;
+            Ok((name, digest(&bytes)?))
+        })
+        .collect()
+    }
+
     /// Every derivation that read one of `names`: the frontier those names' changes dirty, each
     /// once, ordered by output name.
     pub fn derivations_reading(&self, names: &[String]) -> StoreResult<Vec<Derivation>> {
