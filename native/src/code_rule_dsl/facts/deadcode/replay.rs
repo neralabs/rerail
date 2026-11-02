@@ -1,5 +1,6 @@
 //! The dead-code families on facts-engine E3's replay (`facts-b lattice maint`, report
-//! docs/facts/reports/lattice-e3-maint.md): the same inputs (X6's per-content exports, Spike B's
+//! docs/facts/reports/lattice-e3-maint.md): the same inputs (the per-content rows X6 exported,
+//! here produced from this crate's tapes by `facts::xinputs` or read from X6's exports, Spike B's
 //! 40 memberships and Y3's layers over them, the 1,111 events of `seed-5eedb`), each event pushed
 //! through `propagate` on the store or the overlay, the reached set maintained or recomputed.
 //! Ignored (minutes, gigabytes, data outside the repository); run one at a time:
@@ -12,10 +13,13 @@
 //! threads); `RERAIL_DEADCODE_GRAPH` = `store` (default) | `overlay`; `RERAIL_DEADCODE_LIMIT`
 //! (events); `RERAIL_DEADCODE_CHECK_EVERY` (events between checks; 0: none);
 //! `RERAIL_DEADCODE_CHECK_LOAD` (1: check every created worktree); `RERAIL_DEADCODE_WORKERS`
-//! (forked checks at once, 8); `RERAIL_DEADCODE_OUT` (run directory; default
-//! `~/rerail-bench/final-shape/crossfile/runs/<time>-<label>`); data:
-//! `RERAIL_DEADCODE_EXPORTS`, `RERAIL_DEADCODE_EVENTS`, `RERAIL_DEADCODE_MEMBERS`,
-//! `RERAIL_DEADCODE_ORACLE_DUMP`, with E3's defaults under `~/rerail-bench/facts`.
+//! (forked checks at once, 8); `RERAIL_DEADCODE_INPUTS` = `store` (default: the in-scope jobs'
+//! contents ingested into the run's store, read through `xinputs::store::StoreSource`) | `jsonl`
+//! (X6's exports loaded up front); `RERAIL_DEADCODE_OUT` (run directory; default
+//! `~/rerail-bench/final-shape/crossfile/runs/<time>-<label>`); data: `RERAIL_DEADCODE_JOBS`
+//! (`path \t blake3 \t source`), `RERAIL_DEADCODE_EXPORTS`, `RERAIL_DEADCODE_EVENTS`,
+//! `RERAIL_DEADCODE_MEMBERS`, `RERAIL_DEADCODE_ORACLE_DUMP`, with E3's defaults under
+//! `~/rerail-bench/facts`.
 use super::*;
 use crate::code_rule_dsl::facts::lattice::cols;
 use crate::code_rule_dsl::facts::lmap::LMap;
@@ -162,10 +166,40 @@ fn replay(label: &str, default_check_every: usize, default_check_load: bool) -> 
     let store = Arc::new(ContentStore::open(&out.join("store.sqlite")).unwrap());
 
     // Y3's world, as E3 builds it: the base layer (strict-majority membership) and an overlay per
-    // cluster (plurality membership).
+    // cluster (plurality membership). Its inputs come from the store (`store`: the in-scope jobs'
+    // contents ingested, their sets produced from their tapes, read on first use) or are loaded
+    // up front from X6's exports (`jsonl`, the differential reference).
+    let inputs_kind = env("RERAIL_DEADCODE_INPUTS").unwrap_or_else(|| "store".into());
     let mut sh = Shared { y1: y1_shared(), sym: Default::default(), y2_path: Default::default(), source: None, inputs_ms: 0.0 };
-    crate::code_rule_dsl::facts::ygraph::summary::load(&exports, &mut sh.y1.it, &mut sh.y1.sums, None);
-    crate::code_rule_dsl::facts::y3::input::load(&exports, &mut sh.sym.blocks, None);
+    let mut ingest_info = Json::Null;
+    let read = std::rc::Rc::new(std::cell::Cell::new(crate::code_rule_dsl::facts::xinputs::store::Read::default()));
+    match inputs_kind.as_str() {
+        "jsonl" => {
+            crate::code_rule_dsl::facts::ygraph::summary::load(&exports, &mut sh.y1.it, &mut sh.y1.sums, None);
+            crate::code_rule_dsl::facts::y3::input::load(&exports, &mut sh.sym.blocks, None);
+        }
+        "store" => {
+            let jobs_p = path_env("RERAIL_DEADCODE_JOBS", "phase-2/s3-crossfile/exports/replay-jobs.tsv");
+            let source = crate::code_rule_dsl::facts::xinputs::store::StoreSource::new(Arc::clone(&store)).unwrap();
+            let t = Instant::now();
+            let mut seen = std::collections::HashSet::new();
+            let mut contents = Vec::new();
+            for line in std::fs::read_to_string(&jobs_p).unwrap().lines().filter(|l| !l.is_empty()) {
+                let mut it = line.split('\t');
+                let (path, hash, file) = (it.next().unwrap(), it.next().unwrap(), it.next().unwrap());
+                if source.scope.admits(path) && seen.insert(hash.to_owned()) {
+                    contents.push((hash.to_owned(), std::fs::read(file).unwrap()));
+                }
+            }
+            let n = contents.len();
+            let r = source.ingest(&contents).unwrap();
+            drop(contents);
+            ingest_info = json!({"jobs": jobs_p, "contents": n, "read": r, "seconds": t.elapsed().as_secs_f64(), "footprint_mb": footprint_mb()});
+            eprintln!("deadcode replay: ingested {ingest_info}");
+            sh.source = Some(Box::new(crate::code_rule_dsl::facts::xinputs::store::Reading { source, read: std::rc::Rc::clone(&read) }));
+        }
+        o => panic!("RERAIL_DEADCODE_INPUTS={o}: store | jsonl"),
+    }
     let fp_inputs = footprint_mb();
     let base_m = read_members(&mdir.join("base.tsv"));
     let (layer0, _) = wire::base_layer(&mut sh, &base_m);
@@ -226,7 +260,7 @@ fn replay(label: &str, default_check_every: usize, default_check_load: bool) -> 
     let loaded_s = t_all.elapsed().as_secs_f64();
     let mut samples = vec![
         json!({"at": "start", "footprint_mb": fp_start}),
-        json!({"at": "per-content exports loaded (Y1 summaries, symbol blocks)", "footprint_mb": fp_inputs}),
+        json!({"at": format!("per-content inputs ({inputs_kind}: {})", if inputs_kind == "jsonl" { "Y1 summaries and symbol blocks of every export line loaded" } else { "contents ingested and produced in the store; nothing loaded yet" }), "footprint_mb": fp_inputs}),
         json!({"at": "Y3 world (base layer and 8 overlays)", "footprint_mb": fp_world}),
         json!({"at": "worktree 1 and the lattice base", "footprint_mb": fp_base}),
         json!({"at": "loaded", "footprint_mb": footprint_mb(), "worktrees": dc.worktrees().map(|w| dc.memory(w)).collect::<Vec<_>>()}),
@@ -324,7 +358,7 @@ fn replay(label: &str, default_check_every: usize, default_check_load: bool) -> 
         summary(&es)
     };
     let res = json!({
-        "mode": mode_label(mode), "graph": graph_kind, "events": per_event.len(), "single_file": single.len(),
+        "mode": mode_label(mode), "graph": graph_kind, "inputs": {"kind": inputs_kind, "ingest": ingest_info, "read": read.get()}, "events": per_event.len(), "single_file": single.len(),
         "seconds": {"world": world_s, "loaded": loaded_s, "events_wall": events_s, "events_cpu": events_cpu, "total_wall": t_all.elapsed().as_secs_f64(), "total_cpu": cols::cpu_seconds() - cpu0},
         "load_1m": {"start": load_start, "end": load_average()},
         "footprint_mb": {"end": footprint_mb(), "max": max_footprint_mb()},
