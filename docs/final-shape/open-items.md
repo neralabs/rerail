@@ -31,7 +31,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open, narrowed (2026-10-31): S7 4.7 s wall / 10.8 s CPU on Metal against 19.7 s / 20.7 s (0015, 0017–0021); GPU labels 0.7–0.9 s; host: prefilter SQL 1.3 s (anchor index, `lab.rs` loop), CPU roots 0.75–0.9 s, sweeps 0.5 s, push 0.5 s; 2026-10-31: walks carry 8 cursors (was 4), so no label program falls back to the interpreter in the sweeps (498k calls), and sweep entries are 8 bytes (node, pass); labels.sweep 650 → 234 ms |
 | O29 | Phase 4 / 9 | A recursive label through `not has not` settles one level deep: SIM300's `probably` misses `X == 1 + 2 + 3`, `X == [[1]]` (06 S7) | closed (2026-10-31): a sweep with complements sets or clears each roots verdict; S7 equal for every (rule, code) |
 | O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | closed (2026-10-31, decision 0022): S7's engine-only footprint peak is 477 MB on Metal (was 0.99 GB) and 447 MB on the CPU backend (was 575–607), measured as `phys_footprint_peak` after the audit. Freed heap pages are returned at stage ends; SQLite allocates from jemalloc; the GPU's label prefix, scratch and counts are sized by the run; roots stream into rows with digested structure keys. Left: the driver's fixed ~170 MB per GPU execution, and sparse host labels if the corpus grows |
-| O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026): `TapeDoc`'s records, `Facts`, the facts vtab's projection, `MetalNode`, Forte's and literal sub-grammars' trees | open: listed in `scripts/check/node-structures-baseline.json`, the list only shrinks |
+| O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
 
 ## O1. Stale-fact detection after a crash
 
@@ -862,17 +862,9 @@ S8 measures these with interleaved arms. Where the memory goes is the first ques
 
 ## O31. Per-node structures beside the tape
 
-Decision 0026: the tape is the only per-node structure. The copies brought in-memory expansions of
-it, each a second form of the same nodes. `check-node-structures.mjs` lists them in
-`node-structures-baseline.json` with the step that removes each, and fails on any new one:
-- `tape.rs` `Rec` (TapeDoc's records, built at restore) and `node_extents`' arrays: `TapeDoc`
-  reads the tape's columns.
-- `Facts` (`facts/core.rs`, `facts_a`, `typing/rounds.rs`) and the facts vtab's `Projected`: read
-  the tape (list steps 20–21, typing at 29).
-- `MetalNode`: Metal uploads the tape's columns (list step 28; 0025's measurement 4 compares the
-  two).
-- Forte's `FlatNode` and `Rec`, and the literal sub-grammars' `PNode` and `Rec`: write tape columns
-  as tree-sitter's walk does.
-
-**Closure:** the baseline's `structures` list is empty.
-
+Closed (2026-11-02). The user's ruling: only per-node structures stored in the database must go
+(ast-index-spike: "nothing may *store* one row per node"). None is: S7's store, 322,472 nodes,
+peaks at `derivation_inputs` with 0.12 rows/node. `no_relation_stores_a_row_per_node` and S7 now
+assert at most 0.25 rows/node per table. The in-memory structures the linter first listed
+(`TapeDoc`'s records, `Facts`, the facts vtab's projection, `MetalNode`, Forte's and literal
+sub-grammars' trees) are readers' working state and stay.

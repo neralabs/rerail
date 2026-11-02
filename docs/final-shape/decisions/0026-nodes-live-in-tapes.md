@@ -1,14 +1,17 @@
 # 0026: nodes live in tapes
 
-Status: accepted (2026-11-02, user decision)
+Status: accepted (2026-11-02, user decision; scope narrowed the same day to what is stored)
 
 ## Context
 
 The plan kept per-node arrays beside the tape under the tape's digest and called them sidecars:
 parent, position among siblings (all and named), line starts, the term id (`tid`) and text hashes
-(03 §5 and §16, O7, the Phase 9 slabs row). The user's ruling: there are no per-node structures
-anywhere in the design or the implementation. Nodes are stored in tapes, and the only other thing
-over nodes that may be considered is a bare index: a key to the set of nodes that have it.
+(03 §5 and §16, O7, the Phase 9 slabs row). The user's ruling: nodes are stored in tapes, and the only
+other stored thing over nodes that may be considered is a bare index: a key to the set of nodes
+that have it. The rule is about the database: "we only need to remove those that are stored
+on-disk". In-memory structures a consumer builds from a tape while it works are not covered,
+as in the spike, whose rule is "nothing may *store* one row per node" and whose dead end D14 was
+*persisted* sidecars.
 
 ast-index-spike is the reference (`notes/t4-ast-index-spike.md`):
 - "Nothing may store one row per node" (§1.1; Representation rules 1–4; D S089 L4859-4959). Row per
@@ -26,9 +29,13 @@ ast-index-spike is the reference (`notes/t4-ast-index-spike.md`):
 
 ## Decision
 
-The tape (v9np, decision 0025) is the only per-node structure. Everything a consumer needs of a
-node is read from the tape's columns in O(1), computed in the walk that visits it, or read from a
-bare index. Nothing is materialised per node, stored or resident, on the CPU or the GPU.
+The tape (v9np, decision 0025) is the only per-node structure in the database. Everything else
+stored over nodes is a bare index, or an aggregate, at most 0.25 rows per node per relation (the
+spike's limit). A reader needing a node attribute reads it from the tape's columns, computes it
+in its walk, or reads a bare index, as the table below says; what it builds in memory meanwhile
+is its own working state, not stored, and not ruled out. The word "sidecar" (a structure kept
+beside the tape under its digest) is not used: a stored one is ruled out, and an in-memory one is
+just the reader's state.
 
 **Access from the tape.** `i` is a node's preorder; the columns are `code`, `size`, `base` (one u32
 per 16 nodes), `off` and `tail`.
@@ -43,17 +50,43 @@ per 16 nodes), `off` and `tail`.
 | descendant test | `i < j < i + size[i]` | O(1) |
 | first child | `i + 1` when `size[i] > 1` | O(1) |
 | next sibling | `j = i + size[i]`, a sibling while `j < p + size[p]` for the parent `p` | O(1) given `p` |
-| parent | in a walk, the top of the walk's stack of open ancestors; as a point lookup, the nearest `p < i` with `p + size[p] > i` | O(1) in a walk |
+| parent | in a walk, the top of the walk's stack of open ancestors; as a point lookup, by descent from the root (`prefilter::tapes`); see "Parent lookups" | O(1) in a walk |
 | position among siblings (all, named) | counted in the walk over the parent's children, only for the parents a pattern compares | O(children) |
 | k-th child | `k` sibling hops from `i + 1` | O(k) |
 | line and column | binary search of the document's line starts: an index over source lines, computed from the source when the document is read | O(log lines) |
 | nodes of a kind | positional kind postings (`prefilter_sets`, `tape_kind_counts`) | bare index |
 | nodes whose text is a term, or matches a text predicate | the term's postings (`term_postings`); for a predicate, the union of its terms' postings (`vocabulary_term`), plus the uncovered nodes (`term_coverage.missing`), which are confirmed on their text | bare index |
 
-There is no `tid` column or array: the transducer's per-term results (`R[tid]`, 03 §16) are the
-node sets above, built from the postings for the predicates the batch reads. There are no text
-hashes. If point lookups of the parent prove hot, the remedy is a tape column (a parent delta, as
-the spike's rec6 had), decided in the tape format, not a structure beside it.
+Nothing stores a term id per node: the transducer's per-term results (`R[tid]`, 03 §16) are the
+node sets above, built from the postings for the predicates the batch reads. No text hashes are
+stored.
+
+**Parent lookups, as ast-index-spike does them** (`notes/t4-ast-index-spike.md` §2.1, §2.5, §3,
+§8.5):
+- The shipped record, rec6, is `[kf:2][par:2][size:2]`: `par` is a **parent delta stored in the
+  tape**, and the parent is `pre − par`, one subtraction (D S047 L2983-3005; HI L240). The delta
+  fits in 1 B 96.6% of the time and in 2 B 99.69%; larger ones spill to an overflow list at about
+  0.05 B/node (D S039 L2652-2727). The spike's indexes also say "parent, cpos, hi and depth are
+  recovered, not stored" (D S012); §2.1 notes the two statements are not reconciled, and the
+  shipped format is the delta.
+- A climb is repeated subtraction: hop to `pre − par`, check the hop's kind (S207: 147 → 26 ms),
+  carry the root's kind and size from the last hop (655 → 137 ms). The last child of `i` is found
+  by climbing parent deltas from `i + size − 1` (S180, S276).
+- Climb versus descent is a planning choice: anchor on the rarest kind, climb toward the root,
+  then descend into required children, size-bounded and pinned to the spine the climb came up
+  (S217). Forcing the climb everywhere was rejected (SQLite > 215 s vs 38.6 s); the SQLite rule
+  "climb iff leaf_freq ≤ 10 × anchor_freq" was fitted with sidecars and is to be replaced by a
+  cost expression (ledger #13, open).
+- A descent from the root is the spike's fallback for a missing parent, and was the slow side:
+  a top-down recursive walk took 33.5 s against the leaf climb (D36).
+
+**Rerail's tape differs here.** v9np has no parent column (decision 0025: "revisit only if SQL
+parent climbs prove hot"; P measured a climb 1.6–3× faster than interval containment). In memory,
+`TapeDoc` rebuilds parents with a stack at restore, which this decision allows. In SQL,
+`nera_tree` finds a point parent by descent from the root (`prefilter/tapes.rs`): O(depth ×
+siblings), the spike's slow side. The spike's remedy is a parent-delta column in the tape, as
+rec6's `par` (a tape column, not a structure beside it). It is a tape-format change for 0025, to
+be taken when the fallback's climbs are measured (list step 12's lab check).
 
 **What a bare index is.** A key (a kind, a term, a predicate) to the set of nodes that have it:
 postings at rest, a node set (`space::NodeSet`, bits over a document's nodes) in memory. It holds no
@@ -61,19 +94,21 @@ attribute of a node. Stored relations hold at most 0.25 rows per node each (the 
 Representation rule 1).
 
 **Enforcement.**
-- `scripts/check/check-node-structures.mjs` (`npm run check:node-structures`, part of `npm run
-  check`): the word "sidecar" in the engine or the design documents; structs of node-attribute
-  arrays; per-node records; allocations sized by a node count. Structures that exist today are
-  listed in `node-structures-baseline.json` with the step that removes each; the list only shrinks.
 - `content_store` test `no_relation_stores_a_row_per_node`: every table of a store holding real
-  tapes has at most 0.25 rows per node.
+  tapes has at most 0.25 rows per node. S7 asserts the same over its store, which holds every
+  family the slice writes (derivations, matches, findings, statistics).
+- `scripts/check/check-node-structures.mjs` (part of `npm run check`): the word "sidecar" in the
+  engine or the design documents.
 
 ## Consequences
 
 - `facts::core::Sidecars` and its test were removed, and so was the `tid` vector
   (`ContentStore::term_ids`) added in step 10.
-- Existing per-node structures (open item O31) are the in-memory expansions the copies brought:
-  `TapeDoc`'s records, `Facts` (core, facts-a, typing), the facts vtab's projection, Metal's
-  `MetalNode` upload, and the Blade (Forte) and literal sub-grammar trees. Each is removed by
-  reading the tape instead; until then the linter keeps any more from being added.
+- No stored relation is per node. S7's store (322,472 nodes): the largest are
+  `derivation_inputs` 0.12 rows/node, `term_postings` 0.090, `atoms` 0.044, `term_node_freq`
+  0.041, `term_freq` 0.038, `term_coverage` and `tape_kind_counts` 0.035, `vocabulary_term`
+  0.024, `slice_match` 0.016.
+- The in-memory per-node structures the copies brought (`TapeDoc`'s records, `Facts`, the facts
+  vtab's projection, `MetalNode`, Forte's and the literal sub-grammars' trees) are readers'
+  working state, never stored, and stay (O31 closed).
 - 03 §5 and §16, O7, O8 and the Phase 9 slabs row are rewritten to this decision.
