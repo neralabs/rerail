@@ -29,18 +29,20 @@
  * - Protected, the APIs a rule is about rather than the tests' own names: keywords and contextual keywords, the ES
  *   standard library (globals and every member declared in TypeScript's lib.es*.d.ts), the names `HOST_NAMES` lists (a
  *   few browser and Node globals, Node's deprecated `GLOBAL`, `root` and `COUNTER_*`, console methods, React's component
- *   API and lifecycle, Next's data-fetching exports, Node's callback conventions, the test runners' globals and
- *   modifiers: `vi`, `jest`, `only`, `skip`, `todo`), any
- *   hook-shaped name (`use` and an uppercase letter) and any `…Sync` name; every member name chained on one of
- *   `MEMBER_ROOTS` (`process.exit`, `ReactDOM.findDOMNode`, `vi.fn`, `expect(x).toBe`, `Intl.v8BreakIterator`) and every
+ *   API and lifecycle, its legacy and DOM API (`forwardRef`, `memo`, `dangerouslySetInnerHTML`, `__html`, a ref's
+ *   `current`), Next's data-fetching exports, Node's callback conventions, the test runners' globals and modifiers:
+ *   `vi`, `jest`, `only`, `skip`, `todo`), any hook-shaped name (`use` and an uppercase letter) and any `…Sync` name; every member name chained on one of
+ *   `MEMBER_ROOTS` (`process.exit`, `ReactDOM.findDOMNode`, `vi.fn`, `expect(x).toBe`, `Intl.v8BreakIterator`, `crypto.randomUUID`) or on `import.meta` (`import.meta.dirname`), and every
  *   key destructured from one (`let { env: { NODE_REPL_HISTORY_FILE } } = process`); and what a package exports:
  *   the names an `import` or a destructuring `require` takes from a package (`import { Head } from "next/document"`,
- *   `const { TextDecoder } = require("util")`), the members read on a package's binding (`fs.access`) and the props
+ *   `const { TextDecoder } = require("util")`), the members read on a package's binding or on a name a destructuring takes from one (`fs.access`, `b.alloc` after
+ *   `const { Buffer: b } = require("buffer")`) and the props
  *   of a package's component (`<Script strategy=…>`). The rule a variant then loses every finding of is one that
  *   matches the tests' own names, and its `holds-under-rename` fails. Other names of a host API (`setTimeout`'s
  *   callback's parameters, a DOM method on a local) are renamed like the tests' own. Also kept: intrinsic JSX tags
  *   and the attributes on intrinsic elements, both parts of a namespaced JSX name (`xlink:href`), meta-property names (`import.meta`,
- *   `new.target`) and any name with an occurrence that cannot be rewritten in place (unicode escapes). No name is
+ *   `new.target`), a name written right after a division's `/` (`foo⏎/ bar /gym`: read as a regular expression it is
+ *   the flags) and any name with an occurrence that cannot be rewritten in place (unicode escapes). No name is
  *   renamed to a protected name, to one of a kept shape or (when longer than two letters) to a word in the file's
  *   comments; a name that cannot avoid them under any of the tried relabellings stays.
  */
@@ -53,7 +55,8 @@ import ts from "typescript";
 const TEST_GLOBALS = ["describe", "it", "test", "expect", "suite", "bench", "vi", "jest", "xit", "xtest", "xdescribe", "fit", "fdescribe"];
 
 /** Host objects whose members are their API: kept themselves (`HOST_NAMES`), and their members (`MEMBER_ROOTS`). */
-const HOST_OBJECTS = ["process", "console", "React", "ReactDOM", "window", "document", "navigator", "location", "globalThis", "self", "global", "Buffer", "module", "exports", "require", "Intl"];
+const HOST_OBJECTS = ["process", "console", "React", "ReactDOM", "window", "document", "navigator", "location", "globalThis", "self", "global", "Buffer", "module", "exports", "require", "Intl", "crypto", "URL",
+  "URLSearchParams", "Temporal"];
 
 /**
  * The roots whose members are kept: the member names of a chain of accesses and calls on one
@@ -111,6 +114,8 @@ function packageNames(file: ts.SourceFile): { exported: Set<string>; bindings: S
         for (const element of node.name.elements) {
           const name = element.propertyName ?? element.name;
           if (ts.isIdentifier(name)) exported.add(name.text);
+          // An export's local name reads the package's API too: `const { Buffer: b } = require("buffer"); b.alloc`.
+          if (ts.isIdentifier(element.name)) bindings.add(element.name.text);
         }
       }
     }
@@ -133,6 +138,8 @@ function patternKeys(pattern: ts.ObjectBindingPattern): string[] {
 function isApiName(node: ts.Identifier | ts.PrivateIdentifier, bindings: ReadonlySet<string>): boolean {
   const parent = node.parent;
   if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
+    // `import.meta`'s members are the host's: `import.meta.dirname`.
+    if (ts.isMetaProperty(parent.expression)) return true;
     const root = chainRoot(parent.expression);
     return root !== undefined && (MEMBER_ROOTS.has(root.text) || bindings.has(root.text));
   }
@@ -142,6 +149,17 @@ function isApiName(node: ts.Identifier | ts.PrivateIdentifier, bindings: Readonl
     return root !== undefined && bindings.has(root.text);
   }
   return false;
+}
+
+/**
+ * Whether `node` starts the right operand of a `/` right after it (`foo\n/ bar /gym`): read as a regular expression,
+ * as no-unexpected-multiline does, the name is its flags, so renaming it changes which flags (and whether one) it holds.
+ */
+function isFlagsAfterDivision(node: ts.Identifier): boolean {
+  let operand: ts.Node = node;
+  while ((ts.isPropertyAccessExpression(operand.parent) || ts.isCallExpression(operand.parent) || ts.isElementAccessExpression(operand.parent)) && operand.parent.expression === operand) operand = operand.parent;
+  const binary = operand.parent;
+  return ts.isBinaryExpression(binary) && binary.right === operand && binary.operatorToken.kind === ts.SyntaxKind.SlashToken && binary.operatorToken.end === node.pos && node.pos === node.getStart();
 }
 
 /** The host, module-system, React and test-runner names kept (not exhaustive: any name missing here is renamed). */
@@ -157,6 +175,7 @@ const HOST_NAMES = [
   "shouldComponentUpdate", "getSnapshotBeforeUpdate", "getDerivedStateFromProps", "getDerivedStateFromError", "componentDidCatch",
   "UNSAFE_componentWillMount", "UNSAFE_componentWillReceiveProps", "UNSAFE_componentWillUpdate", "createContext", "Provider", "Consumer", "value",
   "getStaticProps", "getStaticPaths", "getServerSideProps", "getInitialProps",
+  "dangerouslySetInnerHTML", "__html", "current", "forwardRef", "memo", "renderComponent", "transferPropsTo", "__iterator__",
   "callback", "cb", "next", "done", "err",
   "jQuery", "$", "_", "angular",
   ...TEST_GLOBALS, "beforeEach", "afterEach", "beforeAll", "afterAll", "vitest", "only", "skip", "todo", "each", "concurrent", "sequential",
@@ -399,7 +418,8 @@ export function renameSource(source: string, fileName: string): RenameResult {
       const namespaced = ts.isJsxNamespacedName(parent);
       const keywordLike = ts.isIdentifier(node) && ts.identifierToKeywordKind(node) !== undefined;
       const metaProperty = ts.isMetaProperty(parent) && parent.name === node;
-      const fixed = intrinsicTag || intrinsicAttribute || namespaced || keywordLike || metaProperty || isApiName(node, packages.bindings);
+      const flags = ts.isIdentifier(node) && isFlagsAfterDivision(node);
+      const fixed = intrinsicTag || intrinsicAttribute || namespaced || keywordLike || metaProperty || flags || isApiName(node, packages.bindings);
       if (source.slice(start, node.end) !== text || fixed) pinned.add(text);
       occur(text, { start, offset: ts.isPrivateIdentifier(node) ? 1 : 0 });
       return;

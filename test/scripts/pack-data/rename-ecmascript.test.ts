@@ -76,6 +76,20 @@ describe("renameSource", () => {
     for (const renamed of ["conn", "file"]) expect(renames.has(renamed), renamed).toBe(true);
   });
 
+  it("keeps import.meta's members, React's DOM and ref API, Web globals' members, an export's local's members and flags after a division", () => {
+    const source = [
+      "const here = import.meta.dirname; crypto.randomUUID(); new URL(href); Temporal.now();",
+      "const { Buffer: heap } = require('buffer'); heap.alloc(count);",
+      "const props = { dangerouslySetInnerHTML: { __html: html } }; myRef.current.focus();",
+      "const Fancy = forwardRef(function (props, ref) {}); memo(Fancy); Foo.prototype.__iterator__ = fn;",
+      "const quotient = foo\n/ bar /gym;",
+      "",
+    ].join("\n");
+    const { renames } = renameSource(source, "a.js");
+    for (const kept of ["dirname", "randomUUID", "URL", "Temporal", "now", "alloc", "dangerouslySetInnerHTML", "__html", "current", "forwardRef", "memo", "__iterator__", "gym"]) expect(renames.has(kept), kept).toBe(false);
+    for (const renamed of ["here", "href", "heap", "count", "html", "myRef", "Fancy", "quotient", "fn"]) expect(renames.has(renamed), renamed).toBe(true);
+  });
+
   it("renames the names a global comment lists with their uses", () => {
     const source = "/* global fooBar, bazQux: writable -- set by the page */\nfooBar(); bazQux = 1;\n// fooBar stays here\n";
     const { source: renamed, renames } = renameSource(source, "a.js");
