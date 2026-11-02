@@ -32,23 +32,32 @@ pub(crate) mod propagate;
 pub(crate) mod runs;
 #[allow(dead_code)]
 pub(crate) mod vtab;
+// The modules below are M's copies and the dead-code seam over them. They call Apple-only libc
+// (`proc_pid_rusage`, `rusage_info_v2`/`v4`) and `fork`/`mmap`, and nothing outside them refers to
+// them (only their own tests and the ignored replays), so they compile on macOS only; elsewhere
+// the crate builds without them.
 /// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19).
+#[cfg(target_os = "macos")]
 #[allow(dead_code, unused_imports, clippy::all)]
 pub(crate) mod ygraph;
 /// M's lattice operator (E1) and its maintenance (E3) as copied; the dead-code producer's
 /// reachability (`deadcode`).
+#[cfg(target_os = "macos")]
 #[allow(dead_code, unused_imports, unused_mut, clippy::all)]
 pub(crate) mod lattice;
 /// M's Y2 dead code (local queries over the reference graph and the symbol table) as copied,
 /// less `exported-families`.
+#[cfg(target_os = "macos")]
 #[allow(dead_code, unused_imports, unused_mut, clippy::all)]
 pub(crate) mod y2;
 /// M's Y3 wiring (Y1 → edge delta → symbol table → Y2) as copied, less M2 and the daemon's
 /// `CrossFile` interface.
+#[cfg(target_os = "macos")]
 #[allow(dead_code, unused_imports, unused_mut, clippy::all)]
 pub(crate) mod y3;
 /// Dead code as derivation families on `propagate`: Y1's rows, the symbol table, the product
 /// graph's CSR, its reached set (E3) and the findings, per worktree.
+#[cfg(target_os = "macos")]
 #[allow(dead_code)]
 pub(crate) mod deadcode;
 
