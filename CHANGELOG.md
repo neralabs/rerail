@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+Rerail and its rule packs are public on npm, so installing Rerail, and adding a pack, needs no npm account. The daemon now answers only a request that carries its access capability, so another user of your machine, or a sandboxed process allowed localhost, gets nothing from it: open the dashboard from `rerail manage`, since an old bookmark no longer gets in. A coding agent's Rerail tools reach only the repository it works in, and a file named like one holding secrets reaches it by rule and place only. The dashboard says less, by rule. Block is still not in this release.
+
 - Python: the engine reads a module `__all__` entry written in parentheses (`[(("a"))]`) and the entries of a bare tuple value (`__all__ = "a", "b"`, `__all__ += "c", "d"`) as Ruff does, so `ruff-f822-undefined-export` reports an undefined name in them and the rules that read `__all__` (unused imports, unused private names) see those exports. In a `.py` file, the string values of a functional `TypedDict`'s keyword fields (`TypedDict("T", field="int")`) are read as forward annotations under the default target version (3.10), as they already were in stubs.
 - `rerail support-bundle` and `/rerail-support-bundle` write one file of Rerail's diagnostics to attach to an issue, since a dashboard link only opens on the reporter's computer: versions, Rerail's state, rule ids and modes, a session's timeline by event kind and tool name, its steers, its violations by rule and line, and the end of the daemon's log. Prompts, replies, tool input and output, source code and rule text stay out, known secrets and paths are replaced, and the command sends nothing. `/rerail-support-bundle` has the coding agent check the file with you first. The README and the bug and rule misfire forms ask for it in place of a session link.
 - The dashboard's What the agent sees block says less and says it by rule. A rule on Log reads "Not sent while this rule is on Log.", under its message and under its draft. The hint under the draft replaces the prompt preview with what saving does: "Reaches open sessions once your agent saves it.", and for a By Rerail rule "Saved as your copy. This one turns off." first.
@@ -25,7 +27,7 @@
 
 ## 0.1.0 (2026-10-27)
 
-First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
+First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0. Rerail keeps coding agents on your rules, with checks that live outside the agent: code rules, run by a native engine on this computer, audit what Claude Code, Codex, Cursor, OMP or Pi writes in Python, JavaScript, TypeScript, PHP, Blade, SQL, Rust and Vue, and steer the agent in the same session, and the dashboard shows every session, rule and violation. Run `npx @neralabs/rerail setup` in a repository to start; set-up picks the rule packs that fit it, and reads on this computer only. Block is not in this release.
 
 ### Internal testing
 
