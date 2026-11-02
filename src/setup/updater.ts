@@ -22,7 +22,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
-import { checkRegistry, runNpm } from "../runtime/npm.js";
+import { auditSignatures, checkRegistry, outsideAnyProject, runNpm, type NpmRunner } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
@@ -150,9 +150,29 @@ export function compareSemver(left: string, right: string): number {
   return coreComparison === 0 ? comparePrerelease(a.prerelease, b.prerelease) : coreComparison;
 }
 
+/**
+ * The registry npm fetched `@neralabs/rerail` from into `prefix`, as its lockfile records the tarball: the address
+ * up to the package's path. Undefined when npm recorded none.
+ */
+async function installedFromRegistry(prefix: string): Promise<string | undefined> {
+  let lockfile: { packages?: Record<string, { resolved?: unknown } | undefined> };
+  try {
+    lockfile = JSON.parse(await readFile(join(prefix, "node_modules", ".package-lock.json"), "utf8")) as typeof lockfile;
+  } catch {
+    return undefined;
+  }
+  const resolved = lockfile.packages?.[`node_modules/${RERAIL_PACKAGE_NAME}`]?.resolved;
+  if (typeof resolved !== "string") return undefined;
+  const path = resolved.indexOf(`/${RERAIL_PACKAGE_NAME}/-/`);
+  return path > 0 ? resolved.slice(0, path) : URL.parse(resolved)?.origin;
+}
+
 export class NpmPackageRegistry implements PackageRegistry {
+  constructor(private readonly npm: NpmRunner = runNpm) {}
+
+  /** Asked from a scratch folder: `rerail update` runs inside repositories, and one's `.npmrc` must not pick the answer. */
   async resolveVersion(channel: string): Promise<string> {
-    const result = await runNpm(["view", `${RERAIL_PACKAGE_NAME}@${channel}`, "version", "--json"]);
+    const result = await outsideAnyProject(async cwd => await this.npm(["view", `${RERAIL_PACKAGE_NAME}@${channel}`, "version", "--json"], { cwd }));
     const parsed = JSON.parse(result.stdout) as unknown;
     if (typeof parsed !== "string") {
       throw new TypeError(`npm returned no single version for ${RERAIL_PACKAGE_NAME}@${channel}`);
@@ -161,20 +181,32 @@ export class NpmPackageRegistry implements PackageRegistry {
     return parsed;
   }
 
+  /**
+   * Installs `version` into the staging `prefix` without running any package's install scripts, then checks the
+   * registry signatures of everything installed before the caller runs any of it. `--prefix` also keeps a project
+   * `.npmrc` in the caller's folder out of the install.
+   */
   async installVersion(version: string, prefix: string): Promise<void> {
     const spec = `${RERAIL_PACKAGE_NAME}@${version}`;
     // npm installs without a word, and a large package on a slow line takes a while: say what is coming first.
     process.stderr.write(`Downloading ${spec} from npm…\n`);
-    await checkRegistry(spec);
-    await runNpm([
+    await checkRegistry(spec, this.npm);
+    await this.npm([
       "install",
       "--prefix",
       prefix,
+      "--ignore-scripts",
       "--omit=dev",
       "--no-audit",
       "--no-fund",
       spec,
     ]);
+    if (await auditSignatures(prefix, this.npm) === "no-signing-keys") {
+      const registry = (await installedFromRegistry(prefix)) ?? "the registry in your npm configuration";
+      process.stderr.write(
+        `warning: ${registry} publishes no signing keys, so npm could not check the registry signatures of ${spec} and its dependencies.\n`,
+      );
+    }
   }
 }
 

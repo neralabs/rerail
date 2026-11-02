@@ -1,4 +1,4 @@
-import { chmod, mkdir } from "node:fs/promises";
+import { lstat, mkdir } from "node:fs/promises";
 import { createServer, request } from "node:http";
 import { dirname, resolve as resolvePath } from "node:path";
 import { z } from "zod/v4";
@@ -53,6 +53,84 @@ function parseEngineRequest(value: unknown): EngineRequest {
 
 function isWindowsNamedPipe(endpoint: string): boolean {
   return endpoint.startsWith("\\\\.\\pipe\\");
+}
+
+/** Why `directory` cannot hold the engine socket, and what the person can do about it. */
+interface DirectoryRefusal {
+  problem: string;
+  remedy: string;
+}
+
+/**
+ * Makes `directory` (mode 0700, with any missing parents) and answers why it is refused, or undefined when it is this
+ * user's alone: a real directory, not a link, owned by `uid`, with no group or other permission bits. Windows has no
+ * POSIX owner or mode to check (`uid` undefined).
+ */
+async function privateDirectoryRefusal(directory: string, uid: number | undefined): Promise<DirectoryRefusal | undefined> {
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    // Something that is not a directory already holds the name; `lstat` below says what and whose.
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      return { problem: `could not be made (${(error as Error).message})`, remedy: `Check that this user may create ${directory}.` };
+    }
+  }
+  if (uid === undefined) return undefined;
+  const info = await lstat(directory);
+  const problem = !info.isDirectory() ? "is a link or not a directory"
+    : info.uid !== uid ? `is owned by uid ${info.uid}, not ${uid}`
+      : (info.mode & 0o077) !== 0 ? `has mode ${(info.mode & 0o777).toString(8)}, not 700`
+        : undefined;
+  if (problem === undefined) return undefined;
+  // In a shared temp directory (sticky bit) only its owner or an administrator can remove what another user made.
+  const remedy = info.uid !== uid
+    ? `Another user (uid ${info.uid}) created it; they or an administrator must remove ${directory}.`
+    : `Remove ${directory} and Rerail makes it again, for this user alone.`;
+  return { problem, remedy };
+}
+
+/**
+ * Makes `directory` (mode 0700, with any missing parents) and refuses it unless it is this user's alone: a real
+ * directory, not a link, owned by `uid`, with no group or other permission bits. The socket inside then takes no
+ * permission change after `listen`: nobody else can reach, replace or pre-create it. A directory another user made
+ * first at a predictable path in a shared temp directory is refused rather than used. Windows has no POSIX owner or
+ * mode to check (`uid` undefined).
+ */
+export async function preparePrivateDirectory(directory: string, uid: number | undefined = process.getuid?.()): Promise<void> {
+  const refusal = await privateDirectoryRefusal(directory, uid);
+  if (refusal !== undefined) {
+    throw new Error(`Rerail will not put its engine socket in ${directory}: it ${refusal.problem}. The socket needs a directory only this user can open (mode 700). ${refusal.remedy}`);
+  }
+}
+
+/**
+ * The first of `candidates` that can carry the engine socket: a Windows named pipe as it is, a Unix socket path that
+ * fits `sun_path` and whose directory `preparePrivateDirectory` accepts (and has made). Anyone can make a directory at a
+ * predictable temp path before this user does; a later candidate keeps Rerail working instead of every hook failing
+ * open. When none can, the error names each one refused, why, and what to do.
+ */
+export async function chooseEngineSocketPath(
+  candidates: readonly string[],
+  uid: number | undefined = process.getuid?.(),
+  platform: NodeJS.Platform = process.platform,
+): Promise<string> {
+  const refused: string[] = [];
+  // The longest Unix socket path in bytes, the terminating NUL aside: `sun_path` holds 108 on Linux, 104 on macOS and
+  // the BSDs. A longer path fails to bind, or on some systems binds a truncated name no client finds.
+  const limit = platform === "linux" || platform === "android" ? 107 : 103;
+  for (const candidate of candidates) {
+    if (isWindowsNamedPipe(candidate)) return candidate;
+    const bytes = Buffer.byteLength(candidate);
+    if (bytes > limit) {
+      refused.push(`${candidate} is ${bytes} bytes, longer than the ${limit} a socket path may be here. Pointing RERAIL_HOME (or TMPDIR) at a shorter folder shortens it.`);
+      continue;
+    }
+    const directory = dirname(candidate);
+    const refusal = await privateDirectoryRefusal(directory, uid);
+    if (refusal === undefined) return candidate;
+    refused.push(`${directory}: it ${refusal.problem}. ${refusal.remedy}`);
+  }
+  throw new Error(`Rerail found nowhere to put its engine socket, which needs a directory only this user can open (mode 700):\n${refused.map(line => `- ${line}`).join("\n")}`);
 }
 
 type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
@@ -163,9 +241,7 @@ async function routeEngineEvent(
 }
 
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
-  if (!isWindowsNamedPipe(options.socketPath)) {
-    await mkdir(dirname(options.socketPath), { recursive: true, mode: 0o700 });
-  }
+  if (!isWindowsNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const routing: EngineRoutingState = {
     runtimes: new Map(),
     runtimeKeysBySession: new Map(),
@@ -214,7 +290,6 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       listening.resolve();
     });
     await listening.promise;
-    if (!isWindowsNamedPipe(options.socketPath)) await chmod(options.socketPath, 0o600);
   } catch (error) {
     server.close();
     await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));

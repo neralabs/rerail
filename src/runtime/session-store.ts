@@ -10,6 +10,7 @@ import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } f
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
+import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
@@ -576,9 +577,5 @@ export class SqliteSessionReader {
  */
 function awaitingApprovalIn(database: RerailDatabase, catalog: RuleCatalog, repositoryKey: string, owners: readonly string[]): number {
   const [checkoutPath, ...parentCheckoutPaths] = owners;
-  const { rules } = listRepositoryRules(database, catalog, repositoryKey, checkoutPath === undefined ? {} : { checkoutPath, parentCheckoutPaths });
-  const waiting = new Set(rules.filter(rule => rule.on && rule.approval?.approved === false)
-    .map(rule => `${rule.approval!.subject.kind}\0${rule.approval!.subject.id}`));
-  return waiting.size;
+  return awaitingApprovalOf(listRepositoryRules(database, catalog, repositoryKey, checkoutPath === undefined ? {} : { checkoutPath, parentCheckoutPaths }).rules);
 }
-

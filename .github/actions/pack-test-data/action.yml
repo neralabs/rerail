@@ -50,7 +50,7 @@ runs:
   steps:
     # The script needs Node 22.15 or newer (zlib's zstd) and no npm packages.
     - name: Set up Node.js v24
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: "24"
         package-manager-cache: false
@@ -77,7 +77,7 @@ runs:
     # The fetching job only asks whether the entry exists: what a cache entry holds never reaches a job with a token.
     - id: cache
       name: Restore the locked archives (fetching, only look them up)
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.entry.outputs.paths }}
         key: ${{ steps.entry.outputs.key }}
@@ -130,7 +130,7 @@ runs:
 
     - name: Save the archives
       if: inputs.fetch == 'true' && steps.cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.entry.outputs.paths }}
         key: ${{ steps.entry.outputs.key }}

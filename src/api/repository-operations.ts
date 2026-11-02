@@ -42,7 +42,7 @@ import {
   writeLibraryRule,
 } from "../engine/catalog/rule-library.js";
 import { configureBundledCodeRule } from "../engine/catalog/rule-config.js";
-import type { RuleMode } from "../engine/catalog/rule-mode.js";
+import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
 import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
 import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { approve, currentSubject, ruleSubject } from "../engine/catalog/rule-approval.js";
@@ -52,6 +52,7 @@ import {
   approvalSubjectSchema,
   attachmentRecordSchema,
   attachmentsSetBodySchema,
+  blockNoteShape,
   followGitignoreBodySchema,
   inactiveOf,
   libraryRuleRecordSchema,
@@ -78,6 +79,11 @@ interface TargetInput {
   readonly repository?: string | undefined;
   readonly checkout?: string | undefined;
   readonly folder?: string | undefined;
+}
+
+/** `{ note }` when a write puts a rule on `block`, which steers until block enforcement lands; else nothing. */
+function blockNote(modes: ReadonlyArray<RuleMode | null | undefined>): { note?: string } {
+  return modes.includes("block") ? { note: BLOCK_STEERS_NOTE } : {};
 }
 
 interface Target {
@@ -529,7 +535,7 @@ export const repositoryOperations: readonly Operation[] = [
     path: "/api/repository/settings",
     summary: "Turn rules or whole packs on or off, change their mode, or choose whether linters' suppression comments (eslint-disable, noqa, ...) silence them (suppressions: honour or ignore), for the repository or for one checkout (this worktree), optionally in one folder. config sets the option values of one code rule by Rerail over the whole repository (folder \"\"); an unknown option or a value the option does not allow is rejected. null clears a value so the next owner decides; an omitted value is kept. A coding agent may change checkout settings at any time, and the repository's only before it is set up.",
     body: settingsSetBodySchema,
-    output: z.object({ settings: z.array(ruleSettingRecordSchema) }),
+    output: z.object({ settings: z.array(ruleSettingRecordSchema), ...blockNoteShape }),
     handler: (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, true);
       const db = stores.database();
@@ -550,7 +556,7 @@ export const repositoryOperations: readonly Operation[] = [
       for (const change of changes) checkConfig(stores, catalog, change);
       const settings = changes.map(change => mergedSetting(db, owner, change));
       for (const setting of settings) setRuleSetting(db, setting);
-      return { settings: settings.map(settingRecord) };
+      return { settings: settings.map(settingRecord), ...blockNote([input.mode]) };
     },
   }),
   defineOperation({
@@ -559,7 +565,7 @@ export const repositoryOperations: readonly Operation[] = [
     path: "/api/repository/attachments",
     summary: "Add or remove rule packs, By Rerail rules and your library rules in a repository, per folder (whole repository by default), with optional repository settings (on, mode, suppressions, config, as repository_settings_set takes them). The first call that adds anything, or passes configure: true, sets the repository up; it does not start Rerail. A coding agent may do this only before the repository is set up.",
     body: attachmentsSetBodySchema,
-    output: z.object({ repository: repositorySummarySchema, attachments: z.array(attachmentRecordSchema) }),
+    output: z.object({ repository: repositorySummarySchema, attachments: z.array(attachmentRecordSchema), ...blockNoteShape }),
     handler: (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, true);
       guardAgent(stores, caller, target);
@@ -588,7 +594,11 @@ export const repositoryOperations: readonly Operation[] = [
         }
         for (const entry of remove) removeAttachment(tx, { repositoryKey, ...entry });
       }, { behavior: "immediate" });
-      return { repository: repositorySummary(requireRepository(db, repositoryKey)), attachments: attachmentsOf(db, repositoryKey) };
+      return {
+        repository: repositorySummary(requireRepository(db, repositoryKey)),
+        attachments: attachmentsOf(db, repositoryKey),
+        ...blockNote(changes.map(change => change.mode)),
+      };
     },
   }),
   defineOperation({
@@ -731,7 +741,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "library_rules_upsert",
     method: "PUT",
     path: "/api/library-rules/{id}",
-    summary: "Create or replace a rule created by you; a code rule is compiled in the kernel first. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository, with the original switched off there.",
+    summary: "Create or replace a rule created by you; a code rule is compiled in the kernel first. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository; the original is switched off there once the copy is approved, at once for a person's write and, for a coding agent's, when a person approves it.",
     params: libraryRuleId,
     body: libraryUpsertBodySchema,
     output: libraryUpsertResultSchema,
@@ -752,6 +762,7 @@ export const repositoryOperations: readonly Operation[] = [
           rule: libraryRecord(copied.rule),
           copiedFromRuleId: input.id,
           attached: { repositoryKey: target.repository.repositoryKey, folders: [...copied.folders] },
+          ...blockNote([input.rule.mode]),
         };
       }
       // An agent editing an existing rule changes it in every repository that runs it, so each must be its own, and
@@ -773,8 +784,9 @@ export const repositoryOperations: readonly Operation[] = [
       const rule = getLibraryRule(db, input.id);
       if (rule === undefined) throw new ApiError(500, "internal", `library rule ${input.id} was not stored`);
       if (caller.kind === "person") approve(db, ruleSubject(input.id, rule.payloadHash));
-      if (target === undefined) return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: null };
-      return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: { repositoryKey: target.repository.repositoryKey, folders: [target.folder] } };
+      const note = blockNote([input.rule.mode]);
+      if (target === undefined) return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: null, ...note };
+      return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: { repositoryKey: target.repository.repositoryKey, folders: [target.folder] }, ...note };
     },
   }),
   defineOperation({

@@ -233,6 +233,7 @@ pub(super) fn make_file(
         transient_failure: false,
         unpublished: false,
         results_only: false,
+        withheld: false,
         unstored: HashSet::new(),
         candidates,
         witnesses: Default::default(),

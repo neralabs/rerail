@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { chmod, mkdtemp, mkdir, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
@@ -167,6 +168,64 @@ describe("SQLite session persistence", () => {
       endedAt: expect.any(Number),
     });
     database.close();
+  });
+
+  it("stores no output of a call that names a secret-like path, in the database or the session ledger", async () => {
+    const root = await temporaryDirectory();
+    const databasePath = defaultRerailDatabasePath();
+    const storageRoot = join(root, "sessions");
+    const runtime = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: root, embedder: testEmbedder });
+    const session = { host: "claude-code" as const, sessionId: "secret-session", cwd: root };
+    const secret = "API_TOKEN=sk-live-0123456789";
+    await runtime.ingest({ kind: "session-start", eventId: "start", session });
+    await runtime.ingest({ kind: "call", eventId: "env-call", toolCallId: "env", sessionId: session.sessionId, toolName: "Bash", input: { command: "cat .env" } });
+    await runtime.ingest({ kind: "result", eventId: "env-result", toolCallId: "env", sessionId: session.sessionId, toolName: "Bash", output: secret });
+    await runtime.ingest({ kind: "call", eventId: "ci-call", toolCallId: "ci", sessionId: session.sessionId, toolName: "Read", input: { file_path: ".github/workflows/ci.yml" } });
+    await runtime.ingest({ kind: "result", eventId: "ci-result", toolCallId: "ci", sessionId: session.sessionId, toolName: "Read", output: "on: push" });
+    await runtime.dispose();
+
+    const database = new Database(databasePath, { readonly: true });
+    const read = database.prepare("SELECT payload_json FROM events WHERE event_id = ?").pluck();
+    const payload = (eventId: string): unknown => JSON.parse(String(read.get(eventId)));
+    expect(payload("env-call")).toMatchObject({ input: { command: "cat .env" } });
+    expect(payload("env-result")).toMatchObject({ toolCallId: "env", output: { withheld: "tool output", bytes: secret.length } });
+    // A hidden path that is not secret-like keeps its output.
+    expect(payload("ci-result")).toMatchObject({ output: "on: push" });
+    const stored = database.prepare("SELECT payload_json AS payloadJson FROM events").pluck().all() as string[];
+    database.close();
+    expect(stored.join("\n")).not.toContain(secret);
+    const sessionFolder = createHash("sha256").update(session.sessionId).digest("hex");
+    expect(await readFile(join(storageRoot, sessionFolder, "events.jsonl"), "utf8")).not.toContain(secret);
+  });
+
+  it("stores no output of a secret call's result that arrives after the daemon restarted", async () => {
+    const root = await temporaryDirectory();
+    const databasePath = defaultRerailDatabasePath();
+    const storageRoot = join(root, "sessions");
+    const session = { host: "claude-code" as const, sessionId: "restarted-session", cwd: root };
+    const secret = "API_TOKEN=sk-live-0123456789";
+    const before = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: root, embedder: testEmbedder });
+    await before.ingest({ kind: "session-start", eventId: "start", session });
+    await before.ingest({ kind: "call", eventId: "env-call", toolCallId: "env", sessionId: session.sessionId, toolName: "Bash", input: { command: "cat .env" } });
+    await before.ingest({ kind: "call", eventId: "src-call", toolCallId: "src", sessionId: session.sessionId, toolName: "Read", input: { file_path: "src/a.ts" } });
+    await before.dispose();
+
+    const after = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: root, embedder: testEmbedder });
+    await after.ingest({ kind: "session-start", eventId: "start-again", session });
+    await after.ingest({ kind: "result", eventId: "env-result", toolCallId: "env", sessionId: session.sessionId, toolName: "Bash", output: secret });
+    await after.ingest({ kind: "result", eventId: "src-result", toolCallId: "src", sessionId: session.sessionId, toolName: "Read", output: "export {};" });
+    await after.dispose();
+
+    const database = new Database(databasePath, { readonly: true });
+    const read = database.prepare("SELECT payload_json FROM events WHERE event_id = ?").pluck();
+    const payload = (eventId: string): unknown => JSON.parse(String(read.get(eventId)));
+    expect(payload("env-result")).toMatchObject({ toolCallId: "env", output: { withheld: "tool output", bytes: secret.length } });
+    expect(payload("src-result")).toMatchObject({ output: "export {};" });
+    const stored = database.prepare("SELECT payload_json AS payloadJson FROM events").pluck().all() as string[];
+    database.close();
+    expect(stored.join("\n")).not.toContain(secret);
+    const sessionFolder = createHash("sha256").update(session.sessionId).digest("hex");
+    expect(await readFile(join(storageRoot, sessionFolder, "events.jsonl"), "utf8")).not.toContain(secret);
   });
 
   it("preserves circular and BigInt call payloads across the native daemon boundary", async () => {

@@ -71,6 +71,13 @@ Each delivery is one block, which only the coding agent reads. It is written for
 
 Findings are listed in the order they were found, each on its own line: `path:line:col` (or the path alone for a finding about a whole file, nothing for one with no path), the message, then the rule id in brackets. A multi-line message keeps its later lines indented under its finding. A suggested fix follows its finding: `Suggested fix: delete <range>`, `Suggested fix: replace <range> with <inline code>` (a CommonMark backtick fence longer than any run of backticks in the fix), or, for a fix over several lines, `Suggested fix, replacing <range>:` and the fix in a `~~~` fence (longer when the fix holds one). Ranges use an en dash (`3:1–5:2`), and a fix over 240 characters is cut with `… (truncated)`.
 
+What a finding quotes can come from the repository: its path, the code a message's metavariables capture, and its
+fix. So the block carries no control or format characters (terminal escapes, bidi overrides, zero-width characters,
+the byte-order mark), a carriage return or other line break inside a line is a space, and the engine cuts each
+capture to its first line and 80 characters. Each part is capped: the place, the rule id and the tool name at 300
+characters, each line of a message at 600 and the whole message at 2,000, each cut marked with `…`. A rule's own
+message keeps its wording.
+
 The lead says what Rerail did:
 
 | Trigger | Lead |

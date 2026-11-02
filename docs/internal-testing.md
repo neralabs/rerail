@@ -12,7 +12,7 @@ Each is tagged with an `Internal testing:` comment where it is defined, and ever
 | Full-repository scanning | `rerail scan`; the `audit_requests_create`, `audit_requests_list`, `repository_audits_list` and `repository_audit_entries_list` operations; the automatic first repository audit at session start |
 | Conversation rules, cosine (similarity) and command (tool-call) alike | `kind: "conversation"` rules, shown in the dashboard with an `Internal testing` badge; `/cosine-rules` and the `conversation_rules` tool in OMP and Pi; `/rerail-create`'s command rules ([Tool-call rules](tool-call-rules.md)) |
 | Semantic tools | `rerail_mark`, `rerail_select`, `rerail_project` and `rerail_relate` in OMP and Pi |
-| Block mode | `mode: "block"`, stored and delivered exactly like `steer`; the dashboard shows it as not in this version |
+| Block mode | `mode: "block"`, stored and delivered exactly like `steer`; the CLI and API writes that set it say it steers in this release, and the dashboard shows it as `Block (steers for now)` |
 | Activation profiles | `rerail activate`, `rerail activation request`, `rerail profile` and `--profile` |
 | Event stream | `rerail events` |
 | Steer strategies `rewind` and `subagent`, experimental: off unless `RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1` | `steerStrategy` in the audit settings (`rerail settings --steer-strategy`, `audit_settings_update`); Pi's `rerail_fix` tool; `benchmark/steer-strategy.ts` |

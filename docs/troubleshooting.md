@@ -260,12 +260,33 @@ With Claude Code and Cursor both connected, Cursor's Third-Party Imports setting
 the hooks in `~/.claude/settings.json` too. Rerail's Claude Code hook ignores the events Cursor sends it, so each
 Cursor chat is recorded once, as a Cursor session. Nothing to do.
 
+### Claude Code: a command on Rerail's files says `Operation not permitted`
+
+With Claude Code's sandbox on, set-up keeps the agent's commands and file tools out of the Rerail home and
+`~/.cache/rerail` (see [What a coding agent can reach](installation.md#what-a-coding-agent-can-reach)). Rerail's own
+commands run outside the sandbox, but only as a plain call: one with a redirect (`> file`), a `cd` or a `$(...)`
+stays sandboxed and fails. Run the command without them, or run it yourself in a terminal. Run `rerail setup` again
+after moving `RERAIL_HOME` or Node, so the entries name the new paths.
+
 ### A session open before set-up shows nothing
 
 Coding agents load hooks and commands when a session starts. Open a new session after set-up, `rerail install`,
 `rerail update` and `rerail install --remove`.
 
 ## Daemon and dashboard
+
+### The daemon keeps running after `/rerail-stop`
+
+That is on purpose. `/rerail-stop` (and `rerail stop`) stops Rerail in this checkout and the worktrees inside it: no
+rules run there and nothing is logged. The daemon is shared by every checkout and coding agent on the computer, so it
+keeps running for the others, and the reply says so. To shut it down, run this in a terminal:
+
+```sh
+rerail daemon stop
+```
+
+A coding agent's session in a checkout where Rerail is still started starts the daemon again with its next event; stop
+Rerail there too to keep it down. `rerail status` says whether it is running.
 
 ### The dashboard URL changed
 
@@ -298,9 +319,13 @@ devcontainers forward loopback ports): the daemon stays on loopback. Only where 
 daemon on every interface and publish the port on the host's loopback only:
 
 ```sh
-rerail daemon stop && rerail daemon start --host 0.0.0.0 --allow-remote   # in the container
-docker run -p 127.0.0.1:4737:4737 …                                       # on the host
+rerail daemon stop && rerail daemon start --host 0.0.0.0 --allow-remote --insecure-http   # in the container
+docker run -p 127.0.0.1:4737:4737 …                                                       # on the host
 ```
+
+`--insecure-http` keeps plain http, which is fair here only because the port is published on the host's loopback;
+publish it anywhere else and pass `--tls-cert <pem> --tls-key <pem>` instead, so the capability is not sent in clear
+(see the daemon section of [reference.md](reference.md)).
 
 Off loopback the capability changes on every start, so open the new link (`rerail daemon start` prints it) after a
 restart. Anyone holding the link can read and change your rules, so do not paste it anywhere. Publishing on

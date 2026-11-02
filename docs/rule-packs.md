@@ -98,7 +98,7 @@ each case is "whatever is installed now":
 | Two versions of a pack are installed | Only one can be: Rerail installs packs into one place (`$RERAIL_HOME/packs`) and reads only `node_modules/rerail-pack-<id>` and `node_modules/@<scope>/rerail-pack-<id>` there that the packs folder's `package.json` lists, one version of each package. |
 | Two packages hold one pack id | One loads: Rerail's own, else the first by package name. The other is left out and reported; repositories add packs by id, so they run the one that loads. While Rerail's own is installed but left out, neither loads. |
 | A pack's core range excludes the running core | The pack is skipped and reported, and repositories that add it report it as `missing`. |
-| A person edits a pack's rule | The rule is copied into the library and the original switched off where the copy is added; the copy keeps the edit through later upgrades, and the original follows them. Option values are changed with `config` settings instead. |
+| A person edits a pack's rule | The rule is copied into the library and added where the original is; the copy keeps the edit through later upgrades, and the original follows them. Saved in the dashboard, the copy is approved as it is saved and the original switched off where the copy is added. A coding agent's copy runs in Log, and the original keeps running, until a person approves the copy ([copy on edit](rule-scoping.md#coding-agents)). Option values are changed with `config` settings instead. |
 | `rerail rules export` / `import` | `rules.json` carries attachments and settings by id, never pack rules. On a machine without the pack, its attachments are `missing` until it is installed. |
 
 ## Format
