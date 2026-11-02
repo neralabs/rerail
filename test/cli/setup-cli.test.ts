@@ -246,6 +246,24 @@ describe("rerail install --root", () => {
     expect((await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"))).toEqual([]);
   });
 
+  // `pi install npm:@neralabs/rerail` with set-up never finished: the running package is the install being removed.
+  it("takes Pi's gallery entry out when it removes Rerail with no managed install, and not for a checkout", async () => {
+    const { context, hostConfigHome } = await fixture();
+    vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const settings = join(hostConfigHome, ".pi", "agent", "settings.json");
+    await mkdir(dirname(settings), { recursive: true });
+    await writeFile(settings, JSON.stringify({ packages: ["npm:@neralabs/rerail", "npm:@other/pkg"] }));
+    const checkoutRoot = join(hostConfigHome, "..", "checkout-elsewhere");
+    await mkdir(join(checkoutRoot, "dist"), { recursive: true });
+
+    expect(await runInstallCommand(["--root", checkoutRoot, "--remove", "--agents", "pi"], context)).toBe(0);
+    expect(JSON.parse(await readFile(settings, "utf8"))).toEqual({ packages: ["npm:@neralabs/rerail", "npm:@other/pkg"] });
+
+    expect(existsSync(context.updater.currentLink)).toBe(false);
+    expect(await runInstallCommand(["--remove"], context)).toBe(0);
+    expect(JSON.parse(await readFile(settings, "utf8"))).toEqual({ packages: ["npm:@other/pkg"] });
+  });
+
   it.skipIf(process.platform === "win32")("puts the launcher on the zsh PATH, and the uninstall takes it off again", async () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
     vi.stubEnv("RERAIL_MODIFY_PATH", "");

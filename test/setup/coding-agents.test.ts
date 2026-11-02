@@ -176,6 +176,18 @@ describe("connectCodingAgents", () => {
     expect(await piSettings(home)).toEqual({ packages: [root] });
   });
 
+  // The gallery entry alone counts as registered for the managed install, but set-up never connected that Pi.
+  it("leaves a Pi holding only the gallery entry alone when the agents named leave Pi out", async () => {
+    const { base, root, home } = await fixture();
+    vi.stubEnv("RERAIL_HOME", join(base, "rerail-home"));
+    await mkdir(join(home, ".codex"));
+    await piSettings(home, ["npm:@neralabs/rerail@0.1.0"]);
+
+    const result = await connectCodingAgents(root, home, ["codex"]);
+    expect(result.changed).toEqual(["codex"]);
+    expect(await piSettings(home)).toEqual({ packages: ["npm:@neralabs/rerail@0.1.0"] });
+  });
+
   it("says OMP loads its own plugin install of Rerail too whenever OMP is connected, named or not", async () => {
     const { root, home } = await fixture();
     await registerHarnesses({ root, home, harnesses: ["omp"] });

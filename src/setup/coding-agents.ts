@@ -9,7 +9,7 @@ import {
   HARNESSES,
   loadsOmpPluginCopy,
   OMP_PLUGIN_NOTE,
-  piHoldsRerailNpmSource,
+  piHoldsGalleryBeside,
   registerHarnesses,
   UnreadableConfigError,
   unregisterHarnesses,
@@ -156,9 +156,10 @@ export interface ConnectResult {
  * connected. `workspaceDir`: the repository the person said yes to, for Claude Code's project status line.
  *
  * A connected agent not named is otherwise left as it is, out-of-date registration and all, for `rerail update`, but for
- * two copies of Rerail loading in it: Pi is registered again while its settings also hold Rerail's npm source (a
- * `pi install npm:@neralabs/rerail` since), which swaps that source for `root`, and OMP's plugin install is looked for
- * whenever OMP is connected.
+ * two copies of Rerail loading in it: Pi is registered again while its settings hold both an entry for `root` and
+ * Rerail's npm source (a `pi install npm:@neralabs/rerail` since), which swaps that source for `root`, and OMP's plugin
+ * install is looked for whenever OMP is connected. A Pi holding only the gallery entry was never connected by set-up, so
+ * one left out of `agents` keeps it; naming Pi or `rerail update` swaps it.
  */
 export async function connectCodingAgents(root: string, home: string, agents: readonly Harness[], workspaceDir?: string): Promise<ConnectResult> {
   const result: ConnectResult = { changed: [], all: [], failures: [], codexTrust: false, ompPlugin: false };
@@ -185,11 +186,14 @@ export async function connectCodingAgents(root: string, home: string, agents: re
   return result;
 }
 
-/** `["pi"]` when Pi, not among `agents`, is connected to `root` and its settings also hold Rerail's npm source. */
+/**
+ * `["pi"]` when Pi, not among `agents`, holds an entry for `root` and Rerail's npm source beside it. Only `root`'s own
+ * entry shows set-up connected Pi: a gallery entry alone counts as registered for the managed install (`isRegistered`).
+ */
 async function piToSwap(root: string, home: string, agents: readonly Harness[]): Promise<Harness[]> {
   if (agents.includes("pi") || !detectHarnesses(home).includes("pi")) return [];
   try {
-    return await piHoldsRerailNpmSource(home) && await isRegistered(root, home, "pi") ? ["pi"] : [];
+    return await piHoldsGalleryBeside(root, home) ? ["pi"] : [];
   } catch {
     // A config that cannot be read is left as it is, as for any agent not named.
     return [];

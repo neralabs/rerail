@@ -52,6 +52,12 @@ export interface RegistrationOptions {
   dryRun?: boolean;
   /** Test seam for platform-specific command quoting and directory links. */
   platform?: NodeJS.Platform;
+  /**
+   * Removal only: whether `root` is the managed install, whose removal takes Pi's gallery entry (`npm:@neralabs/rerail`)
+   * out too. `rerail install --remove` sets it when it removes the install itself, which before any set-up is the running
+   * package rather than `<Rerail home>/current`. Defaults to whether `root` is `<Rerail home>/current`.
+   */
+  managed?: boolean;
 }
 
 export interface RegistrationChange {
@@ -72,8 +78,8 @@ type Mode = "register" | "unregister";
 interface Context {
   mode: Mode;
   root: string;
-  /** The managed install, `<Rerail home>/current`: the install Pi's gallery entry is swapped for. */
-  managedRoot: string;
+  /** Removal takes Pi's gallery entry out too: `root` is the managed install (`RegistrationOptions.managed`). */
+  managed: boolean;
   packageRoots: Map<string, Promise<boolean>>;
   home: string;
   nodePath: string;
@@ -822,21 +828,24 @@ async function piSourceKind(context: Context, agentDir: string, source: string):
   return await isRerailPackageRoot(context, root) || (isAbsolute(source) && await isGoneInstallRoot(root)) ? "other" : undefined;
 }
 
-/** Whether Pi's settings hold Rerail's npm source, as Pi's package gallery writes it. Throws when they cannot be read. */
-export async function piHoldsRerailNpmSource(home: string): Promise<boolean> {
-  const { packages } = (await readJsonFile(join(home, ".pi", "agent", "settings.json"))).value;
-  return Array.isArray(packages) && packages.some((entry: unknown) => {
-    const source = piPackageSource(entry);
-    return source !== undefined && isRerailNpmSource(source);
-  });
+/**
+ * Whether Pi's settings hold both an entry for `root` and Rerail's npm source, as Pi's package gallery writes it: Pi was
+ * connected to `root` and a gallery install came since. Throws when they cannot be read.
+ */
+export async function piHoldsGalleryBeside(root: string, home: string): Promise<boolean> {
+  const agentDir = join(resolve(home), ".pi", "agent");
+  const { packages } = (await readJsonFile(join(agentDir, "settings.json"))).value;
+  if (!Array.isArray(packages)) return false;
+  const sources = packages.map(piPackageSource).filter(source => source !== undefined);
+  return sources.some(isRerailNpmSource) && sources.some(source => !isRerailNpmSource(source) && resolve(agentDir, source) === resolve(root));
 }
 
 /**
  * Pi loads a package once per identity, and an npm source and a path are two, so registration keeps one Rerail entry,
  * with an object's filters: this install's own, else the first other Rerail entry (Rerail's npm source, another install
  * or one that is gone) with this install as its source, else this install appended. Removal takes out this install's
- * entries, and Rerail's npm source only when this is the managed install: the npm source is what Pi's gallery wrote,
- * which set-up swaps for the managed install, so removing a checkout registered with `--root` leaves it alone.
+ * entries, and Rerail's npm source only when this is the managed install (`managed`): the npm source is what Pi's gallery
+ * wrote, which set-up swaps for the managed install, so removing a checkout registered with `--root` leaves it alone.
  */
 function planPi(context: Context): Promise<Plan> {
   const agentDir = join(context.home, ".pi", "agent");
@@ -862,8 +871,7 @@ function planPi(context: Context): Promise<Plan> {
     }
     const kept: unknown[] = [];
     if (context.mode === "unregister") {
-      const managed = context.root === context.managedRoot;
-      for (const { entry, kind } of entries) if (kind === undefined || (kind === "npm" && !managed)) kept.push(entry);
+      for (const { entry, kind } of entries) if (kind === undefined || (kind === "npm" && !context.managed)) kept.push(entry);
     } else {
       const ownSlot = entries.findIndex(({ kind }) => kind === "own");
       const slot = ownSlot === -1 ? entries.findIndex(({ kind }) => kind !== undefined) : ownSlot;
@@ -1163,10 +1171,11 @@ export function detectHarnesses(home: string = homedir()): Harness[] {
 }
 
 function newContext(options: RegistrationOptions, mode: Mode): Context {
+  const root = resolve(options.root);
   return {
     mode,
-    root: resolve(options.root),
-    managedRoot: join(defaultRerailHome(), "current"),
+    root,
+    managed: options.managed ?? root === join(defaultRerailHome(), "current"),
     packageRoots: new Map(),
     home: resolve(options.home ?? homedir()),
     nodePath: options.nodePath ?? pinnedNodePath(),
