@@ -85,12 +85,12 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      # Core's release notes, on a pull request: each entry it adds to CHANGELOG.md stays at a sentence or two and
-      # names no ticket, pull request or commit, and on the Release pull request the dated section leads with a
-      # paragraph for the people who upgrade (scripts/release/core-changelog-check.mjs). The base branch's tip is
-      # fetched alone, so the entries the pull request adds can be told from the ones main has; the event's base.sha
-      # is the base as it was when the pull request was last updated, which would count main's newer entries as the
-      # pull request's.
+      # Core's release notes, on a pull request: each entry it adds or changes in .changelog/ stays at a sentence or two
+      # and names no ticket, pull request or commit, none is written into CHANGELOG.md by hand, and on the Release pull
+      # request the dated section leads with a paragraph for the people who upgrade
+      # (scripts/release/core-changelog-check.mjs). The base branch's tip is fetched alone, so the entries the pull
+      # request adds can be told from the ones main has; the event's base.sha is the base as it was when the pull
+      # request was last updated, which would count main's newer entries as the pull request's.
       - name: Fetch the base branch's tip
         if: github.event_name == 'pull_request'
         env:

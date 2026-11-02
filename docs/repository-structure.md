@@ -263,7 +263,7 @@ names the row's.
 
 No tracked text file mentions `rerail-fixtures/`, `tempo-oracles`, `code-rule-dsl/rules/opt-in` or
 `policies/rule-packs`.
-Exemptions: `history` (`CHANGELOG.md`, `.changeset/*.md`) and `structure-gate` (this page, the gate, its tests).
+Exemptions: `history` (`CHANGELOG.md`, `.changelog/*.md`, `.changeset/*.md`) and `structure-gate` (this page, the gate, its tests).
 
 ### 23. Shipped rules come only from `packs/*` — target `packs/*` only
 
