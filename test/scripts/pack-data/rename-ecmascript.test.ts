@@ -90,6 +90,13 @@ describe("renameSource", () => {
     for (const renamed of ["here", "href", "heap", "count", "html", "myRef", "Fancy", "quotient", "fn"]) expect(renames.has(renamed), renamed).toBe(true);
   });
 
+  it("keeps a JSX pragma's factory and the names destructured from a package's binding", () => {
+    const source = "/** @jsx Foo */ Foo.renderComponent(widget);\nimport ReactPerf from 'react-addons-perf';\nconst {printDOM} = ReactPerf;\n";
+    const { renames } = renameSource(source, "a.jsx");
+    for (const kept of ["Foo", "printDOM", "renderComponent"]) expect(renames.has(kept), kept).toBe(false);
+    expect(renames.has("widget")).toBe(true);
+  });
+
   it("renames the names a global comment lists with their uses", () => {
     const source = "/* global fooBar, bazQux: writable -- set by the page */\nfooBar(); bazQux = 1;\n// fooBar stays here\n";
     const { source: renamed, renames } = renameSource(source, "a.js");

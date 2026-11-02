@@ -33,7 +33,7 @@
  *   `current`), Next's data-fetching exports, Node's callback conventions, the test runners' globals and modifiers:
  *   `vi`, `jest`, `only`, `skip`, `todo`), any hook-shaped name (`use` and an uppercase letter) and any `…Sync` name; every member name chained on one of
  *   `MEMBER_ROOTS` (`process.exit`, `ReactDOM.findDOMNode`, `vi.fn`, `expect(x).toBe`, `Intl.v8BreakIterator`, `crypto.randomUUID`) or on `import.meta` (`import.meta.dirname`), and every
- *   key destructured from one (`let { env: { NODE_REPL_HISTORY_FILE } } = process`); and what a package exports:
+ *   key destructured from one or from a package's binding (`let { env: { NODE_REPL_HISTORY_FILE } } = process`); and what a package exports:
  *   the names an `import` or a destructuring `require` takes from a package (`import { Head } from "next/document"`,
  *   `const { TextDecoder } = require("util")`), the members read on a package's binding or on a name a destructuring takes from one (`fs.access`, `b.alloc` after
  *   `const { Buffer: b } = require("buffer")`) and the props
@@ -42,7 +42,7 @@
  *   callback's parameters, a DOM method on a local) are renamed like the tests' own. Also kept: intrinsic JSX tags
  *   and the attributes on intrinsic elements, both parts of a namespaced JSX name (`xlink:href`), meta-property names (`import.meta`,
  *   `new.target`), a name written right after a division's `/` (`foo⏎/ bar /gym`: read as a regular expression it is
- *   the flags) and any name with an occurrence that cannot be rewritten in place (unicode escapes). No name is
+ *   the flags), a JSX pragma's factory (`/** @jsx Foo *\/`) and any name with an occurrence that cannot be rewritten in place (unicode escapes). No name is
  *   renamed to a protected name, to one of a kept shape or (when longer than two letters) to a word in the file's
  *   comments; a name that cannot avoid them under any of the tried relabellings stays.
  */
@@ -103,10 +103,11 @@ function packageNames(file: ts.SourceFile): { exported: Set<string>; bindings: S
       if (named !== undefined && ts.isNamespaceImport(named)) bindings.add(named.name.text);
       if (named !== undefined && ts.isNamedImports(named)) for (const element of named.elements) exported.add((element.propertyName ?? element.name).text);
     }
-    // Destructuring a host object takes its API: `let { env: { NODE_REPL_HISTORY_FILE } } = process`.
+    // Destructuring a host object or a package's binding takes its API: `let { env: { NODE_REPL_HISTORY_FILE } } = process`,
+    // `const { printDOM } = ReactPerf` after `import ReactPerf from "react-addons-perf"`.
     if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer !== undefined) {
       const root = chainRoot(node.initializer);
-      if (root !== undefined && MEMBER_ROOTS.has(root.text)) for (const name of patternKeys(node.name)) exported.add(name);
+      if (root !== undefined && (MEMBER_ROOTS.has(root.text) || bindings.has(root.text))) for (const name of patternKeys(node.name)) exported.add(name);
     }
     if (ts.isVariableDeclaration(node) && requiredPackage(node.initializer) !== undefined) {
       if (ts.isIdentifier(node.name)) bindings.add(node.name.text);
@@ -407,6 +408,8 @@ export function renameSource(source: string, fileName: string): RenameResult {
   };
   const packages = packageNames(file);
   for (const name of packages.exported) pinned.add(name);
+  // A JSX pragma names the factory in a comment (`/** @jsx Foo */ Foo.renderComponent()`): its root stays, so the two agree.
+  for (const match of source.matchAll(/@jsx(?:Frag)?\s+([A-Za-z_$][\w$]*)/gu)) pinned.add(match[1]!);
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) {
       const text = node.text;
