@@ -173,8 +173,9 @@ describe("rules dump", () => {
     addRepository(target, REPOSITORY);
     target.update(repositories).set({ started: true }).run();
     addAttachment(target, { repositoryKey: REPOSITORY, folder: "", sourceKind: "rerail_rule", sourceId: "loose" });
-    // Approvals are this machine's: the imported rule waits for one here.
-    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 1, repositories: 1, approved: [], waiting: ["mine"] });
+    // The builder's rules are on Block unless they name another mode. Approvals are this machine's: the imported rule
+    // waits for one here.
+    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 1, repositories: 1, onBlock: ["mine"], approved: [], waiting: ["mine"] });
 
     expect(exportRulesDump(target, new Date(0)).repositories).toEqual(exportRulesDump(source, new Date(0)).repositories);
     expect(getLibraryRule(target, "mine")?.document).toEqual(getLibraryRule(source, "mine")?.document);
@@ -211,9 +212,9 @@ describe("rules dump", () => {
     expect(upsertLibraryRule(source, withShared, codeRule("shared", { mode: "steer" }), "code").document.rule.mode).toBe("steer");
     const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
 
-    expect(importRulesDump(source, withShared, dump)).toEqual({ library: 1, repositories: 0, approved: [], waiting: ["shared"] });
+    expect(importRulesDump(source, withShared, dump)).toEqual({ library: 1, repositories: 0, onBlock: [], approved: [], waiting: ["shared"] });
     const target = await temporaryDatabase();
-    expect(importRulesDump(target, withShared, dump)).toEqual({ library: 1, repositories: 0, approved: [], waiting: ["shared"] });
+    expect(importRulesDump(target, withShared, dump)).toEqual({ library: 1, repositories: 0, onBlock: [], approved: [], waiting: ["shared"] });
     expect(getLibraryRule(target, "shared")?.document.rule.mode).toBe("steer");
   });
 
@@ -240,13 +241,26 @@ describe("rules dump", () => {
     addRepository(target, "remote:github.com/acme/app-renamed");
     target.update(repositories).set({ aliases: [REPOSITORY] }).run();
 
-    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 0, repositories: 1, approved: [], waiting: [] });
+    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 0, repositories: 1, onBlock: [], approved: [], waiting: [] });
     expect(target.select({ key: repositories.repositoryKey, aliases: repositories.aliases }).from(repositories).all())
       .toEqual([{ key: "remote:github.com/acme/app-renamed", aliases: [REPOSITORY] }]);
     expect(target.select({ key: ruleAttachments.repositoryKey, folder: ruleAttachments.folder }).from(ruleAttachments).all())
       .toEqual([{ key: "remote:github.com/acme/app-renamed", folder: "web" }]);
   });
 
+  it("names what the dump puts on Block, library rules and repository settings, each once", async () => {
+    const source = await repositoryWithLintPack(["web"]);
+    upsertLibraryRule(source, ruleCatalog, codeRule("mine", { mode: "block" }), "code");
+    upsertLibraryRule(source, ruleCatalog, codeRule("calm", { mode: "steer" }), "code");
+    const owner = { kind: "repository" as const, repositoryKey: REPOSITORY };
+    setRuleSetting(source, { owner, folder: "web", targetKind: "pack", targetId: "lint", on: null, mode: "block" });
+    setRuleSetting(source, { owner, folder: "", targetKind: "rule", targetId: "mine", on: null, mode: "block" });
+    const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
+
+    const report = importRulesDump(await temporaryDatabase(), ruleCatalog, dump);
+
+    expect([...report.onBlock].sort()).toEqual(["mine", "pack lint"]);
+  });
   it("imports nothing when a code rule does not compile", async () => {
     const db = await temporaryDatabase();
     const broken = { ...codeRule("broken"), clauses: [{ ...codeRule("broken").clauses[0], forbid: { regex: { pattern: "(", source: "file.content" } } }] };

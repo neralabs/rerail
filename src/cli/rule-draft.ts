@@ -27,6 +27,7 @@ import { CODE_RULE_FORMAT, type CodeRule } from "../engine/code-rule/code-rule-s
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { normalizeFolder } from "../engine/catalog/repository-model.js";
+import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { addAttachment, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { getLibraryRule, upsertLibraryRule } from "../engine/catalog/rule-library.js";
@@ -512,6 +513,8 @@ export interface AddedRule {
   folder: string;
   /** Whether adding the rule set the repository up, with this rule as its only one. */
   setUp: boolean;
+  /** The mode the rule's content sets; `block` steers until block enforcement lands. */
+  mode: RuleMode;
   /** Whether the rule's content is approved, so it steers; otherwise it runs in Log until `rerail rules approve`. */
   approved: boolean;
 }
@@ -542,7 +545,7 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     else addAttachment(database, { repositoryKey: checkout.repositoryKey, ...attachment });
     const stored = getLibraryRule(database, draft.rule.id);
     const approved = stored !== undefined && isApproved(database, ruleSubject(draft.rule.id, stored.payloadHash));
-    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp, approved };
+    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp, mode: draft.rule.mode, approved };
   } finally {
     database.$client.close();
   }
@@ -635,6 +638,7 @@ export async function runRuleDraftCommand(
   const where = added.folder === "" ? added.repositoryName : `${added.repositoryName}/${added.folder}`;
   stdout.write(`● Added ${added.ruleId} to ${where}.\n`);
   if (added.setUp) stdout.write(`  ${added.repositoryName} was not set up, so it is now set up with this rule.\n`);
+  if (added.mode === "block") stdout.write(`  ${added.ruleId} is on Block. ${BLOCK_STEERS_NOTE}\n`);
   if (!added.approved) stdout.write(`  It runs in Log until a person approves it: rerail rules approve ${added.ruleId}\n`);
   // The same dashboard the footer and steers link to, scoped to this checkout's repository when the daemon knows it.
   const dashboard = await readRulesDashboard({ cwd: repo });

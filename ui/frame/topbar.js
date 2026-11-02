@@ -13,8 +13,9 @@ const $ = id => document.getElementById(id);
 /* ---------- status ----------
  * One indicator for the daemon and this repo: "Live" while the polls come in, "Updated
  * 3 min ago" when the page has fallen behind (a hidden tab, a slow answer), amber when Rerail is not on here or the
- * page is reconnecting, red once the daemon has not answered for a while. The repo is in the pill beside the
- * wordmark and the install date in Settings: the bar keeps only the dot and how fresh the data is. */
+ * page is reconnecting, red once the daemon has not answered for a while or reports its model broken (the file at
+ * fault named). The repo is in the pill beside the wordmark and the install date in Settings: the bar keeps only the
+ * dot and how fresh the data is. */
 
 const DOWN_AFTER_MS = 30_000;
 /** Two missed polls (every 5 s) and the page is no longer live. */
@@ -48,6 +49,12 @@ function status() {
         title: `No answer from ${location.origin}${since}. Running sessions aren't steered until it's back; a new session starts it, or run rerail daemon start.` };
     }
     return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${rel}; retrying.` };
+  }
+  // A model whose files do not match its manifest fails every session's attach, whichever repo the page shows.
+  const model = data.health?.model;
+  if (model && !model.ok) {
+    return { cls: "down", text: `Model: ${model.message}`,
+      title: "The engine's model files do not match model/manifest.json, so no session can attach. Reinstall Rerail, or in a source checkout run git lfs install && git lfs pull and rebuild; then run rerail daemon stop and rerail daemon start." };
   }
   if (ui.scope === null) return { cls: "", dot: false, text: "No repo selected", title: "Open the dashboard from a session, or pick a repo." };
   if (data.missing) return { cls: "warn", text: "Repo not found", title: "The daemon has no record of this checkout. Run /rerail-start in a session there, or pick another repo." };

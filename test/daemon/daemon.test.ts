@@ -1039,17 +1039,19 @@ describe("Rerail daemon", () => {
     const daemon = await start();
     const remove = (headers: Record<string, string>) => rawRequest(daemon, "/api/presentation-preferences?repository=&host=", { method: "DELETE", headers });
     const bound = `127.0.0.1:${daemon.port}`;
+    // `port: 0` can bind any ephemeral port, 35831 included: the mapped port must differ from the bound one.
+    const mapped = daemon.port === 35831 ? 35832 : 35831;
 
     expect(await remove({ origin: `http://${bound}`, host: bound })).toEqual({ status: 200, body: { removed: 0 } });
 
     // Reached through a container port mapping, the browser addresses a port the daemon never bound.
-    for (const host of ["localhost:35831", "127.0.0.1:35831", "[::1]:35831"]) {
+    for (const host of [`localhost:${mapped}`, `127.0.0.1:${mapped}`, `[::1]:${mapped}`]) {
       expect(await remove({ origin: `http://${host}`, host })).toEqual({ status: 200, body: { removed: 0 } });
     }
 
     const forbidden = { status: 403, body: { error: "api-origin-forbidden" } };
     expect(await remove({ origin: "https://evil.example", host: bound })).toEqual(forbidden);
-    expect(await remove({ origin: "http://localhost:35831", host: bound })).toEqual(forbidden);
+    expect(await remove({ origin: `http://localhost:${mapped}`, host: bound })).toEqual(forbidden);
   });
 
   it("answers 421 before any route when Host is not a name the daemon is known by", async () => {

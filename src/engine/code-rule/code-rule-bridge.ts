@@ -19,6 +19,7 @@ import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { sourceLanguageOfPath } from "./code-rule-languages.js";
 import { sensitiveByName } from "../path-boundary.js";
+import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 
 
 const MAX_SOURCE_BYTES = 1_000_000;
@@ -34,13 +35,27 @@ const IGNORED_DIRECTORIES = new Set([
 /**
  * A source as a tool call found it: its text, why it could not be read, or neither when it did not exist. A file named
  * like one holding secrets (`sensitiveByName`) keeps only its SHA-256 and size (`withheld`): preimages go into the
- * session ledger in the checkout, so its text is never captured, and `rewind` refuses to put it back.
+ * session ledger in the checkout, so its text is never captured, and `rewind` refuses to put it back. A preimage whose
+ * text holds a secret is written to the ledger the same way ({@link ledgerPreimage}), though the session keeps its text.
  */
 export interface Preimage {
   readonly text?: string;
   readonly readError?: string;
   readonly withheld?: { readonly sha256: string; readonly bytes: number };
 }
+
+/**
+ * `preimage` as the session ledger records it: text holding a secret (`containsSecret`) is withheld, its SHA-256 and
+ * size kept, so a session resumed from the ledger still finds the file unchanged by its digest but cannot put it back;
+ * a read error is scrubbed. The live session keeps the text it captured.
+ */
+export function ledgerPreimage(preimage: Preimage): Preimage {
+  if (preimage.text !== undefined && containsSecret(preimage.text)) {
+    return { withheld: { sha256: createHash("sha256").update(preimage.text).digest("hex"), bytes: Buffer.byteLength(preimage.text) } };
+  }
+  return preimage.readError === undefined ? preimage : { ...preimage, readError: scrubSecrets(preimage.readError) };
+}
+
 interface Source {
   readonly path: string;
   readonly language: CodeRuleSourceLanguage;
@@ -383,7 +398,7 @@ export class CodeRuleBridge {
     if ([...preimages.values()].some(preimage => preimage.readError !== undefined)) return undefined;
     const secret = [...preimages].find(([, preimage]) => preimage.withheld !== undefined);
     if (secret !== undefined)
-      throw new Error(`${secret[0]} is named like a file holding secrets, so Rerail kept no copy of it to put back; the edit stays as it is`);
+      throw new Error(`${secret[0]} holds secrets, by its name or its text, so Rerail kept no copy of it to put back; the edit stays as it is`);
     const discovery = this.#discovery;
     if (discovery === undefined || discovery.cancelled) return undefined;
     return await this.#enqueue(async () => {
@@ -875,7 +890,7 @@ export class CodeRuleBridge {
     const previous = preimage === undefined
       ? { previousReadError: "Original source was not captured for this tool call" }
       : preimage.withheld !== undefined
-        ? { previousReadError: "Rerail keeps no copy of a file named like one holding secrets" }
+        ? { previousReadError: "Rerail keeps no copy of a file holding secrets" }
         : { ...(preimage.text === undefined ? {} : { previousText: preimage.text }), ...(preimage.readError === undefined ? {} : { previousReadError: preimage.readError }) };
     if (source.text !== undefined) return { path: source.path, language: source.language, ...previous, generatedText: source.text };
     if (source.deleted) return { path: source.path, language: source.language, ...previous, deleted: true };

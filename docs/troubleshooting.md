@@ -275,6 +275,19 @@ Coding agents load hooks and commands when a session starts. Open a new session 
 
 ## Daemon and dashboard
 
+### The daemon keeps running after `/rerail-stop`
+
+That is on purpose. `/rerail-stop` (and `rerail stop`) stops Rerail in this checkout and the worktrees inside it: no
+rules run there and nothing is logged. The daemon is shared by every checkout and coding agent on the computer, so it
+keeps running for the others, and the reply says so. To shut it down, run this in a terminal:
+
+```sh
+rerail daemon stop
+```
+
+A coding agent's session in a checkout where Rerail is still started starts the daemon again with its next event; stop
+Rerail there too to keep it down. `rerail status` says whether it is running.
+
 ### The dashboard URL changed
 
 Rerail's daemon comes back on the port it last listened on, which it keeps in `~/.rerail/daemon-port.json`: 4737 the
@@ -306,9 +319,13 @@ devcontainers forward loopback ports): the daemon stays on loopback. Only where 
 daemon on every interface and publish the port on the host's loopback only:
 
 ```sh
-rerail daemon stop && rerail daemon start --host 0.0.0.0 --allow-remote   # in the container
-docker run -p 127.0.0.1:4737:4737 …                                       # on the host
+rerail daemon stop && rerail daemon start --host 0.0.0.0 --allow-remote --insecure-http   # in the container
+docker run -p 127.0.0.1:4737:4737 …                                                       # on the host
 ```
+
+`--insecure-http` keeps plain http, which is fair here only because the port is published on the host's loopback;
+publish it anywhere else and pass `--tls-cert <pem> --tls-key <pem>` instead, so the capability is not sent in clear
+(see the daemon section of [reference.md](reference.md)).
 
 Off loopback the capability changes on every start, so open the new link (`rerail daemon start` prints it) after a
 restart. Anyone holding the link can read and change your rules, so do not paste it anywhere. Publishing on

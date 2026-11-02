@@ -15,6 +15,7 @@ export interface RerailMcpBridgeOptions {
   input?: Readable;
   stdout?: Writable;
   stderr?: Writable;
+  /** Sends every request (the health probe included) in place of the daemon's own transport (`daemonFetch`). */
   fetch?: RerailMcpBridgeFetch;
   /** The Rerail home whose daemon state names the daemon; defaults to `defaultRerailHome()`. */
   home?: string;
@@ -89,7 +90,7 @@ function sameDaemon(left: DaemonState, right: DaemonState): boolean {
 class DaemonLocator {
   #confirmed: DaemonState | undefined;
 
-  constructor(private readonly home: string, private readonly fetchImpl: RerailMcpBridgeFetch) {}
+  constructor(private readonly home: string, private readonly fetchImpl: RerailMcpBridgeFetch | undefined) {}
 
   /** The `/mcp` endpoint of the home's live daemon and the headers that admit a request to it. */
   async endpoint(): Promise<DaemonEndpoint> {
@@ -118,12 +119,12 @@ async function relay(
   request: string,
   daemon: DaemonLocator,
   callerHeaders: Readonly<Record<string, string>>,
-  fetchImpl: RerailMcpBridgeFetch,
+  fetchImpl: RerailMcpBridgeFetch | undefined,
 ): Promise<string | undefined> {
   const endpoint = await daemon.endpoint();
   let response: Response;
   try {
-    response = await fetchImpl(endpoint.url, {
+    response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, {
       method: "POST",
       // The capability last: nothing the bridge was started with names another.
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...callerHeaders, ...endpoint.headers },
@@ -149,7 +150,7 @@ async function relayRequest(
   callerHeaders: Readonly<Record<string, string>>,
   stdout: Writable,
   stderr: Writable,
-  fetchImpl: RerailMcpBridgeFetch,
+  fetchImpl: RerailMcpBridgeFetch | undefined,
 ): Promise<void> {
   try {
     const body = await relay(request, daemon, callerHeaders, fetchImpl);
@@ -174,7 +175,7 @@ export async function runRerailMcpBridge(options: RerailMcpBridgeOptions = {}): 
   const callerHeaders: Record<string, string> = callerCwd === undefined ? {} : { [CALLER_CWD_HEADER]: encodeURIComponent(callerCwd) };
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
-  const fetchImpl = options.fetch ?? fetch;
+  const fetchImpl = options.fetch;
   const daemon = new DaemonLocator(options.home ?? defaultRerailHome(), fetchImpl);
   const lines = createInterface({ input: options.input ?? process.stdin, crlfDelay: Infinity });
   for await (const request of lines) {

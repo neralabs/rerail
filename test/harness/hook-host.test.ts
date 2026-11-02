@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -5,11 +6,16 @@ import { describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
 import {
   emitHookOutput,
+  holdStopSteers,
   pendingPath,
   persistPending,
   readPending,
+  replacePending,
+  routeDeliveries,
+  scrubbedPendingText,
   serveHook,
   takePending,
+  withPendingFileLock,
   withSessionLock,
   type HookInput,
   type HookOutput,
@@ -240,5 +246,63 @@ describe("hook host durable state", () => {
       throw new Error("ingest failed");
     })).rejects.toThrow("ingest failed");
     await expect(withSessionLock(root, "codex", "session-1", async () => "recovered")).resolves.toBe("recovered");
+  });
+
+  it("holds steers on disk scrubbed of secrets and hands the hook their original text", async () => {
+    const root = await temporaryDirectory();
+    const path = pendingPath(root, "claude-code", "session-1");
+    // Assembled from parts, so no secret scanner takes this file for one holding a key.
+    const secret = ["glpat", "-x7Kq2mZ9vL4pR8tN1wB6"].join("");
+    const leaky = delivery(`Move the key in \`const key = "${secret}"\` to the environment.`);
+    const stored = { ...leaky, content: leaky.content.replace(secret, `[redacted:gitlab-token:${createHash("sha256").update(secret).digest("hex").slice(0, 6)}]`) };
+
+    expect(await holdStopSteers(path, [leaky])).toEqual([leaky]);
+    expect(await readFile(path, "utf8")).not.toContain(secret);
+    expect(await readPending(path)).toEqual([stored]);
+
+    await replacePending(path, [leaky, delivery("plain")]);
+    expect(await readFile(path, "utf8")).not.toContain(secret);
+    expect(await readPending(path)).toEqual([stored, delivery("plain")]);
+
+    // A context event delivers the steers it carries as they came; the one held earlier comes back as it was stored.
+    expect(await routeDeliveries(path, "SessionStart", [leaky], { SessionStart: true })).toEqual([stored, delivery("plain"), leaky]);
+    await persistPending(path, [leaky]);
+    expect(await readFile(path, "utf8")).not.toContain(secret);
+  });
+
+  it("rewrites a pending file held before steers were scrubbed, and leaves a clean or foreign one", async () => {
+    const secret = ["glpat", "-x7Kq2mZ9vL4pR8tN1wB6"].join("");
+    const older = JSON.stringify([delivery(`key ${secret}`), delivery("plain"), "stray"]);
+    const rewritten = scrubbedPendingText(older);
+    expect(rewritten).not.toContain(secret);
+    expect(JSON.parse(rewritten!)).toEqual([
+      delivery(`key [redacted:gitlab-token:${createHash("sha256").update(secret).digest("hex").slice(0, 6)}]`), delivery("plain"), "stray",
+    ]);
+    expect(scrubbedPendingText(rewritten!)).toBeUndefined();
+    expect(scrubbedPendingText("{\"not\": \"an array\"}")).toBeUndefined();
+    expect(scrubbedPendingText("not json")).toBeUndefined();
+  });
+
+  it("locks a pending file with the lock its session's hooks hold", async () => {
+    const root = await temporaryDirectory();
+    const order: string[] = [];
+    const hookEntered = Promise.withResolvers<void>();
+    const releaseHook = Promise.withResolvers<void>();
+
+    const hook = withSessionLock(root, "cursor", "session-1", async () => {
+      order.push("hook-start");
+      hookEntered.resolve();
+      await releaseHook.promise;
+      order.push("hook-end");
+    });
+    await hookEntered.promise;
+    const scrub = withPendingFileLock(pendingPath(root, "cursor", "session-1"), async () => {
+      order.push("scrub");
+    });
+    releaseHook.resolve();
+    await Promise.all([hook, scrub]);
+
+    expect(order).toEqual(["hook-start", "hook-end", "scrub"]);
+    await expect(withPendingFileLock(join(root, "cursor-pending", "notes.json"), async () => undefined)).rejects.toThrow("Not a pending steer file");
   });
 });

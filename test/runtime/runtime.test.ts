@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -722,5 +722,61 @@ describe("Rerail session restore", () => {
     } finally {
       await runtime.dispose();
     }
+  });
+
+  it("stores a tool output's secret redacted, while the rule that matches it still sees it and steers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-secret-output-"));
+    directories.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    // Assembled from parts so no key-shaped literal sits in the file for secret scanners to refuse.
+    const key = ["sk-", "proj-", "Q7f2LmZ9xV4pR8tK1wN6bH3cJ5dS0gYa"].join("");
+    setUpTestRepository(root, {
+      library: [{
+        kind: "conversation",
+        rule: {
+          id: "acme:no-key-in-output",
+          mode: "steer",
+          match: { field: "text", regex: "sk-proj-[A-Za-z0-9]{32}" },
+          sample: { source: "tool:Bash", boundary: "tool-call" },
+          action: { content: "Rotate the key the output showed." },
+          repeat: { mode: "always" },
+        },
+      }],
+    }, databasePath);
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      modelPath: resolve("model"),
+      databasePath,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => false,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "keys", cwd: root } });
+      await runtime.ingest({ kind: "call", eventId: "cat", sessionId: "keys", toolCallId: "cat", toolName: "Bash", input: { command: "cat config.py" } });
+      const deliveries = await runtime.ingest({
+        kind: "result", eventId: "cat-out", sessionId: "keys", toolCallId: "cat", toolName: "Bash", output: `API_KEY = "${key}"\n`,
+      });
+      expect(deliveries).toEqual([expect.objectContaining({ requested: "steer", ruleIds: ["acme:no-key-in-output"] })]);
+    } finally {
+      await runtime.dispose();
+    }
+    const database = openRerailDatabase(databasePath, { readonly: true });
+    let stored: string;
+    try {
+      stored = database.$client.prepare("SELECT payload_json FROM events WHERE event_id = 'cat-out'").pluck().get() as string;
+    } finally {
+      database.$client.close();
+    }
+    expect(stored).not.toContain(key);
+    expect(JSON.parse(stored)).toMatchObject({ output: expect.stringMatching(/^API_KEY = "\[redacted:openai-key:[0-9a-f]{6}\]"\n$/u) });
+    const ledger = await readFile(join(root, "sessions", createHash("sha256").update("keys").digest("hex"), "events.jsonl"), "utf8");
+    expect(ledger).not.toContain(key);
+    expect(ledger).toContain("[redacted:openai-key:");
   });
 });
