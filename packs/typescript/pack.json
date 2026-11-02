@@ -3,7 +3,7 @@
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "typescript-eslint rules for safe, idiomatic TypeScript.",
+  "covers": "typescript-eslint and @vitest/eslint-plugin rules for safe, idiomatic TypeScript and Vitest tests.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -468,6 +468,24 @@
       "title": "typescript-eslint unified-signatures: Disallow two overloads that could be unified into one with a union or an optional/rest parameter",
       "group": "typescript-eslint",
       "on": false
+    },
+    {
+      "id": "vitest-expect-expect",
+      "document": "rules/vitest-expect-expect.json",
+      "title": "@vitest/eslint-plugin expect-expect: enforce having expectation in test body",
+      "group": "@vitest/eslint-plugin"
+    },
+    {
+      "id": "vitest-no-disabled-tests",
+      "document": "rules/vitest-no-disabled-tests.json",
+      "title": "@vitest/eslint-plugin no-disabled-tests: disallow disabled tests",
+      "group": "@vitest/eslint-plugin"
+    },
+    {
+      "id": "vitest-no-focused-tests",
+      "document": "rules/vitest-no-focused-tests.json",
+      "title": "@vitest/eslint-plugin no-focused-tests: disallow focused tests",
+      "group": "@vitest/eslint-plugin"
     }
   ]
 }

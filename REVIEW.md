@@ -86,7 +86,7 @@ Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is
     "packs/*/upstream/*/*.lock",
     "packs/node/rules/",
     "packs/node/candidates/",
-    "packs/typescript/candidates/rules/vitest-*.json"
+    "packs/typescript/rules/vitest-*.json"
   ]
 }
 ```

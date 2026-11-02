@@ -893,7 +893,7 @@
         "tool": "eslint-plugin-vitest",
         "rule": "vitest/expect-expect"
       },
-      "policy": "candidates/rules/vitest-expect-expect.json",
+      "policy": "rules/vitest-expect-expect.json",
       "capabilities": [
         "syntax",
         "value",
@@ -908,7 +908,7 @@
         "tool": "eslint-plugin-vitest",
         "rule": "vitest/no-disabled-tests"
       },
-      "policy": "candidates/rules/vitest-no-disabled-tests.json",
+      "policy": "rules/vitest-no-disabled-tests.json",
       "capabilities": [
         "syntax",
         "value",
@@ -923,7 +923,7 @@
         "tool": "eslint-plugin-vitest",
         "rule": "vitest/no-focused-tests"
       },
-      "policy": "candidates/rules/vitest-no-focused-tests.json",
+      "policy": "rules/vitest-no-focused-tests.json",
       "capabilities": [
         "syntax",
         "value",

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "vitest-no-focused-tests",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Remove .only from Vitest tests and suites; a focused test makes Vitest skip every other test in the file.",
   "scope": {
@@ -13,7 +13,10 @@
       "**/*.test.mts",
       "**/*.spec.mts",
       "**/__tests__/**/*.ts",
-      "**/__tests__/**/*.tsx"
+      "**/__tests__/**/*.tsx",
+      "**/*.js",
+      "**/*.mjs",
+      "**/*.cjs"
     ],
     "exclude": [
       "**/node_modules/**",
@@ -929,8 +932,7 @@
               }
             }
           },
-          "vitest-context-pair": {
-            "kind": "pair_pattern",
+          "vitest-first-context-property": {
             "nthChild": {
               "position": 1,
               "ofRule": {
@@ -949,18 +951,9 @@
             },
             "inside": {
               "kind": "object_pattern",
-              "inside": {
-                "any": [
-                  {
-                    "kind": "required_parameter"
-                  },
-                  {
-                    "kind": "optional_parameter"
-                  }
-                ],
-                "nthChild": {
-                  "position": 1,
-                  "ofRule": {
+              "any": [
+                {
+                  "inside": {
                     "any": [
                       {
                         "kind": "required_parameter"
@@ -969,33 +962,130 @@
                         "kind": "optional_parameter"
                       }
                     ],
-                    "has": {
-                      "field": "pattern",
-                      "kind": "object_pattern"
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "any": [
+                          {
+                            "kind": "required_parameter"
+                          },
+                          {
+                            "kind": "optional_parameter"
+                          }
+                        ],
+                        "has": {
+                          "field": "pattern",
+                          "kind": "object_pattern"
+                        }
+                      }
+                    },
+                    "inside": {
+                      "kind": "formal_parameters",
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "function_expression"
+                          },
+                          {
+                            "kind": "generator_function"
+                          },
+                          {
+                            "kind": "method_definition"
+                          }
+                        ]
+                      }
                     }
                   }
                 },
-                "inside": {
-                  "kind": "formal_parameters",
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "any": [
+                        {
+                          "kind": "object_pattern"
+                        },
+                        {
+                          "kind": "assignment_pattern",
+                          "has": {
+                            "field": "left",
+                            "kind": "object_pattern"
+                          }
+                        }
+                      ]
+                    }
+                  },
                   "inside": {
-                    "any": [
-                      {
-                        "kind": "arrow_function"
-                      },
-                      {
-                        "kind": "function_expression"
-                      },
-                      {
-                        "kind": "generator_function"
-                      },
-                      {
-                        "kind": "method_definition"
+                    "kind": "formal_parameters",
+                    "inside": {
+                      "any": [
+                        {
+                          "kind": "arrow_function"
+                        },
+                        {
+                          "kind": "function_expression"
+                        },
+                        {
+                          "kind": "generator_function"
+                        },
+                        {
+                          "kind": "method_definition"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "assignment_pattern",
+                    "field": "left",
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "any": [
+                          {
+                            "kind": "object_pattern"
+                          },
+                          {
+                            "kind": "assignment_pattern",
+                            "has": {
+                              "field": "left",
+                              "kind": "object_pattern"
+                            }
+                          }
+                        ]
                       }
-                    ]
+                    },
+                    "inside": {
+                      "kind": "formal_parameters",
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "function_expression"
+                          },
+                          {
+                            "kind": "generator_function"
+                          },
+                          {
+                            "kind": "method_definition"
+                          }
+                        ]
+                      }
+                    }
                   }
                 }
-              }
-            },
+              ]
+            }
+          },
+          "vitest-context-pair": {
+            "kind": "pair_pattern",
+            "matches": "vitest-first-context-property",
             "has": {
               "field": "key",
               "kind": "property_identifier",
@@ -1045,6 +1135,14 @@
                             "regex": "[\\s\\S]"
                           }
                         }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "parameters",
+                      "has": {
+                        "kind": "identifier"
                       }
                     }
                   }
@@ -1103,141 +1201,13 @@
                           "kind": "shorthand_property_identifier_pattern",
                           "any": [
                             {
-                              "nthChild": {
-                                "position": 1,
-                                "ofRule": {
-                                  "any": [
-                                    {
-                                      "kind": "pair_pattern"
-                                    },
-                                    {
-                                      "kind": "shorthand_property_identifier_pattern"
-                                    },
-                                    {
-                                      "kind": "object_assignment_pattern"
-                                    }
-                                  ]
-                                }
-                              },
-                              "inside": {
-                                "kind": "object_pattern",
-                                "inside": {
-                                  "any": [
-                                    {
-                                      "kind": "required_parameter"
-                                    },
-                                    {
-                                      "kind": "optional_parameter"
-                                    }
-                                  ],
-                                  "nthChild": {
-                                    "position": 1,
-                                    "ofRule": {
-                                      "any": [
-                                        {
-                                          "kind": "required_parameter"
-                                        },
-                                        {
-                                          "kind": "optional_parameter"
-                                        }
-                                      ],
-                                      "has": {
-                                        "field": "pattern",
-                                        "kind": "object_pattern"
-                                      }
-                                    }
-                                  },
-                                  "inside": {
-                                    "kind": "formal_parameters",
-                                    "inside": {
-                                      "any": [
-                                        {
-                                          "kind": "arrow_function"
-                                        },
-                                        {
-                                          "kind": "function_expression"
-                                        },
-                                        {
-                                          "kind": "generator_function"
-                                        },
-                                        {
-                                          "kind": "method_definition"
-                                        }
-                                      ]
-                                    }
-                                  }
-                                }
-                              }
+                              "matches": "vitest-first-context-property"
                             },
                             {
                               "inside": {
                                 "kind": "object_assignment_pattern",
                                 "field": "left",
-                                "nthChild": {
-                                  "position": 1,
-                                  "ofRule": {
-                                    "any": [
-                                      {
-                                        "kind": "pair_pattern"
-                                      },
-                                      {
-                                        "kind": "shorthand_property_identifier_pattern"
-                                      },
-                                      {
-                                        "kind": "object_assignment_pattern"
-                                      }
-                                    ]
-                                  }
-                                },
-                                "inside": {
-                                  "kind": "object_pattern",
-                                  "inside": {
-                                    "any": [
-                                      {
-                                        "kind": "required_parameter"
-                                      },
-                                      {
-                                        "kind": "optional_parameter"
-                                      }
-                                    ],
-                                    "nthChild": {
-                                      "position": 1,
-                                      "ofRule": {
-                                        "any": [
-                                          {
-                                            "kind": "required_parameter"
-                                          },
-                                          {
-                                            "kind": "optional_parameter"
-                                          }
-                                        ],
-                                        "has": {
-                                          "field": "pattern",
-                                          "kind": "object_pattern"
-                                        }
-                                      }
-                                    },
-                                    "inside": {
-                                      "kind": "formal_parameters",
-                                      "inside": {
-                                        "any": [
-                                          {
-                                            "kind": "arrow_function"
-                                          },
-                                          {
-                                            "kind": "function_expression"
-                                          },
-                                          {
-                                            "kind": "generator_function"
-                                          },
-                                          {
-                                            "kind": "method_definition"
-                                          }
-                                        ]
-                                      }
-                                    }
-                                  }
-                                }
+                                "matches": "vitest-first-context-property"
                               }
                             }
                           ]

@@ -1,19 +1,22 @@
 # Rerail rule pack: TypeScript
 
-62 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
-options. 42 start off (`"on": false`): no approved typescript-eslint configuration turns them on, so they are
-experimental. Each is scored against the tool's own findings on the tool's test fixtures and on their rename variants
-(`holds-under-rename`), and against the labelled lines of the tool's real-code samples
+65 code rules for TypeScript: 62 ported from typescript-eslint 8.70.1 (on ESLint 10.11.0) and 3 from @vitest/eslint-plugin
+1.6.27, each with its default options. 42 start off (`"on": false`): no approved upstream configuration turns them on,
+so they are experimental. Each is scored against the tool's own findings on the tool's test fixtures and on their
+rename variants (`holds-under-rename`), and against the labelled lines of the tool's real-code samples
 ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with every
 disagreement declared in `divergences.json`: 27 today. 26 are `rerail-unknown`, each an upstream fixture or its rename
-variant that the grammar reads with a syntax error or misreads; 1 is `not-comparable`, a candidate's sample. The
-conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules. ESLint's core
-rules are in the [JavaScript pack](../javascript/README.md).
+variant that the grammar reads with a syntax error or misreads; 1 is `not-comparable`, a sample that an Oxlint-style
+suppression comment silences. The conformance check ([conformance/README.md](../../conformance/README.md#the-gate))
+gates the shipped rules. ESLint's core rules are in the [JavaScript pack](../javascript/README.md).
 
 Every typescript-eslint rule runs on `.ts`, `.tsx`, `.mts` and `.cts` files only. On JavaScript a port steers CommonJS
 files away from
 `require` (`no-require-imports` on `jest.config.js`), and with both packs added a port with an ESLint core twin would
-report the same violation as the twin, which runs on JavaScript files only.
+report the same violation as the twin, which runs on JavaScript files only. The three `vitest-*` rules run on TypeScript
+test files (`*.test.ts`, `*.spec.ts`, `__tests__/**` and their `.tsx`/`.mts` forms) and on every `.js`, `.mjs` and `.cjs`
+file, the files @vitest/eslint-plugin's `recommended` configuration lints; the JavaScript pack has no Vitest rule, and a
+file without a Vitest call is never reported.
 
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack typescript"`, against the
 [pack structure and validation contract](../../docs/pack-format.md).
@@ -26,7 +29,8 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); `upstream/eslint-plugin-vitest/UPSTREAM.md` lists the fixtures Rerail wrote (`fixtures/*/rerail-*`), which the generator holds and lints like the copied ones |
 | `upstream/generate.mjs` | typescript-eslint's generator; `upstream/eslint-plugin-vitest/generate.mjs` is @vitest/eslint-plugin's |
-| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the expected findings do not have) is listed in `conformance.json`, scored and reported, never gated. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
+| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint ports that fail the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the expected findings do not have) is listed in `conformance.json`, scored and reported, never gated |
+| `rules/vitest-*.json` | Generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
 | `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
@@ -281,3 +285,15 @@ Applies to a type literal, or an interface with no supertype other than Function
 ### `typescript-eslint-unified-signatures`
 
 Compares each overload with every earlier overload of the same name in the same container, pairing parameters by position for any number of parameters, requiring equal return types and type parameters. As upstream: only class declarations are class containers (an anonymous `export default class` too; a class expression's overloads are not compared), anonymous `export default function` overloads share one name, and so do computed keys that are neither an identifier nor a literal. `export declare function` overloads count, and an interface method signature is reported at its start. Not ported: the outer type-parameter usage test. With three or more overloads of a name, the message names the line of the other overload ESLint picks (a `line` transform).
+
+### `vitest-expect-expect`
+
+@vitest/eslint-plugin 1.6.27 vitest/expect-expect (default `assertFunctionNames`: `expect` and `assert`). Flags a Vitest test (`it`, `test`, `fit`, `bench`, with `.only`, `.concurrent`, `.sequential` or `.fails`, or the call `.each(...)`/`.for(...)` returns; upstream skips `.skip`, `.todo`, `.extend` and `.scoped`) whose function makes no call whose name starts with `expect` or `assert`, case-insensitive, read through member chains, computed keys that name a string and calls. A call is Vitest's when its head is a global, a named import of `vitest` (or a key destructured from `require('vitest')` or `await import('vitest')`), a `.extend` of such a test function, or a test context, as upstream's parseVitestFnCall classifies it; `node:test`, `bun:test` and other runners' calls are not.
+
+### `vitest-no-disabled-tests`
+
+@vitest/eslint-plugin 1.6.27 vitest/no-disabled-tests (default options). Disabled forms: `.skip`, a `{ skip: true }` option, `xit`, `xtest`, `xdescribe`, a test with no function, `pending()`. Which calls are Vitest's is read as `vitest-expect-expect` reads it.
+
+### `vitest-no-focused-tests`
+
+@vitest/eslint-plugin 1.6.27 vitest/no-focused-tests (default options). Flags `.only` on `describe`, `it` and `test`, and a `{ only: true }` option, at the property. Which calls are Vitest's is read as `vitest-expect-expect` reads it. Divergence (`not-comparable`): a jest sample whose `// eslint-disable-next-line jest/no-focused-tests` names another plugin's rule. ESLint reports the `test.only` below it; the port's `suppress.oxlint` matches the directive by its part after the last `/`, as Oxlint does, so the comment silences it.
