@@ -38,6 +38,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
 | O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open |
 | O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
+| O65 | Phase 11 | Two data-layer stages outside the fragment: `call_paths` (a value cycle) and `block_results` (`NotStratifiable` over the tree) (t17) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -930,3 +931,11 @@ kind-filtered climb/descent (the matcher's `inside`/`has` with `stopBy`) as tree
 109 forbid clauses regex the file's text (108 with line options, 8 with a line state machine) and 4 its path, in
 14 rules; 9 rules have nothing else. `yaml::add` refuses them. PIAT §5.1 (`notes/t1` :446) found 107 expressible as
 AST rules, 2 needing line positions, 4 path-only. **Closure:** the rewrite, done for the gate's pack.
+
+## O65. Two data-layer stages outside the fragment
+
+serverplan-quality's `call_paths` carries dotted text along attribute chains (`path || suffix`), a cycle through a
+value-creating builtin that the front end does not check. `block_results` folds a JSON map in block order; over the
+tree it is a negation of `raises` in its own component (`serverplan_quality.block_results.rdl`), stratified only by
+depth. Both are declared inputs in the programs. **Closure:** a tape builtin for attribute-chain text, and a
+bottom-up tree fold (or per-file lattice in the dispatch, §7) for `block_results`.
