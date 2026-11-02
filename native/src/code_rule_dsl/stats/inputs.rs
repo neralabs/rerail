@@ -62,7 +62,8 @@ impl Statistics {
                 SELECT w.lang,w.code,w.term,coalesce(k.n,0),coalesce(v.n,0),
                        max(0,coalesce(k.n,0)-coalesce(c.n,0))
                 FROM wanted w LEFT JOIN kind_size k ON k.kind=w.lang*{LANG_STRIDE}+CASE WHEN w.code=65535 THEN 0 ELSE w.code END
-                LEFT JOIN term_node_freq v ON v.lang=w.lang AND v.kind=k.kind AND v.term=w.term
+                LEFT JOIN atoms a ON a.value=w.term
+                LEFT JOIN term_node_freq v ON v.lang=w.lang AND v.kind=k.kind AND v.term=a.atom
                 LEFT JOIN term_kind_freq c ON c.kind=k.kind");
             let parameters = requests.iter().flat_map(|Key(lang, required)| {
                 let (kind, term) = match required {

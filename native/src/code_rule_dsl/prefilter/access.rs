@@ -25,7 +25,7 @@ impl Lower {
                 let lang = self.parameter(i64::from(self.lang));
                 let name = format!("terms{}", self.ctes.len());
                 let body = if literal {
-                    format!("SELECT term FROM term_freq WHERE lang={lang} AND term={expression}")
+                    format!("SELECT v.term FROM atoms a CROSS JOIN term_freq v ON v.lang={lang} AND v.term=a.atom WHERE a.value={expression}")
                 } else {
                     self.predicates
                         .insert(name.clone(), (lang.clone(), expression.clone()));

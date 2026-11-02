@@ -195,7 +195,9 @@ pub(super) fn select(db: &Connection, lang: u32, plans: &[&AnchorPlan], files: &
     let mut term_files = BTreeMap::new();
     let mut uncovered = BTreeSet::new();
     if !terms.is_empty() {
-        let mut query = db.prepare_cached("SELECT DISTINCT tape_id FROM term_postings WHERE lang=?1 AND term=?2")?;
+        let mut query = db.prepare_cached(
+            "SELECT DISTINCT p.tape_id FROM atoms a CROSS JOIN term_postings p ON p.lang=?1 AND p.term=a.atom WHERE a.value=?2",
+        )?;
         for term in &terms {
             let found = query
                 .query_map(rusqlite::params![lang, term], |row| row.get::<_, i64>(0))?

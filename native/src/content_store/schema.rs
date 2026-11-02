@@ -21,12 +21,12 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 1;
+pub(super) const SCHEMA_VERSION: i64 = 2;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v1.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at.
-const STORE_FILE_FLOOR: i64 = 1;
+pub const STORE_FILE_NAME: &str = "content-v2.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 2: the prefilter vocabulary keyed by atom.
+const STORE_FILE_FLOOR: i64 = 2;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -300,6 +300,8 @@ CREATE TABLE IF NOT EXISTS atoms (
     value TEXT NOT NULL
 ) STRICT;
 INSERT OR IGNORE INTO atoms(atom,value) VALUES (0,'');
+-- A string's atom, from SQL: the vocabulary's terms are atoms, looked up and range-sought by text.
+CREATE UNIQUE INDEX IF NOT EXISTS atoms_by_value ON atoms(value);
 
 -- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
 -- derivation's inputs with the digest it read. A derivation's output is a name too, so an
@@ -427,9 +429,10 @@ CREATE TABLE IF NOT EXISTS fact_value_stats (
     sqd INTEGER NOT NULL,
     PRIMARY KEY (tbl, col, val)
 ) STRICT, WITHOUT ROWID;
+-- Every `term` column below is the term's atom (`atoms`): its text is stored once.
 CREATE TABLE IF NOT EXISTS term_postings (
     lang INTEGER NOT NULL,
-    term TEXT NOT NULL,
+    term INTEGER NOT NULL,
     tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
     kind INTEGER NOT NULL,
     n INTEGER NOT NULL CHECK(n > 0),
@@ -439,7 +442,7 @@ CREATE TABLE IF NOT EXISTS term_postings (
 CREATE INDEX IF NOT EXISTS term_postings_by_tape ON term_postings(tape_id);
 CREATE TABLE IF NOT EXISTS term_freq (
     lang INTEGER NOT NULL,
-    term TEXT NOT NULL,
+    term INTEGER NOT NULL,
     n INTEGER NOT NULL,
     PRIMARY KEY (lang, term)
 ) STRICT, WITHOUT ROWID;
@@ -448,7 +451,7 @@ CREATE TABLE IF NOT EXISTS term_freq (
 -- tape with a set. A kind's uncovered nodes are `kind_size.n - term_kind_freq.n`.
 CREATE TABLE IF NOT EXISTS term_node_freq (
     lang INTEGER NOT NULL,
-    term TEXT NOT NULL,
+    term INTEGER NOT NULL,
     kind INTEGER NOT NULL,
     n INTEGER NOT NULL,
     PRIMARY KEY (lang, term, kind)
@@ -499,13 +502,14 @@ CREATE TABLE IF NOT EXISTS vocabulary_predicate (
 CREATE TABLE IF NOT EXISTS vocabulary_term (
     lang INTEGER NOT NULL,
     expression TEXT NOT NULL,
-    term TEXT NOT NULL,
+    term INTEGER NOT NULL,
     PRIMARY KEY (lang, expression, term),
     FOREIGN KEY (lang, expression) REFERENCES vocabulary_predicate(lang, expression) ON DELETE CASCADE,
     FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS vocabulary_term_deleted ON vocabulary_term(lang, term);
 -- An exact literal set (`^(?:a|b)$`) matches exactly its literals: a join, not a regex per term.
+-- A literal is text: it need not be a term (or an atom) yet.
 CREATE TABLE IF NOT EXISTS vocabulary_literal (
     lang INTEGER NOT NULL,
     expression TEXT NOT NULL,
@@ -516,7 +520,7 @@ CREATE TABLE IF NOT EXISTS vocabulary_literal (
 CREATE INDEX IF NOT EXISTS vocabulary_literal_expression ON vocabulary_literal(lang, expression);
 CREATE TABLE IF NOT EXISTS vocabulary_pending (
     lang INTEGER NOT NULL,
-    term TEXT NOT NULL,
+    term INTEGER NOT NULL,
     PRIMARY KEY (lang, term),
     FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID;

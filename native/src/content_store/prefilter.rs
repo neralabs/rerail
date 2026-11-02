@@ -11,7 +11,8 @@
 //! - `tape_kind_counts`: per (tape, kind), the count and the delta-varint preorder postings: the
 //!   access path for "which nodes of this tape have kind k", without decoding the tape.
 //! - `term_postings`: case-exact leaf text per (lang, term, tape, kind), and `term_freq` the number
-//!   of (tape, kind) rows carrying each term.
+//!   of (tape, kind) rows carrying each term. A term is its text's atom (`atoms`), interned in the
+//!   publication's transaction, so its text is stored once.
 //! - `term_coverage`: per (tape, kind), whether every node of the kind is covered by a term
 //!   (`bad` = 0), and the nodes that are not (`missing`). Unclean leaves (whitespace, control
 //!   characters, too long) are kept as terms only while the store-wide residue of their kind stays
@@ -25,8 +26,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The image a tape's rows were built by. 2: ERROR nodes are kind code 0 in both postings.
 /// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
-/// edges (`kind_size`, `edge_freq`).
-pub(crate) const PREFILTER_VERSION: i64 = 4;
+/// edges (`kind_size`, `edge_freq`). 5: terms are atoms.
+pub(crate) const PREFILTER_VERSION: i64 = 5;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub(crate) const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -180,6 +181,7 @@ impl ContentStore {
                  INSERT INTO capture.tape_kind_counts SELECT k.* FROM temp.capture_tapes c JOIN main.tape_kind_counts k USING(tape_id);
                  INSERT INTO capture.term_postings SELECT p.* FROM temp.capture_tapes c JOIN main.term_postings p USING(tape_id);
                  INSERT INTO capture.term_coverage SELECT v.* FROM temp.capture_tapes c JOIN main.term_coverage v USING(tape_id);
+                 INSERT OR IGNORE INTO capture.atoms SELECT * FROM main.atoms;
                  INSERT INTO capture.kind_size SELECT * FROM main.kind_size;
                  INSERT INTO capture.edge_freq SELECT * FROM main.edge_freq;
                  INSERT INTO capture.term_freq SELECT * FROM main.term_freq;
@@ -247,6 +249,18 @@ impl Counts {
     /// Writes and clears the sums; postings in key order, so consecutive rows share leaves.
     fn flush(&mut self, transaction: &Transaction<'_>) -> StoreResult<()> {
         let counts = std::mem::take(self);
+        // Each term's atom: new texts are appended to `atoms` (dense: a new row's atom is the
+        // table's next), then every text is looked up.
+        let texts = counts.term_freq.keys().map(|(_, term)| term.as_str()).collect::<BTreeSet<_>>();
+        insert(transaction, "INSERT INTO atoms(value)", "ON CONFLICT(value) DO NOTHING", texts.iter().map(|&text| [Value::Text(text.to_owned())]))?;
+        let mut atoms = BTreeMap::new();
+        {
+            let mut atom = transaction.prepare_cached("SELECT atom FROM atoms WHERE value=?1")?;
+            for &text in &texts {
+                atoms.insert(text, atom.query_row([text], |row| row.get::<_, i64>(0))?);
+            }
+        }
+        let atom = |term: &str| atoms.get(term).copied().ok_or_else(|| StoreError::Invalid("a posting's term has no atom".to_owned()));
         insert(
             transaction,
             "INSERT INTO kind_size(kind,n,size)",
@@ -265,13 +279,20 @@ impl Counts {
             transaction,
             "INSERT INTO term_postings(lang,term,tape_id,kind,n,postings)",
             "",
-            postings.into_iter().map(|(lang, term, tape, kind, n, packed)| [lang.into(), term.into(), tape.into(), kind.into(), n.into(), Value::Blob(packed)]),
+            postings
+                .into_iter()
+                .map(|(lang, term, tape, kind, n, packed)| Ok([lang.into(), atom(&term)?.into(), tape.into(), kind.into(), n.into(), Value::Blob(packed)]))
+                .collect::<StoreResult<Vec<_>>>()?,
         )?;
         insert(
             transaction,
             "INSERT INTO term_node_freq(lang,term,kind,n)",
             "ON CONFLICT(lang,term,kind) DO UPDATE SET n=n+excluded.n",
-            counts.term_node_freq.into_iter().map(|((lang, term, kind), n)| [lang.into(), term.into(), kind.into(), n.into()]),
+            counts
+                .term_node_freq
+                .into_iter()
+                .map(|((lang, term, kind), n)| Ok([lang.into(), atom(&term)?.into(), kind.into(), n.into()]))
+                .collect::<StoreResult<Vec<_>>>()?,
         )?;
         insert(
             transaction,
@@ -283,7 +304,11 @@ impl Counts {
             transaction,
             "INSERT INTO term_freq(lang,term,n)",
             "ON CONFLICT(lang,term) DO UPDATE SET n=n+excluded.n",
-            counts.term_freq.into_iter().map(|((lang, term), n)| [lang.into(), term.into(), n.into()]),
+            counts
+                .term_freq
+                .iter()
+                .map(|((lang, term), n)| Ok([(*lang).into(), atom(term)?.into(), (*n).into()]))
+                .collect::<StoreResult<Vec<_>>>()?,
         )?;
         Ok(())
     }

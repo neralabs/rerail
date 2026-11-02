@@ -331,13 +331,14 @@ pub(super) fn select(
         // A text's term postings, by term.
         let terms_of = |expression: &str, literal: bool| -> rusqlite::Result<NodeSet> {
             let mut set = NodeSet::empty(&space);
+            // Terms are atoms (`atoms`).
             let terms = if literal {
-                db.prepare_cached("SELECT term FROM term_freq WHERE lang=?1 AND term=?2")?
-                    .query_map(rusqlite::params![lang, expression], |row| row.get::<_, String>(0))?
+                db.prepare_cached("SELECT v.term FROM atoms a CROSS JOIN term_freq v ON v.lang=?1 AND v.term=a.atom WHERE a.value=?2")?
+                    .query_map(rusqlite::params![lang, expression], |row| row.get::<_, i64>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?
             } else {
                 db.prepare_cached("SELECT term FROM vocabulary_term WHERE lang=?1 AND expression=?2")?
-                    .query_map(rusqlite::params![lang, expression], |row| row.get::<_, String>(0))?
+                    .query_map(rusqlite::params![lang, expression], |row| row.get::<_, i64>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?
             };
             let mut postings = db.prepare_cached("SELECT tape_id, postings FROM term_postings WHERE lang=?1 AND term=?2")?;

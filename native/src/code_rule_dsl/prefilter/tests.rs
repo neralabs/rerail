@@ -71,7 +71,7 @@ fn terms_are_case_exact_grammar_agnostic_and_die_with_their_tape() {
     let rows = |store: &ContentStore| {
         store
             .query_rows(
-                "SELECT v.term,v.kind,p.pre FROM term_postings v,nera_postings(v.postings) p WHERE v.tape_id=?1 ORDER BY p.pre",
+                "SELECT a.value,v.kind,p.pre FROM term_postings v JOIN atoms a ON a.atom=v.term,nera_postings(v.postings) p WHERE v.tape_id=?1 ORDER BY p.pre",
                 [tape.row()],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?, r.get::<_, u32>(2)?)),
             )
@@ -86,7 +86,7 @@ fn terms_are_case_exact_grammar_agnostic_and_die_with_their_tape() {
         assert_eq!(text, doc.transducer_text_str(pre));
         assert_eq!(kind, base + u32::from(kind_code(&doc, pre)));
     }
-    assert_eq!(count(&store, "SELECT count(*) FROM term_freq WHERE term IN ('Target','target')"), 2);
+    assert_eq!(count(&store, "SELECT count(*) FROM term_freq WHERE term IN (SELECT atom FROM atoms WHERE value IN ('Target','target'))"), 2);
 
     // Another connection (a reopened store) decodes postings too.
     drop(store);
@@ -97,7 +97,7 @@ fn terms_are_case_exact_grammar_agnostic_and_die_with_their_tape() {
     // An edit is a new tape; the old one's rows go with it, and the counts follow.
     let (replacement, _) = put(&store, "const replacement = 7;", lang);
     store.delete_tape_for_test(tape).unwrap();
-    assert_eq!(count(&store, "SELECT count(*) FROM term_freq WHERE term IN ('Target','target')"), 0);
+    assert_eq!(count(&store, "SELECT count(*) FROM term_freq WHERE term IN (SELECT atom FROM atoms WHERE value IN ('Target','target'))"), 0);
     assert_eq!(store.prefilter_version(tape).unwrap(), None);
     store.remove_prefilter(replacement).unwrap();
     for table in ["term_postings", "term_freq", "term_coverage", "tape_kind_counts", "kind_size", "edge_freq"] {
@@ -124,7 +124,7 @@ fn term_coverage_bounds_residue_across_the_store_and_restores_after_removal() {
     store.remove_prefilter(first).unwrap();
     store.remove_prefilter(second).unwrap();
     put(&store, "// new residue\n", lang);
-    assert_eq!(count(&store, "SELECT count(*) FROM term_freq WHERE term='// new residue'"), 1);
+    assert_eq!(count(&store, "SELECT count(*) FROM term_freq WHERE term=(SELECT atom FROM atoms WHERE value='// new residue')"), 1);
 }
 
 #[test]

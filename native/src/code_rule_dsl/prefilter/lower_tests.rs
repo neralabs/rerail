@@ -332,7 +332,7 @@ fn regex_vocabulary_fills_once_follows_new_terms_and_dies_with_its_terms() {
     assert_eq!(count("SELECT count(*) FROM vocabulary_pending"), 0);
     // A new tape's new terms are pending until the next statement matches them.
     let second = put(&store, "let tarp = gamma;", lang);
-    assert_eq!(count("SELECT count(*) FROM vocabulary_pending WHERE term IN ('tarp','gamma','let')"), 3);
+    assert_eq!(count("SELECT count(*) FROM vocabulary_pending WHERE term IN (SELECT atom FROM atoms WHERE value IN ('tarp','gamma','let'))"), 3);
     let tapes = [first, second];
     let selected = select_each(&store, lang, &tapes, &rules);
     for per_tape in &selected {
@@ -340,10 +340,10 @@ fn regex_vocabulary_fills_once_follows_new_terms_and_dies_with_its_terms() {
             assert_eq!(candidates, matched);
         }
     }
-    assert_eq!(count("SELECT count(*) FROM vocabulary_term WHERE term='tarp'"), 1);
+    assert_eq!(count("SELECT count(*) FROM vocabulary_term WHERE term=(SELECT atom FROM atoms WHERE value='tarp')"), 1);
     // A term that leaves the store leaves every predicate's set.
     store.remove_prefilter(tapes[1].0).unwrap();
-    assert_eq!(count("SELECT count(*) FROM vocabulary_term WHERE term='tarp'"), 0);
+    assert_eq!(count("SELECT count(*) FROM vocabulary_term WHERE term=(SELECT atom FROM atoms WHERE value='tarp')"), 0);
     assert_eq!(count("SELECT count(*) FROM vocabulary_term"), 6);
 }
 

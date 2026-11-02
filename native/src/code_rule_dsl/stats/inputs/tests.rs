@@ -42,7 +42,7 @@ fn statistics_count_nodes_not_segments_and_follow_publication_and_removal() {
     let (a, _) = put(&store, "target(); target();", lang);
     let (b, _) = put(&store, "target();", lang);
     assert_eq!(estimate(&store, lang, kind, Some("target")).rows, 3);
-    assert_eq!(count(&store, "SELECT n FROM term_freq WHERE term='target'"), 2);
+    assert_eq!(count(&store, "SELECT n FROM term_freq WHERE term=(SELECT atom FROM atoms WHERE value='target')"), 2);
     store.remove_prefilter(a).unwrap();
     store.delete_tape_for_test(b).unwrap();
     assert_eq!(estimate(&store, lang, kind, Some("target")).rows, 0);
@@ -78,7 +78,7 @@ fn statistics_rollback_a_failed_publication() {
     put(&store, "target();", lang);
     store
         .candidate_transaction(true, |db| {
-            db.execute_batch("CREATE TRIGGER reject_value BEFORE INSERT ON term_postings WHEN NEW.term='explode' BEGIN SELECT RAISE(ABORT,'publication failed'); END")
+            db.execute_batch("CREATE TRIGGER reject_value BEFORE INSERT ON term_postings WHEN NEW.term=(SELECT atom FROM atoms WHERE value='explode') BEGIN SELECT RAISE(ABORT,'publication failed'); END")
         })
         .unwrap();
     let source = "target(); explode();";
