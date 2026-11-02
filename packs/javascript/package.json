@@ -1,7 +1,7 @@
 {
   "name": "@neralabs/rerail-pack-javascript",
   "version": "0.1.5",
-  "description": "Rerail rule pack: ESLint core rules ported to Rerail code rules.",
+  "description": "Rerail rule pack: ESLint core and eslint-plugin-unicorn rules ported to Rerail code rules.",
   "license": "Apache-2.0 AND MIT",
   "repository": {
     "type": "git",

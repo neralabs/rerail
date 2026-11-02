@@ -55,6 +55,7 @@ impl Adapter for Rust {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
+    const STRIPS_BOM: bool = false;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -662,6 +663,9 @@ impl ValueRules for Rust {
 
     fn feature(feature: ValueFeature<'_>) -> Result<(), Refusal> {
         match feature {
+            ValueFeature::ToPrecision => refused(
+                "`toPrecision` lays a number out as ECMAScript's Number.prototype.toPrecision; Rust numbers have no such layout",
+            ),
             ValueFeature::Type(name) if RUST_TYPES.contains(&name) => Ok(()),
             ValueFeature::Type(name) => refused(format!(
                 "`{name}` is not a Rust type name; expected one of {}",

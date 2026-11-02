@@ -454,8 +454,9 @@ with `npm run conformance:languages -- --pack <id>` (`--samples` adds the sample
 
 **The conformance comment.** On a pull request from a branch of this repository, CI keeps one comment headed
 **Conformance**: whether every shipped rule passes, the shipped rules' blocking failures, the candidates ready to
-promote, the shipped rules whose `pack.json` `on` disagrees with upstream-status, the checks that pass without
-evidence (a vacuous `holds-under-rename`, for one), and where each other candidate stops. A shipped rule that fails a
+promote, the shipped rules whose `pack.json` `on` disagrees with upstream-status, and where each other candidate
+stops. A rule whose findings the rename variants all lose (`holds-under-rename` with nothing surviving) fails: the
+renamer keeps literals and the order of names, so such a rule matches the cases' names, not the construct. A shipped rule that fails a
 blocking check fails CI: fix it, or move it back to `candidates/`. Everything else in the comment is reported only. On
 a pull request from a fork no CI runs (below); run `npm run test:conformance` yourself and say so in the pull
 request. What each check needs is in [conformance/README.md](conformance/README.md#the-gate), and the
