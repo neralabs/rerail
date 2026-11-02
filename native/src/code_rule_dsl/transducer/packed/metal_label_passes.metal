@@ -274,6 +274,7 @@ kernel void label_group_32(device const Node* nodes [[buffer(0)]],device const u
 // records, once to write them where one atomic per item reserved them (an item numbered from
 // its dispatch's `shape.round`) (`cursor[0]`; `cursor[1]`
 // the buffer was too small). A walk outgrowing its frames, captures or steps flags its program.
+// pad: 1 where the walk ends at its first emit (set mode, one label).
 struct RootPass { uint wordStart,wordCount,textStart,pad; };
 struct RootFrame { uint pc,node,resume,named,next,end,cursors[8],captured,caps[8],labs[8]; };
 // The 32-frame roots run as a pool of ROOT_POOL threads with device stacks (metal_label_passes.rs's ROOT_POOL).
@@ -328,7 +329,10 @@ static bool root_walk(device const Node* nodes,device const uint* children,devic
             record[0]=item;record[1]=emitted;record[2]=arg;record[3]=path.captured;
             for(uint c=0u;c<8u;c++){record[4u+c]=path.caps[c];record[12u+c]=path.labs[c];}
           }
-          emitted++;alive=false;break;
+          emitted++;alive=false;
+          // Set mode with one label (`Micro::key_stop`): the task's key is found.
+          if(pass.pad!=0u)return true;
+          break;
         default:return false;
       }
       if(alive){path.pc++;if(path.pc>=pass.wordCount)return false;}

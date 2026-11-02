@@ -50,6 +50,9 @@ pub(in crate::code_rule_dsl) struct Micro {
     /// Each text test's value (an index into the program's values) and the kind its node has, where
     /// the test follows a kind test that no jump skips (its domain).
     pub(in crate::code_rule_dsl) texts: Vec<(u16, Option<u16>)>,
+    /// Set mode's reach (`set_mode::Reach`): a walk emits each label once and drops a frame that
+    /// can emit no label not yet fired; None for an exact program.
+    pub(in crate::code_rule_dsl) reach: Option<super::set_mode::Reach>,
 }
 
 #[derive(Clone, Copy)]
@@ -213,7 +216,14 @@ impl Micro {
             });
             words[pc] = u32::from(op) | u32::from(mode) << 8 | (slot as u32) << 16;
         }
-        Some(Self { words, texts })
+        let reach = if program.set_mode { super::set_mode::Reach::of(&words) } else { None };
+        Some(Self { words, texts, reach })
+    }
+
+    /// Whether a walk ends at its first emit: set mode with one label (the device's root walks
+    /// read this, `metal_label_passes`).
+    pub(in crate::code_rule_dsl) fn key_stop(&self) -> bool {
+        self.reach.as_ref().is_some_and(|reach| reach.labels().len() == 1)
     }
 
     /// The walk's words as (op, mode, arg), for diagnostics.
@@ -382,6 +392,7 @@ impl Micro {
             captured: 0,
         };
         let mut steps = 0_u32;
+        let mut fired = 0_u64;
         let limit = self::steps(tape.transducer_len() as usize, self.words.len());
         loop {
             // The path from `state` until it ends.
@@ -457,12 +468,23 @@ impl Micro {
                         state.pc = arg;
                         continue;
                     }
-                    EMIT => {
-                        if emitted(&state, arg) {
-                            return Ok(());
+                    EMIT => match &self.reach {
+                        // Set mode: a label once; the walk ends once every label fired.
+                        Some(reach) if fired & reach.bit(arg) != 0 => false,
+                        Some(reach) => {
+                            fired |= reach.bit(arg);
+                            if emitted(&state, arg) || fired == reach.all() {
+                                return Ok(());
+                            }
+                            false
                         }
-                        false
-                    }
+                        None => {
+                            if emitted(&state, arg) {
+                                return Ok(());
+                            }
+                            false
+                        }
+                    },
                     _ => return Err(Overflow("operation")),
                 };
                 if !alive {
@@ -478,6 +500,11 @@ impl Micro {
                 let Some((frame, mut resume)) = stack.pop() else {
                     return Ok(());
                 };
+                if let Some(reach) = &self.reach
+                    && !reach.live(frame.pc, fired)
+                {
+                    continue;
+                }
                 if let Resume::Path = resume {
                     state = frame;
                     break;

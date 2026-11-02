@@ -33,6 +33,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | closed (2026-10-31, decision 0022): S7's engine-only footprint peak is 477 MB on Metal (was 0.99 GB) and 447 MB on the CPU backend (was 575–607), measured as `phys_footprint_peak` after the audit. Freed heap pages are returned at stage ends; SQLite allocates from jemalloc; the GPU's label prefix, scratch and counts are sized by the run; roots stream into rows with digested structure keys. Left: the driver's fixed ~170 MB per GPU execution, and sparse host labels if the corpus grows |
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
+| O33 | Phase 4 | G's grid executor (`ExecutionBackend::Metal`, not on the production path) exceeds the 99-launch bound on five parity tests | open: its parity is skipped where it refuses; production Metal is the label passes and set steps |
 
 ## O1. Stale-fact detection after a crash
 
@@ -887,3 +888,19 @@ join scope and inner on their shared parent. On the 63 batches: 2.21 G → 0.091
 0.285 G), execute CPU 57 s → 2.3 s, rows identical (1,312,845);
 `the_sql_fallback_relates_on_the_tape_exactly` still holds the eleven relation rules to the matcher.
 
+## O33. G's grid executor and the launch bound
+
+List step 13 bounds an evaluation at 99 launches. G's grid executor (`metal_grid_backend`,
+`ExecutionBackend::Metal`) plans its stages with 16 checked frontier waves each
+(`CHECKED_FRONTIER_WAVES`), and on five of the packed runtime's parity tests it is refused with
+`BackendLaunchLimit`: `all_backends_execute_every_verified_instruction_and_mode`,
+`cpu_jit_compiles_general_scm_control_flow`, `scm_host_predicates_filter_text_kinds_lines_and_relations`,
+`scm_output_directives_transform_text_adjacency_and_language`, and
+`scm_quantified_runs_preserve_each_distinct_middle_capture`. These tests still assert the CPU
+interpreter's and JIT's parity. They skip the grid executor's comparison only where it refuses
+(`tests::grid`) and print `O33`. The production wave does not use this executor: its Metal work is the
+label passes (44 launches on S7) and the set steps (1).
+
+**Closure:** the grid executor's frontier waves planned from the batch (its plan counts its
+launches, as `label_passes` does) or enqueued on the device (list step 17). Otherwise it is removed
+with the copies it belongs to (list step 31).

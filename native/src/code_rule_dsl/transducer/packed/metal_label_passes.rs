@@ -1942,7 +1942,8 @@ impl Runner<'_> {
             };
             let text_start = (texts.len() / self.words) as u32;
             rows.iter().for_each(|row| texts.extend_from_slice(row));
-            passes.push([words.len() as u32, walk.words.len() as u32, text_start, 0]);
+            // The fourth word: set mode with one label, so the walk ends at its first emit.
+            passes.push([words.len() as u32, walk.words.len() as u32, text_start, u32::from(walk.key_stop())]);
             longest = longest.max(walk.words.len());
             match &self.label_rows {
                 None => words.extend_from_slice(&walk.words),

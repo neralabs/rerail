@@ -198,6 +198,15 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
     - Results: 710 keys = W on CPU and Metal; Metal CPU time 2.2 s.
     - The 15-fixture wave check (`the_wave_is_one_evaluation_on_metal`): 46 launches, was 77.
   - **Diagnostics:** `RERAIL_LAUNCHES` prints planned against actual launches; `RERAIL_BUFFERS` prints each reservation of 4 MB or more with its call site.
+- **Set mode (list step 14, 2026-11-02),** t1 spec-transducer §1 :95-100, §2.7, §3 :368-377.
+  - **A program-level flag** (`Program::in_set_mode`): the program's consumer reads its output as a set of (task, label) keys. It is in the digest, so the JIT's cache tells the two modes apart. Tree-sitter queries stay exact, because their repeats reduce by capture containment (§2 :132).
+  - **The freedoms.** A label emits at most once per task, and a task ends once every label has fired. The host's executors also drop a pending path whose reachable labels have all fired (`set_mode::Reach`: per pc, the labels reachable through fall-through, `FORK` and `GOTO`).
+    - Interpreter and micro walk (host): all of the above.
+    - CPU JIT and the device's root walks: the task ends at its first emit, for single-label programs (the device's flag is `RootPass.pad`). A program with more labels runs exact there, which gives the same keys.
+  - **Lazy enumeration (§2.7).** The interpreter's `CHILD` and `DESCEND` are one resumable cursor each (`WorkItem::Children`, `WorkItem::Descend`), as `FOLLOWING` already was, instead of a pending path per candidate. Programs with repeats keep the eager form, whose queued states are deduplicated. The micro walks were already lazy (`Resume`). The JIT's moves still fork eagerly (list step 17, device-side enqueue, with its loops).
+  - **Which programs.** The wave's root programs (their matches are read as `match(c, d, n)` and spans) and every roots label are in set mode. Targets and count labels stay exact: they need every captured node, or every match.
+  - **The oracle** is finding keys plus Complete/Unknown per (rule, file), as S7 checks (decision 0017; the loose findings contract).
+  - **Measured.** S7: 710 keys = W on CPU and Metal. Root records went from 5,023 to 5,009, because S7's roots rarely have more than one emitting path. `set_mode_emits_each_key_once_on_every_cpu_executor`: on a program with many emitting paths per start, the interpreter, micro walk and JIT give exact mode's keys, each once. The packed runtime's 35 tests, the matcher lowering's and the wave's pass.
 
 Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base, then differential finding keys for interpreter vs JIT vs Metal on a 100–300-file sample.
 

@@ -213,7 +213,9 @@ impl Labels {
 impl LoweredMatcher {
     pub(in crate::code_rule_dsl) fn lower(tree: &MatchTree) -> Result<Self, Error> {
         let mut labels = Labels::default();
-        let program = Builder::new(&mut labels).roots(tree)?;
+        // Set mode (list step 14): the clause's matches are its roots, read as keys (the wave's
+        // `match(c, d, n)` and spans), so the root program stops at its first emit per start.
+        let program = Builder::new(&mut labels).roots(tree)?.in_set_mode();
         if labels.defs.len() > usize::from(u16::MAX - LABEL_BASE) {
             return Err(Error::InvalidOperand(0));
         }
@@ -1788,7 +1790,8 @@ impl<'a> Builder<'a> {
             }
             _ => {}
         }
-        let program = Builder::new(self.labels).roots(tree)?;
+        // A roots label is the starts that emit: set mode.
+        let program = Builder::new(self.labels).roots(tree)?.in_set_mode();
         Ok(self.label(Label::Roots(program, Domain::of(tree))))
     }
 
@@ -1802,7 +1805,7 @@ impl<'a> Builder<'a> {
         let label = self.labels.reserve(Label::Empty);
         self.labels.recursive.insert(id, label);
         let start = self.labels.steps.len();
-        let program = Builder::new(self.labels).roots(tree)?;
+        let program = Builder::new(self.labels).roots(tree)?.in_set_mode();
         self.labels.defs[usize::from(label - LABEL_BASE)] = Label::Roots(program, Domain::of(tree));
         // Only the labels that read the utility's, directly or through each other, are evaluated
         // round after round; the others are passes of their own ahead of the group.
