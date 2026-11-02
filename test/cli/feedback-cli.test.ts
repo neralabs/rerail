@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,10 +41,12 @@ async function steeredRepository() {
 
   const flushes = vi.fn();
   const requests: Array<Record<string, unknown>> = [];
+  const urls: string[] = [];
   let responses: Array<number | "offline"> = [];
-  const fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+  const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const next = responses.shift() ?? "offline";
     if (next === "offline") throw new TypeError("fetch failed");
+    urls.push(String(url));
     requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
     return new Response(null, { status: next });
   });
@@ -73,7 +75,7 @@ async function steeredRepository() {
     }
   };
   const idIn = (output: string): string => /note ([0-9a-f-]{36})/u.exec(output)![1]!;
-  return { home, run, notes, idIn, flushes, requests, env, stdin, fetch, respond: (...next: Array<number | "offline">) => { responses = next; } };
+  return { home, run, notes, idIn, flushes, requests, urls, env, stdin, fetch, respond: (...next: Array<number | "offline">) => { responses = next; } };
 }
 
 describe("rerail feedback", () => {
@@ -180,7 +182,7 @@ describe("rerail feedback", () => {
     await run("flush");
 
     expect(said).toContain("never asks");
-    expect(notes().map(note => note.sharing)).toEqual(["local", "local", "local"]);
+    expect(notes().map(note => [note.sharing, note.destination])).toEqual([["local", null], ["local", null], ["local", null]]);
     expect(requests).toEqual([]);
   });
 
@@ -210,6 +212,50 @@ describe("rerail feedback", () => {
     expect(output).toContain("send it to 127.0.0.1:9 (RERAIL_FEEDBACK_URL, not Nera)");
     const id = idIn(output);
     expect(await run("answer", id, "yes")).toContain("to 127.0.0.1:9 (RERAIL_FEEDBACK_URL, not Nera)");
+  });
+
+  it("sends an approved note only where the person was told it would go, whatever the flush's environment says", async () => {
+    const { run, notes, idIn, env, respond, urls } = await steeredRepository();
+    env.RERAIL_FEEDBACK_URL = "http://127.0.0.1:9/feedback";
+    await run("answer", idIn(await run(RULE, "approved for the local endpoint")), "yes");
+    env.RERAIL_FEEDBACK_URL = "https://other.example/collect";
+    await run("sharing", "always");
+    await run(RULE, "queued under always for other.example");
+
+    // The flush runs with no override at all (the daemon's environment, say): each note still goes where it was approved.
+    delete env.RERAIL_FEEDBACK_URL;
+    respond(202, 202);
+    await run("flush");
+
+    expect(urls).toEqual(["http://127.0.0.1:9/feedback", "https://other.example/collect"]);
+    expect(notes().map(note => [note.sharing, note.destination])).toEqual([
+      ["sent", "http://127.0.0.1:9/feedback"],
+      ["sent", "https://other.example/collect"],
+    ]);
+  });
+
+  it("writes a flush that fails to the flush log, where the person is told to look, and still fails", async () => {
+    const { home, run } = await steeredRepository();
+    await run("sharing", "always");
+    await run(RULE, "cannot be sent");
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    database.update(steerFeedback).set({ destination: "not a url" }).run();
+    database.$client.close();
+
+    await expect(run("flush")).rejects.toThrow(/Invalid URL/u);
+
+    expect(readFileSync(join(home, "feedback-flush.log"), "utf8")).toMatch(/ failed: Invalid URL\n$/u);
+  });
+
+  it("does not open or create the database for a flush while the answer is never", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-feedback-never-"));
+    directories.push(root);
+    writeFileSync(join(root, "consent.json"), JSON.stringify({ feedback: { sharing: "never", answeredAt: "2026-01-01T00:00:00.000Z" } }));
+    const databasePath = join(root, "rerail.sqlite");
+
+    await runFeedbackCommand(["flush"], () => "usage", { home: root, packageVersion: "9.9.9", databasePath, stdout: { write: () => true } });
+
+    expect(existsSync(databasePath)).toBe(false);
   });
 
   it("flushes approved notes only, without the session, never retries one the API refused, and keeps the rest queued while it is unreachable", async () => {

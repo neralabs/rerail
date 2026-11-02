@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
 import { readFile, stat, writeFile, rm, rename } from "node:fs/promises";
@@ -8,7 +7,7 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
+import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, type DaemonHealth, type DaemonState, type NativeStatus } from "../runtime/daemon-control.js";
 import { startEngineService, type EngineService } from "../runtime/engine-service.js";
@@ -575,9 +574,13 @@ async function packageVersion(): Promise<string> {
 }
 
 /** What the process entry point (`src/cli/daemon-entry.ts`) supplies from the layers above the daemon. */
-export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
+export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents"> & {
+  /** Once the daemon listens: send approved feedback notes an earlier flush could not deliver (offline, say). */
+  flushFeedback?: () => void;
+};
 
 export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
+  const { flushFeedback, ...daemonServices } = services;
   const arguments_ = parseDaemonArguments(argv);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
   // here naming the first. A checkout's daemon is a dev build with its own content store and takes no lock.
@@ -602,7 +605,7 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     accessTokenFile: join(defaultRerailHome(), DAEMON_ACCESS_TOKEN_FILE),
     uiRoot,
     dev,
-    ...services,
+    ...daemonServices,
     ...(arguments_.stateFile === undefined ? {} : { stateFile: arguments_.stateFile }),
   });
   const health = daemon.health();
@@ -620,11 +623,7 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   for (const skipped of catalog.skipped) {
     process.stdout.write(`rule pack left out: ${skipped.packageName ?? skipped.path}${skipped.version === null ? "" : `@${skipped.version}`}: ${skipped.reason}\n`);
   }
-  // Approved feedback notes an earlier flush could not deliver (offline, say) go out now: the flush is a detached
-  // `rerail feedback flush`, which exits at once when nothing waits or the person keeps notes local.
-  const flush = spawn(process.execPath, [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "feedback", "flush"], { detached: true, stdio: "ignore" });
-  flush.on("error", () => undefined);
-  flush.unref();
+  flushFeedback?.();
   const shutdown = (): void => {
     daemon.close().then(
       () => {

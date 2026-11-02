@@ -347,7 +347,9 @@ export type SteerFeedbackSharing = (typeof STEER_FEEDBACK_SHARING)[number];
  * A coding agent's one-line reason for not following a steer (`rerail feedback`), kept for tuning the rule. The
  * repository is the checkout's, and the session is where the rule last steered there, when Rerail found one; like
  * `work_links`, no foreign key, and a reset deletes the repository's notes. Only the note's id, the rule, pack, host,
- * reason, Rerail version and time are ever sent, and only once the person has said yes.
+ * reason, Rerail version and time are ever sent, and only once the person has said yes. `destination` is the endpoint
+ * the person was told a yes sends the note to, fixed when the note is approved (`queued`): a flush sends it there and
+ * nowhere else, whatever its own environment says; a note kept local again loses it.
  */
 export const steerFeedback = sqliteTable(
   "steer_feedback",
@@ -365,9 +367,11 @@ export const steerFeedback = sqliteTable(
     sharing: text("sharing", { enum: STEER_FEEDBACK_SHARING }).notNull(),
     sentAt: integer("sent_at"),
     claimedAt: integer("claimed_at"),
+    destination: text("destination"),
   },
   table => [
     check("steer_feedback_sharing", sql`${table.sharing} IN (${sql.raw(inList(STEER_FEEDBACK_SHARING))})`),
+    check("steer_feedback_destination", sql`${table.sharing} IN ('ask', 'local') OR ${table.destination} IS NOT NULL`),
     index("steer_feedback_rule_recorded").on(table.ruleId, table.recordedAt),
     index("steer_feedback_sharing_recorded").on(table.sharing, table.recordedAt),
     index("steer_feedback_repository").on(table.repositoryId),

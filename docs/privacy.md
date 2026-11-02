@@ -62,7 +62,8 @@ paths, code or anything else Rerail records; a reason holding control characters
 own sentence, so it can name what it was doing: that is what you are asked to approve. Nera's function stores only
 those fields; its platform request logs keep the region a request came from, not the note. `RERAIL_FEEDBACK_URL`
 (for testing) sends notes elsewhere: it must be `https`, or `http` on this computer, and the agent is told, and tells
-you, where a yes would send the note.
+you, where a yes would send the note. A note you approved goes there and nowhere else: Rerail keeps that destination
+with the note, and a later flush ignores whatever `RERAIL_FEEDBACK_URL` its own environment holds.
 
 ## Your coding agent's provider
 
@@ -77,7 +78,7 @@ Rerail stores what it needs to evaluate rules and show you their history. None o
 
 | Where | What |
 | --- | --- |
-| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits and findings, steer feedback notes, and every event your coding agents report: your prompts, the agent's replies, and tool calls with their inputs and outputs. Also the daemon's state and log, your consent answers (`consent.json`: reading sessions, sharing feedback), `feedback-flush.log` (when a feedback note could not be sent, and why: note and rule ids, never the reason), installed rule packs and managed installs |
+| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits and findings, steer feedback notes (with where each approved one goes), and every event your coding agents report: your prompts, the agent's replies, and tool calls with their inputs and outputs. Also the daemon's state and log, your consent answers (`consent.json`: reading sessions, sharing feedback), `feedback-flush.log` (when a feedback note could not be sent or a flush failed, and why: note and rule ids and the error, never the reason), installed rule packs and managed installs |
 | `~/.cache/rerail/` | `content-v1.sqlite`: compressed copies of the source files Rerail has read, with their syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per coding-agent session: its events, and the text of files as they were before the agent edited them. The folder holds a `.gitignore` of `*`, so Git never shows or commits it |
 
