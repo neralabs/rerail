@@ -478,13 +478,39 @@ describe("the migration path", () => {
       // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(() => listRepositoryRules(openRerailDatabase(path, { readonly: true }), loadRuleCatalog(), "repo"))
-          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
+          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
         expect(statSync(path).mode & 0o777).toBe(0o400);
       }
     } finally {
       chmodSync(path, 0o600);
     }
     expect(readFileSync(path).equals(before)).toBe(true);
+  });
+
+  it("approves, at the content it has, every library rule a file held before approvals, and nothing added after", async () => {
+    const path = await temporaryDatabase();
+    // A file from before the step: library rules, no rule_approvals, the step not recorded.
+    stampedFile(path, `
+      DROP TABLE rule_approvals;
+      DELETE FROM schema_migrations WHERE id = 'rule-approvals';
+      INSERT INTO library_rules (rule_id, kind, document_json, revision, payload_hash, created_at, updated_at)
+      VALUES ('mine', 'code', '{}', 1, 'sha256:mine', 0, 5);
+    `);
+    openRerailDatabase(path).$client.close();
+    const database = new Database(path);
+    try {
+      database.exec("INSERT INTO library_rules (rule_id, kind, document_json, revision, payload_hash, created_at, updated_at) VALUES ('later', 'code', '{}', 1, 'sha256:later', 6, 6)");
+    } finally {
+      database.close();
+    }
+    openRerailDatabase(path).$client.close();
+    const reader = new Database(path, { readonly: true });
+    try {
+      expect(reader.prepare("SELECT subject_kind, subject_id, digest, approved_at FROM rule_approvals").all())
+        .toEqual([{ subject_kind: "rule", subject_id: "mine", digest: "sha256:mine", approved_at: 5 }]);
+    } finally {
+      reader.close();
+    }
   });
 
   it("runs a step an existing file has not run, keeps its rows, records the step, and runs nothing on reopening", async () => {

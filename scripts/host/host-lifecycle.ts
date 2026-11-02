@@ -43,6 +43,8 @@ import {
   loadRuleCatalog,
   setUpRepository,
   upsertLibraryRule,
+  approve,
+  ruleSubject,
 } from "../../src/engine/index.js";
 import { setRepositoryStarted, SqliteSessionReader, type SessionEventRecord } from "../../src/runtime/index.js";
 import { DIST, ensureFresh, jsonlFiles } from "./host-harness.js";
@@ -245,7 +247,8 @@ async function project(): Promise<Workspace> {
   const database = openRerailDatabase(databasePath);
   try {
     const ruleCatalog = loadRuleCatalog();
-    upsertLibraryRule(database, ruleCatalog, CODE_RULE, "code");
+    const stored = upsertLibraryRule(database, ruleCatalog, CODE_RULE, "code");
+    approve(database, ruleSubject(stored.document.rule.id, stored.payloadHash));
     const { repositoryKey } = recordCheckout(database, root);
     setUpRepository(database, repositoryKey, { packs: [], rules: [{ sourceKind: "library_rule", sourceId: CODE_RULE.id, folder: "" }] });
     setRepositoryStarted(database, repositoryKey, true);

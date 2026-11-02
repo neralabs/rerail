@@ -25,6 +25,7 @@ import { applyCodeRuleConfig } from "../../../src/engine/code-rule/code-rule-opt
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { addAttachment, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
+import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
@@ -129,7 +130,8 @@ describe("checkout code-rule catalog", () => {
     const database = openRerailDatabase(databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
     try {
-      upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code");
+      const apiOnly = upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code");
+      approve(database, ruleSubject("test:api-only", apiOnly.payloadHash));
       addAttachment(database, { repositoryKey: key, folder: "api", sourceKind: "library_rule", sourceId: "test:api-only" });
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "legacy", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null });
       setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "web", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "log" });

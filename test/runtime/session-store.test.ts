@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { chmod, mkdtemp, mkdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -20,6 +20,7 @@ import {
   setRuleSetting,
   listLibraryRules,
   upsertLibraryRule,
+  worktreeRuleCatalog,
 } from "../../src/engine/index.js";
 import { SqlitePresentationPreferenceStore } from "../../src/runtime/presentation-preference-store.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
@@ -30,6 +31,7 @@ import { testEmbedder } from "../support/hook-events.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
+import { approve, currentSubject } from "../../src/engine/index.js";
 
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];
@@ -279,7 +281,7 @@ describe("SQLite session persistence", () => {
     await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
     const reader = new SqliteSessionReader(databasePath);
     await handlers.get("before_agent_start")?.({ type: "before_agent_start", prompt: "hello" }, context);
-    expect(reader.hud("omp-live")).toEqual({ activeRuleCount: 1, steeringCount: 0 });
+    expect(reader.hud("omp-live")).toEqual({ activeRuleCount: 1, steeringCount: 0, overlays: [], awaitingApproval: 0 });
     const configuration = openRerailDatabase(databasePath);
     upsertLibraryRule(configuration, loadRuleCatalog(), MOCK_CODE_RULES[0]!, "code");
     addAttachment(configuration, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: MOCK_CODE_RULES[0]!.id });
@@ -416,7 +418,7 @@ describe("SQLite session persistence", () => {
     const reader = new SqliteSessionReader(path);
     expect(reader.sessions()).toEqual([]);
     expect(reader.events("session-1")).toEqual([]);
-    expect(reader.hud("session-1")).toEqual({ activeRuleCount: null, steeringCount: null });
+    expect(reader.hud("session-1")).toEqual({ activeRuleCount: null, steeringCount: null, overlays: [], awaitingApproval: null });
 
     const store = new SqliteSessionStore(path);
     store.openSession({ host: "codex", sessionId: "session-1", cwd: "/workspace" }, 10);
@@ -490,7 +492,7 @@ describe("SQLite session persistence", () => {
     const { path, repositoryId, store, reader, session } = await hudFixture("untracked");
     store.openSession(session);
     store.recordSteer(session, "new-receipt");
-    expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: null, steeringCount: null });
+    expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: null, steeringCount: null, overlays: [], awaitingApproval: null });
     store.startHudTracking(session, false);
     store.startHudTracking(session, true);
     expect(reader.hud(session.sessionId).steeringCount).toBeNull();
@@ -534,7 +536,7 @@ describe("SQLite session persistence", () => {
     store.startHudTracking(session, true);
     const coverage = { repositoryId: repositoryKey, ownerCheckoutPaths, activeRuleCount: 3, ruleSignature: signature() };
     store.recordRuleCoverage(session, coverage);
-    expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: 3, steeringCount: 0 });
+    expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: 3, steeringCount: 0, overlays: [], awaitingApproval: 0 });
     setRuleSetting(database, {
       owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: MOCK_CONVERSATION_RULES[0]!.id, on: false, mode: null,
     });
@@ -546,6 +548,33 @@ describe("SQLite session persistence", () => {
     expect(reader.hud(session.sessionId).activeRuleCount).toBe(2);
     removeAttachment(database, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: MOCK_CONVERSATION_RULES[0]!.id });
     expect(reader.hud(session.sessionId).activeRuleCount).toBeNull();
+  });
+
+  it("names the worktree's own rules as an overlay, and counts them waiting for approval, while the coverage counting them is current", async () => {
+    const { root, store, reader, session } = await hudFixture("worktree-overlay");
+    const repositoryKey = setUpTestRepository(root, {});
+    const checkoutPath = realpathSync(root);
+    mkdirSync(join(checkoutPath, ".rerail", "rules"), { recursive: true });
+    writeFileSync(join(checkoutPath, ".rerail", "rules", "no-todo.json"), JSON.stringify({
+      format: "rerail.policy/v1", id: "local:no-todo", revision: 1, mode: "steer",
+      clauses: [{ id: "todo", violation: { code: "TODO", anchor: "witness.span", message: "Resolve it." }, forbid: { regex: { pattern: "TODO", source: "file.content" } } }],
+    }));
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    closeAfterTest({ close: () => database.$client.close() });
+    const signature = ruleConfigurationSignature(database, worktreeRuleCatalog(loadRuleCatalog(), checkoutPath), repositoryKey, [checkoutPath]);
+    store.openSession(session);
+    store.startHudTracking(session, true);
+    store.recordRuleCoverage(session, { repositoryId: repositoryKey, ownerCheckoutPaths: [checkoutPath], activeRuleCount: 1, ruleSignature: signature });
+
+    expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: 1, steeringCount: 0, overlays: ["worktree"], awaitingApproval: 1 });
+    // Approved, nothing waits; the approval changes the configuration, so coverage is taken again.
+    const catalog = worktreeRuleCatalog(loadRuleCatalog(), checkoutPath);
+    approve(database, currentSubject(database, catalog, "local:no-todo")!);
+    store.recordRuleCoverage(session, { repositoryId: repositoryKey, ownerCheckoutPaths: [checkoutPath], activeRuleCount: 1, ruleSignature: ruleConfigurationSignature(database, catalog, repositoryKey, [checkoutPath]) });
+    expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: 1, steeringCount: 0, overlays: ["worktree"], awaitingApproval: 0 });
+    // The folder gone, the count it was taken with is stale, and nothing is named until coverage is taken again.
+    rmSync(join(checkoutPath, ".rerail"), { recursive: true, force: true });
+    expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: null, steeringCount: 0, overlays: [], awaitingApproval: null });
   });
 
   it("preserves a runtime's complete baseline across reopen but not across a database reset", async () => {

@@ -50,7 +50,9 @@ describe("/rerail-bug-report", () => {
     expect(text).toContain("[../rerail-create/SKILL.md](../rerail-create/SKILL.md) and follow its Tune section");
     await expect(readFile("skills/rerail-create/SKILL.md", "utf8")).resolves.toContain("## Tune");
     expect(text).toContain("`pack` is null: an **own rule bug**");
-    expect(text).toContain("`pack` is set: a **shipped rule bug**");
+    expect(text).toContain("`pack` is `worktree`: the rule is in this worktree's `.rerail/rules/`, so it is the person's: an **own rule bug**");
+    expect(text).toContain("never report it on neralabs/rerail");
+    expect(text).toContain("Any other `pack`: a **shipped rule bug**");
     expect(text).toContain("| Bug report | `1-bug.yml` |");
     expect(text).toContain("| Rule misfire | `2-rule-misfire.yml` |");
   });

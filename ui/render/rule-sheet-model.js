@@ -31,14 +31,14 @@ export const LOG_NOTE = "Not sent while this rule is on Log.";
 
 const COPY_NOTE = "Saved as your copy. This one turns off.";
 
-/** What saving a new message does: a By Rerail rule's edit is a library copy, and on Log nothing reaches the agent. */
-export const agentSeesHint = ({ byRerail, log }) => [
-  ...(byRerail ? [COPY_NOTE] : []),
+/** What saving a new message does: a pack rule's edit is a library copy, and on Log nothing reaches the agent. */
+export const agentSeesHint = ({ fromPack, log }) => [
+  ...(fromPack ? [COPY_NOTE] : []),
   log ? LOG_NOTE : "Reaches open sessions once your agent saves it.",
 ].join(" ");
 
 /** What saving a change from the prompt box does: as `agentSeesHint`, for a change to more than the message. */
-export const askHint = ({ byRerail }) => [...(byRerail ? [COPY_NOTE] : []), "Applies in open sessions once your agent saves it."].join(" ");
+export const askHint = ({ fromPack }) => [...(fromPack ? [COPY_NOTE] : []), "Applies in open sessions once your agent saves it."].join(" ");
 
 const DAY_FORMAT = new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short", year: "numeric" });
 
