@@ -89,10 +89,14 @@ background, without delaying the agent:
 1. A cheap filter (the correction phrases `rerail rules evidence` already recognises) skips ordinary prompts.
 2. The agent CLI classifies the correction: a **one-off** fix (dropped), a decision for **this branch**, or a
    **repository** convention, and states it as one sentence with the folders it covers.
-3. When the decision can be a code rule, the agent CLI drafts one with test cases taken from the correction itself: the
-   code the agent wrote is a caught case, the corrected code a passed case. Rerail compiles it and runs the cases and a
-   repository pass. A draft that fails, or that matches too much of the repository, falls back to a **note**: the
-   decision text alone.
+3. When the decision can be a code rule, the agent CLI drafts one: a regex, or an AST check that names a pattern or a
+   node kind, optionally narrowed by a node it has or is inside (a `for_statement` that has `request($$$ARGS)`). Its
+   test cases are complete files taken from the correction itself: the code the agent wrote is a caught case, the
+   corrected code a passed case. Rerail compiles the rule and runs the cases and a repository pass over the checkout,
+   which must match nothing: the corrected code and the rest of the branch are clean. A draft that fails gets one
+   repair round, in which the agent CLI sees the failure (the compile error, the failing case, or up to three matched
+   lines) and corrects the check; the repair counts against the judgment budget like any call. A draft that still
+   fails falls back to a **note**: the decision text alone, with the reason recorded.
 4. Rerail writes the candidate file and tells the agent, which tells the person in one line:
 
 ```text

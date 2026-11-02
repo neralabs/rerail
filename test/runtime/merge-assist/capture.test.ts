@@ -5,6 +5,7 @@ import { lookupCheckout, mergeAssistItems, newCandidateId } from "../../../src/e
 import type { SessionEventRecord } from "../../../src/runtime/session-store.js";
 import { ownRuleId } from "../../../src/runtime/merge-assist/activation.js";
 import { captureCorrections, type SessionEventSource } from "../../../src/runtime/merge-assist/capture.js";
+import type { CaptureVerdict, CheckRule } from "../../../src/runtime/merge-assist/judge-prompts.js";
 import {
   candidate,
   candidateFiles,
@@ -53,6 +54,52 @@ function correctedSession(repo: string, sessionId = "session-1"): EventLog {
     .add("turn-end", { text: "Fixed." });
 }
 
+/** A checkout whose transport layer retries in a loop of its own, and whose callers go through it. */
+const RETRY_FILES = {
+  "src/api/client.ts": "export async function request(path: string): Promise<unknown> {\n  const response = await fetch(path);\n  return response.json();\n}\n",
+  "src/api/transport.ts": [
+    "/** The one place a request is retried. */",
+    "export async function withRetry<T>(call: () => Promise<T>, attempts = 3): Promise<T> {",
+    "  let last: unknown;",
+    "  for (let attempt = 0; attempt < attempts; attempt += 1) {",
+    "    try {",
+    "      return await call();",
+    "    } catch (error) {",
+    "      last = error;",
+    "    }",
+    "  }",
+    "  throw last;",
+    "}",
+    "",
+  ].join("\n"),
+  "src/api/users.ts": "import { request } from \"./client\";\nimport { withRetry } from \"./transport\";\n\nexport async function loadUsers(): Promise<unknown> {\n  return withRetry(() => request(\"/users\"));\n}\n",
+};
+
+const USERS_LOOP = [
+  "import { request } from \"./client\";",
+  "",
+  "export async function loadUsers(): Promise<unknown> {",
+  "  for (let attempt = 0; attempt < 3; attempt += 1) {",
+  "    try {",
+  "      return await request(\"/users\");",
+  "    } catch {}",
+  "  }",
+  "  throw new Error(\"failed\");",
+  "}",
+  "",
+].join("\n");
+
+const LOOP_THAT_REQUESTS: CheckRule = { pattern: null, nodeKind: "for_statement", has: { pattern: "request($$$ARGS)", nodeKind: null }, inside: null };
+const ANY_LOOP: CheckRule = { pattern: null, nodeKind: "for_statement", has: null, inside: null };
+
+/** A verdict whose AST check is `rule`, with the loop the agent wrote as its caught case and the fix as its passed case. */
+function loopVerdict(rule: CheckRule): CaptureVerdict {
+  return captureVerdict({
+    check: { kind: "ast", language: "typescript", rule },
+    cases: { caught: [{ path: "src/api/users.ts", content: USERS_LOOP }], passed: [{ path: "src/api/users.ts", content: RETRY_FILES["src/api/users.ts"] }] },
+  });
+}
+
 // Each test builds Git repositories and compiles rules in the Engine; under a full run that outlasts the default 5 s.
 describe("Merge Assist capture", { timeout: 30_000 }, () => {
   it("saves a correction as a code-rule candidate that steers this checkout and no other, and says so once", async () => {
@@ -82,7 +129,7 @@ describe("Merge Assist capture", { timeout: 30_000 }, () => {
     expect(status.own).toEqual([expect.objectContaining({ id: saved!.id, level: "code", committed: false, source: { sessionId: "session-1", at: expect.any(String) } })]);
     expect(takeNotes(service, "session-1", ws.repo)).toEqual([
       "This note comes from Rerail, not the user.\n"
-        + `Rerail saved your correction as a decision for this branch: "${saved!.decision}". It applies from now on. `
+        + `Rerail saved your correction as a decision for this branch: "${saved!.decision}" It applies from now on. `
         + `Undo: Merge Assist page, or \`rerail merge-assist reject ${saved!.id}\`.\nTell the user so in one line.`,
     ]);
     expect(takeNotes(service, "session-1", ws.repo)).toEqual([]);
@@ -110,9 +157,10 @@ describe("Merge Assist capture", { timeout: 30_000 }, () => {
     expect(readFileSync(join(ws.repo, ".rerail/candidates", `${existing.id.slice("candidate:".length)}.json`), "utf8")).toBe(before);
   });
 
-  it("keeps a decision whose drafted check fails as a note, and says why", async () => {
+  it("keeps a decision whose drafted check still fails its case after the repair round as a note, and says why", async () => {
     const ws = await workspace();
-    const service = ws.service({ judge: new FakeJudge(() => captureVerdict({ check: { kind: "regex", pattern: String.raw`\bnever_written\(` } })) });
+    const judge = new FakeJudge(() => captureVerdict({ check: { kind: "regex", pattern: String.raw`\bnever_written\(` } }));
+    const service = ws.service({ judge });
     await service.setEnabled(ws.repo, true);
 
     const [saved] = (await service.captureSession({ sessionId: "s", host: "codex", checkoutPath: ws.repo, events: correctedSession(ws.repo, "s") })).saved;
@@ -121,19 +169,74 @@ describe("Merge Assist capture", { timeout: 30_000 }, () => {
     expect(saved!.rule).toBeUndefined();
     expect(ws.rulesOn(ws.repo)).toEqual([]);
     expect((await service.status(ws.repo)).own[0]).toMatchObject({ id: saved!.id, level: "note" });
+    expect(judge.count("capture")).toBe(2);
+    expect(judge.tasks[1]!.prompt).toContain("the caught case src/api/orders.ts (\"the code the agent wrote (1)\") must be caught but is not caught");
     const [item] = ws.database.select().from(mergeAssistItems).all();
-    expect(item!.evidence).toMatchObject({ ruleDropped: "the drafted check fails its case \"the code the agent wrote (1)\"" });
+    expect(item!.evidence).toMatchObject({ ruleDropped: "the drafted check fails its case \"the code the agent wrote (1)\" (after a repair round)" });
   });
 
-  it("keeps a decision whose drafted check matches too much of the corrected repository as a note", async () => {
-    const files = Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`src/api/resource-${index}.ts`, "retry(() => load());\n"]));
-    const ws = await workspace({ files });
-    const service = ws.service({ judge: new FakeJudge(() => captureVerdict()) });
+  it("drafts an AST check from a node kind and a node it has, and keeps it when the repository stays clean", async () => {
+    const ws = await workspace({ files: RETRY_FILES });
+    const judge = new FakeJudge(() => loopVerdict(LOOP_THAT_REQUESTS));
+    const service = ws.service({ judge });
     await service.setEnabled(ws.repo, true);
+
     const [saved] = (await service.captureSession({ sessionId: "s", host: "codex", checkoutPath: ws.repo, events: correctedSession(ws.repo, "s") })).saved;
+
+    expect(judge.count("capture")).toBe(1);
+    expect(saved!.rule!.clauses[0]).toMatchObject({
+      forbid: { ast: { language: "typescript", rule: { kind: "for_statement", has: { pattern: "request($$$ARGS)", stopBy: "end" } } } },
+    });
+    expect(ws.rulesOn(ws.repo)).toEqual([ownRuleId(ws.repo, saved!.id)]);
+  });
+
+  it("rejects a check that matches anywhere in the corrected repository, and keeps the one the repair round corrects", async () => {
+    const ws = await workspace({ files: RETRY_FILES });
+    let calls = 0;
+    const judge = new FakeJudge(() => loopVerdict(++calls === 1 ? ANY_LOOP : LOOP_THAT_REQUESTS));
+    const service = ws.service({ judge });
+    await service.setEnabled(ws.repo, true);
+
+    const [saved] = (await service.captureSession({ sessionId: "s", host: "codex", checkoutPath: ws.repo, events: correctedSession(ws.repo, "s") })).saved;
+
+    expect(judge.tasks.map(task => task.kind)).toEqual(["capture", "capture"]);
+    expect(judge.tasks[1]!.cacheKey).not.toBe(judge.tasks[0]!.cacheKey);
+    const repair = judge.tasks[1]!.prompt;
+    expect(repair).toContain("the check matches 1 place in the repository after the correction, which must match none:");
+    expect(repair).toContain("src/api/transport.ts:4: for (let attempt = 0; attempt < attempts; attempt += 1) {");
+    expect(repair).toContain("\"nodeKind\": \"for_statement\"");
+    expect(saved!.rule!.clauses[0]).toMatchObject({ forbid: { ast: { rule: { kind: "for_statement", has: { pattern: "request($$$ARGS)" } } } } });
+    expect(ws.database.select().from(mergeAssistItems).all()[0]!.evidence).toMatchObject({ ruleDropped: null });
+  });
+
+  it("keeps a note naming the first match when the repaired check still matches the corrected repository", async () => {
+    const ws = await workspace({ files: RETRY_FILES });
+    const judge = new FakeJudge(() => loopVerdict(ANY_LOOP));
+    const service = ws.service({ judge });
+    await service.setEnabled(ws.repo, true);
+
+    const [saved] = (await service.captureSession({ sessionId: "s", host: "codex", checkoutPath: ws.repo, events: correctedSession(ws.repo, "s") })).saved;
+
+    expect(judge.count("capture")).toBe(2);
     expect(saved!.rule).toBeUndefined();
     expect(ws.database.select().from(mergeAssistItems).all()[0]!.evidence).toMatchObject({
-      ruleDropped: "the drafted check matches 11 places in the corrected repository",
+      ruleDropped: "the drafted check matches 1 place in the corrected repository, first src/api/transport.ts:4 (after a repair round)",
+    });
+  });
+
+  it("keeps a note when the judge cannot answer the repair round", async () => {
+    const files = { "src/api/resource.ts": "retry(() => load());\n" };
+    const ws = await workspace({ files });
+    let calls = 0;
+    const judge = new FakeJudge(() => (++calls === 1 ? captureVerdict() : { ok: false, reason: "budget", detail: "the hourly budget is spent" }));
+    const service = ws.service({ judge });
+    await service.setEnabled(ws.repo, true);
+
+    const [saved] = (await service.captureSession({ sessionId: "s", host: "codex", checkoutPath: ws.repo, events: correctedSession(ws.repo, "s") })).saved;
+
+    expect(saved!.rule).toBeUndefined();
+    expect(ws.database.select().from(mergeAssistItems).all()[0]!.evidence).toMatchObject({
+      ruleDropped: "the drafted check matches 1 place in the corrected repository, first src/api/resource.ts:1; the repair round failed: the hourly budget is spent",
     });
   });
 

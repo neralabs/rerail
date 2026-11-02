@@ -296,6 +296,17 @@ async function localDistrust(root: string, branch: LocalBranch, list: PullReques
   return null;
 }
 
+/**
+ * Whether another branch's tip is stacked with this branch, so its decisions are this branch's own: its tip is
+ * already in this branch, or it builds on commits this branch added. A branch that merely starts where this one
+ * does (this branch has no commits of its own past the base) is not stacked on it.
+ */
+function stackedWith(root: string, head: string, commit: string, base: { ref: string } | null): boolean {
+  if (isAncestor(root, commit, head)) return true;
+  if (!isAncestor(root, head, commit)) return false;
+  return base === null || !isAncestor(root, head, base.ref);
+}
+
 /** The local branches to read: not this one or the base, not merged into the base, not stacked with this branch. */
 async function localPeers(
   root: string,
@@ -311,7 +322,7 @@ async function localPeers(
   for (const branch of localBranches(root)) {
     if (branch.name === current || `refs/heads/${branch.name}` === base?.ref) continue;
     if (base !== null && isAncestor(root, branch.commit, base.ref)) continue;
-    if (isAncestor(root, branch.commit, head) || isAncestor(root, head, branch.commit)) continue;
+    if (stackedWith(root, head, branch.commit, base)) continue;
     const peer = { kind: "branch" as const, branch: branch.name, number: null };
     const set = await readTreeCandidates(root, branch.commit);
     problems.push(...readProblems(peer, set));
@@ -343,6 +354,7 @@ async function pullRequestPeers(
   list: PullRequestList,
   head: string,
   current: string | null,
+  base: { ref: string } | null,
   local: readonly Peer[],
   distrust: AuthorDistrust,
   problems: string[],
@@ -355,7 +367,7 @@ async function pullRequestPeers(
   const peers: Peer[] = [];
   for (const pull of list.pulls) {
     if (pull.headRefName === current || pull.baseRefName === current || localCommits.has(pull.headCommit)) continue;
-    if (commitExists(root, pull.headCommit) && (isAncestor(root, pull.headCommit, head) || isAncestor(root, head, pull.headCommit))) continue;
+    if (commitExists(root, pull.headCommit) && stackedWith(root, head, pull.headCommit, base)) continue;
     const ref = `pull/${pull.number}`;
     const named = { kind: "pull-request" as const, branch: pull.headRefName, number: pull.number };
     let set: CandidateSet;
@@ -417,7 +429,7 @@ export async function scanPeers(context: ScanContext): Promise<LastScan> {
   const list = await listPullRequests(context, problems);
   const distrust = authorDistrust(context, list.repository);
   const local = await localPeers(root, head, current, base, list, distrust, problems);
-  const pulls = await pullRequestPeers(context, list, head, current, local, distrust, problems);
+  const pulls = await pullRequestPeers(context, list, head, current, base, local, distrust, problems);
 
   const own = await readWorktreeCandidates(root);
   const ownIds = new Set(own.candidates.map(candidate => candidate.id));

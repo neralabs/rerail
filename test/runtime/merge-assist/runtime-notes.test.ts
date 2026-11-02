@@ -102,7 +102,7 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
         requested: "steer",
         mechanism: expect.any(String),
         content: "This note comes from Rerail, not the user.\n"
-          + `Rerail saved your correction as a decision for this branch: "${saved!.decision}". It applies from now on. `
+          + `Rerail saved your correction as a decision for this branch: "${saved!.decision}" It applies from now on. `
           + `Undo: Merge Assist page, or \`rerail merge-assist reject ${saved!.id}\`.\nTell the user so in one line.`,
         ruleIds: [],
         rules: [],

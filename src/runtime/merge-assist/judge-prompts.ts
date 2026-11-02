@@ -17,6 +17,8 @@ export const MAX_CASE_CONTENT = 4_000;
 export const MAX_CHECK_MESSAGE = 200;
 /** The longest regex or AST pattern a captured check uses. */
 export const MAX_CHECK_PATTERN = 1_000;
+/** A tree-sitter node kind an AST check names: lowercase letters and underscores. */
+export const CHECK_NODE_KIND_PATTERN = /^[a-z_]{1,64}$/u;
 /** The longest comparison explanation. */
 export const MAX_COMPARE_EXPLANATION = 300;
 /** The longest message to the author of a contradicting decision. */
@@ -31,6 +33,8 @@ const MAX_PRIOR_CALL_CHARS = 300;
 const MAX_EDITS = 8;
 const MAX_EDIT_SIDE_CHARS = 6_000;
 const MAX_PROMPT_DECISIONS = 64;
+const MAX_TOUCHED_PATHS = 20;
+const MAX_REPAIR_FAILURE_CHARS = 2_000;
 
 export const CHECK_AST_LANGUAGES = ["typescript", "javascript", "python", "php", "rust", "sql", "vue"] as const;
 export type CheckAstLanguage = (typeof CHECK_AST_LANGUAGES)[number];
@@ -83,9 +87,25 @@ const verdictDecisionSchema = z.string()
 
 const caseSchema = z.object({ path: scopePatternSchema, content: z.string().max(MAX_CASE_CONTENT) }).strict();
 
+/** One node of an AST check: an ast-grep pattern or a tree-sitter node kind, exactly one of the two. */
+const checkNodeShape = {
+  pattern: z.string().min(1).max(MAX_CHECK_PATTERN).nullable(),
+  nodeKind: z.string().regex(CHECK_NODE_KIND_PATTERN).nullable(),
+};
+
+function oneOfPatternOrKind(node: { pattern: string | null; nodeKind: string | null }): boolean {
+  return (node.pattern === null) !== (node.nodeKind === null);
+}
+
+const ONE_OF_MESSAGE = "a check node names exactly one of pattern and nodeKind";
+const checkNodeSchema = z.object(checkNodeShape).strict().refine(oneOfPatternOrKind, ONE_OF_MESSAGE);
+const checkRuleSchema = z.object({ ...checkNodeShape, has: checkNodeSchema.nullable(), inside: checkNodeSchema.nullable() })
+  .strict()
+  .refine(oneOfPatternOrKind, ONE_OF_MESSAGE);
+
 const checkSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("regex"), pattern: z.string().min(1).max(MAX_CHECK_PATTERN) }).strict(),
-  z.object({ kind: z.literal("ast"), language: z.enum(CHECK_AST_LANGUAGES), pattern: z.string().min(1).max(MAX_CHECK_PATTERN) }).strict(),
+  z.object({ kind: z.literal("ast"), language: z.enum(CHECK_AST_LANGUAGES), rule: checkRuleSchema }).strict(),
 ]);
 
 export interface CaptureInput {
@@ -95,6 +115,20 @@ export interface CaptureInput {
   ownDecisions: Array<{ id: string; decision: string }>;
 }
 
+/** One node of an AST check: exactly one of `pattern` (an ast-grep pattern) and `nodeKind` (a tree-sitter node kind). */
+export interface CheckNode {
+  pattern: string | null;
+  nodeKind: string | null;
+}
+
+/** An AST check's rule: the node it forbids, narrowed by a node it has (at any depth) or one it is inside. */
+export interface CheckRule extends CheckNode {
+  has: CheckNode | null;
+  inside: CheckNode | null;
+}
+
+export type CaptureCheck = { kind: "regex"; pattern: string } | { kind: "ast"; language: CheckAstLanguage; rule: CheckRule };
+
 export interface CaptureVerdict {
   generality: "one-off" | "branch" | "repository";
   /** An ownDecisions id the correction restates. */
@@ -103,7 +137,7 @@ export interface CaptureVerdict {
   decision: string;
   /** 1 to 8 repository-relative globs. */
   scope: string[];
-  check: null | { kind: "regex"; pattern: string } | { kind: "ast"; language: CheckAstLanguage; pattern: string };
+  check: null | CaptureCheck;
   /** At most 200 characters: what the steer says when the check fires. */
   message: string;
   cases: { caught: Array<{ path: string; content: string }>; passed: Array<{ path: string; content: string }> };
@@ -127,6 +161,18 @@ const caseJsonSchema = {
   additionalProperties: false,
   required: ["path", "content"],
   properties: { path: { type: "string" }, content: { type: "string", maxLength: MAX_CASE_CONTENT } },
+};
+
+const checkNodeJsonProperties = {
+  pattern: { type: ["string", "null"], maxLength: MAX_CHECK_PATTERN },
+  nodeKind: { type: ["string", "null"], pattern: CHECK_NODE_KIND_PATTERN.source },
+};
+
+const checkNodeJsonSchema = {
+  anyOf: [
+    { type: "null" },
+    { type: "object", additionalProperties: false, required: ["pattern", "nodeKind"], properties: checkNodeJsonProperties },
+  ],
 };
 
 /**
@@ -154,11 +200,16 @@ export const captureJsonSchema: Record<string, unknown> = {
         {
           type: "object",
           additionalProperties: false,
-          required: ["kind", "language", "pattern"],
+          required: ["kind", "language", "rule"],
           properties: {
             kind: { type: "string", enum: ["ast"] },
             language: { type: "string", enum: [...CHECK_AST_LANGUAGES] },
-            pattern: { type: "string", maxLength: MAX_CHECK_PATTERN },
+            rule: {
+              type: "object",
+              additionalProperties: false,
+              required: ["pattern", "nodeKind", "has", "inside"],
+              properties: { ...checkNodeJsonProperties, has: checkNodeJsonSchema, inside: checkNodeJsonSchema },
+            },
           },
         },
       ],
@@ -188,9 +239,13 @@ decision: one sentence of at most ${MAX_DECISION_LENGTH} characters, imperative 
 scope: 1 to ${MAX_VERDICT_SCOPE} repository-relative globs, the narrowest that cover the files the correction touched ("src/api/**", "src/api/client.ts"). Never start with / and never use "..".
 check: a check Rerail runs on code text, or null when code text alone cannot show the decision is broken. Prefer null to a check that would also catch correct code.
 - {"kind":"regex","pattern":"..."} is matched against each file's whole content. Rust regex dialect: no look-around, no backreferences. Anchor it to identifiers with \\b on both ends; use (?m) for ^ and $ at each line. It also matches inside strings and comments, so keep it narrow.
-- {"kind":"ast","language":"...","pattern":"..."} is an ast-grep pattern: code with metavariables, $X for one node and $$$ARGS for any number, as in console.log($$$ARGS) or requests.get($URL, $$$REST). Prefer it for a call, expression or statement in ${CHECK_AST_LANGUAGES.join(", ")}. The pattern must parse as code in that language.
+- {"kind":"ast","language":"...","rule":{"pattern":...,"nodeKind":...,"has":...,"inside":...}} is an ast-grep rule over the tree-sitter syntax tree of code in ${CHECK_AST_LANGUAGES.join(", ")}. The rule and its "has" and "inside" nodes each set exactly one of "pattern" and "nodeKind" and the other null.
+  - pattern: a complete code snippet that parses on its own in that language, with metavariables: $NAME matches one node, $$$NAME a list of nodes. Examples: console.log($$$ARGS), request($$$ARGS), requests.get($URL, $$$REST). A partial statement such as "for ($INIT; $COND; $UPDATE) { $$$BODY }" matches nothing; name a statement by its nodeKind.
+  - nodeKind: a tree-sitter node kind, the usual ones: for_statement, for_in_statement, while_statement, do_statement, try_statement, call_expression, new_expression, import_statement, function_declaration, arrow_function, ...
+  - has: a node the match contains at any depth; inside: a node that contains the match at any depth; null when unused. To forbid a construct only when it does something, use nodeKind with has: {"pattern":null,"nodeKind":"for_statement","has":{"pattern":"request($$$ARGS)","nodeKind":null},"inside":null} is a for loop that calls request.
 message: at most ${MAX_CHECK_MESSAGE} characters, what the agent should do instead when the check fires. Without a check, the decision's gist.
-cases: when there is a check, code from the edits: what the agent wrote before the correction as "caught" cases and the corrected code as "passed" cases, at most ${MAX_VERDICT_CASES} of each, each with its file path. Empty when check is null.
+cases: when there is a check, at most ${MAX_VERDICT_CASES} "caught" and ${MAX_VERDICT_CASES} "passed" cases taken from the edits, each a complete file that parses on its own (with its imports and an enclosing function) and its path: the code before the correction is a caught case, the code after it a passed case. Empty when check is null.
+Rerail keeps the check only when it compiles, catches every caught case, passes every passed case, and matches nothing in the repository as it is after the correction: neither the corrected code in the files the correction touched nor legitimate code elsewhere, such as the place the decision says the code belongs. Otherwise it saves the decision without a check.
 For one-off: duplicateOf null, check null, empty cases, and the simplest valid decision, scope and message.`;
 
 /** The capture prompt for one correction, with every input fenced as data. */
@@ -210,9 +265,27 @@ export function capturePrompt(input: CaptureInput, nonce: string): string {
     parts.push(fenceData(`edit ${index + 1}`, text, nonce));
   });
   if (input.edits.length > MAX_EDITS) parts.push(`(${input.edits.length - MAX_EDITS} more edits left out.)`);
+  const touched = [...new Set(input.edits.map(edit => edit.path))].slice(0, MAX_TOUCHED_PATHS);
+  if (touched.length > 0) parts.push(fenceData("files the correction touched", touched.join("\n"), nonce));
   const decisions = input.ownDecisions.slice(0, MAX_PROMPT_DECISIONS).map(own => `- ${own.id}: ${own.decision}`);
   parts.push(decisions.length > 0 ? fenceData("decisions already made on this branch", decisions.join("\n"), nonce) : "No decisions have been made on this branch yet.");
   return parts.join("\n");
+}
+
+const REPAIR_INSTRUCTIONS = `Your earlier answer to this capture task is below, with why Rerail could not keep its check. Answer again with the same generality, duplicateOf, decision and scope, and a corrected check, message and cases that fix the failure. If no check can express the decision without matching correct code, answer check null and empty cases.`;
+
+/**
+ * The capture prompt asked again after the drafted check failed Rerail's validation: the same task, with the earlier
+ * answer and the failure (a compile error, a failing case, or the places it matched) fenced as data.
+ */
+export function captureRepairPrompt(input: CaptureInput, previous: CaptureVerdict, failure: string, nonce: string): string {
+  return [
+    capturePrompt(input, nonce),
+    "",
+    REPAIR_INSTRUCTIONS,
+    fenceData("your earlier answer", JSON.stringify(previous, null, 2), nonce),
+    fenceData("why rerail could not keep its check", cut(failure, MAX_REPAIR_FAILURE_CHARS), nonce),
+  ].join("\n");
 }
 
 export interface CompareInput {

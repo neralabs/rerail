@@ -3,10 +3,11 @@
  * candidate rules on the branch. It reads the session's stored events after its cursor, keeps the prompts the
  * correction phrases match (never the session's first prompt, which states the task), and asks the agent CLI whether
  * each records a lasting decision. A decision is written to `.rerail/candidates/` with a code rule when the drafted check
- * compiles, passes its own cases and leaves the corrected repository clean; otherwise as a note, the decision alone.
+ * compiles, passes its own cases and matches nothing in the corrected checkout; a check that fails gets one repair round
+ * with the failure, and is otherwise dropped, leaving a note: the decision alone.
  */
 import { createHash } from "node:crypto";
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { RerailDatabase } from "../../engine/storage/database.js";
@@ -34,10 +35,13 @@ import type { AgentJudge } from "./agent-judge.js";
 import {
   captureJsonSchema,
   capturePrompt,
+  captureRepairPrompt,
   captureVerdictSchema,
   newJudgeNonce,
   type CaptureInput,
   type CaptureVerdict,
+  type CheckNode,
+  type CheckRule,
 } from "./judge-prompts.js";
 import { STATE_KEYS, isoSeconds, itemId, readState, writeState } from "./state.js";
 
@@ -51,8 +55,9 @@ const PRIOR_CALLS = 6;
 const PRIOR_EVENTS = 200;
 const MAX_EDITS = 4;
 const MAX_EDIT_SIDE_CHARS = 2_000;
-/** A drafted check may match this many places in the corrected repository; more means it is too broad. */
-const MAX_REPOSITORY_MATCHES = 10;
+/** The repository matches a failed check's repair round names. */
+const REPAIR_MATCHES = 3;
+const MAX_MATCH_TEXT_CHARS = 200;
 const EVENT_PAGE = 500;
 
 /** Where capture reads a session's stored events: the session store's `events`. */
@@ -206,10 +211,48 @@ function fallbackScope(edits: readonly Edit[]): string[] {
   return folders.length === 0 || folders.includes(".") ? ["**"] : folders.map(folder => `${folder}/**`);
 }
 
-/** The `rerail.policy/v1` rule a verdict's check drafts, or why there is none. */
-function draftRule(id: string, verdict: CaptureVerdict, scope: readonly string[]): { rule: CodeRule } | { problem: string } {
-  const check = verdict.check;
-  if (check === null) return { problem: "the judgment drafted no check" };
+/** The engine's ast-grep node for one node of an AST check. */
+function astNode(node: CheckNode): { pattern: string } | { kind: string } {
+  return node.pattern !== null ? { pattern: node.pattern } : { kind: node.nodeKind ?? "" };
+}
+
+/** The engine's ast-grep rule for an AST check: the node it forbids, with `has` and `inside` looking at any depth. */
+function astRule(rule: CheckRule): Record<string, unknown> {
+  return {
+    ...astNode(rule),
+    ...(rule.has === null ? {} : { has: { ...astNode(rule.has), stopBy: "end" } }),
+    ...(rule.inside === null ? {} : { inside: { ...astNode(rule.inside), stopBy: "end" } }),
+  };
+}
+
+/** Why a drafted check cannot be kept: `reason` for the item's evidence, `detail` for the judge's repair round. */
+interface CheckFailure {
+  readonly reason: string;
+  readonly detail: string;
+}
+
+/** The line at `line` of the checkout's file at `path`, trimmed and cut, as a repair round names a match. */
+function matchedText(root: string, path: string, line: number): string {
+  try {
+    const text = readFileSync(join(root, path), "utf8").split("\n")[line - 1]?.trim() ?? "";
+    return text.length <= MAX_MATCH_TEXT_CHARS ? text : `${text.slice(0, MAX_MATCH_TEXT_CHARS)} [cut]`;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The `rerail.policy/v1` rule a verdict's check drafts, kept only when it compiles, catches every caught case, passes
+ * every passed case and matches nothing in the checkout as it is after the correction; otherwise why not.
+ */
+async function checkedRule(
+  id: string,
+  verdict: CaptureVerdict & { check: NonNullable<CaptureVerdict["check"]> },
+  scope: readonly string[],
+  root: string,
+  followGitignore: boolean,
+): Promise<{ rule: CodeRule } | CheckFailure> {
+  const { check } = verdict;
   const parsed = codeRuleSchema.safeParse({
     format: "rerail.policy/v1",
     id,
@@ -221,37 +264,90 @@ function draftRule(id: string, verdict: CaptureVerdict, scope: readonly string[]
       id: "check",
       forbid: check.kind === "regex"
         ? { regex: { source: "file.content", pattern: check.pattern } }
-        : { ast: { language: check.language, rule: { pattern: check.pattern } } },
+        : { ast: { language: check.language, rule: astRule(check.rule) } },
       violation: { code: "MERGE_ASSIST_DECISION", anchor: "witness.span", message: verdict.message },
     }],
   });
-  return parsed.success ? { rule: parsed.data as CodeRule } : { problem: `the drafted check is not a valid rule: ${parsed.error.issues[0]?.message ?? "invalid"}` };
-}
-
-/** Check a drafted rule against its own cases and the corrected repository; why it fails, or undefined when it holds. */
-async function ruleProblem(rule: CodeRule, verdict: CaptureVerdict, root: string, followGitignore: boolean): Promise<string | undefined> {
+  if (!parsed.success) {
+    const reason = `the drafted check is not a valid rule: ${parsed.error.issues[0]?.message ?? "invalid"}`;
+    return { reason, detail: reason };
+  }
+  const rule = parsed.data as CodeRule;
+  if (verdict.cases.caught.length === 0) return { reason: "the drafted check has no case it must catch", detail: "the answer has no caught case: give at least one" };
   const cases: RuleCheckCase[] = [
     ...verdict.cases.caught.map((entry, index) => ({ expected: "caught" as const, label: `the code the agent wrote (${index + 1})`, ...entry })),
     ...verdict.cases.passed.map((entry, index) => ({ expected: "passed" as const, label: `the corrected code (${index + 1})`, ...entry })),
   ];
-  if (verdict.cases.caught.length === 0) return "the drafted check has no case it must catch";
-  const result = await checkCodeRule(rule, { root, cases, followGitignore, maxMatches: 0 });
-  if (!result.valid) return `the drafted check does not compile: ${result.error ?? "unknown error"}`;
-  const failing = result.cases.find(entry => !entry.ok);
-  if (failing !== undefined) return `the drafted check fails its case "${failing.label}"`;
-  if (result.matchCount > MAX_REPOSITORY_MATCHES) return `the drafted check matches ${result.matchCount} places in the corrected repository`;
-  return undefined;
+  const result = await checkCodeRule(rule, { root, cases, followGitignore, maxMatches: REPAIR_MATCHES });
+  if (!result.valid) {
+    const reason = `the drafted check does not compile: ${result.error ?? "unknown error"}`;
+    return { reason, detail: reason };
+  }
+  const failing = result.cases.findIndex(entry => !entry.ok);
+  if (failing >= 0) {
+    const entry = result.cases[failing]!;
+    const outcome = entry.notChecked !== undefined ? `could not be checked: ${entry.notChecked}` : entry.caught ? "is caught" : "is not caught";
+    return {
+      reason: `the drafted check fails its case "${cases[failing]!.label}"`,
+      detail: `the ${entry.expected} case ${cases[failing]!.path} ("${entry.label}") must be ${entry.expected === "caught" ? "caught" : "passed"} but ${outcome}`,
+    };
+  }
+  if (result.matchCount > 0) {
+    const [first] = result.matches;
+    const places = result.matches.map(match => `${match.path}:${match.line}: ${matchedText(root, match.path, match.line)}`);
+    return {
+      reason: `the drafted check matches ${result.matchCount} ${result.matchCount === 1 ? "place" : "places"} in the corrected repository, first ${first!.path}:${first!.line}`,
+      detail: [`the check matches ${result.matchCount} ${result.matchCount === 1 ? "place" : "places"} in the repository after the correction, which must match none:`, ...places].join("\n"),
+    };
+  }
+  return { rule };
+}
+
+/** A cache key for one judge task over `inputs`. */
+function judgeCacheKey(kind: string, inputs: unknown): string {
+  return createHash("sha256").update(`${kind}\0${stableJsonText(inputs) ?? ""}`).digest("hex");
+}
+
+/**
+ * The rule a verdict's check drafts when it holds, or after one repair round in which the judge sees the failure and
+ * corrects the check (the decision and scope stay); otherwise why there is none.
+ */
+async function draftedRule(
+  id: string,
+  verdict: CaptureVerdict,
+  input: CaptureInput,
+  scope: readonly string[],
+  context: CaptureContext,
+): Promise<{ rule: CodeRule } | { problem: string }> {
+  if (verdict.check === null) return { problem: "the judgment drafted no check" };
+  const root = context.checkout.checkoutPath;
+  const followGitignore = followsGitignore(context.database, context.checkout);
+  const first = await checkedRule(id, { ...verdict, check: verdict.check }, scope, root, followGitignore);
+  if ("rule" in first) return first;
+  const outcome = await context.judge.judge({
+    kind: "capture",
+    repositoryKey: context.checkout.repositoryKey,
+    prompt: captureRepairPrompt(input, verdict, first.detail, newJudgeNonce()),
+    jsonSchema: captureJsonSchema,
+    parse: value => captureVerdictSchema.parse(value),
+    cacheKey: judgeCacheKey("capture-repair", { input, verdict, failure: first.detail }),
+  });
+  if (!outcome.ok) return { problem: `${first.reason}; the repair round failed: ${outcome.detail}` };
+  const { check, message, cases } = outcome.value;
+  if (check === null) return { problem: `${first.reason}; the repair round drafted no check` };
+  const second = await checkedRule(id, { ...verdict, check, message, cases }, scope, root, followGitignore);
+  return "rule" in second ? second : { problem: `${second.reason} (after a repair round)` };
 }
 
 /** The candidate a verdict states, with its rule when the drafted check holds; why the rule was dropped, if it was. */
 async function candidateOf(
   verdict: CaptureVerdict,
-  edits: readonly Edit[],
+  input: CaptureInput,
   context: CaptureContext,
 ): Promise<{ candidate: Candidate; dropped: string | null } | undefined> {
   const { checkout } = context;
   const usable = verdict.scope.filter(pattern => scopePatternSchema.safeParse(pattern).success);
-  const scope = usable.length > 0 ? usable : fallbackScope(edits);
+  const scope = usable.length > 0 ? usable : fallbackScope(input.edits);
   // A random suffix can repeat: an id whose file is already there (even one that no longer reads) is never reused.
   const id = unusedCandidateId(verdict.decision, taken => {
     try {
@@ -272,15 +368,12 @@ async function candidateOf(
     state: "active",
     supersedes: null,
   };
-  const drafted = draftRule(id, verdict, scope);
+  const drafted = await draftedRule(id, verdict, input, scope, context);
   let dropped = "problem" in drafted ? drafted.problem : null;
   if ("rule" in drafted) {
-    dropped = await ruleProblem(drafted.rule, verdict, checkout.checkoutPath, followsGitignore(context.database, checkout)) ?? null;
-    if (dropped === null) {
-      const withRule = candidateSchema.safeParse({ ...base, rule: drafted.rule });
-      if (withRule.success) return { candidate: withRule.data, dropped: null };
-      dropped = "the drafted check does not fit a candidate file";
-    }
+    const withRule = candidateSchema.safeParse({ ...base, rule: drafted.rule });
+    if (withRule.success) return { candidate: withRule.data, dropped: null };
+    dropped = "the drafted check does not fit a candidate file";
   }
   const note = candidateSchema.safeParse(base);
   return note.success ? { candidate: note.data, dropped } : undefined;
@@ -341,7 +434,7 @@ export async function captureCorrections(context: CaptureContext, request: Captu
         prompt: capturePrompt(input, newJudgeNonce()),
         jsonSchema: captureJsonSchema,
         parse: value => captureVerdictSchema.parse(value),
-        cacheKey: createHash("sha256").update(`capture\0${stableJsonText(input) ?? ""}`).digest("hex"),
+        cacheKey: judgeCacheKey("capture", input),
       });
       if (!outcome.ok) {
         unjudged.push(outcome.detail);
@@ -349,7 +442,7 @@ export async function captureCorrections(context: CaptureContext, request: Captu
       }
       const verdict = outcome.value;
       if (verdict.generality === "one-off" || verdict.duplicateOf !== null) continue;
-      const made = await candidateOf(verdict, correction.edits, context);
+      const made = await candidateOf(verdict, input, context);
       if (made === undefined) continue;
       await writeWorktreeCandidate(root, made.candidate);
       const now = context.now();

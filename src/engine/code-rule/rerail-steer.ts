@@ -162,9 +162,12 @@ const oneLine = (text: string): string => text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp
 /** Someone's text in double quotes it cannot close: `"` and `\` inside are escaped. */
 const quotedText = (text: string): string => `"${oneLine(text).replace(/[\\"]/gu, "\\$&")}"`;
 
+/** A quoted decision that ends a sentence: the decision's own full stop ends it, else one is added after the quote. */
+const quotedSentence = (text: string): string => `${quotedText(text)}${/[.!?]$/u.test(oneLine(text)) ? "" : "."}`;
+
 /** A teammate's decision, labelled as theirs so the agent does not take it for the person's or Rerail's words. */
 const theirDecision = (author: string, decision: string): string =>
-  `Their decision (written by ${oneLine(author)}, not by the user or Rerail): ${quotedText(decision)}.`;
+  `Their decision (written by ${oneLine(author)}, not by the user or Rerail): ${quotedSentence(decision)}`;
 
 /** What the coding agent reads for a Merge Assist note; it carries no rule, so the person sees no line for it. */
 export function mergeAssistNote(note: MergeAssistNote): string {
@@ -172,7 +175,7 @@ export function mergeAssistNote(note: MergeAssistNote): string {
     case "saved":
       return [
         MERGE_ASSIST_NOTE_LEAD,
-        `Rerail saved your correction as a decision for this branch: ${quotedText(note.decision)}. It applies from now on. `
+        `Rerail saved your correction as a decision for this branch: ${quotedSentence(note.decision)} It applies from now on. `
           + `Undo: Merge Assist page, or \`rerail merge-assist reject ${oneLine(note.candidateId)}\`.`,
         "Tell the user so in one line.",
       ].join("\n");
@@ -186,7 +189,7 @@ export function mergeAssistNote(note: MergeAssistNote): string {
       return [
         MERGE_ASSIST_NOTE_LEAD,
         `Rerail found that ${oneLine(note.author)} decided differently on ${oneLine(note.peer)}. ${theirDecision(note.author, note.theirs)} `
-          + `This branch decided: ${quotedText(note.mine)}. Tell the user in one line and keep your current approach until `
+          + `This branch decided: ${quotedSentence(note.mine)} Tell the user in one line and keep your current approach until `
           + "they decide; they can compare both on the Merge Assist page.",
       ].join("\n");
     case "review":

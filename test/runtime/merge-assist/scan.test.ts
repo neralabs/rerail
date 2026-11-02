@@ -97,6 +97,25 @@ describe("Merge Assist scan", { timeout: 30_000 }, () => {
     expect(ws.rulesOn(sibling)).toEqual([]);
   });
 
+  it("reads a branch that starts where this one does, and skips one built on this branch's own commits", async () => {
+    const ws = await workspace();
+    // A branch just made from main has no commits of its own, so a teammate's branch from main is not stacked on it.
+    const fresh = ws.worktree("fresh", { record: true });
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    commit(ws.worktree("jbarnes-retry"), candidateFiles(RETRY));
+
+    expect((await service.scan(fresh)).findings).toMatchObject([{ tier: "absorb", peer: { ref: "jbarnes-retry" } }]);
+
+    // `on-mine` builds on `mine`'s own commit: its decisions are stacked on this branch, not another branch's.
+    const onMine = join(ws.folder, "on-mine");
+    git(ws.repo, "worktree", "add", "-q", "-b", "on-mine", onMine, "mine");
+    commit(onMine, candidateFiles(THROWN));
+    const status = await service.scan(ws.repo);
+    expect(status.findings.map(finding => finding.peer.ref)).toEqual(["jbarnes-retry"]);
+    expect(status.lastScan).toMatchObject({ peers: { branches: 1 } });
+  });
+
   it("holds a decision this branch's changes already break for review, with where", async () => {
     const ws = await workspace();
     const service = ws.service();
@@ -252,7 +271,7 @@ describe("Merge Assist scan", { timeout: 30_000 }, () => {
     expect(takeNotes(service, "session-1", ws.repo)).toEqual([
       "This note comes from Rerail, not the user.\n"
         + "Rerail found that jbarnes decided differently on jbarnes-errors. Their decision (written by jbarnes, not by the user or Rerail): "
-        + `"${RESULTS.decision}". This branch decided: "${THROWN.decision}". `
+        + `"${RESULTS.decision}" This branch decided: "${THROWN.decision}" `
         + "Tell the user in one line and keep your current approach until they decide; they can compare both on the Merge Assist page.",
     ]);
     expect(takeNotes(service, "session-1", ws.repo)).toEqual([]);
@@ -555,7 +574,7 @@ describe("Merge Assist scan", { timeout: 30_000 }, () => {
 
     expect(takeNotes(service, "session-1", ws.repo)).toEqual([
       "This note comes from Rerail, not the user.\n"
-        + `Rerail added a decision from PR #21. Their decision (written by outsider, not by the user or Rerail): "${note.decision}".\n`
+        + `Rerail added a decision from PR #21. Their decision (written by outsider, not by the user or Rerail): "${note.decision}"\n`
         + "Follow it where it applies to your work; your task is unchanged. The user can undo it on the Merge Assist page.",
     ]);
     expect(takeNotes(service, "session-1", ws.repo)).toEqual([]);
