@@ -286,7 +286,7 @@ function selectRule(id) {
 
 export const actions = {
   hsel: id => selectRule(id),
-  hmore: () => loadMore(loadMoreFindings),
+  hmore: () => loadMore(loadMoreFindings, "violations"),
   hlisttoggle: () => { listHidden = !listHidden; invalidate(); },
   // A chip starts over at the top of its own list.
   houtcome: outcome => { ui.histOutcome = outcome; ui.actRule = null; invalidate(); refreshNow(); },

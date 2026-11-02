@@ -1,0 +1,524 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf010-explicit-f-string-type-conversion",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the f-string conversion flag instead of calling str, repr or ascii on an interpolated value; the flag is shorter and idiomatic.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "builtin-str": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "str"
+                  ],
+                  "import": [
+                    "builtins.str"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "builtin-str"
+                }
+              }
+            ]
+          },
+          "builtin-repr": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "repr"
+                  ],
+                  "import": [
+                    "builtins.repr"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "builtin-repr"
+                }
+              }
+            ]
+          },
+          "builtin-ascii": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "ascii"
+                  ],
+                  "import": [
+                    "builtins.ascii"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "builtin-ascii"
+                }
+              }
+            ]
+          },
+          "one-argument": {
+            "kind": "argument_list",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "any": [
+                    {
+                      "regex": "^[(),]$"
+                    },
+                    {
+                      "kind": "comment"
+                    }
+                  ]
+                }
+              },
+              "min": 1,
+              "max": 1
+            }
+          },
+          "positional-argument": {
+            "all": [
+              {
+                "matches": "one-argument"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[(),]$"
+                      },
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "keyword_argument"
+                      },
+                      {
+                        "kind": "dictionary_splat"
+                      },
+                      {
+                        "kind": "list_splat"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "object-argument": {
+            "all": [
+              {
+                "matches": "one-argument"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),]$"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "dictionary_splat"
+                          },
+                          {
+                            "kind": "list_splat"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "not": {
+                            "kind": "keyword_argument"
+                          }
+                        },
+                        {
+                          "kind": "keyword_argument",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^object$",
+                            "field": "name"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "str-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "builtin-str",
+                  "field": "function"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "generator_expression"
+                    },
+                    {
+                      "matches": "object-argument"
+                    }
+                  ],
+                  "field": "arguments"
+                }
+              }
+            ]
+          },
+          "repr-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "builtin-repr",
+                  "field": "function"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "generator_expression"
+                    },
+                    {
+                      "matches": "positional-argument"
+                    }
+                  ],
+                  "field": "arguments"
+                }
+              }
+            ]
+          },
+          "ascii-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "builtin-ascii",
+                  "field": "function"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "generator_expression"
+                    },
+                    {
+                      "matches": "positional-argument"
+                    }
+                  ],
+                  "field": "arguments"
+                }
+              }
+            ]
+          },
+          "starred-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "builtin-repr"
+                    },
+                    {
+                      "matches": "builtin-ascii"
+                    }
+                  ],
+                  "field": "function"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "one-argument"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "list_splat"
+                      }
+                    }
+                  ],
+                  "field": "arguments"
+                }
+              }
+            ]
+          },
+          "any-conversion-call": {
+            "any": [
+              {
+                "matches": "str-call"
+              },
+              {
+                "matches": "repr-call"
+              },
+              {
+                "matches": "ascii-call"
+              }
+            ]
+          },
+          "stops-the-string": {
+            "all": [
+              {
+                "kind": "interpolation"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type_conversion"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "matches": "starred-call"
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^=$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "matches": "any-conversion-call"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "bare-interpolation-slot": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "interpolation",
+              "all": [
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "type_conversion"
+                        },
+                        {
+                          "regex": "^=$"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_start",
+                        "regex": "[tT]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "stops-the-string"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "explicit-str",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "str-call"
+              },
+              {
+                "matches": "bare-interpolation-slot"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF010",
+        "message": "Replace the `str(...)` call with the `!s` flag on the interpolation, as in `{value!s}`; with no custom `__format__` and no format spec, the call can be dropped.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF010"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "explicit-repr",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "repr-call"
+              },
+              {
+                "matches": "bare-interpolation-slot"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF010",
+        "message": "Replace the `repr(...)` call with the `!r` flag on the interpolation, as in `{value!r}`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF010"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "explicit-ascii",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "ascii-call"
+              },
+              {
+                "matches": "bare-interpolation-slot"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF010",
+        "message": "Replace the `ascii(...)` call with the `!a` flag on the interpolation, as in `{value!a}`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF010"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

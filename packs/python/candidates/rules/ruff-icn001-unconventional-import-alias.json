@@ -1,0 +1,434 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-icn001-unconventional-import-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Import well-known libraries under their community aliases, such as pandas as pd, numpy as np and matplotlib.pyplot as plt, so readers recognize them at a glance.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "import-statement",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "key": {
+              "kind": "dotted_name",
+              "regex": "^(?:altair|matplotlib(?:[\\s\\\\]*\\.[\\s\\\\]*pyplot)?|networkx|numpy(?:[\\s\\\\]*\\.[\\s\\\\]*typing)?|pandas|seaborn|tensorflow|tkinter|holoviews|panel|plotly[\\s\\\\]*\\.[\\s\\\\]*express|polars|pyarrow|xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree)$",
+              "inside": {
+                "stopBy": "end",
+                "kind": "import_statement"
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "key",
+                "pattern": "$MOD",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "import_statement"
+                }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$ALIAS",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "aliased_import",
+                  "field": "alias",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "matches": "key",
+                    "pattern": "$MOD"
+                  }
+                },
+                "compare": {
+                  "left": "ALIAS",
+                  "op": "ne",
+                  "right": "E"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "E0": {
+              "replace": {
+                "source": "$MOD",
+                "replace": "^altair$",
+                "by": "alt"
+              }
+            },
+            "E1": {
+              "replace": {
+                "source": "$E0",
+                "replace": "^matplotlib$",
+                "by": "mpl"
+              }
+            },
+            "E2": {
+              "replace": {
+                "source": "$E1",
+                "replace": "^matplotlib[\\s\\\\]*\\.[\\s\\\\]*pyplot$",
+                "by": "plt"
+              }
+            },
+            "E3": {
+              "replace": {
+                "source": "$E2",
+                "replace": "^networkx$",
+                "by": "nx"
+              }
+            },
+            "E4": {
+              "replace": {
+                "source": "$E3",
+                "replace": "^numpy$",
+                "by": "np"
+              }
+            },
+            "E5": {
+              "replace": {
+                "source": "$E4",
+                "replace": "^numpy[\\s\\\\]*\\.[\\s\\\\]*typing$",
+                "by": "npt"
+              }
+            },
+            "E6": {
+              "replace": {
+                "source": "$E5",
+                "replace": "^pandas$",
+                "by": "pd"
+              }
+            },
+            "E7": {
+              "replace": {
+                "source": "$E6",
+                "replace": "^seaborn$",
+                "by": "sns"
+              }
+            },
+            "E8": {
+              "replace": {
+                "source": "$E7",
+                "replace": "^tensorflow$",
+                "by": "tf"
+              }
+            },
+            "E9": {
+              "replace": {
+                "source": "$E8",
+                "replace": "^tkinter$",
+                "by": "tk"
+              }
+            },
+            "E10": {
+              "replace": {
+                "source": "$E9",
+                "replace": "^holoviews$",
+                "by": "hv"
+              }
+            },
+            "E11": {
+              "replace": {
+                "source": "$E10",
+                "replace": "^panel$",
+                "by": "pn"
+              }
+            },
+            "E12": {
+              "replace": {
+                "source": "$E11",
+                "replace": "^plotly[\\s\\\\]*\\.[\\s\\\\]*express$",
+                "by": "px"
+              }
+            },
+            "E13": {
+              "replace": {
+                "source": "$E12",
+                "replace": "^polars$",
+                "by": "pl"
+              }
+            },
+            "E14": {
+              "replace": {
+                "source": "$E13",
+                "replace": "^pyarrow$",
+                "by": "pa"
+              }
+            },
+            "E": {
+              "replace": {
+                "source": "$E14",
+                "replace": "^xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree$",
+                "by": "ET"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ICN001",
+        "message": "Write `import $MOD as $E` and rename its uses to match; keep the current name only if `$E` already means something else in this module.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ICN001"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "from-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "member": {
+              "kind": "dotted_name",
+              "any": [
+                {
+                  "regex": "^pyplot$",
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^matplotlib$"
+                    }
+                  }
+                },
+                {
+                  "regex": "^typing$",
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^numpy$"
+                    }
+                  }
+                },
+                {
+                  "regex": "^express$",
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^plotly$"
+                    }
+                  }
+                },
+                {
+                  "regex": "^ElementTree$",
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^xml[\\s\\\\]*\\.[\\s\\\\]*etree$"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "import_from_statement",
+              "has": {
+                "field": "module_name",
+                "pattern": "$PKG"
+              }
+            },
+            "any": [
+              {
+                "matches": "member",
+                "pattern": "$MOD",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "import_from_statement"
+                }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$ALIAS",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "aliased_import",
+                  "field": "alias",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "matches": "member",
+                    "pattern": "$MOD"
+                  }
+                },
+                "compare": {
+                  "left": "ALIAS",
+                  "op": "ne",
+                  "right": "E"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "E0": {
+              "replace": {
+                "source": "$MOD",
+                "replace": "^pyplot$",
+                "by": "plt"
+              }
+            },
+            "E1": {
+              "replace": {
+                "source": "$E0",
+                "replace": "^typing$",
+                "by": "npt"
+              }
+            },
+            "E2": {
+              "replace": {
+                "source": "$E1",
+                "replace": "^express$",
+                "by": "px"
+              }
+            },
+            "E": {
+              "replace": {
+                "source": "$E2",
+                "replace": "^ElementTree$",
+                "by": "ET"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ICN001",
+        "message": "Write `from $PKG import $MOD as $E` and rename its uses to match; keep the current name only if `$E` already means something else in this module.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ICN001"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "non-ascii-spelling",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "spelled": {
+              "kind": "dotted_name",
+              "resolves": {
+                "imported": [
+                  "altair",
+                  "matplotlib",
+                  "matplotlib.pyplot",
+                  "networkx",
+                  "numpy",
+                  "numpy.typing",
+                  "pandas",
+                  "seaborn",
+                  "tensorflow",
+                  "tkinter",
+                  "holoviews",
+                  "panel",
+                  "plotly.express",
+                  "polars",
+                  "pyarrow",
+                  "xml.etree.ElementTree"
+                ]
+              },
+              "any": [
+                {
+                  "regex": "[^\\x00-\\x7f]"
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "regex": "[^\\x00-\\x7f]"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "spelled",
+                "pattern": "$MOD",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "import_statement"
+                }
+              },
+              {
+                "matches": "spelled",
+                "pattern": "$MOD",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "import_from_statement"
+                },
+                "follows": {
+                  "stopBy": "end",
+                  "kind": "dotted_name"
+                }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$ALIAS",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "aliased_import",
+                  "field": "alias",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "matches": "spelled",
+                    "pattern": "$MOD"
+                  }
+                },
+                "not": {
+                  "regex": "^(?:alt|mpl|plt|nx|np|npt|pd|sns|tf|tk|hv|pn|px|pl|pa|ET)$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ICN001",
+        "message": "Spell `$MOD` in plain ASCII, import it under its conventional alias (such as `import pandas as pd`) and rename its uses to match.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ICN001"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

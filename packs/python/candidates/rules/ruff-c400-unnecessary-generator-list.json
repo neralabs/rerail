@@ -1,0 +1,364 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c400-unnecessary-generator-list",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a list comprehension instead of passing a generator expression to list, or pass the iterable itself when the generator yields its items unchanged.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "trivia": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              },
+              {
+                "regex": "^[(),]$"
+              }
+            ]
+          },
+          "callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "global": [
+                    "list"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "callee"
+                }
+              }
+            ]
+          },
+          "gen": {
+            "any": [
+              {
+                "kind": "generator_expression"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "gen"
+                }
+              }
+            ]
+          },
+          "target": {
+            "any": [
+              {
+                "pattern": "$TARGET",
+                "not": {
+                  "matches": "paren-target"
+                }
+              },
+              {
+                "matches": "paren-target",
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "matches": "trivia"
+                  },
+                  "matches": "target"
+                }
+              }
+            ]
+          },
+          "paren-target": {
+            "kind": "tuple_pattern",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^,$"
+              }
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "not": {
+                "matches": "trivia"
+              }
+            }
+          },
+          "gen-identity": {
+            "any": [
+              {
+                "kind": "generator_expression",
+                "has": {
+                  "field": "body",
+                  "pattern": "$ELT"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "for_in_clause",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^async$"
+                        }
+                      },
+                      "has": {
+                        "field": "left",
+                        "matches": "target"
+                      }
+                    }
+                  },
+                  {
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "for_in_clause"
+                          },
+                          {
+                            "kind": "if_clause"
+                          }
+                        ]
+                      },
+                      "min": 1,
+                      "max": 1
+                    }
+                  }
+                ],
+                "compare": {
+                  "left": "ELT",
+                  "op": "eq",
+                  "right": "TARGET",
+                  "text": "structure"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "gen-identity"
+                }
+              }
+            ]
+          },
+          "args-gen": {
+            "any": [
+              {
+                "kind": "generator_expression"
+              },
+              {
+                "kind": "argument_list",
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "matches": "trivia"
+                    }
+                  },
+                  "min": 1,
+                  "max": 1
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "gen"
+                }
+              }
+            ]
+          },
+          "args-identity": {
+            "any": [
+              {
+                "matches": "gen-identity"
+              },
+              {
+                "kind": "argument_list",
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "matches": "trivia"
+                    }
+                  },
+                  "min": 1,
+                  "max": 1
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "gen-identity"
+                }
+              }
+            ]
+          },
+          "call": {
+            "kind": "call",
+            "any": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "callee"
+                },
+                "pattern": "$CALL"
+              },
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "list_splat",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                },
+                "regex": "^\\*(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*(?<CALL>[\\s\\S]+)$"
+              }
+            ]
+          },
+          "identity-call": {
+            "matches": "call",
+            "has": {
+              "field": "arguments",
+              "matches": "args-identity"
+            }
+          },
+          "comprehension-call": {
+            "matches": "call",
+            "has": {
+              "field": "arguments",
+              "matches": "args-gen"
+            },
+            "not": {
+              "has": {
+                "field": "arguments",
+                "matches": "args-identity"
+              }
+            }
+          },
+          "identity-in-annotation": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "identity-call"
+                  },
+                  {
+                    "matches": "identity-in-annotation"
+                  }
+                ]
+              }
+            }
+          },
+          "comprehension-in-annotation": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "comprehension-call"
+                  },
+                  {
+                    "matches": "comprehension-in-annotation"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "generator-list-identity",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "identity-call"
+              },
+              {
+                "matches": "identity-in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "C400",
+        "message": "Replace with `list(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C400"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "generator-list",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "comprehension-call"
+              },
+              {
+                "matches": "comprehension-in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "C400",
+        "message": "Rewrite `list(<generator>)` as a list comprehension: `[expr for ...]` instead of `list(expr for ...)`.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C400"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

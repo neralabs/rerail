@@ -1,0 +1,126 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi021-docstring-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove docstrings from stub files; stubs exist to carry type information, not documentation.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "docstring-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-prefix": {
+              "regex": "^[ruRU]{0,2}[\"']"
+            },
+            "first-statement": {
+              "kind": "expression_statement",
+              "not": {
+                "any": [
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                ]
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "docstring-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "first-statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "docstring-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "string",
+                "matches": "plain-prefix"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "matches": "plain-prefix"
+                    }
+                  }
+                }
+              }
+            ],
+            "matches": "docstring-slot"
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI021",
+        "message": "Remove this docstring from the stub; if it is the only statement in the body, replace it with `...`. Keep it if this stub package ships docstrings on purpose.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI021"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

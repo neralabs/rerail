@@ -1,0 +1,382 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-air001-airflow-variable-name-task-id-mismatch",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name each Airflow operator variable after the task id it creates, so the Dag code reads the same as the task graph it builds.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "task-variable-name-mismatch",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "str-lit": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "interpolation"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "string_start",
+                          "regex": "[bBfFtT]"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "matches": "str-lit"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "str-lit"
+                  }
+                }
+              ]
+            },
+            "from-ops-module": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "import_from_statement",
+                "has": {
+                  "field": "module_name",
+                  "kind": "dotted_name",
+                  "regex": "^airflow\\.providers(\\.\\w+)*\\.operators(\\.\\w+)*$"
+                }
+              }
+            },
+            "ops-site": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "dotted_name"
+                    },
+                    {
+                      "kind": "aliased_import"
+                    }
+                  ],
+                  "matches": "from-ops-module"
+                },
+                {
+                  "kind": "aliased_import",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_statement"
+                  },
+                  "has": {
+                    "field": "name",
+                    "regex": "^airflow\\.providers(\\.\\w+)*\\.operators(\\.\\w+)+$"
+                  }
+                }
+              ]
+            },
+            "ops-head-site": {
+              "any": [
+                {
+                  "matches": "ops-site"
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "kind": "dotted_name",
+                      "regex": "^airflow\\.providers(\\.\\w+)*$"
+                    }
+                  },
+                  "any": [
+                    {
+                      "kind": "dotted_name",
+                      "regex": "^operators$"
+                    },
+                    {
+                      "kind": "aliased_import",
+                      "has": {
+                        "field": "name",
+                        "regex": "^operators$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "aliased_import",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_statement"
+                  },
+                  "has": {
+                    "field": "name",
+                    "regex": "^airflow\\.providers(\\.\\w+)*\\.operators$"
+                  }
+                }
+              ]
+            },
+            "ops-head": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "matches": "ops-head-site"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "ops-head"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ops-head"
+                  }
+                }
+              ]
+            },
+            "ops-chain": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^operators$"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "ops-chain"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ops-chain"
+                  }
+                }
+              ]
+            },
+            "ops-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "airflow.operators"
+                    ],
+                    "prefix": true
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "matches": "ops-site"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "airflow.providers"
+                    ],
+                    "prefix": true
+                  },
+                  "any": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "ops-chain"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "ops-head"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ops-callee"
+                  }
+                }
+              ]
+            },
+            "operator-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "function",
+                        "matches": "ops-callee"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "kind": "argument_list",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "keyword_argument",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "name",
+                                "regex": "^task_id$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "value",
+                                "matches": "str-lit",
+                                "pattern": "$TID"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "operator-call"
+                  }
+                }
+              ]
+            },
+            "target-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$NAME"
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "target-name"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "assignment",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "expression_statement"
+            },
+            "not": {
+              "has": {
+                "field": "type",
+                "kind": "type"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "left",
+                  "matches": "target-name"
+                }
+              },
+              {
+                "has": {
+                  "field": "right",
+                  "matches": "operator-call"
+                }
+              },
+              {
+                "compare": {
+                  "left": "NAME",
+                  "op": "ne",
+                  "right": "TV"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "TV": {
+              "substring": {
+                "source": "$TID",
+                "value": true
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "code": "AIR001",
+        "message": "Rename this task variable to `$TV` so it matches its `task_id`, or change the `task_id` if this variable name is the one you want.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "AIR001"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
