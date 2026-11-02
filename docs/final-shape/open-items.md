@@ -34,6 +34,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
 | O70 | S8 at scale (notes/t18) | The slice's cold audit fails `Err(Busy)` on every whole memory47 worktree (and S8 at 2,650 files): `put_tape` (`content_store/objects.rs:453`, on the push's thread) begins its write once within the 250 ms busy timeout, while the overlay's background writer holds the lock for a layer on its own thread's connection under `retry_busy` | open: reproducer `a_tape_write_waits_out_another_writer_as_the_store_writes_do` (ignored); with `put_tape` under `immediate_transaction` (not committed) all 5 whole worktrees run |
+| O71 | S8 at scale (notes/t18) | The slice reports its Python clauses' coverage `Unknown` (`source-incomplete`) on non-Python documents whose parse is incomplete (2 MySQL `.sql` files per memory47 worktree, 80 (rule, path)s of the `**/*`-scoped rules); W reports nothing there, as a Python clause does not read them. No finding key differs | open |
 
 ## O1. Stale-fact detection after a crash
 
