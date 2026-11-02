@@ -806,7 +806,7 @@ pub(super) fn unparenthesized<'r, D: Doc>(
 /// `os` of `from os.$ import x` as the module and drops the stray dot of `a..b`, so the name
 /// would read as one the statement does not import. It reads no other node, which keeps
 /// `imported` sound under errors (see `Resolves::witness_only`).
-fn imported_name<D: Doc>(node: &Node<'_, D>, relative_text: bool) -> Option<String> {
+pub(crate) fn imported_name<D: Doc>(node: &Node<'_, D>, relative_text: bool) -> Option<String> {
     let name = statement_name(node, relative_text)?;
     let end = node.range().end;
     let statement = node.ancestors().find(|ancestor| {
