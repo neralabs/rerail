@@ -35,25 +35,53 @@ executor (`xexport`).
   produced and published) → exports.
 - `y3::wire::Source`: the xref and symbols steps read the inputs of their changes on first use
   (`Shared::ensure`), through `summary::insert` and `input::insert`, so the readers are unchanged.
+  `xinputs::store::Reading` is that source over `StoreSource`.
+- `deadcode::replay`: `RERAIL_DEADCODE_INPUTS=store` (default) ingests the in-scope jobs'
+  contents into the run's store (8,125 contents: sources, tapes, sets; 82.6 s), then reads Y1's
+  and the table's inputs through `Reading`; `jsonl` loads X6's exports up front (the reference).
 
-## 3. Exactness
+## 3. Recovery (O39)
+
+`#xref:` and `#symbols:` record the membership digest their state holds (`Wt::xref_tree`,
+`sym_tree`) as their read of `{scope}#tree:`. A run takes the push's edits only as a cache: it
+uses them when they turn its membership's digest into the one bound now; otherwise (after a
+crash, when no push handed them) it diffs its own membership (`Inputs::members`: Y1's records,
+the table's members) against the path names bound under the scope
+(`ContentStore::bindings_with_prefix`, SQLite: recovery runs on open, before any push, with
+the overlay empty) and counts the run in `Step::rebuilt`. `DeadCode::observe` is the observer's
+half of `push`. `bindings_differ` also checks that both states hold the bound membership.
+
+## 4. Exactness
 
 | Check | Result | Run |
 |---|---|---|
 | Producer = X6 exports, every (path, content) of the replay corpus (19,801 lines, 19,738 contents), exports 3 and 7–26, as multisets and in order | **18,005,997 rows; 0 lines differ (multiset), 0 (order); 0 contents failed**; 65 s at 6 threads, load 70 → 40 | `runs/20261102-154541-diff-full` |
 | Job sources = the exports' contents (`facts-b b3sum` of every source) | 19,801 / 19,801 | (shell check, not recorded as a run) |
 | Before the distinct exports: duplicates only (no row on one side only) in 16, 17, 20, then 22, 25 | fixed in `exports` | `runs/20261102-153753-diff-every50`, `-154404-diff-full` |
+| Full replay on the store's inputs, maintained, graph on the store, check every load and event (forked) | **1,151 checks, 0 differences; 1,151 binding checks, 0** | `runs/20261102-155728-exactness-store-inputs` |
+| Oracle tree: lattice findings = dataflow `dc__findings` = Y2 from scratch, both modes | **4,931 = 4,931 = 4,931**, same digest, `check` clean | `runs/20261102-160855-oracle` |
+| Crash between observe and recompute (`deadcode::tests::a_crash_between_observe_and_recompute_recovers_xref_and_symbols_from_the_bindings`, both modes): `recover` rebuilds both deltas from the bindings (`rebuilt` = 2), `check` and `bindings_differ` clean, the next push takes the cache, outputs = a run that never crashed | pass | `cargo test --lib --features metal-tests -- facts::deadcode::tests` (2 passed) |
 | Unit: `content_store::xinputs` (round trip, replace, cascade; tables = spec), producer smoke test | pass | `runs/20261102-153600-unit` |
 
-## 4. Not done
+## 5. Footprint and latency
 
-- The dead-code replay still reads the JSONL: `deadcode::replay` was not switched to
-  `StoreSource` (ingest into the run's store, `Shared::source`), so the replay's exactness on
-  these inputs (1,151 checks), the oracle test and the footprint and per-edit latency against
-  T12 §4.1 were **not run**. The machine stayed at 1-minute load 40–85 throughout, above the
-  quiet-run threshold.
-- `StoreSource`'s round trip to `Summary`/`SymBlock` is checked only through the store's unit test
-  and the producer's differential, not end to end against the JSONL loaders [unverified].
-- O39: the xref and symbols derivations still take the path delta from `Pending`. The intended fix:
-  the delta as a cache verified against the recorded `#tree:` digest, else a diff of the store's
-  bound membership against the producer's, with the inputs read from the store.
+| | T12 (end / peak: §4.1, `-102505-quiet-workload-maintained-store`; the samples below: §5, `-094712-workload-maintained-store`) | here, store inputs (`runs/20261102-160640-workload-store-inputs`) |
+|---|---|---|
+| footprint end / peak (MB) | 4,043 / 5,264 | **3,341 / 3,361** (−702 / −1,903) |
+| after the inputs (MB) | 1,706 (JSONL loaded) | 1,343 (ingest done, nothing loaded) |
+| Y3 world / 40 worktrees loaded (MB) | 2,661 / 3,109 | 1,821 / 2,307 |
+
+The exactness run agrees (3,346 / 3,379 MB). The peak falls because nothing parses the 3.5 GB
+export file; inputs are read per (path, content) as steps first touch them (8,149 sets read).
+
+**Per-edit latency: not measured.** The workload ran at 1-minute load 8.8 → 5.7 (per event 6.8–7.1),
+above the < 3 the comparison with T12 §4.1 needs; its latency numbers are in the run's
+`results.json` but are not a measurement.
+
+## 6. Not done
+
+- Per-edit latency on a quiet machine (load < 3), store inputs against `jsonl`.
+- The overlay graph with store inputs, and `recompute` mode, on the full replay (only maintained /
+  store graph ran); the fast test covers both modes on the store.
+- The fallback delta reads SQLite only: an overlay that still holds bindings must be flushed
+  before it is used (true at recovery, which runs on open).
