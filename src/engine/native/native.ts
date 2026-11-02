@@ -251,6 +251,12 @@ export interface NativeSlicePolicy {
   format: CodeRuleDslSourceFormat;
 }
 
+/** An editor's unsaved source for `path` (relative to the directory, `/` separators); the file may not exist yet. */
+export interface NativeSliceBuffer {
+  path: string;
+  source: string;
+}
+
 /**
  * The first slice over one content store (docs/final-shape/06-first-slice.md): the pack's lowered Python `ast`
  * clauses, kept between runs. `audit` and `apply` return JSON: `findings` ({rule, code, path, line}), `coverage`
@@ -260,11 +266,11 @@ export interface NativeCodeRuleSlice {
   clauses(): number;
   /**
    * A cold audit of `scope` at `directory` as `observer` sees it: `"directory"` (default, the working tree's
-   * snapshot) or `"head"` (the `HEAD` tree of its Git checkout).
+   * snapshot, with `buffers` over it) or `"head"` (the `HEAD` tree of its Git checkout; no buffers).
    */
-  audit(scope: string, directory: string, observer?: "directory" | "head" | null): string;
+  audit(scope: string, directory: string, observer?: "directory" | "head" | null, buffers?: NativeSliceBuffer[] | null): string;
   /** `scope` at `directory` as `observer` sees it, evaluating only the documents that changed since the last run. */
-  apply(scope: string, directory: string, observer?: "directory" | "head" | null): string;
+  apply(scope: string, directory: string, observer?: "directory" | "head" | null, buffers?: NativeSliceBuffer[] | null): string;
 }
 
 export interface NativeCodeRuleSliceConstructor {

@@ -4,7 +4,7 @@
 
 use super::{Rules, Run, apply, audit};
 use crate::code_rule_dsl::CodeRuleDslRuntime;
-use crate::code_rule_dsl::facts::observe::roots::{directory_root, git_root};
+use crate::code_rule_dsl::facts::observe::roots::{buffered_root, git_root};
 use crate::code_rule_dsl::findings::contract::Coverage;
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::content_store::{ContentStore, HashKey};
@@ -19,6 +19,14 @@ pub struct SlicePolicy {
     pub name: String,
     pub source: String,
     pub format: String,
+}
+
+/// An editor buffer: the unsaved source of the file at `path` (relative to the directory, `/`
+/// separators), which may not exist on disk yet.
+#[napi(object)]
+pub struct SliceBuffer {
+    pub path: String,
+    pub source: String,
 }
 
 /// The first slice over one store: the lowered rules and the SQL owner live between runs, so a
@@ -60,10 +68,11 @@ impl CodeRuleSlice {
     }
 
     /// A cold audit of `scope` at `directory`, as `observer` sees it: `"directory"` (the default,
-    /// the working tree's snapshot) or `"head"` (the `HEAD` tree of its Git checkout).
+    /// the working tree's snapshot, with `buffers` over it) or `"head"` (the `HEAD` tree of its
+    /// Git checkout).
     #[napi]
-    pub fn audit(&mut self, scope: String, directory: String, observer: Option<String>) -> Result<String> {
-        let root = self.root(&directory, observer.as_deref())?;
+    pub fn audit(&mut self, scope: String, directory: String, observer: Option<String>, buffers: Option<Vec<SliceBuffer>>) -> Result<String> {
+        let root = self.root(&directory, observer.as_deref(), buffers)?;
         let run = audit(&self.store, &scope, root, &mut self.rules).map_err(failed)?;
         Ok(report(&run))
     }
@@ -71,8 +80,8 @@ impl CodeRuleSlice {
     /// `scope` after edits: `directory` as `observer` sees it (as `audit`'s), evaluating only what
     /// changed since the last run.
     #[napi]
-    pub fn apply(&mut self, scope: String, directory: String, observer: Option<String>) -> Result<String> {
-        let root = self.root(&directory, observer.as_deref())?;
+    pub fn apply(&mut self, scope: String, directory: String, observer: Option<String>, buffers: Option<Vec<SliceBuffer>>) -> Result<String> {
+        let root = self.root(&directory, observer.as_deref(), buffers)?;
         let run = apply(&self.store, &scope, root, &mut self.rules).map_err(failed)?;
         Ok(report(&run))
     }
@@ -80,11 +89,13 @@ impl CodeRuleSlice {
 
 impl CodeRuleSlice {
     /// The root tree `observer` sees at `directory`, stored with its sources.
-    fn root(&self, directory: &str, observer: Option<&str>) -> Result<HashKey> {
+    fn root(&self, directory: &str, observer: Option<&str>, buffers: Option<Vec<SliceBuffer>>) -> Result<HashKey> {
         let directory = Path::new(directory);
+        let buffers = buffers.unwrap_or_default().into_iter().map(|buffer| (buffer.path, buffer.source.into_bytes())).collect::<std::collections::BTreeMap<_, _>>();
         match observer.unwrap_or("directory") {
-            "directory" => directory_root(&self.store, directory),
-            "head" => git_root(&self.store, directory),
+            "directory" => buffered_root(&self.store, directory, &buffers),
+            "head" if buffers.is_empty() => git_root(&self.store, directory),
+            "head" => return Err(Error::from_reason("editor buffers lie over a directory snapshot, not over `HEAD`")),
             other => return Err(Error::from_reason(format!("unknown slice observer `{other}`"))),
         }
         .map_err(failed)

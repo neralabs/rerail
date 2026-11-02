@@ -630,10 +630,10 @@ fn the_napi_slice_audits_and_applies_as_the_slice_does() {
             .collect();
         (keys, value["evaluated"].as_array().unwrap().len(), value["rerun"].as_u64().unwrap())
     };
-    let (keys, evaluated, _) = found(&slice.audit(WS.to_owned(), dir.to_string_lossy().into_owned(), None).unwrap());
+    let (keys, evaluated, _) = found(&slice.audit(WS.to_owned(), dir.to_string_lossy().into_owned(), None, None).unwrap());
     assert_eq!(keys, self::keys(&cold(&dir, &policies())));
     assert!(!keys.is_empty() && evaluated == 2);
-    let (warm, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), None).unwrap());
+    let (warm, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), None, None).unwrap());
     assert_eq!((warm, evaluated, rerun), (keys.clone(), 0, 0));
     // The Git observer: a clean checkout's `HEAD` is the directory's snapshot, so it is warm too.
     let git = |args: &[&str]| {
@@ -648,9 +648,29 @@ fn the_napi_slice_audits_and_applies_as_the_slice_does() {
     git(&["init", "-q"]);
     git(&["add", "a.py", "b.py"]);
     git(&["commit", "-q", "-m", "fixture"]);
-    let (head, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), Some("head".to_owned())).unwrap());
-    assert_eq!((head, evaluated, rerun), (keys, 0, 0));
-    assert!(slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), Some("buffers".to_owned())).is_err());
+    let (head, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), Some("head".to_owned()), None).unwrap());
+    assert_eq!((head, evaluated, rerun), (keys.clone(), 0, 0));
+    assert!(slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), Some("nope".to_owned()), None).is_err());
+    // The buffers observer: an unsaved edit of `b.py` and an unsaved new file in a new directory
+    // are found as if written, and nothing on disk changes.
+    let buffers = || {
+        vec![
+            napi::SliceBuffer { path: "b.py".to_owned(), source: "def f():\n    assert x\n    password = 'hunter2'\n    return password\n".to_owned() },
+            napi::SliceBuffer { path: "pkg/c.py".to_owned(), source: "import os\nos.chmod('g', 0o777)\n".to_owned() },
+        ]
+    };
+    assert!(slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), Some("head".to_owned()), Some(buffers())).is_err());
+    let (buffered, evaluated, _) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned(), None, Some(buffers())).unwrap());
+    assert_eq!(evaluated, 2);
+    let written = temp("napi-written");
+    std::fs::create_dir_all(written.join("pkg")).unwrap();
+    std::fs::copy(dir.join("a.py"), written.join("a.py")).unwrap();
+    for buffer in buffers() {
+        std::fs::write(written.join(&buffer.path), &buffer.source).unwrap();
+    }
+    assert_eq!(buffered, self::keys(&cold(&written, &policies())));
+    assert_ne!(buffered, keys);
+    assert!(!dir.join("pkg").exists());
 }
 
 /// S8 (06): the first measurements against 03's targets, on S7's sample. Each pass runs, per

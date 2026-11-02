@@ -31,8 +31,15 @@ fn store_source(store: &ContentStore, blob: HashKey, bytes: &[u8]) -> StoreResul
 /// language, and returns the root tree's id. `.git` and symbolic links are left out, and so are
 /// empty directories, as Git leaves them out.
 pub(crate) fn directory_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey> {
+    buffered_root(store, root, &std::collections::BTreeMap::new())
+}
+
+/// `directory_root` with editor buffers over it (the buffers observer, O2): each buffer's bytes
+/// stand for the file at its path (relative, `/`-separated), on disk or not yet, in place of what
+/// is on disk.
+pub(crate) fn buffered_root(store: &ContentStore, root: &Path, buffers: &std::collections::BTreeMap<String, Vec<u8>>) -> StoreResult<HashKey> {
     let mut trees = Vec::new();
-    let id = directory_tree(store, root, "", &mut trees)?.unwrap_or(git_hash(gix::objs::Kind::Tree, b"")?);
+    let id = directory_tree(store, Some(root), "", buffers, &mut trees)?.unwrap_or(git_hash(gix::objs::Kind::Tree, b"")?);
     if trees.is_empty() {
         trees.push(GitTree { id: HashKey::git_sha1(id), prefix: String::new(), entries: Vec::new() });
     }
@@ -40,19 +47,40 @@ pub(crate) fn directory_root(store: &ContentStore, root: &Path) -> StoreResult<H
     Ok(HashKey::git_sha1(id))
 }
 
-/// The tree of `dir` at `prefix`, pushed onto `trees` after its subtrees; `None` when empty.
-fn directory_tree(store: &ContentStore, dir: &Path, prefix: &str, trees: &mut Vec<GitTree>) -> StoreResult<Option<[u8; 20]>> {
-    let mut children = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let Ok(name) = entry.file_name().into_string() else {
-            continue;
-        };
-        let kind = entry.file_type()?;
-        if name == ".git" || kind.is_symlink() {
-            continue;
+/// The tree of `dir` at `prefix` (`None`: a directory only buffers hold), with `buffers` over
+/// it, pushed onto `trees` after its subtrees; `None` when empty.
+fn directory_tree(
+    store: &ContentStore,
+    dir: Option<&Path>,
+    prefix: &str,
+    buffers: &std::collections::BTreeMap<String, Vec<u8>>,
+    trees: &mut Vec<GitTree>,
+) -> StoreResult<Option<[u8; 20]>> {
+    let mut children: Vec<(String, bool, Option<std::path::PathBuf>)> = Vec::new();
+    if let Some(dir) = dir {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            let kind = entry.file_type()?;
+            if name == ".git" || kind.is_symlink() {
+                continue;
+            }
+            children.push((name, kind.is_dir(), Some(entry.path())));
         }
-        children.push((name, kind.is_dir(), entry.path()));
+    }
+    // Buffers below this tree that name an entry the disk does not have: a file, or a directory
+    // only buffers hold.
+    let below = if prefix.is_empty() { String::new() } else { format!("{prefix}/") };
+    for path in buffers.keys().filter_map(|path| path.strip_prefix(below.as_str())) {
+        let (name, is_dir) = match path.split_once('/') {
+            Some((name, _)) => (name, true),
+            None => (path, false),
+        };
+        if !name.is_empty() && !children.iter().any(|(held, _, _)| held == name) {
+            children.push((name.to_owned(), is_dir, None));
+        }
     }
     // Git orders a tree's entries by name, a directory's as if it ended in '/'.
     children.sort_by(|(a, a_dir, _), (b, b_dir, _)| {
@@ -64,17 +92,25 @@ fn directory_tree(store: &ContentStore, dir: &Path, prefix: &str, trees: &mut Ve
     for (name, is_dir, path) in children {
         let child = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
         let (mode, id) = if is_dir {
-            match directory_tree(store, &path, &child, trees)? {
+            match directory_tree(store, path.as_deref(), &child, buffers, trees)? {
                 Some(id) => (TREE, id),
                 None => continue,
             }
         } else {
-            let bytes = std::fs::read(&path)?;
+            let bytes = match (buffers.get(&child), &path) {
+                (Some(buffer), _) => buffer.clone(),
+                (None, Some(path)) => std::fs::read(path)?,
+                (None, None) => continue,
+            };
             let id = git_hash(gix::objs::Kind::Blob, &bytes)?;
             if label_of_path(&child).is_some() {
                 store_source(store, HashKey::git_sha1(id), &bytes)?;
             }
-            (if executable(&path)? { EXECUTABLE } else { BLOB }, id)
+            let executable = match &path {
+                Some(path) => executable(path)?,
+                None => false,
+            };
+            (if executable { EXECUTABLE } else { BLOB }, id)
         };
         encoded.extend_from_slice(format!("{mode:o} {name}\0").as_bytes());
         encoded.extend_from_slice(&id);

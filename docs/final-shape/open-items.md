@@ -7,7 +7,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | Id | Found | Item | Status |
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated; 2026-11-01: called by every slice run before its push (`a_run_after_a_crashed_push_recovers_it`) |
-| O2 | Phase 1 | Nothing calls the push path yet (ingest wired in S3) | production caller wired (2026-11-01): the slice's napi `CodeRuleSlice` pushes a directory snapshot or a Git `HEAD` (W's `git_workspace` discovery); open: editor buffers, and the corpus capture for the anchor lab (Phase 3's check) |
+| O2 | Phase 1 | Nothing calls the push path yet (ingest wired in S3) | closed for the observers (2026-11-01): the slice's napi `CodeRuleSlice` pushes a directory snapshot with editor buffers over it, or a Git `HEAD` (W's `git_workspace` discovery); the anchor lab's corpus capture moves to Phase 3's check |
 | O3 | Phase 1 | A new name is interned by a synchronous SQLite write | open |
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
@@ -141,6 +141,10 @@ for the anchor lab.
 `"head"`, the checkout's `HEAD` tree through W's `git_workspace::discover`. Both push through the
 overlay with its writer, after recovering any push that did not end (O1). Left: editor buffers as
 an observer (an overlay snapshot of unsaved sources), and the corpus capture for the anchor lab.
+Buffers since: `roots::buffered_root` lays each buffer's bytes over the directory snapshot (a
+file on disk or not yet, in a directory on disk or not yet), and `audit`/`apply` take them with the
+directory observer. A file watcher is the host's: it calls `apply` on a change. The corpus capture
+is Phase 3's check.
 
 ## O3. Synchronous interning
 
