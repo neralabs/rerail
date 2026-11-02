@@ -543,3 +543,15 @@ pub fn load(file: &Path, out: &mut Blocks, want: Option<&(dyn Fn(&str, &str) -> 
     }
     loaded
 }
+
+/// One (path, content)'s block from its exports (`facts::xinputs::exports`), as `load` builds it
+/// from its line; false if the pair was loaded before.
+pub fn insert(out: &mut Blocks, path: &str, hash: &str, ex: &std::collections::BTreeMap<u32, Vec<Vec<Json>>>) -> bool {
+    let key = (sym(path), sym(hash));
+    if out.by_key.contains_key(&key) {
+        return false;
+    }
+    let rows = std::array::from_fn(|i| ex.get(&(14 + i as u32)).cloned().unwrap_or_default());
+    out.by_key.insert(key, block(&Parsed { path: path.to_owned(), hash: hash.to_owned(), rows }));
+    true
+}
