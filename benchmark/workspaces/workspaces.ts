@@ -27,7 +27,7 @@ import {
   type NativeCompiledCodeRuleDsl,
   resolveNativeBindingPath,
 } from "../../src/engine/index.js";
-import { compareFindings } from "./facts.js";
+import { compareFindings } from "./compare-findings.js";
 import { runSlice } from "./slice.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
