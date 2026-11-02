@@ -207,6 +207,23 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
   - **Which programs.** The wave's root programs (their matches are read as `match(c, d, n)` and spans) and every roots label are in set mode. Targets and count labels stay exact: they need every captured node, or every match.
   - **The oracle** is finding keys plus Complete/Unknown per (rule, file), as S7 checks (decision 0017; the loose findings contract).
   - **Measured.** S7: 710 keys = W on CPU and Metal. Root records went from 5,023 to 5,009, because S7's roots rarely have more than one emitting path. `set_mode_emits_each_key_once_on_every_cpu_executor`: on a program with many emitting paths per start, the interpreter, micro walk and JIT give exact mode's keys, each once. The packed runtime's 35 tests, the matcher lowering's and the wave's pass.
+- **The combined cross-rule graph (list step 15, 2026-11-02),** t1 spec-fusion §4.1 and §4.7. This is the fusion model's first priority: shared sub-rule evaluation.
+  - **Hash-consed labels** (`LoweredWave::new`). A clause's sub-rules are its labels. A label equal to an earlier one becomes that label: equal means the same `Label::key` (kind, program digest, domain, constraints, count bounds), with every label it reads already renamed in the wave. Steps are in evaluation order, so a label's reads are named before it.
+    - Each clause's kept labels take the next ids, so its labels stay one range. A duplicate's slot and pass are gone, so the wave's bitsets hold each distinct label once.
+    - A clause keeps copies of the definitions it borrows (`Labels::borrowed`), for their domains.
+    - Recursive groups stay each clause's own.
+  - **Scheduling.** `levels` tracks when each label is final across the whole wave, so a borrowed label's level is its owner's. A clause's labels also run where a clause that reads them is active (`LoweredWave::spread`, through `feeds`, transitive).
+  - **Measured** (S7, 87 clauses, load 55):
+    - Labels: 833 separately, 496 combined (40% shared).
+    - Results: 710 keys = W on CPU and Metal; Metal still 44 launches.
+    - The CPU backend's audit: CPU time 5.3 s, from 6.3–6.6 s at step 14.
+    - The device's buffer peak: 211 MB, from 248.
+    - `the_combined_graph_shares_labels_and_keeps_each_clauses_roots`: on the pack's fixtures, each clause's roots from the combined wave equal its roots alone, with clauses active on half the tapes.
+  - **Not in this step:**
+    - spec-fusion's prefix tries (§4.3), and Boolean fusion of root programs into FORK chains (§4.4);
+    - multi-target packing of same-type passes (§2.6);
+    - recursive groups shared by digest;
+    - the fused plan's cache key (§4.9; the wave is lowered per audit).
 
 Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base, then differential finding keys for interpreter vs JIT vs Metal on a 100–300-file sample.
 

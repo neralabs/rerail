@@ -41,6 +41,59 @@ struct Labels {
     steps: Vec<Vec<u16>>,
     /// A recursive utility's label, by recursion id (`MatchTree::Recursive`).
     recursive: BTreeMap<usize, u16>,
+    /// In a wave, the labels this clause reads that an earlier clause owns (the combined graph,
+    /// `LoweredWave::new`), with the labels they read in turn: their definitions, to read their
+    /// domains (`bound`). They are evaluated as the owner's passes.
+    borrowed: BTreeMap<u16, Label>,
+}
+
+impl Label {
+    /// The label with every label it reads renamed by `map`.
+    fn relabelled(&self, map: &dyn Fn(u16) -> u16) -> Self {
+        let domain = |domain: &Domain| match domain {
+            Domain::Label(label) => Domain::Label(map(*label)),
+            other => other.clone(),
+        };
+        match self {
+            Label::Pattern(program, starts) => Label::Pattern(program.relabelled(map), domain(starts)),
+            Label::Constrained(program, starts, constraints) => Label::Constrained(
+                program.relabelled(map),
+                domain(starts),
+                constraints.iter().map(|(name, label)| (name.clone(), map(*label))).collect(),
+            ),
+            Label::Roots(program, starts) => Label::Roots(program.relabelled(map), domain(starts)),
+            Label::Targets(program, starts) => Label::Targets(program.relabelled(map), domain(starts)),
+            Label::Count { program, domain: starts, by, min, max } => Label::Count {
+                program: program.relabelled(map),
+                domain: domain(starts),
+                by: *by,
+                min: *min,
+                max: *max,
+            },
+            Label::Complement(of) => Label::Complement(map(*of)),
+            Label::Empty => Label::Empty,
+        }
+    }
+
+    /// The label's structural identity, the labels it reads named in the wave: equal for labels
+    /// that mark the same nodes of every tape (the combined graph's hash-consing key).
+    fn key(&self) -> String {
+        let tally = |by: &Tally| match by {
+            Tally::Start => "start",
+            Tally::Capture => "capture",
+        };
+        match self {
+            Label::Pattern(program, starts) => format!("pattern|{}|{starts:?}", program.plain_digest()),
+            Label::Constrained(program, starts, constraints) => format!("constrained|{}|{starts:?}|{constraints:?}", program.plain_digest()),
+            Label::Roots(program, starts) => format!("roots|{}|{starts:?}", program.plain_digest()),
+            Label::Targets(program, starts) => format!("targets|{}|{starts:?}", program.plain_digest()),
+            Label::Count { program, domain, by, min, max } => {
+                format!("count|{}|{domain:?}|{}|{min}|{max:?}", program.plain_digest(), tally(by))
+            }
+            Label::Complement(of) => format!("complement|{of}"),
+            Label::Empty => "empty".to_owned(),
+        }
+    }
 }
 
 /// The nodes a pass starts from: those whose kind the rule needs, or a label's (a walk's start).
@@ -113,7 +166,10 @@ impl Labels {
     }
 
     fn def(&self, id: u16) -> &Label {
-        &self.defs[usize::from(id - LABEL_BASE - self.offset)]
+        match usize::from(id - LABEL_BASE).checked_sub(usize::from(self.offset)) {
+            Some(at) if at < self.defs.len() => &self.defs[at],
+            _ => self.borrowed.get(&id).expect("a label of the clause or one it borrows"),
+        }
     }
 
     /// The kinds a domain's nodes can have, known before any label is (`None`: any kind). A
@@ -178,6 +234,7 @@ impl Labels {
             offset: self.offset + by,
             steps: self.steps.iter().map(|step| step.iter().copied().map(up).collect()).collect(),
             recursive: self.recursive.iter().map(|(at, label)| (*at, up(*label))).collect(),
+            borrowed: self.borrowed.iter().map(|(id, label)| (up(*id), label.clone())).collect(),
         }
     }
 
@@ -448,6 +505,19 @@ impl LoweredMatcher {
 }
 
 impl Program {
+    /// The program with every label it tests renamed by `map`.
+    fn relabelled(&self, map: &dyn Fn(u16) -> u16) -> Self {
+        let mut program = self.clone();
+        for word in &mut program.words {
+            if let (SUPERTYPE, mode, class) = split(*word)
+                && class >= LABEL_BASE
+            {
+                *word = super::word(SUPERTYPE, mode, map(class));
+            }
+        }
+        program
+    }
+
     /// The program with every label it tests `by` higher (a clause's place in a wave).
     fn shifted(&self, by: u16) -> Self {
         let mut program = self.clone();
@@ -480,22 +550,142 @@ impl LoweredMatcher {
 pub(in crate::code_rule_dsl) struct LoweredWave {
     clauses: Vec<LoweredMatcher>,
     labels: usize,
+    /// Per clause, the earlier clauses whose labels it reads (the combined graph), transitively:
+    /// their passes run wherever it is active (`spread`).
+    feeds: Vec<BTreeSet<usize>>,
 }
 
 impl LoweredWave {
+    /// The clauses as one combined graph (list step 14 → 15; t1 spec-fusion §4.1, §4.7, the
+    /// fusion model's first priority): a label equal to an earlier one, every label it reads named
+    /// in the wave (`Label::key`), is that label, so a sub-rule shared by clauses is one pass. A
+    /// recursive group's labels are each clause's own. Each clause's kept labels take the next
+    /// ids, so its labels stay one range and the wave's bitsets hold each distinct label once.
     pub(in crate::code_rule_dsl) fn new(clauses: &[&LoweredMatcher]) -> Result<Self, Error> {
-        let mut at = 0_usize;
-        let mut shifted = Vec::with_capacity(clauses.len());
-        for clause in clauses {
-            let by = u16::try_from(at).map_err(|_| Error::InvalidOperand(0))?;
-            shifted.push(clause.shifted(by));
-            at += clause.labels.defs.len();
+        let limit = usize::from(u16::MAX - LABEL_BASE);
+        let mut next = 0_usize;
+        let mut seen = HashMap::<String, u16>::new();
+        let mut owner = HashMap::<u16, usize>::new();
+        let mut combined: Vec<LoweredMatcher> = Vec::with_capacity(clauses.len());
+        let mut feeds: Vec<BTreeSet<usize>> = Vec::with_capacity(clauses.len());
+        let (mut distinct, mut total) = (0_usize, 0_usize);
+        for (at, clause) in clauses.iter().enumerate() {
+            let labels = &clause.labels;
+            let offset = u16::try_from(next).map_err(|_| Error::InvalidOperand(0))?;
+            let mut map = HashMap::<u16, u16>::new();
+            let mut steps = Vec::new();
+            let fresh = |next: &mut usize| -> Result<u16, Error> {
+                let id = u16::try_from(*next).ok().filter(|id| usize::from(*id) < limit).ok_or(Error::InvalidOperand(0))?;
+                *next += 1;
+                Ok(LABEL_BASE + id)
+            };
+            for step in &labels.steps {
+                total += step.len();
+                let recursive = step.len() > 1 || labels.recursive.values().any(|id| step.contains(id));
+                if recursive {
+                    // A group's members read each other: each its own label.
+                    let ids = step.iter().map(|&id| fresh(&mut next).map(|new| (id, new))).collect::<Result<Vec<_>, _>>()?;
+                    map.extend(ids.iter().copied());
+                    steps.push(ids.iter().map(|&(_, new)| new).collect());
+                    continue;
+                }
+                // Its reads are earlier steps' (the steps are in evaluation order), named already.
+                let id = step[0];
+                let key = labels.def(id).relabelled(&|label| map.get(&label).copied().unwrap_or(label)).key();
+                if let Some(&shared) = seen.get(&key) {
+                    map.insert(id, shared);
+                    continue;
+                }
+                let new = fresh(&mut next)?;
+                map.insert(id, new);
+                seen.insert(key, new);
+                steps.push(vec![new]);
+            }
+            // A label in no step (none is expected) keeps its own.
+            for local in 0..labels.defs.len() {
+                let id = LABEL_BASE + labels.offset + local as u16;
+                if !map.contains_key(&id) {
+                    map.insert(id, fresh(&mut next)?);
+                }
+            }
+            let rename = |label: u16| map.get(&label).copied().unwrap_or(label);
+            // Each kept label's definition at its id's place: the ids from `offset` on are this clause's.
+            let mut placed = vec![None; next - usize::from(offset)];
+            for local in 0..labels.defs.len() {
+                let new = map[&(LABEL_BASE + labels.offset + local as u16)];
+                if let Some(at) = usize::from(new - LABEL_BASE).checked_sub(usize::from(offset)) {
+                    placed[at].get_or_insert_with(|| labels.defs[local].relabelled(&rename));
+                }
+            }
+            let defs = placed.into_iter().map(|def| def.expect("a definition per kept id")).collect::<Vec<_>>();
+            distinct += defs.len();
+            for local in 0..defs.len() {
+                owner.insert(LABEL_BASE + offset + local as u16, at);
+            }
+            let mut own = Labels {
+                defs,
+                offset,
+                steps,
+                recursive: labels.recursive.iter().map(|(at, label)| (*at, rename(*label))).collect(),
+                borrowed: BTreeMap::new(),
+            };
+            // The labels this clause reads that an earlier clause owns, with what they read.
+            let mut wanted = (0..own.defs.len())
+                .flat_map(|local| own.reads(LABEL_BASE + offset + local as u16))
+                .chain(match &clause.domain {
+                    Domain::Label(label) => Some(rename(*label)),
+                    _ => None,
+                })
+                .chain(clause.program.relabelled(&rename).words.iter().filter_map(|&word| match split(word) {
+                    (SUPERTYPE, _, class) if class >= LABEL_BASE => Some(class),
+                    _ => None,
+                }))
+                .filter(|id| owner.get(id).is_some_and(|&by| by != at))
+                .collect::<Vec<_>>();
+            let mut fed = BTreeSet::new();
+            while let Some(id) = wanted.pop() {
+                if own.borrowed.contains_key(&id) {
+                    continue;
+                }
+                let by = owner[&id];
+                fed.insert(by);
+                let source = &combined[by].labels;
+                let def = source.def(id).clone();
+                own.borrowed.insert(id, def);
+                wanted.extend(source.reads(id).into_iter().filter(|read| owner.get(read).is_some_and(|&by| by != at)));
+            }
+            let fed = fed.iter().flat_map(|&by| std::iter::once(by).chain(feeds[by].iter().copied())).collect::<BTreeSet<_>>();
+            feeds.push(fed);
+            combined.push(LoweredMatcher {
+                labels: own,
+                program: clause.program.relabelled(&rename),
+                domain: match &clause.domain {
+                    Domain::Label(label) => Domain::Label(rename(*label)),
+                    other => other.clone(),
+                },
+            });
         }
         // Each clause's root label on Metal follows every pass's.
-        if at + clauses.len() > usize::from(u16::MAX - LABEL_BASE) {
+        if next + clauses.len() > limit {
             return Err(Error::InvalidOperand(0));
         }
-        Ok(Self { clauses: shifted, labels: at })
+        crate::code_rule_dsl::prof::count("wave.labels", total);
+        crate::code_rule_dsl::prof::count("wave.distinct_labels", distinct);
+        Ok(Self { clauses: combined, labels: next, feeds })
+    }
+
+    /// `active` (per clause, per tape) with each clause's labels also where a clause reading them
+    /// is active.
+    fn spread(&self, active: &[Vec<bool>]) -> Vec<Vec<bool>> {
+        let mut out = active.to_vec();
+        for (clause, fed) in self.feeds.iter().enumerate() {
+            for &by in fed {
+                for tape in 0..active[clause].len() {
+                    out[by][tape] |= active[clause][tape];
+                }
+            }
+        }
+        out
     }
 
     /// How many label passes the wave runs before its roots.
@@ -547,6 +737,7 @@ impl LoweredWave {
     /// labels are its own and read only by its walks, so they are computed only on those tapes
     /// (empty elsewhere).
     pub(in crate::code_rule_dsl) fn labelled(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<Vec<TapeDoc>, Error> {
+        let active = &self.spread(active);
         let clauses = self.clauses.iter().collect::<Vec<_>>();
         let (steps, _) = levels(&clauses, |clause, id| Ok((clause, id)))?;
         let active = |clause: &LoweredMatcher, tape: usize| {
@@ -734,7 +925,8 @@ impl LoweredWave {
         active: &[Vec<bool>],
         roots: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
     ) -> Result<(Vec<TapeDoc>, metal_program_backend::label_passes::Outcome), Error> {
-        let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[], Some(active), roots)?;
+        let active = self.spread(active);
+        let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[], Some(&active), roots)?;
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3e.before_views");
         let _views = crate::code_rule_dsl::prof::Stage::start("labels.views");
@@ -1279,9 +1471,10 @@ fn levels<'a, T>(
     // siblings).
     let mut single: Vec<Vec<T>> = Vec::new();
     let mut groups: Vec<(Vec<Vec<T>>, Option<BTreeSet<u16>>, bool)> = Vec::new();
+    // When each label is final: (wave level, whether in the level's recursive part). Over the
+    // wave: a clause reads labels an earlier clause owns (the combined graph).
+    let mut done = BTreeMap::<u16, (usize, bool)>::new();
     for &clause in clauses {
-        // When each label is final: (wave level, whether in the level's recursive part).
-        let mut done = BTreeMap::<u16, (usize, bool)>::new();
         for step in &clause.labels.steps {
             let recursive = clause.labels.recursive.values().any(|id| step.contains(id));
             let outside = |id: u16| clause.labels.reads(id).into_iter().filter(|read| !step.contains(read)).collect::<Vec<_>>();

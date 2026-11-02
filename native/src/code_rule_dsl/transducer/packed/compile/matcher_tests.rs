@@ -454,3 +454,42 @@ fn micro_walks_are_the_interpreters_label_outputs() {
     assert!(eligible * 2 > programs.len(), "most label programs are micro walks");
     assert!(compared > 100_000 && overflowed * 100 < compared);
 }
+
+/// The combined graph (list step 15): a sub-rule shared by clauses is one label of the wave, and
+/// each clause's roots from the wave's labels are its roots alone. Clauses are active on half the
+/// tapes each, so a label an earlier clause owns is computed where a later clause reads it.
+#[test]
+fn the_combined_graph_shares_labels_and_keeps_each_clauses_roots() {
+    let mut tapes = fixtures();
+    tapes.truncate(4);
+    let mut lowered = Vec::new();
+    for (_, compiled) in &clauses() {
+        for (_, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+            }
+        }
+    }
+    let wave = LoweredWave::new(&lowered.iter().collect::<Vec<_>>()).unwrap();
+    let separate = lowered.iter().map(LoweredMatcher::passes).sum::<usize>();
+    eprintln!("combined graph: {} clauses, {separate} labels separately, {} combined", lowered.len(), wave.passes());
+    assert!(wave.passes() < separate, "some sub-rule is shared");
+    let active = (0..lowered.len()).map(|clause| (0..tapes.len()).map(|tape| (clause + tape) % 2 == 0).collect()).collect::<Vec<Vec<bool>>>();
+    let views = wave.labelled(&tapes, &active).unwrap();
+    let programs = wave.programs();
+    let mut compared = 0;
+    for (clause, matcher) in lowered.iter().enumerate() {
+        for (tape, view) in views.iter().enumerate() {
+            if !active[clause][tape] {
+                continue;
+            }
+            let starts = (0..view.transducer_len() as u32).filter(|&node| wave.starts(clause, view, node));
+            let found = programs[clause].execute_roots(view, starts).unwrap().iter().map(|output| output.start).collect::<BTreeSet<_>>();
+            assert_eq!(found, matcher.roots(&tapes[tape]).unwrap(), "clause {clause} on tape {tape}");
+            compared += 1;
+        }
+    }
+    assert!(compared > 0);
+}
