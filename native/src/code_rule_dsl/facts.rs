@@ -32,6 +32,10 @@ pub(crate) mod propagate;
 pub(crate) mod runs;
 #[allow(dead_code)]
 pub(crate) mod vtab;
+/// The cross-file families' per-content inputs from this crate's tapes (Y1's call summaries,
+/// the X6 pack's inputs), in place of facts-engine's X6 exports (open items O39, O40).
+#[allow(dead_code)]
+pub(crate) mod xinputs;
 // The modules below are M's copies and the dead-code seam over them. They call Apple-only libc
 // (`proc_pid_rusage`, `rusage_info_v2`/`v4`) and `fork`/`mmap`, and nothing outside them refers to
 // them (only their own tests and the ignored replays), so they compile on macOS only; elsewhere
