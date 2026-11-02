@@ -371,14 +371,14 @@ fn rows_step(b: &Base, w: &mut LWt, f: &Facts, cand: Vec<u32>, seeds: &[(St, boo
     let mut seed_ch: Vec<(u32, bool)> = Vec::new();
     for &(s, now) in seeds {
         let id = if now { Some(ext.alloc(b, s, &mut wl)) } else { ext.id_of(b, s) };
-        if let Some(v) = id {
-            if bit(seed.as_slice(), v) != now {
-                seed_ch.push((v, now));
-                if now {
-                    e.seeds_ins.push(v);
-                } else {
-                    e.seeds_del.push(v);
-                }
+        if let Some(v) = id
+            && bit(seed.as_slice(), v) != now
+        {
+            seed_ch.push((v, now));
+            if now {
+                e.seeds_ins.push(v);
+            } else {
+                e.seeds_del.push(v);
             }
         }
     }
