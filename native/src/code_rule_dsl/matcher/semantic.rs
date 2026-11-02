@@ -36,12 +36,19 @@ pub(in crate::code_rule_dsl) enum Semantic {
     /// `calls` (Python): the call's callee reaches a definition the term's inner rule matches,
     /// through the workspace call graph's closure.
     Calls(Box<crate::code_rule_dsl::calls::CallsTest>),
+    /// `importTarget`: the import or require target the node's constant value names, and what
+    /// eslint-plugin-n reads of it.
+    ImportTarget(Box<crate::code_rule_dsl::import_target::term::ImportTargetTest>),
 }
 
 impl Semantic {
     pub(super) fn binds_nothing(&self) -> bool {
         match self {
-            Self::Resolves(_) | Self::Value(_) | Self::Layout(_) | Self::Host(_) => true,
+            Self::Resolves(_)
+            | Self::Value(_)
+            | Self::Layout(_)
+            | Self::Host(_)
+            | Self::ImportTarget(_) => true,
             Self::Binding(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
             Self::Binds(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
             Self::Arguments(arguments) => arguments.bind.is_empty(),
@@ -71,7 +78,7 @@ impl Semantic {
             Self::Embedded(test) => test.rules().any(|rule| super::reads_values(rule, seen)),
             // PHP's run-time fallback of a function or constant name may be unknown.
             Self::Resolves(resolves) => flow(resolves.language),
-            Self::Capture(_) | Self::Layout(_) => false,
+            Self::Capture(_) | Self::Layout(_) | Self::ImportTarget(_) => false,
             // PHP's flow may leave a read's binding, `latest` and `outer` unknown.
             Self::Binding(test) => {
                 test.filter.reads_usage()
@@ -96,6 +103,7 @@ impl Semantic {
                 }
             },
             Self::Resolves(resolves) => resolves.holds(&node).then_some(node),
+            Self::ImportTarget(test) => test.holds(&node).then_some(node),
             Self::Binding(test) => test.match_node(node, env),
             Self::Binds(test) => test.match_node(node, env),
             Self::Arguments(arguments) => arguments.match_node(node, env),

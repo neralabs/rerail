@@ -48,10 +48,9 @@ function largeTestFile(calls: number): { source: string; planted: string[] } {
 
 describe("the node pack's n/prefer-promises ports at scale", () => {
   it("finish on a large test file and report the callback calls planted in it", async () => {
-    // n-prefer-promises-fs ships; n-prefer-promises-dns is a candidate until it is promoted.
-    const pack = (id: string) => (id === "n-prefer-promises-dns" ? join("packs", "node", "candidates") : join("packs", "node"));
+    const pack = join("packs", "node");
     const rules = await Promise.all(RULES.map(async (id) =>
-      codeRuleSchema.parse(JSON.parse(await readFile(join(pack(id), "rules", `${id}.json`), "utf8")))));
+      codeRuleSchema.parse(JSON.parse(await readFile(join(pack, "rules", `${id}.json`), "utf8")))));
     const root = await mkdtemp(join(tmpdir(), "rerail-node-scale-"));
     directories.push(root);
     // The planted calls read `require`, which the ports reach only in a CommonJS file (packs/node/README.md).

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-exports-style",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "Use module.exports instead of the bare exports shortcut in CommonJS files, for one consistent export style.",
   "scope": {
@@ -23,7 +23,9 @@
       "forbid": {
         "ast": {
           "language": "typescript",
-          "languageOptions": {},
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
           "rule": {
             "any": [
               {

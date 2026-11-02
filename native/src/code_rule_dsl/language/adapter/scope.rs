@@ -2,7 +2,7 @@
 
 use super::{Adapter, Ecma, Php, Python, Refusal};
 
-use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module, file_source_type};
+use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module, file_source_type_for};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{
     DEFAULT_PYTHON_MINOR, EsGlobals, LanguageOptions, PythonOptions,
@@ -520,7 +520,12 @@ impl ScopeRules for Ecma {
     ) -> bool {
         mode == Unresolved::Unbound
             && !options.is_some_and(|options| {
-                options.declares_in(name, reference.spaces, directives, file_source_type())
+                options.declares_in(
+                    name,
+                    reference.spaces,
+                    directives,
+                    file_source_type_for(options),
+                )
             })
     }
 

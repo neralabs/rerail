@@ -1,0 +1,107 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-top-level-await",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid top-level await in modules npm publishes; require() cannot load an ES module that uses it, so move the await into an async function the module exports or calls.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "package": {
+              "published": true
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "await_expression"
+              },
+              {
+                "kind": "for_in_statement",
+                "has": {
+                  "regex": "^await$",
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "kind": "using_declaration",
+                "has": {
+                  "regex": "^await$",
+                  "stopBy": "neighbor"
+                }
+              }
+            ],
+            "not": {
+              "inside": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "inside": {
+                      "kind": "method_definition",
+                      "field": "parameters"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "method_definition",
+                      "field": "body"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-top-level-await",
+        "message": "Top-level `await` is forbidden in published modules.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-top-level-await"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-top-level-await"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

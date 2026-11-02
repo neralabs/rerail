@@ -31,7 +31,7 @@ pub(crate) mod adapter;
 
 use crate::code_rule_dsl::blade::forte::tree::{self as blade_tree, BladeLang};
 use crate::code_rule_dsl::module_path::ModulePath;
-use crate::code_rule_dsl::package_manifest::{DEFAULT_NODE_RANGE, Manifest};
+use crate::code_rule_dsl::package_manifest::{Manifest, node_range_is_subset_of};
 use crate::code_rule_dsl::semver::Range;
 use ast_grep_core::{
     language::Language,
@@ -524,6 +524,21 @@ impl SourceType {
     pub(crate) fn of_file(label: &str, path: &str, package: Option<PackageType>) -> Option<Self> {
         adapter::source_type(label, path, package)
     }
+
+    /// The module system a file has by its extension and its nearest `package.json`'s `type`
+    /// alone (`languageOptions.moduleSystem: "package-type"`), as eslint-plugin-n's configs give
+    /// each file one: `.mjs` and `.mts` modules, `.cjs` and `.cts` CommonJS, any other file a
+    /// module only where `type` is `module`, CommonJS where it is anything else and where there
+    /// is no manifest. No syntax is read.
+    pub(crate) fn by_package_type(path: &str, package: Option<PackageType>) -> Self {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        match name.rsplit_once('.').map(|(_, extension)| extension) {
+            Some("mjs" | "mts") => Self::Module,
+            Some("cjs" | "cts") => Self::CommonJs,
+            _ if package == Some(PackageType::Module) => Self::Module,
+            _ => Self::CommonJs,
+        }
+    }
 }
 
 /// The `type` of an ECMA file's nearest `package.json` (its `package`'s `type`).
@@ -829,31 +844,44 @@ pub(crate) fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
 }
 
 /// An ECMA query's `file.package`: conditions on the file's nearest `package.json`. `bin`,
-/// `dependsOn` and `path` need one, so a file without one fails them, `bin: false` included;
-/// `nodeVersion` reads eslint-plugin-n's default range there.
+/// `dependsOn`, `path`, `private` and `published` need one, so a file without one fails them,
+/// `bin: false`, `private: false` and `published: false` included; `nodeVersion` reads
+/// eslint-plugin-n's default range there.
 #[derive(Debug)]
 pub(crate) struct PackageCondition {
     /// Whether the file is one of the manifest's `bin` targets (`Manifest::is_bin`).
     pub(crate) bin: Option<bool>,
-    /// The range the file's configured Node range must be a subset of.
-    pub(crate) node_version: Option<Range>,
+    /// The range the file's configured Node range must, or must not, be a subset of.
+    pub(crate) node_version: Option<NodeVersionCondition>,
     /// Names one of which the manifest must list as a dependency of any kind.
     pub(crate) depends_on: Option<Vec<String>>,
     /// Over the file's path relative to the manifest's folder.
     pub(crate) path: Option<TextCondition>,
     /// Whether the file is in its Next app's server module graph (`Manifest::in_server_graph`).
     pub(crate) server_graph: Option<bool>,
+    /// Whether the manifest's `private` is `true` (`Manifest::is_private`).
+    pub(crate) private: Option<bool>,
+    /// Whether npm publishes the file (`Manifest::publishes`).
+    pub(crate) published: Option<bool>,
+}
+
+/// `nodeVersion`: the file's configured Node range is (`subsetOf`) or is not (`notSubsetOf`) a
+/// subset of `range`, node-semver's `subset`.
+#[derive(Debug)]
+pub(crate) struct NodeVersionCondition {
+    pub(crate) range: Range,
+    pub(crate) subset: bool,
 }
 
 impl PackageCondition {
     fn holds(&self, path: &str, manifest: Option<&Manifest>) -> bool {
         self.bin
             .is_none_or(|bin| manifest.is_some_and(|manifest| manifest.is_bin(path) == bin))
-            && self.node_version.as_ref().is_none_or(|range| {
+            && self.node_version.as_ref().is_none_or(|condition| {
                 manifest.map_or_else(
-                    || DEFAULT_NODE_RANGE.is_subset_of(range),
-                    |manifest| manifest.node_range_is_subset_of(range),
-                )
+                    || node_range_is_subset_of(None, &condition.range),
+                    |manifest| manifest.node_range_is_subset_of(&condition.range),
+                ) == condition.subset
             })
             && self
                 .depends_on
@@ -866,6 +894,12 @@ impl PackageCondition {
             })
             && self.server_graph.is_none_or(|member| {
                 manifest.and_then(|manifest| manifest.in_server_graph(path)) == Some(member)
+            })
+            && self.private.is_none_or(|private| {
+                manifest.is_some_and(|manifest| manifest.is_private() == private)
+            })
+            && self.published.is_none_or(|published| {
+                manifest.and_then(|manifest| manifest.publishes(path)) == Some(published)
             })
     }
 }
@@ -891,6 +925,9 @@ pub(crate) struct FileCondition {
     /// TypeScript: the JSX runtimes the file's may be one of. Its text can decide it, so it is
     /// checked once the file is read (`run_clause`), not by `holds`.
     pub(crate) jsx_runtime: Option<Vec<JsxRuntime>>,
+    /// Whether the file's text opens with a byte order mark (U+FEFF), which every grammar reads as
+    /// whitespace before the program, so no node's text holds it.
+    pub(crate) byte_order_mark: Option<bool>,
 }
 
 /// A text condition: `regex` (unanchored, as ast-grep's) must match, `notRegex` must not.
@@ -911,14 +948,15 @@ impl TextCondition {
 }
 
 impl FileCondition {
-    /// Whether a file at `path` with this module path and nearest `package.json` satisfies the
-    /// condition, `jsx_runtime` aside. A module path's text condition needs a module path
-    /// (`package` one in a package), `notRegex` too.
+    /// Whether a file at `path` with this module path, nearest `package.json` and text (`source`)
+    /// satisfies the condition, `jsx_runtime` aside. A module path's text condition needs a module
+    /// path (`package` one in a package), `notRegex` too.
     pub(crate) fn holds(
         &self,
         path: &str,
         module: Option<&ModulePath>,
         manifest: Option<&Manifest>,
+        source: &str,
     ) -> bool {
         self.path
             .as_ref()
@@ -943,6 +981,9 @@ impl FileCondition {
                 .manifest
                 .as_ref()
                 .is_none_or(|condition| condition.holds(path, manifest))
+            && self
+                .byte_order_mark
+                .is_none_or(|mark| source.starts_with('\u{feff}') == mark)
     }
 }
 

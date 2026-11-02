@@ -508,6 +508,20 @@ impl Query {
             Query::Regex { .. } => false,
         }
     }
+
+    /// Whether an AST query here reads `importTarget`, whose answer depends on files besides the
+    /// one matched (`import_target::fs::View`).
+    pub(super) fn reads_import_targets(&self) -> bool {
+        match self {
+            Query::Ast { matchers, .. } => matchers.iter().any(|matcher| {
+                crate::code_rule_dsl::matcher::reads_import_targets(&matcher.matcher)
+            }),
+            Query::SelectWhen { select, exists } => {
+                select.reads_import_targets() || exists.reads_import_targets()
+            }
+            Query::Regex { .. } => false,
+        }
+    }
 }
 
 /// A `calls` term: its inner rule as a seed query over definitions, and what chains pass through.
@@ -636,6 +650,19 @@ impl CompiledCodeRule {
                 subject.ast.query.reads_server_graph() || evidence.ast.query.reads_server_graph()
             }
             ClauseKind::Budget { query, .. } => query.ast.query.reads_server_graph(),
+            ClauseKind::Llm => false,
+        })
+    }
+
+    /// Whether any clause reads `importTarget` (`Query::reads_import_targets`).
+    pub(super) fn reads_import_targets(&self) -> bool {
+        self.clauses.iter().any(|clause| match &clause.kind {
+            ClauseKind::Forbid(query) => query.reads_import_targets(),
+            ClauseKind::RequireEach { subject, evidence } => {
+                subject.ast.query.reads_import_targets()
+                    || evidence.ast.query.reads_import_targets()
+            }
+            ClauseKind::Budget { query, .. } => query.ast.query.reads_import_targets(),
             ClauseKind::Llm => false,
         })
     }

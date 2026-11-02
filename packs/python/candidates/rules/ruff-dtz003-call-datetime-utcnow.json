@@ -1,0 +1,109 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz003-call-datetime-utcnow",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use datetime.now with a timezone instead of datetime.utcnow; utcnow returns a naive datetime that carries no zone information.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "call-datetime-utcnow",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      }
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "datetime.datetime.utcnow"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "astz-safe": {
+       "inside": {
+        "stopBy": {
+         "not": {
+          "kind": "parenthesized_expression"
+         }
+        },
+        "kind": "attribute",
+        "any": [
+         {
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^astimezone$"
+          }
+         },
+         {
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^replace$"
+          },
+          "inside": {
+           "stopBy": {
+            "not": {
+             "kind": "parenthesized_expression"
+            }
+           },
+           "kind": "call",
+           "matches": "astz-safe"
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ003",
+    "message": "Replace `utcnow()` with `now(tz=datetime.timezone.utc)` for an aware UTC datetime. Keep `utcnow()` only where the value is mixed with naive datetimes that cannot change too.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ003"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -251,6 +251,7 @@
         "ast": {
           "language": "typescript",
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly"
             }
@@ -279,6 +280,7 @@
         "ast": {
           "language": "typescript",
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly"
             }

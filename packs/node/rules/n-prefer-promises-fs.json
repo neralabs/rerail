@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-promises-fs",
-  "revision": 4,
+  "revision": 7,
   "mode": "steer",
   "description": "Use the promise-based fs API instead of callback-style fs functions such as readFile and writeFile, for cleaner async code.",
   "scope": {
@@ -19,11 +19,65 @@
   },
   "clauses": [
     {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "template_string",
+                "not": {
+                  "has": {
+                    "kind": "template_substitution"
+                  }
+                }
+              }
+            ],
+            "value": {
+              "regex": "^(?:access|copyFile|open|rename|truncate|rmdir|mkdir|readdir|readlink|symlink|lstat|stat|link|unlink|chmod|lchmod|lchown|chown|utimes|realpath|mkdtemp|writeFile|appendFile|readFile|cp|glob|lutimes|opendir|rm|statfs)$"
+            }
+          },
+          "c2": {
+            "not": {
+              "resolves": {
+                "binding": {
+                  "site": {
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier"
+                    },
+                    "inside": {
+                      "kind": "lexical_declaration",
+                      "regex": "^const\\b"
+                    },
+                    "kind": "variable_declarator"
+                  }
+                }
+              }
+            }
+          },
+          "c3": {
+            "kind": "template_string",
+            "not": {
+              "has": {
+                "kind": "template_substitution"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "id": "call",
       "forbid": {
         "ast": {
           "language": "typescript",
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly"
             }
@@ -38,12 +92,7 @@
                     "kind": "string"
                   },
                   {
-                    "kind": "template_string",
-                    "not": {
-                      "has": {
-                        "kind": "template_substitution"
-                      }
-                    }
+                    "matches": "c3"
                   }
                 ],
                 "regex": "fs|\\\\",
@@ -132,12 +181,7 @@
                           "kind": "string"
                         },
                         {
-                          "kind": "template_string",
-                          "not": {
-                            "has": {
-                              "kind": "template_substitution"
-                            }
-                          }
+                          "matches": "c3"
                         }
                       ],
                       "value": {
@@ -203,23 +247,7 @@
                       }
                     },
                     {
-                      "not": {
-                        "resolves": {
-                          "binding": {
-                            "site": {
-                              "kind": "variable_declarator",
-                              "has": {
-                                "field": "name",
-                                "kind": "identifier"
-                              },
-                              "inside": {
-                                "kind": "lexical_declaration",
-                                "regex": "^const\\b"
-                              }
-                            }
-                          }
-                        }
-                      }
+                      "matches": "c2"
                     }
                   ],
                   "resolves": {
@@ -340,12 +368,7 @@
                                 "kind": "string"
                               },
                               {
-                                "kind": "template_string",
-                                "not": {
-                                  "has": {
-                                    "kind": "template_substitution"
-                                  }
-                                }
+                                "matches": "c3"
                               }
                             ],
                             "value": {
@@ -387,23 +410,7 @@
                       }
                     },
                     {
-                      "not": {
-                        "resolves": {
-                          "binding": {
-                            "site": {
-                              "kind": "variable_declarator",
-                              "has": {
-                                "field": "name",
-                                "kind": "identifier"
-                              },
-                              "inside": {
-                                "kind": "lexical_declaration",
-                                "regex": "^const\\b"
-                              }
-                            }
-                          }
-                        }
-                      }
+                      "matches": "c2"
                     }
                   ],
                   "resolves": {
@@ -462,42 +469,12 @@
                                     "regex": "^(?:access|copyFile|open|rename|truncate|rmdir|mkdir|readdir|readlink|symlink|lstat|stat|link|unlink|chmod|lchmod|lchown|chown|utimes|realpath|mkdtemp|writeFile|appendFile|readFile|cp|glob|lutimes|opendir|rm|statfs)$"
                                   },
                                   {
-                                    "any": [
-                                      {
-                                        "kind": "string"
-                                      },
-                                      {
-                                        "kind": "template_string",
-                                        "not": {
-                                          "has": {
-                                            "kind": "template_substitution"
-                                          }
-                                        }
-                                      }
-                                    ],
-                                    "value": {
-                                      "regex": "^(?:access|copyFile|open|rename|truncate|rmdir|mkdir|readdir|readlink|symlink|lstat|stat|link|unlink|chmod|lchmod|lchown|chown|utimes|realpath|mkdtemp|writeFile|appendFile|readFile|cp|glob|lutimes|opendir|rm|statfs)$"
-                                    }
+                                    "matches": "c1"
                                   },
                                   {
                                     "kind": "computed_property_name",
                                     "has": {
-                                      "any": [
-                                        {
-                                          "kind": "string"
-                                        },
-                                        {
-                                          "kind": "template_string",
-                                          "not": {
-                                            "has": {
-                                              "kind": "template_substitution"
-                                            }
-                                          }
-                                        }
-                                      ],
-                                      "value": {
-                                        "regex": "^(?:access|copyFile|open|rename|truncate|rmdir|mkdir|readdir|readlink|symlink|lstat|stat|link|unlink|chmod|lchmod|lchown|chown|utimes|realpath|mkdtemp|writeFile|appendFile|readFile|cp|glob|lutimes|opendir|rm|statfs)$"
-                                      }
+                                      "matches": "c1"
                                     }
                                   }
                                 ]

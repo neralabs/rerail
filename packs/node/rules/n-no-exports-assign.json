@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-exports-assign",
-  "revision": 3,
+  "revision": 5,
   "mode": "steer",
   "description": "Don't assign to exports in CommonJS files; it breaks the link to module.exports, so assign to module.exports instead.",
   "scope": {
@@ -19,11 +19,40 @@
   },
   "clauses": [
     {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "has": {
+              "field": "object",
+              "kind": "identifier",
+              "regex": "^module$",
+              "resolves": {
+                "global": [
+                  "module"
+                ]
+              }
+            }
+          },
+          "c2": {
+            "has": {
+              "field": "property",
+              "kind": "property_identifier",
+              "regex": "^exports$"
+            }
+          }
+        }
+      }
+    },
+    {
       "id": "upstream",
       "forbid": {
         "ast": {
           "language": "typescript",
-          "languageOptions": {},
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
           "rule": {
             "any": [
               {
@@ -55,23 +84,10 @@
                           "kind": "member_expression",
                           "all": [
                             {
-                              "has": {
-                                "kind": "identifier",
-                                "regex": "^module$",
-                                "resolves": {
-                                  "global": [
-                                    "module"
-                                  ]
-                                },
-                                "field": "object"
-                              }
+                              "matches": "c1"
                             },
                             {
-                              "has": {
-                                "field": "property",
-                                "kind": "property_identifier",
-                                "regex": "^exports$"
-                              }
+                              "matches": "c2"
                             }
                           ]
                         }
@@ -92,23 +108,10 @@
                       "kind": "member_expression",
                       "all": [
                         {
-                          "has": {
-                            "kind": "identifier",
-                            "regex": "^module$",
-                            "resolves": {
-                              "global": [
-                                "module"
-                              ]
-                            },
-                            "field": "object"
-                          }
+                          "matches": "c1"
                         },
                         {
-                          "has": {
-                            "field": "property",
-                            "kind": "property_identifier",
-                            "regex": "^exports$"
-                          }
+                          "matches": "c2"
                         }
                       ]
                     }

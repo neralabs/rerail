@@ -9,11 +9,12 @@ holds no hooks, MCP servers, scripts or binaries. Set-up stays the installer and
 - `codex/`: the plugin for OpenAI's plugin directory (ChatGPT and Codex), in the portable Agent Plugins format with
   OpenAI's listing under `extensions.com.openai`. It is submitted as a ZIP of this folder at
   platform.openai.com/plugins; its `install` skill is also its onboarding skill.
-- `cursor/`: the Cursor plugin for the Cursor Marketplace, submitted at cursor.com/marketplace/publish with the link to
-  this folder.
+- `cursor/`: the Cursor plugin for the Cursor Marketplace, submitted at cursor.com/marketplace/publish with this
+  repository's URL. Cursor's form takes a repository, not a folder, so `.cursor-plugin/marketplace.json` at the root
+  names `plugins/cursor` as the repository's one marketplace plugin; `package.json`'s `files` leaves it out of npm.
 
 The Release pull request moves every plugin's pins with core's version (`PLUGIN_PINS` in `scripts/release/core.mjs`);
 publish each new plugin version only once that release is on npm ([docs/release.md](../docs/release.md)).
 
-The plugin manifests at the repository root (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`) are a different
-thing: they ship in the npm package and point each agent's hooks at the installed package.
+The plugin manifests at the repository root (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/plugin.json`) are a
+different thing: they ship in the npm package and point each agent's hooks at the installed package.

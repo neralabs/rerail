@@ -1,7 +1,7 @@
 {
   "name": "@neralabs/rerail",
   "version": "0.1.0",
-  "description": "Local semantic monitor and rule runtime for AI coding harnesses",
+  "description": "Checks the code your coding agent writes against your rules while it works, and steers it back in the same session",
   "license": "Apache-2.0",
   "publishConfig": {
     "access": "public"
@@ -42,12 +42,19 @@
   "pi": {
     "extensions": [
       "./dist/hosts/pi/pi-extension.js"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/neralabs/rerail/main/docs/images/session-steer.png"
   },
   "keywords": [
     "pi-package",
-    "semantic-search",
-    "cosine-similarity"
+    "coding-agent",
+    "rules",
+    "linter",
+    "guardrails",
+    "claude-code",
+    "codex",
+    "cursor",
+    "omp"
   ],
   "workspaces": [
     "packs/*"
@@ -62,6 +69,7 @@
     ".claude-plugin",
     ".codex-plugin",
     ".cursor-plugin",
+    "!.cursor-plugin/marketplace.json",
     "hooks",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",

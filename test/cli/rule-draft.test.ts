@@ -248,9 +248,10 @@ describe("rerail rules test", () => {
 
     const following = await testReportText(file, repo);
 
-    expect(following.report.repository).toMatchObject({ matches: 1, leftOut: 3 });
+    // .gitignore is hidden: audits read it as text (it decides what npm publishes), so it is one of the files left out.
+    expect(following.report.repository).toMatchObject({ matches: 1, leftOut: 4 });
     expect(following.report.repository?.examples.map(example => example.path)).toEqual(["app.json"]);
-    expect(following.stdout).toContain("3 files or folders were left out unread: hidden, sensitive by name, or ignored by Git.");
+    expect(following.stdout).toContain("4 files or folders were left out unread: hidden, sensitive by name, or ignored by Git.");
     expect(following.stdout).not.toMatch(/\.env|\.secrets|id_rsa|server\.pem|ci\.yml|local\.json/);
 
     const database = openRerailDatabase(defaultRerailDatabasePath());
@@ -262,7 +263,7 @@ describe("rerail rules test", () => {
     }
     const { report } = await testReport(file, repo);
 
-    expect(report.repository).toMatchObject({ matches: 2, leftOut: 2 });
+    expect(report.repository).toMatchObject({ matches: 2, leftOut: 3 });
     expect(report.repository?.examples.map(example => example.path)).toEqual(["app.json", "local.json"]);
   });
 

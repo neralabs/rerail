@@ -1,0 +1,251 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-fbt003-boolean-positional-value-in-call",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass True and False to Python calls as keyword arguments rather than positionally; a bare boolean does not say what it switches.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "flake8-boolean-trap.extend-allowed-calls": {
+            "type": "array",
+            "items": "string",
+            "default": [],
+            "description": "Qualified names of further calls that may take positional boolean arguments."
+          }
+        }
+      }
+    },
+    {
+      "id": "boolean-positional-value-in-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "allowed-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(__setattr__|append|assertEqual|assertEquals|assertNotEqual|assertNotEquals|bool|bytes|coalesce|count|failIfEqual|failUnlessEqual|float|fromkeys|get|getattr|getboolean|getfloat|getint|ifnull|index|insert|int|is_|is_not|isnull|next|nvl|param|pop|remove|set_blocking|set_enabled|setattr|setdefault|str)$"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^\\.$"
+                    },
+                    "matches": "allowed-name"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "allowed-name"
+                  }
+                }
+              ]
+            },
+            "setter-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^set([_A-Z].*)?$"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^\\.$"
+                    },
+                    "matches": "setter-name"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "setter-name"
+                  }
+                }
+              ]
+            },
+            "positional-argument": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "argument_list"
+              },
+              "not": {
+                "any": [
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  },
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "regex": "^[(),]$"
+                  }
+                ]
+              }
+            },
+            "allowed-call": {
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "allowed-name"
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ],
+                    "resolves": {
+                      "import": [
+                        "multiprocessing.Value",
+                        {
+                          "$option": "flake8-boolean-trap.extend-allowed-calls",
+                          "spread": true
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "matches": "setter-name",
+                    "precedes": {
+                      "stopBy": "end",
+                      "kind": "argument_list",
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "positional-argument"
+                        },
+                        "max": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "argument-position": {
+              "any": [
+                {
+                  "matches": "positional-argument",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "not": {
+                        "matches": "allowed-call"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "argument-position"
+                  }
+                }
+              ]
+            },
+            "string-booleans": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "true"
+                        },
+                        {
+                          "kind": "false"
+                        }
+                      ],
+                      "matches": "argument-position",
+                      "capture": "B"
+                    },
+                    {
+                      "matches": "string-booleans"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  }
+                ],
+                "pattern": "$B",
+                "matches": "argument-position"
+              },
+              {
+                "matches": "string-booleans"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.B",
+        "code": "FBT003",
+        "message": "Pass this boolean by keyword (`name=True`) so the call says what it switches; leave it when the callee only accepts it positionally, such as a builtin or C-extension function.",
+        "each": "B",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "FBT003"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

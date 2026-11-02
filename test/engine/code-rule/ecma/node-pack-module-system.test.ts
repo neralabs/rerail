@@ -7,6 +7,7 @@ import type { AuditInput, AuditRecorder, AuditResult } from "../../../../src/eng
 import { bundledCodeRuleDslDirectory } from "../../../../src/engine/code-rule/code-rule-compile.js";
 import { NativeCodeRuleEnforcer } from "../../../../src/engine/code-rule/code-rule-enforcer.js";
 import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
+import { loadPackRuleDocuments } from "../../../../src/engine/catalog/rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 import { testCodeRuleCatalog } from "../../../support/repository-rules.js";
 
@@ -25,19 +26,19 @@ async function directory(prefix: string): Promise<string> {
 }
 
 /**
- * The pack's documents that pinned sourceType commonjs before each file kept its own module system. n-prefer-promises-dns
- * and n-no-deprecated-api are candidates until they are promoted; the others ship.
+ * The pack's documents that pinned sourceType commonjs before each file kept its own module system, shipped
+ * (`packs/node/rules/`) or candidates (`packs/node/candidates/rules/`).
  */
-const CANDIDATES = new Set(["n-prefer-promises-dns", "n-no-deprecated-api"]);
-const CODE_RULES = await Promise.all(
-  [
-    "n-exports-style", "n-global-require", "n-no-exports-assign", "n-no-path-concat", "n-prefer-global-buffer", "n-prefer-global-console",
-    "n-prefer-global-process", "n-prefer-global-text-decoder", "n-prefer-global-text-encoder", "n-prefer-global-url-search-params",
-    "n-prefer-global-url", "n-prefer-promises-dns", "n-prefer-promises-fs", "n-no-deprecated-api",
-  ].map(async id =>
-    codeRuleSchema.parse(JSON.parse(await readFile(repositoryPath("packs", "node", ...(CANDIDATES.has(id) ? ["candidates"] : []), "rules", `${id}.json`), "utf8"))),
-  ),
-);
+const NODE_DOCUMENTS = loadPackRuleDocuments([repositoryPath("packs", "node"), repositoryPath("packs", "node", "candidates")]);
+const CODE_RULES = [
+  "n-exports-style", "n-global-require", "n-no-exports-assign", "n-no-path-concat", "n-prefer-global-buffer", "n-prefer-global-console",
+  "n-prefer-global-process", "n-prefer-global-text-decoder", "n-prefer-global-text-encoder", "n-prefer-global-url-search-params",
+  "n-prefer-global-url", "n-prefer-promises-dns", "n-prefer-promises-fs", "n-no-deprecated-api",
+].map(id => {
+  const document = NODE_DOCUMENTS.find(candidate => candidate.rule.id === id);
+  if (document === undefined) throw new Error(`${id} is in neither packs/node/rules nor packs/node/candidates/rules`);
+  return codeRuleSchema.parse(document.rule);
+});
 
 /** CommonJS code: each line is one rule's finding there. */
 const COMMONJS_CODE = [

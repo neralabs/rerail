@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-global-console",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Use the global console instead of importing or requiring the console module; it is always available in Node.js.",
   "scope": {
@@ -251,6 +251,7 @@
         "ast": {
           "language": "typescript",
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly"
             }
@@ -279,6 +280,7 @@
         "ast": {
           "language": "typescript",
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly"
             }

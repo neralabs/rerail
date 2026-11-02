@@ -1,0 +1,110 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up041-timeout-error-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the builtin TimeoutError instead of socket.timeout or asyncio.TimeoutError; since Python 3.10 and 3.11 they are plain aliases of it.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "handler-type": {
+            "any": [
+              { "inside": { "stopBy": "neighbor", "kind": "except_clause", "field": "value" } },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "as_pattern",
+                  "inside": { "stopBy": "neighbor", "kind": "except_clause", "field": "value" }
+                }
+              },
+              { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "handler-type" } }
+            ]
+          },
+          "atom-site": {
+            "any": [
+              { "matches": "handler-type" },
+              {
+                "inside": { "stopBy": "neighbor", "kind": "raise_statement" },
+                "not": { "inside": { "stopBy": "neighbor", "kind": "raise_statement", "field": "cause" } }
+              },
+              { "inside": { "stopBy": "neighbor", "kind": "call", "field": "function" } },
+              { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "atom-site" } }
+            ]
+          },
+          "socket-timeout": {
+            "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+            "resolves": { "import": ["socket.timeout"] }
+          },
+          "asyncio-timeout": {
+            "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+            "resolves": { "import": ["asyncio.TimeoutError"] }
+          },
+          "element": {
+            "any": [
+              { "inside": { "stopBy": "neighbor", "kind": "tuple", "matches": "handler-type" } },
+              { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "element" } }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "socket-timeout-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": { "pythonVersion": { "min": "3.10" } },
+          "rule": {
+            "any": [
+              { "matches": "socket-timeout", "all": [{ "matches": "atom-site" }] },
+              {
+                "kind": "tuple",
+                "matches": "handler-type",
+                "has": { "stopBy": "end", "matches": "socket-timeout", "all": [{ "matches": "element" }] }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP041",
+        "message": "Use the builtin `TimeoutError` instead of `socket.timeout`, the same class since Python 3.10; in an except tuple, name `TimeoutError` once. Skip it if this file defines its own `TimeoutError`.",
+        "suppress": { "noqa": { "codes": ["UP041"] } }
+      }
+    },
+    {
+      "id": "asyncio-timeout-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": { "pythonVersion": { "min": "3.11" } },
+          "rule": {
+            "any": [
+              { "matches": "asyncio-timeout", "all": [{ "matches": "atom-site" }] },
+              {
+                "kind": "tuple",
+                "matches": "handler-type",
+                "has": { "stopBy": "end", "matches": "asyncio-timeout", "all": [{ "matches": "element" }] },
+                "not": { "has": { "stopBy": "end", "matches": "socket-timeout", "all": [{ "matches": "element" }] } }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP041",
+        "message": "Use the builtin `TimeoutError` instead of `asyncio.TimeoutError`, the same class since Python 3.11; in an except tuple, name `TimeoutError` once. Skip it if this file defines its own `TimeoutError`.",
+        "suppress": { "noqa": { "codes": ["UP041"] } }
+      }
+    }
+  ]
+}

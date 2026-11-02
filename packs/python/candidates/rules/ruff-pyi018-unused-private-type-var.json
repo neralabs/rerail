@@ -1,0 +1,155 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi018-unused-private-type-var",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove private type variables that are never used, or use them; an unused underscore-prefixed type variable is likely a mistake.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "typevar-call": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                  "resolves": {
+                    "import": [
+                      "typing.TypeVar",
+                      "typing_extensions.TypeVar",
+                      "_typeshed.TypeVar",
+                      "typing.ParamSpec",
+                      "typing_extensions.ParamSpec",
+                      "_typeshed.ParamSpec",
+                      "typing.TypeVarTuple",
+                      "typing_extensions.TypeVarTuple",
+                      "_typeshed.TypeVarTuple"
+                    ]
+                  }
+                }
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "typevar-call"}}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-private-type-var",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "regex": "^(?P<NAME>_.*)$",
+            "binds": {
+              "form": "assignment",
+              "scope": ["module", "function"],
+              "latest": true,
+              "used": false,
+              "exported": false,
+              "site": {
+                "kind": "assignment",
+                "not": {"has": {"stopBy": "neighbor", "field": "type", "kind": "type"}},
+                "inside": {"stopBy": "neighbor", "kind": "expression_statement"},
+                "has": {"stopBy": "neighbor", "field": "right", "matches": "typevar-call"}
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI018",
+        "message": "Remove the unused private type variable `$NAME`, or use it in an annotation; rename it without the underscore if other modules import it.",
+        "suppress": {"noqa": {"codes": ["PYI018"]}}
+      }
+    },
+    {
+      "id": "unused-private-type-var-in-stub-class",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "regex": "^(?P<NAME>_.*)$",
+            "binds": {
+              "form": "assignment",
+              "scope": ["class"],
+              "latest": true,
+              "used": false,
+              "exported": false,
+              "site": {
+                "kind": "assignment",
+                "not": {"has": {"stopBy": "neighbor", "field": "type", "kind": "type"}},
+                "inside": {"stopBy": "neighbor", "kind": "expression_statement"},
+                "has": {"stopBy": "neighbor", "field": "right", "matches": "typevar-call"}
+              }
+            }
+          },
+          "file": {"path": {"regex": "\\.pyi$"}}
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI018",
+        "message": "Remove the unused private type variable `$NAME`, or use it in an annotation; rename it without the underscore if other modules import it.",
+        "suppress": {"noqa": {"codes": ["PYI018"]}}
+      }
+    },
+    {
+      "id": "unused-private-type-var-in-function-calling-locals",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "regex": "^(?P<NAME>_.*)$",
+            "binds": {
+              "form": "assignment",
+              "scope": ["function"],
+              "latest": true,
+              "exported": false,
+              "site": {
+                "kind": "assignment",
+                "not": {"has": {"stopBy": "neighbor", "field": "type", "kind": "type"}},
+                "inside": {"stopBy": "neighbor", "kind": "expression_statement"},
+                "has": {"stopBy": "neighbor", "field": "right", "matches": "typevar-call"}
+              }
+            },
+            "pattern": "$V",
+            "inside": {
+              "stopBy": {"kind": "function_definition"},
+              "kind": "function_definition",
+              "has": {
+                "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "lambda"}, {"kind": "class_definition"}]},
+                "kind": "call",
+                "pattern": "locals()"
+              },
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "identifier",
+                  "pattern": "$V",
+                  "not": {"inside": {"stopBy": "neighbor", "kind": "assignment", "field": "left"}}
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI018",
+        "message": "Remove the unused private type variable `$NAME`, or use it in an annotation; rename it without the underscore if other modules import it.",
+        "suppress": {"noqa": {"codes": ["PYI018"]}}
+      }
+    }
+  ]
+}

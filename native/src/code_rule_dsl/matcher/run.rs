@@ -3,7 +3,9 @@
 //! limits (`begin_clause`), with `violation.each` enumerated at a matching root. Utility verdicts are
 //! remembered for the whole file while the caller holds `memo::with_file`.
 
-use super::resolve::{decide_file_jsx_runtime, decide_file_source_type};
+use super::resolve::{
+    decide_file_jsx_runtime, decide_file_source_type, file_package_type_source_type,
+};
 use super::{EachScope, GrammarMatcher, UtilLimit, begin_clause, end_clause, util_limit_hit};
 use crate::code_rule_dsl::budget::matcher_budget_observed;
 use crate::code_rule_dsl::tape::TapeDoc;
@@ -100,7 +102,12 @@ pub(in crate::code_rule_dsl) fn run_clause<'f, E>(
     work: &mut usize,
     mut visit: impl FnMut(u32, MetaVarEnv<'f, TapeDoc>, &mut usize) -> Result<bool, E>,
 ) -> Result<Result<(), Stopped>, E> {
-    if !matcher.may_apply_to(Some(decide_file_source_type(&file.root()))) {
+    let source_type = if matcher.package_type_gate {
+        file_package_type_source_type()
+    } else {
+        decide_file_source_type(&file.root())
+    };
+    if !matcher.may_apply_to(Some(source_type)) {
         return Ok(Ok(()));
     }
     if let Some(runtimes) = matcher

@@ -5,6 +5,7 @@ mod compile;
 mod embed;
 mod eval;
 mod identifier;
+mod import_target;
 mod json;
 mod language;
 mod lines;
@@ -13,6 +14,7 @@ mod matcher;
 mod model;
 mod module_graph;
 mod module_path;
+mod npm_ignore;
 mod origin;
 mod package_manifest;
 mod php_literal;
@@ -143,37 +145,82 @@ pub struct PackageFacts {
     pub dependencies: Vec<String>,
     /// The package's `tsconfig.json` (else `jsconfig.json`) `compilerOptions.jsxImportSource`.
     pub jsx_import_source: Option<String>,
+    /// `true` where the manifest's `private` is `true`; none otherwise.
+    pub private: Option<bool>,
+    /// Whether npm publishes the file, as eslint-plugin-n's `getNpmignore` reads the manifest's
+    /// `files` and `main` and its folder's `.npmignore` or `.gitignore`: the file's own fact,
+    /// which `package_facts` sends and `nearest_package` does not.
+    pub published: Option<bool>,
+}
+
+impl PackageFacts {
+    fn of(manifest: &package_manifest::Manifest) -> Self {
+        Self {
+            folder: manifest.folder().to_owned(),
+            package_type: manifest.package_type().as_str().to_owned(),
+            bin: manifest.bin().map(str::to_owned).collect(),
+            node_version: manifest.node_version().map(str::to_owned),
+            dependencies: manifest.dependencies().map(str::to_owned).collect(),
+            jsx_import_source: manifest.jsx_import_source().map(str::to_owned),
+            private: manifest.is_private().then_some(true),
+            published: None,
+        }
+    }
 }
 
 /// The `package` a file carries, for the file at `absolute` whose dialect's label is `label`: its
-/// nearest `package.json` at or above it, never above `root` (the workspace's), or null without
-/// one and for a family that reads none (`Adapter::PACKAGE_MANIFESTS`). Hosts and the native
-/// repository ingestion paths share this one derivation.
+/// nearest `package.json` at or above it, never above `root` (the workspace's), with whether npm
+/// publishes the file, or null without one and for a family that reads none
+/// (`Adapter::PACKAGE_MANIFESTS`). Hosts and the native repository ingestion paths share this one
+/// derivation; a host reading many files reads them through one `PackageFactsReader`.
 #[napi]
 pub fn package_facts(label: String, absolute: String, root: String) -> Option<PackageFacts> {
-    if !language::adapter::package_manifests(&label) {
-        return None;
+    PackageFactsReader::new(root).facts(label, absolute)
+}
+
+/// The `package` facts of the files below one root, each manifest and its ignore files read once
+/// (`package_manifest::Manifests`): one walk's reader, as files on disk do not change during it.
+#[napi]
+pub struct PackageFactsReader {
+    manifests: parking_lot::Mutex<package_manifest::Manifests>,
+}
+
+#[napi]
+impl PackageFactsReader {
+    #[napi(constructor)]
+    pub fn new(root: String) -> Self {
+        Self {
+            manifests: parking_lot::Mutex::new(package_manifest::Manifests::new(root)),
+        }
     }
-    nearest_package(absolute, root)
+
+    /// `package_facts` for the file at `absolute` below the reader's root.
+    #[napi]
+    pub fn facts(&self, label: String, absolute: String) -> Option<PackageFacts> {
+        if !language::adapter::package_manifests(&label) {
+            return None;
+        }
+        let mut manifests = self.manifests.lock();
+        let file = std::path::Path::new(&absolute);
+        let manifest = manifests.of_file(file)?;
+        let path = manifests.relative(file);
+        Some(PackageFacts {
+            published: manifest.publishes(&path),
+            ..PackageFacts::of(&manifest)
+        })
+    }
 }
 
 /// The nearest `package.json` at or above `absolute` (a file or a folder's `package.json`),
 /// never above `root`, whatever reads it: the package an edit of any file belongs to, so a host
 /// can tell which applied sources it may change. Null without one.
 #[napi]
+// Only JavaScript calls it.
+#[cfg_attr(test, allow(dead_code))]
 pub fn nearest_package(absolute: String, root: String) -> Option<PackageFacts> {
-    let manifest = package_manifest::manifest_of_file(
-        std::path::Path::new(&absolute),
-        std::path::Path::new(&root),
-    )?;
-    Some(PackageFacts {
-        folder: manifest.folder().to_owned(),
-        package_type: manifest.package_type().as_str().to_owned(),
-        bin: manifest.bin().map(str::to_owned).collect(),
-        node_version: manifest.node_version().map(str::to_owned),
-        dependencies: manifest.dependencies().map(str::to_owned).collect(),
-        jsx_import_source: manifest.jsx_import_source().map(str::to_owned),
-    })
+    let manifest =
+        package_manifest::Manifests::new(root).of_file(std::path::Path::new(&absolute))?;
+    Some(PackageFacts::of(&manifest))
 }
 
 /// The server graph of the package whose folder (relative to `root`) is `folder`, read on disk
