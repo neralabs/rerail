@@ -18,11 +18,12 @@ fn error_name(e: &Error) -> &'static str {
 }
 
 /// Each program, after `prelude.rdl`, parses and stratifies; or, if its first line is `// expect: <Error>`, fails with
-/// that named error. Every matcher atom holds JSON.
+/// that named error. Every relation is declared with its arity, every matcher atom holds JSON, and every program's
+/// failure is reported.
 #[test]
 fn data_layer_programs_parse() {
     let prelude = std::fs::read_to_string(programs().join("prelude.rdl")).unwrap();
-    let mut names = Vec::new();
+    let (mut names, mut failures) = (Vec::new(), Vec::new());
     for entry in std::fs::read_dir(programs()).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -32,19 +33,24 @@ fn data_layer_programs_parse() {
         let text = std::fs::read_to_string(&path).unwrap();
         let expect = text.lines().next().and_then(|l| l.strip_prefix("// expect: ")).map(str::trim);
         let result = parse(&format!("{prelude}\n{text}")).and_then(|p| strata(&p).map(|_| p));
-        match (expect, result) {
+        let failure = match (expect, result) {
             (None, Ok(p)) => {
-                for l in p.rules.iter().flat_map(|r| &r.body) {
-                    if let Literal::Ast { matcher, .. } = l {
-                        serde_json::from_str::<serde_json::Value>(matcher).unwrap_or_else(|e| panic!("{name}: matcher {matcher}: {e}"));
-                    }
-                }
+                let atoms = p.rules.iter().flat_map(|r| std::iter::once(&r.head).chain(r.body.iter().filter_map(Literal::atom)));
+                let undeclared = atoms.into_iter().find(|a| p.decls.get(&a.rel).is_none_or(|c| c.len() != a.args.len()));
+                undeclared.map(|a| format!("{a}: undeclared, or not the declared arity")).or_else(|| {
+                    p.rules.iter().flat_map(|r| &r.body).find_map(|l| match l {
+                        Literal::Ast { matcher, .. } => serde_json::from_str::<serde_json::Value>(matcher).err().map(|e| format!("matcher {matcher}: {e}")),
+                        _ => None,
+                    })
+                })
             }
-            (None, Err(e)) => panic!("{name}: {e}"),
-            (Some(want), Ok(_)) => panic!("{name}: parsed, expected {want}"),
-            (Some(want), Err(e)) => assert_eq!(error_name(&e), want, "{name}: {e}"),
-        }
+            (None, Err(e)) => Some(e.to_string()),
+            (Some(want), Ok(_)) => Some(format!("parsed, expected {want}")),
+            (Some(want), Err(e)) => (error_name(&e) != want).then(|| format!("expected {want}, got {e}")),
+        };
+        failures.extend(failure.map(|f| format!("{name}: {f}")));
         names.push(name);
     }
     assert!(!names.is_empty(), "no programs");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
