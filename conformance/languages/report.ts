@@ -93,9 +93,11 @@ export const ruleRowSchema = z.object({
       /**
        * Variant units whose original upstream reports the rule in and the variant itself not: the renaming took away
        * every finding (a name the rule keys on was renamed), so the variant tests only that the rule stays silent.
-       * Reported, never failing.
+       * When every variant is renamed away and no true positive survives, holds-under-rename fails, unless `exempt`.
        */
       renamedAway: z.number().int().nonnegative(),
+      /** gates.yaml's `rename_exempt` for the rule: why a variant renamed away is no evidence against it. */
+      exempt: z.string().min(1).optional(),
     })
     .nullable(),
   /**
@@ -127,6 +129,16 @@ export const ruleRowSchema = z.object({
   falseNegatives: z.array(pointSchema),
 });
 export type RuleRow = z.infer<typeof ruleRowSchema>;
+
+/**
+ * Whether the renaming took every finding of the rule from its variants and none survives: `"vacuous"`, which fails
+ * holds-under-rename, `"exempt"` where gates.yaml's `rename_exempt` gives the reason it is no evidence against the
+ * rule, and `false` otherwise. The gate (checks/conformance.ts) and `reportFailures` (runner.ts) both read it.
+ */
+export function renameVacuity(renamed: NonNullable<RuleRow["renamed"]>): "vacuous" | "exempt" | false {
+  if (renamed.tp > 0 || renamed.renamedAway === 0) return false;
+  return renamed.exempt === undefined ? "vacuous" : "exempt";
+}
 
 export const sourceSummarySchema = z.object({
   source: z.string(),
