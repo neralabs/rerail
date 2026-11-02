@@ -1,8 +1,8 @@
 import {
+  bugReportInstructions,
   createRuleInstructions,
   uninstallInstructions,
   showMeInstructions,
-  supportBundleInstructions,
   RERAIL_COMMANDS,
   type CommandSigil,
   type RerailCommand,
@@ -143,11 +143,13 @@ type BodyBuilder = (agent: CommandFileAgent, context: CommandFileContext) => Com
 
 const sigilFor = (agent: CommandFileAgent): CommandSigil => agent === "codex" ? "$" : "/";
 
+/** How a command's instructions name the words typed after it: Claude Code substitutes them, the others read them. */
+const typedWords = (agent: CommandFileAgent, name: RerailCommandName): string => agent === "claude-code" ? "\"$ARGUMENTS\""
+  : `the words the person typed after ${sigilFor(agent)}${name}`;
+
 function createBody(agent: CommandFileAgent, { cli, packageRoot }: CommandFileContext): CommandBody {
-  const request = agent === "claude-code" ? "\"$ARGUMENTS\""
-    : `the words the person typed after ${sigilFor(agent)}rerail-create`;
   return {
-    text: createRuleInstructions({ cli, packageRoot, request }),
+    text: createRuleInstructions({ cli, packageRoot, request: typedWords(agent, "rerail-create") }),
     // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or add a rule.
     allowed: [`${cli} rules evidence *`, `${cli} rules test *`, `${cli} rules add *`],
   };
@@ -175,10 +177,11 @@ const COMMAND_BODIES: Record<RerailCommandName, BodyBuilder> = {
     text: showMeInstructions({ cli, sigil: sigilFor(agent), write: agent === "codex" ? "shell" : "edit-tool" }),
     allowed: [`${cli} show-me --json`, `${cli} show-me --cleanup`],
   }),
-  // `--output` writes any path, so it is left out; reading and editing the file go through the agent's own permissions.
-  "rerail-support-bundle": (_agent, { cli }) => ({
-    text: supportBundleInstructions(cli),
-    allowed: [`${cli} support-bundle --json`, `${cli} support-bundle --json --session *`],
+  // `--output` writes any path and `rules add` changes a rule, so both are left out; reading and editing the bundle, and
+  // filing an issue, go through the agent's own permissions.
+  "rerail-bug-report": (agent, { cli, packageRoot }) => ({
+    text: bugReportInstructions({ cli, packageRoot, request: typedWords(agent, "rerail-bug-report") }),
+    allowed: [`${cli} support-bundle --json`, `${cli} support-bundle --json --session *`, `${cli} update check`, `${cli} rules test *`],
   }),
 };
 
