@@ -4,6 +4,8 @@
 //
 //   setup --data-layer <nera-data-layer clone> --workspaces <dir>   adds SUBSET's checkouts under <dir>
 //   run --engine native --rules <dir> [--rules <dir> …] --workspaces <dir> --output <file.json>
+//   run --engine slice --rules <dir> … [--backend cpu|metal] [--observer directory|head] [--store-path <file>]
+//                                                                   the first slice over the same workspaces (slice.ts)
 //   compare <left.json> <right.json>                                prints the two runs side by side
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -26,6 +28,7 @@ import {
   resolveNativeBindingPath,
 } from "../../src/engine/index.js";
 import { compareFindings } from "./facts.js";
+import { runSlice } from "./slice.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rerailRoot = resolve(here, "../..");
@@ -589,9 +592,11 @@ function workspaceRoots(directory: string, selected: ReadonlyArray<{ name: strin
 }
 
 async function run(argv: readonly string[]): Promise<void> {
-  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--passes", "--reapply", "--sample", "--edits", "--idle-ms", "--only", "--first", "--findings-out"]);
+  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--passes", "--reapply", "--sample", "--edits", "--idle-ms", "--only", "--first", "--findings-out", "--backend", "--observer", "--store-path"]);
   const engine = option(values, "--engine");
-  if (engine !== "native") throw new UsageError("--engine takes native");
+  if (engine !== "native" && engine !== "slice") throw new UsageError("--engine takes native or slice");
+  const others = engine === "slice" ? ["--passes", "--reapply", "--sample", "--idle-ms"] : ["--backend", "--observer", "--store-path"];
+  for (const other of others) if (values.has(other)) throw new UsageError(`${other} is not an option of --engine ${engine}`);
   const ruleDirectories = (values.get("--rules") ?? []).map(directory => resolve(directory));
   if (ruleDirectories.length === 0) throw new UsageError("--rules <dir> is required");
   const workspacesDirectory = option(values, "--workspaces");
@@ -604,6 +609,36 @@ async function run(argv: readonly string[]): Promise<void> {
   const reapply = option(values, "--reapply") ?? "off";
   if (reapply !== "on" && reapply !== "off") throw new UsageError("--reapply takes on or off");
   const passes = count("--passes", option(values, "--passes"), 1, 1);
+  const addon = option(values, "--addon");
+  if (addon !== undefined) process.env.RERAIL_ENGINE_PATH = resolve(addon);
+  const addonPath = realpathSync(resolveNativeBindingPath());
+  process.env.RERAIL_ENGINE_PATH = addonPath;
+  const roots = workspaceRoots(workspacesDirectory, selectedWorkspaces(values));
+  if (engine === "slice") {
+    const backend = option(values, "--backend") ?? "cpu";
+    if (backend !== "cpu" && backend !== "metal") throw new UsageError("--backend takes cpu or metal");
+    const observer = option(values, "--observer") ?? "directory";
+    if (observer !== "directory" && observer !== "head") throw new UsageError("--observer takes directory or head");
+    const storePath = option(values, "--store-path");
+    const sampler = new RssSampler();
+    await runSlice(
+      {
+        rules: ruleDirectories,
+        capabilities: readFileSync(capabilitiesPath, "utf8"),
+        roots,
+        backend,
+        observer,
+        edits: count("--edits", option(values, "--edits"), 20, 0),
+        storePath: storePath === undefined ? undefined : resolve(storePath),
+        output: resolve(output),
+        findingsOut: findingsOut === undefined ? undefined : resolve(findingsOut),
+        addon: { path: addonPath, sha256: `sha256:${createHash("sha256").update(readFileSync(addonPath)).digest("hex")}` },
+      },
+      sampler,
+    );
+    await sampler.stop();
+    return;
+  }
   const options: RunOptions = {
     engine,
     reapply: reapply === "on",
@@ -614,11 +649,6 @@ async function run(argv: readonly string[]): Promise<void> {
   };
   // The reuse counters (files evaluated, clause results restored) are the profile's.
   process.env.RERAIL_CODE_RULE_PROFILE = "1";
-  const addon = option(values, "--addon");
-  if (addon !== undefined) process.env.RERAIL_ENGINE_PATH = resolve(addon);
-  const addonPath = realpathSync(resolveNativeBindingPath());
-  process.env.RERAIL_ENGINE_PATH = addonPath;
-  const roots = workspaceRoots(workspacesDirectory, selectedWorkspaces(values));
 
   const sampler = new RssSampler();
   const started = performance.now();
