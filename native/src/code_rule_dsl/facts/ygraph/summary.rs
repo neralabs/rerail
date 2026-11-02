@@ -92,27 +92,19 @@ fn text(v: &Json) -> String {
 fn parse_line(line: &[u8]) -> Parsed {
     let j: Json = serde_json::from_slice(line).expect("export line");
     let ex = &j["exports"];
-    let rows_of = |id: &str| -> Vec<(usize, Vec<String>)> {
-        ex.get(id)
-            .and_then(Json::as_array)
-            .map(|rs| {
-                rs.iter()
-                    .map(|r| {
-                        let r = r.as_array().unwrap();
-                        // [__path, variant, ...]
-                        (variant_index(r[1].as_str().unwrap()), r[2..].iter().map(text).collect())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
+    let rows = |id: &str| ex.get(id).and_then(Json::as_array).map(|rs| rows_of(rs.iter().map(|r| r.as_array().unwrap().as_slice()))).unwrap_or_default();
     Parsed {
         path: j["path"].as_str().unwrap().to_owned(),
         hash: j["hash"].as_str().unwrap().to_owned(),
         in_scope: ex.get("3").and_then(Json::as_array).is_some_and(|a| !a.is_empty()),
         failure: !j["failure"].is_null(),
-        rows: [rows_of("7"), rows_of("8"), rows_of("9"), rows_of("10"), rows_of("11"), rows_of("12"), rows_of("13")],
+        rows: [rows("7"), rows("8"), rows("9"), rows("10"), rows("11"), rows("12"), rows("13")],
     }
+}
+
+/// An export's rows `[__path, variant, ...]` as (variant, the rest as text).
+fn rows_of<'a>(rows: impl Iterator<Item = &'a [Json]>) -> Vec<(usize, Vec<String>)> {
+    rows.map(|r| (variant_index(r[1].as_str().unwrap()), r[2..].iter().map(text).collect())).collect()
 }
 
 fn num(s: &str) -> i64 {
@@ -151,40 +143,52 @@ pub fn load(file: &Path, it: &mut Interner, out: &mut Summaries, want: Option<&(
             .map(|l| parse_line(l))
             .collect();
         for p in parsed {
-            let path = it.intern(&p.path);
-            let hash = it.intern(&p.hash);
-            if out.by_key.contains_key(&(path, hash)) {
-                continue;
-            }
-            let mut s = Summary { in_scope: p.in_scope, failure: p.failure, ..Default::default() };
-            let [defs, edges, aliases, opaque, module, open, refs] = p.rows;
-            for (v, r) in defs {
-                s.v[v].defs.push(RawDef { idx: num(&r[0]) as u32, name: it.intern(&r[1]), start: num(&r[2]) as u32, end: num(&r[3]) as u32, flags: num(&r[4]) as u32 });
-            }
-            for (v, r) in edges {
-                s.v[v].edges.push((num(&r[0]) as u32, it.intern(&r[1])));
-            }
-            for (v, r) in aliases {
-                s.v[v].aliases.push((it.intern(&r[0]), it.intern(&r[1])));
-            }
-            for (v, r) in opaque {
-                s.v[v].opaque.push(it.intern(&r[0]));
-            }
-            for (v, r) in module {
-                s.v[v].module.push(it.intern(&r[0]));
-            }
-            for (v, r) in open {
-                s.v[v].open.push(num(&r[0]));
-            }
-            for (v, r) in refs {
-                if r[0].contains(".<base-slot>.") {
-                    s.v[v].base_slots.push((it.intern(&r[0]), it.intern(&r[1])));
-                }
-            }
-            out.by_key.insert((path, hash), out.all.len() as u32);
-            out.all.push(s);
-            loaded += 1;
+            loaded += usize::from(add(it, out, p));
         }
     }
     loaded
+}
+
+/// One (path, content)'s rows given as its exports (`facts::xinputs::exports`), as `load` reads
+/// its line; false if the pair was loaded before.
+pub fn insert(it: &mut Interner, out: &mut Summaries, path: &str, hash: &str, failure: bool, ex: &std::collections::BTreeMap<u32, Vec<Vec<Json>>>) -> bool {
+    let rows = |id: u32| ex.get(&id).map(|rs| rows_of(rs.iter().map(Vec::as_slice))).unwrap_or_default();
+    let in_scope = ex.get(&3).is_some_and(|a| !a.is_empty());
+    add(it, out, Parsed { path: path.to_owned(), hash: hash.to_owned(), in_scope, failure, rows: [rows(7), rows(8), rows(9), rows(10), rows(11), rows(12), rows(13)] })
+}
+
+fn add(it: &mut Interner, out: &mut Summaries, p: Parsed) -> bool {
+    let path = it.intern(&p.path);
+    let hash = it.intern(&p.hash);
+    if out.by_key.contains_key(&(path, hash)) {
+        return false;
+    }
+    let mut s = Summary { in_scope: p.in_scope, failure: p.failure, ..Default::default() };
+    let [defs, edges, aliases, opaque, module, open, refs] = p.rows;
+    for (v, r) in defs {
+        s.v[v].defs.push(RawDef { idx: num(&r[0]) as u32, name: it.intern(&r[1]), start: num(&r[2]) as u32, end: num(&r[3]) as u32, flags: num(&r[4]) as u32 });
+    }
+    for (v, r) in edges {
+        s.v[v].edges.push((num(&r[0]) as u32, it.intern(&r[1])));
+    }
+    for (v, r) in aliases {
+        s.v[v].aliases.push((it.intern(&r[0]), it.intern(&r[1])));
+    }
+    for (v, r) in opaque {
+        s.v[v].opaque.push(it.intern(&r[0]));
+    }
+    for (v, r) in module {
+        s.v[v].module.push(it.intern(&r[0]));
+    }
+    for (v, r) in open {
+        s.v[v].open.push(num(&r[0]));
+    }
+    for (v, r) in refs {
+        if r[0].contains(".<base-slot>.") {
+            s.v[v].base_slots.push((it.intern(&r[0]), it.intern(&r[1])));
+        }
+    }
+    out.by_key.insert((path, hash), out.all.len() as u32);
+    out.all.push(s);
+    true
 }
