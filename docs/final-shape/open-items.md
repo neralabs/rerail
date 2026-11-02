@@ -34,6 +34,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
 | O41 | Phase 4 / 10 | Producer labels in the lowering: `match_tree` reads a semantic leaf a producer answers as a label (O24, t15) | open |
+| O42 | Phase 4 / 10 | Three-valued semantic labels: `binds` is unknown at 36 fixture nodes; a set label under `not` reads unknown as false (t15) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -900,3 +901,13 @@ Decision 0011's label sources gain "a producer's rows". A `binds` leaf's sub-rul
 as labels of their own and joined at the binding's nodes. Validated by S1's gate with the 60
 clauses lowered. Hot zones (`matcher/lower.rs`, `transducer/packed/compile`), so it is left to
 their owner. t15 sketches the change.
+
+## O42. Three-valued semantic labels
+
+**Requirement.** S1's labels are sets: only the refused leaves are ever unknown (`lower.rs`).
+`binds` is three-valued, with 36 unknown nodes on the pack's fixtures, where a usage fact the
+filter reads is unknown. Its label (`binds::label`) gives the true and unknown sets, and the gate
+holds both to W. A lowering that keeps only the true set would read unknown as false, and under
+`not` as true, where W reports nothing. **Closure:** a semantic label is a pair (true, unknown);
+`not` complements the pair, and a root whose verdict is unknown is no match. Or such a leaf stays
+refused under `not`. Validated by S1's gate on the clauses that read `binds` under `not`.
