@@ -587,11 +587,23 @@ impl Visitor<'_, '_> {
                 }
             }
             Tag::NestedTypeIdentifier => {
-                if let Some(module) = field(node, fields.module) {
-                    if self.tag(&module) == Tag::Identifier {
-                        self.builder.reference(module.range(), VALUE | TYPE);
+                // The head of a qualified type name (`foo.Foo`, `a.b.C`) reads only the type
+                // namespace, as typescript-eslint's `TSQualifiedName`: a value-only binding such as
+                // a parameter never takes it.
+                if let Some(mut head) = field(node, fields.module) {
+                    while matches!(
+                        head.kind().as_ref(),
+                        "nested_identifier" | "member_expression"
+                    ) {
+                        match field(&head, fields.object) {
+                            Some(object) => head = object,
+                            None => break,
+                        }
+                    }
+                    if self.tag(&head) == Tag::Identifier {
+                        self.builder.reference(head.range(), TYPE);
                     } else {
-                        self.visit(&module)?;
+                        self.visit(&head)?;
                     }
                 }
             }
