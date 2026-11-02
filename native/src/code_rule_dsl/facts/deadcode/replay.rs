@@ -158,12 +158,14 @@ fn replay(label: &str, default_check_every: usize, default_check_load: bool) -> 
     eprintln!("deadcode replay: {} into {}", mode_label(mode), out.display());
     let load_start = load_average();
     let (cpu0, t_all) = (cols::cpu_seconds(), Instant::now());
+    let fp_start = footprint_mb();
 
     // Y3's world, as E3 builds it: the base layer (strict-majority membership) and an overlay per
     // cluster (plurality membership).
     let mut sh = Shared { y1: y1_shared(), sym: Default::default(), y2_path: Default::default() };
     crate::code_rule_dsl::facts::ygraph::summary::load(&exports, &mut sh.y1.it, &mut sh.y1.sums, None);
     crate::code_rule_dsl::facts::y3::input::load(&exports, &mut sh.sym.blocks, None);
+    let fp_inputs = footprint_mb();
     let base_m = read_members(&mdir.join("base.tsv"));
     let (layer0, _) = wire::base_layer(&mut sh, &base_m);
     let mut world = World { sh, layers: vec![layer0], wts: BTreeMap::new() };
@@ -177,12 +179,14 @@ fn replay(label: &str, default_check_every: usize, default_check_load: bool) -> 
         world.layers.push(layer);
     }
     let world_s = t_all.elapsed().as_secs_f64();
+    let fp_world = footprint_mb();
     eprintln!("deadcode replay: Y3 world: base + {} overlays in {world_s:.1}s", CLUSTERS.len());
     let layer_of = |w: u32| CLUSTERS.iter().position(|&(lo, hi)| lo <= w && w <= hi).map_or(0, |c| c + 1);
     let st1 = world.create(1, layer_of(1), &ms[0]);
     let (base, mut base_info) = Base::build(&world.wts[&1].top.facts, &out.join("base"));
     base_info["y3_create_ms"] = json!(st1.ms);
     let mut dc = DeadCode::new(world, base, mode);
+    let fp_base = footprint_mb();
     eprintln!("deadcode replay: base {base_info}");
 
     let store = Arc::new(ContentStore::open(&out.join("store.sqlite")).unwrap());
@@ -220,7 +224,13 @@ fn replay(label: &str, default_check_every: usize, default_check_load: bool) -> 
         }
     }
     let loaded_s = t_all.elapsed().as_secs_f64();
-    let mut samples = vec![json!({"at": "loaded", "footprint_mb": footprint_mb(), "worktrees": dc.worktrees().map(|w| dc.memory(w)).collect::<Vec<_>>()})];
+    let mut samples = vec![
+        json!({"at": "start", "footprint_mb": fp_start}),
+        json!({"at": "per-content exports loaded (Y1 summaries, symbol blocks)", "footprint_mb": fp_inputs}),
+        json!({"at": "Y3 world (base layer and 8 overlays)", "footprint_mb": fp_world}),
+        json!({"at": "worktree 1 and the lattice base", "footprint_mb": fp_base}),
+        json!({"at": "loaded", "footprint_mb": footprint_mb(), "worktrees": dc.worktrees().map(|w| dc.memory(w)).collect::<Vec<_>>()}),
+    ];
     eprintln!("deadcode replay: 40 worktrees loaded at {loaded_s:.1}s, footprint {} MB", footprint_mb());
 
     let events = read_events(&events_p);
