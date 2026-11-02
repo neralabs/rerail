@@ -179,7 +179,7 @@ function agentSeesEdit(stored, message) {
   draft.value = message;
   return h("div.pask.sees-edit", null,
     draft,
-    h("p.why", null, agentSeesHint({ byRerail: isByRerail(stored), log: isLog(stored) })),
+    h("p.why", null, agentSeesHint({ fromPack: isFromPack(stored), log: isLog(stored) })),
     h("div.foot", null, h("span"), h("span.btns",
       null,
       h("button.btn.sm", { "data-act": "promptcancel" }, "Cancel"),

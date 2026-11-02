@@ -42,10 +42,10 @@ describe("the What the agent sees hint", () => {
   const copy = "Saved as your copy. This one turns off.";
 
   it.each([
-    [{ byRerail: false, log: false }, reaches],
-    [{ byRerail: false, log: true }, LOG_NOTE],
-    [{ byRerail: true, log: false }, `${copy} ${reaches}`],
-    [{ byRerail: true, log: true }, `${copy} ${LOG_NOTE}`],
+    [{ fromPack: false, log: false }, reaches],
+    [{ fromPack: false, log: true }, LOG_NOTE],
+    [{ fromPack: true, log: false }, `${copy} ${reaches}`],
+    [{ fromPack: true, log: true }, `${copy} ${LOG_NOTE}`],
   ])("for %j says what saving does", (rule, hint) => {
     expect(agentSeesHint(rule)).toBe(hint);
   });
