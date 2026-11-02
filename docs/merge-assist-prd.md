@@ -1,0 +1,289 @@
+# PRD: Merge Assist — sharing decisions between branches before they land
+
+**Document type:** Product requirements and technical design for an experimental feature.
+
+**Delivery status:** Demo branch (`tbelanger/ner-2224-merge-assist`). Experimental; off unless a person turns it on
+for a repository. Tracked in Linear [NER-2224](https://linear.app/nera/issue/NER-2224).
+
+**Prior art:** [Amp comparison](branch-coordination-amp-comparison.md).
+
+## 1. Summary
+
+When several people and their coding agents work on parallel branches, they remake the same decisions and discover
+conflicting ones only at merge time. Merge Assist turns each decision a developer makes while steering their agent
+("no, do it this way") into a **candidate rule** that travels with the branch. Rerail reads the candidates on other
+branches, local and in open pull requests, and acts on each one in one of three tiers:
+
+1. **Absorb.** A compatible decision from a trusted teammate starts steering your agent too, and you can undo it.
+2. **Review.** A decision your branch already breaks, or one from someone Rerail cannot vouch for, waits for you to
+   adopt or dismiss it.
+3. **Talk.** When you and a teammate decided the same question differently, Rerail says so and shows both decisions.
+   The two of you resolve it; Rerail does not pick a winner.
+
+Rules are the intermediate representation of architectural intent. A decision that Rerail can turn into a code rule
+is checked exactly, by Rerail's own engine. A decision that cannot be a code rule is still shared, and only your own
+coding agent judges it.
+
+## 2. Problem
+
+- Learnings are not shared across sessions. A teammate leaves breadcrumb notes; another person's agent cannot use them.
+- Discovery is sequential: the same decisions are remade, and the same conflicts are found at merge time.
+- Existing tools resolve conflicts after the fact. Amp's **Ship** rebases, tests and resolves textual conflicts when a
+  branch lands on `main`, one branch at a time
+  ([shipping](https://ampcode.com/docs/orbs/shipping)). Nothing compares two branches that are both still in progress,
+  and nothing compares design intent rather than lines.
+
+**Intended value:** move coordination left, before code is written against a decision someone else already made
+differently. Re-steering an agent mid-work is cheaper than resolving divergent architecture after both branches land.
+
+## 3. Users and goals
+
+**Primary user:** a developer whose coding agent works on a branch while teammates work on others in the same
+repository.
+
+Goals:
+
+1. A decision made once on a branch applies to the rest of that branch's work without the developer repeating it.
+2. Decisions on other branches reach your agent before you build against them, when they are compatible.
+3. Real disagreements surface as a conversation between people, early, with both decisions side by side.
+4. Trivial overlap (adjacent lines, shared files) is not reported as a disagreement.
+5. Nothing leaves the machine that the developer did not already send through their own tools.
+
+Non-goals for this version: resolving conflicts automatically, rebasing, posting to pull requests, blocking pushes or
+merges, a hosted service, other Git hosts than GitHub for remote pull requests.
+
+## 4. Principles
+
+- **Local first, no Rerail network requests.** Rerail runs tools the developer already has, under their existing
+  sign-in: `gh` to read pull requests (read-only), and their coding agent's CLI to judge. Rerail holds no credentials.
+- **Git is the sync layer.** Candidates are files on the branch. They move with commits and pushes the developer
+  already makes, on whatever Git host the team uses. Rerail never commits or pushes.
+- **Deterministic before intelligent.** Exact checks (Rerail's engine, `git merge-tree`) run first; the agent judges
+  only what they cannot decide.
+- **Innocent until proven guilty, with a visible undo.** Compatible decisions apply automatically and are always shown,
+  with one-click undo. Nothing is absorbed silently in the sense of invisibly.
+- **Never stronger than steer.** Candidates steer; they never block.
+- **People decide disagreements.** Rerail never chooses between two developers' decisions.
+
+## 5. Experience
+
+### 5.1 Turning it on
+
+Merge Assist is off for every repository. A person turns it on in the dashboard (**Merge Assist** page) or with
+`rerail merge-assist on`. A coding agent cannot turn it on. The page states, before the switch:
+
+- Rerail reads corrections you give your coding agent in this repository and asks **your coding agent's CLI** to
+  summarise each one as a decision. That sends the correction and the code it corrected to your agent's provider, as
+  your session already does.
+- Each decision is written to `.rerail/candidates/` in the checkout. Commit it to share it; Rerail never commits.
+- Rerail reads other local branches, and open pull requests through **`gh`** with your sign-in, read-only.
+- Decisions from teammates with write access may steer your agent; you can undo each one.
+
+It also shows what Rerail found: which agent CLI it will use, whether `gh` is signed in, and whether
+`.rerail/candidates/` is ignored by Git (then candidates stay local and the page says so).
+
+### 5.2 Capturing a decision
+
+When a person corrects their agent in a session, Rerail checks the correction at the end of the turn, in the
+background, without delaying the agent:
+
+1. A cheap filter (the correction phrases `rerail rules evidence` already recognises) skips ordinary prompts.
+2. The agent CLI classifies the correction: a **one-off** fix (dropped), a decision for **this branch**, or a
+   **repository** convention, and states it as one sentence with the folders it covers.
+3. When the decision can be a code rule, the agent CLI drafts one with test cases taken from the correction itself: the
+   code the agent wrote is a caught case, the corrected code a passed case. Rerail compiles it and runs the cases and a
+   repository pass. A draft that fails, or that matches too much of the repository, falls back to a **note**: the
+   decision text alone.
+4. Rerail writes the candidate file and tells the agent, which tells the person in one line:
+
+```text
+Rerail saved your correction as a decision for this branch: "Retries live in the transport layer; callers don't wrap
+requests in retry loops." It applies from now on. Undo: Merge Assist page, or `rerail merge-assist reject <id>`.
+```
+
+A code-rule candidate steers like any rule. A note reaches the agent as guidance once, when it is saved.
+
+### 5.3 Scanning other branches
+
+A scan runs when a session starts in a checkout with Merge Assist on, after a decision is saved, and on demand (the
+page's **Scan now**, `rerail merge-assist scan`, or the `merge_assist_scan` MCP tool). It reads:
+
+- every local branch with commits not on the base branch, at its committed tip;
+- every open pull request through `gh pr list`, and its candidates through the GitHub contents API at the pull
+  request's head commit.
+
+A branch stacked on yours, or one yours is stacked on, is skipped: its decisions are already yours.
+
+### 5.4 The three tiers
+
+For each candidate on another branch:
+
+| Tier | When | What happens |
+| --- | --- | --- |
+| Absorb | The author is trusted, your branch's changes pass its code rule, and your agent's CLI finds no contradiction with your own decisions | It applies to this checkout: a code rule steers your agent; a note is delivered once. Listed under **Added from other branches**, with Undo |
+| Review | Your branch's changes already break its code rule, or its author is not trusted (no write access, or `gh` unavailable), or your agent's CLI cannot tell | Listed under **Needs your review** with the evidence. **Adopt** applies it; **Dismiss** hides it until it changes |
+| Talk | Your agent's CLI finds it contradicts one of your own decisions | Listed first under **Decided differently**, both decisions side by side, the author and pull request, and a message you can copy to send them. Nothing is applied |
+
+`git merge-tree` conflicts between your branch and theirs are shown as context on a Talk or Review item that covers
+the same files. On their own, overlapping or adjacent lines are never a finding.
+
+**Trusted** means the candidate came from a local branch on this machine, or from a pull request whose author has
+write access to the repository (`gh api repos/{owner}/{repo}/collaborators/{login}/permission`).
+
+### 5.5 The dashboard page
+
+**Merge Assist** in the sidebar. For the selected checkout:
+
+- A status strip: on or off, the branch, the agent CLI used for judgment, `gh` state, when the last scan ran, and how
+  many judgment calls the last hour used against the budget.
+- **Decided differently** (Talk), **Needs your review**, **Added from other branches**, and **Decisions on this branch**
+  (your own candidates: decision text, whether Rerail checks it exactly or your agent judges it, the folders, when it
+  was saved, and **Not a rule**).
+- An empty state that explains what will appear and how to make the first decision.
+
+### 5.6 CLI and MCP
+
+```sh
+rerail merge-assist [status] [--json]      # this checkout: state, decisions, findings
+rerail merge-assist on | off               # people only
+rerail merge-assist scan [--json]
+rerail merge-assist reject <candidate-id>  # "Not a rule" for one of your own decisions
+rerail merge-assist adopt <finding-id>     # Review → applied
+rerail merge-assist dismiss <finding-id>
+rerail merge-assist undo <finding-id>      # remove an absorbed or adopted decision
+```
+
+MCP tools (the same operations the dashboard uses): `merge_assist_get`, `merge_assist_scan`,
+`merge_assist_candidate_set`, `merge_assist_finding_set`, and the people-only `merge_assist_settings_set`. An agent may
+reject one of its own branch's candidates when the person asks; it may not adopt, turn the feature on, or undo
+another person's decision on their behalf.
+
+## 6. Candidate file format
+
+`.rerail/candidates/<id>.json`, one file per decision, written with mode `0644` because it is meant to be committed:
+
+```json
+{
+  "format": "rerail.candidate/v1",
+  "id": "candidate:retries-in-transport-3f9a1c",
+  "decision": "Retries live in the transport layer; callers don't wrap requests in retry loops.",
+  "generality": "repository",
+  "scope": ["src/api/**"],
+  "author": "tbelanger",
+  "createdAt": "2026-11-03T14:02:11Z",
+  "state": "active",
+  "rule": { "format": "rerail.policy/v1", "id": "candidate:retries-in-transport-3f9a1c", "...": "..." },
+  "supersedes": null
+}
+```
+
+- `rule` is present only when the decision is a validated code rule; the rule's `id` equals the candidate's `id`, and
+  its mode is always `steer`.
+- `state` is `active` or `rejected`. A rejected file stays so that a teammate who already absorbed it sees the
+  withdrawal on their next scan.
+- The file never holds the correction text, code, paths outside `scope`, session ids or anything else from the
+  transcript. The link from a candidate to the session and correction it came from stays in the local database.
+
+## 7. Security
+
+Merge Assist reads data written by other people (candidate files, pull request metadata) and passes some of it to an
+agent CLI and, when absorbed, into the developer's own agent session. The threat model:
+
+| Threat | Mitigation |
+| --- | --- |
+| A malicious candidate injects instructions into the developer's agent | Only trusted authors' candidates are absorbed; others wait for review. Decision text is capped at 280 characters, stripped of control characters and Markdown links, and delivered inside Rerail's guidance framing. Candidates never exceed `steer` |
+| A malicious candidate injects instructions into the judging agent CLI | The judge runs with **no tools**, no MCP servers, no session persistence, in an empty temporary directory, so it cannot read or change the repository. Untrusted text is passed as fenced data with a per-call random fence and an instruction to treat it as data. Its output must match a JSON schema and is used only as a verdict; it never executes |
+| A malicious code rule (expensive regex, broad scope) | Rules are parsed with the same schema and compiled in the same kernel as every Rerail rule, which refuses unsafe regexes. Scope globs must be relative and stay inside the repository. A peer candidate whose rule fails to compile is shown for review as a note, never applied |
+| Oversized or numerous candidate files | At most 64 candidates per branch and 16 KiB per file; extra files are reported, not read |
+| Path tricks in candidate file names or ids | Ids match `^candidate:[a-z0-9-]{1,64}$`; files are read only from `.rerail/candidates/` at the top of a tree, by Git object, never by following a path from the file |
+| Recursive Rerail sessions from the judge | The judge runs in a temporary directory that is not a started repository, so Rerail's own hooks ignore it, and with the agent CLI's extension/plugin discovery off where it has a switch |
+| Credential exposure | Rerail passes the environment the agent CLI and `gh` need and never reads or stores tokens. `gh` runs with prompts and the update notifier off |
+| An agent turning on Merge Assist or adopting decisions to widen its own latitude | Turning on, adopting and undoing someone's decision are people-only operations |
+| Runaway spending of the user's tokens | A per-repository budget (default 40 judgment calls an hour), results cached by content hash, and the page shows the use |
+
+## 8. Privacy
+
+Updates to [privacy.md](privacy.md):
+
+- **What goes over the network**: with Merge Assist on, Rerail runs `gh` to list open pull requests and read the
+  `.rerail/candidates/` files at their heads. It is read-only and uses the developer's own `gh` sign-in.
+- **Your coding agent's provider**: with Merge Assist on, Rerail runs the developer's coding agent CLI to judge
+  corrections and decisions. That run sends the correction, the code it corrected, and candidate decisions to the agent's
+  provider, under that provider's terms. Rerail makes no model request itself.
+- **What Rerail keeps**: candidate files are written into the checkout to be committed; they hold only the decision,
+  its scope, the rule and the author's login.
+
+The principle stays: Rerail makes no network requests with credentials of its own.
+
+## 9. Technical design
+
+### 9.1 Modules
+
+| Layer | Module | Responsibility |
+| --- | --- | --- |
+| engine | `src/engine/merge-assist/candidate.ts` | The `rerail.candidate/v1` schema, limits, sanitising, ids |
+| engine | `src/engine/merge-assist/candidate-files.ts` | Read and write candidates in a working tree (atomic, no symlinks); read them from a Git tree object; whether Git ignores the folder |
+| engine | `src/engine/merge-assist/branch-git.ts` | Local branches and tips, base branch and merge base, changed paths, ancestry, `merge-tree` conflicts |
+| engine | `src/engine/merge-assist/corrections.ts` | The correction phrases and call summaries, moved from `cli/rule-evidence.ts` |
+| engine | `src/engine/code-rule/rule-check.ts` | Compile a code rule and run cases and a repository pass, moved from `cli/rule-draft.ts`; optionally limited to given paths |
+| engine | `src/engine/storage/schema.ts` | `repositories.merge_assist`, `merge_assist_items`, `merge_assist_judgments` |
+| runtime | `src/runtime/merge-assist/agent-judge.ts` | Find the agent CLI, run it headless with a JSON schema, budget and cache |
+| runtime | `src/runtime/merge-assist/judge-prompts.ts` | The capture and comparison prompts and schemas |
+| runtime | `src/runtime/merge-assist/github.ts` | `gh` reads: auth state, open pull requests, candidates at a commit, author permission |
+| runtime | `src/runtime/merge-assist/capture.ts` | Corrections in a session → candidates |
+| runtime | `src/runtime/merge-assist/scan.ts` | Peers → tiers → items |
+| runtime | `src/runtime/merge-assist/activation.ts` | Which candidates apply to a checkout, reconciled into library rules and per-checkout settings |
+| runtime | `src/runtime/merge-assist/service.ts` | The facade the runtime, API and CLI call |
+| api | `src/api/merge-assist-contracts.ts`, `merge-assist-operations.ts` | The operations in §5.6 |
+| cli | `src/cli/merge-assist-cli.ts` | `rerail merge-assist` |
+| ui | `ui/views/merge.js`, `ui/merge-model.js`, `ui/css/merge.css` | The page |
+
+### 9.2 Applying a candidate to one checkout
+
+Library rules are attached per repository and folder, so they would reach every worktree. A candidate applies to one
+checkout: Rerail upserts the candidate's rule as a library rule, attaches it at the repository root with the
+repository-level setting **off**, and sets it **on** for the checkout. Checkout settings take precedence over
+repository settings (`rule-configuration.ts`, `ownersOf`). Reconciliation runs at session start, after capture and
+after a scan, from the candidate files in the working tree plus the absorbed and adopted items for that checkout.
+
+### 9.3 Storage
+
+- `repositories.merge_assist` (boolean, default false): migration `repositories-merge-assist`.
+- `merge_assist_items`: one row per candidate known to a checkout, own or from a peer: checkout path, repository key,
+  candidate id, content hash, origin (`own`, `peer`), peer ref and commit, peer author, tier, status (`open`,
+  `applied`, `dismissed`, `rejected`), the evidence and verdict, and for own candidates the session and event they
+  came from.
+- `merge_assist_judgments`: judgment results keyed by a hash of the task and its inputs, with the runner and time,
+  used as the cache and to count the hourly budget.
+
+### 9.4 Agent CLI invocations
+
+| CLI | Command | Notes |
+| --- | --- | --- |
+| Claude Code | `claude -p --output-format json --json-schema <schema> --tools "" --disallowedTools "mcp__*" --strict-mcp-config --no-session-persistence --max-turns 2` | Reads `structured_output`. Not `--bare`, which would not use the person's subscription |
+| Codex | `codex exec --sandbox read-only --skip-git-repo-check --ephemeral --output-schema <file> -o <file> -` | Prompt on stdin |
+| OMP | `omp -p --no-tools --no-session --no-extensions --no-skills --mode json` | Schema stated in the prompt; output validated |
+
+All run in a fresh `0700` temporary directory, with a 120-second timeout, a 1 MiB output cap, and no shell. The
+runner preference is the host of the session that triggered the work, then Claude Code, Codex, OMP.
+
+## 10. Demo
+
+Two developers, two branches of the same repository:
+
+1. Jeremy, on `jbarnes/session-retry`, corrects his agent: "don't wrap API calls in retry loops; retries belong in the
+   transport". Rerail saves the decision as a code-rule candidate; he commits it and opens a pull request.
+2. Tim, on `tbelanger/export-api`, starts a session. The scan absorbs Jeremy's decision; when Tim's agent writes a retry
+   loop in `src/api/`, Rerail steers it with Jeremy's rule.
+3. Jeremy also decided "API errors are returned as `Result` values, not thrown". Tim had told his agent the opposite
+   earlier on his branch. The page shows **Decided differently**, with both decisions and a message to send Jeremy.
+4. A third candidate, from a pull request by an outside contributor, waits under **Needs your review**.
+
+## 11. Open questions
+
+- Promotion: when a branch merges, should its candidates become repository rules automatically, or after review on
+  `main`?
+- Should reviewers' comments on pull requests be a source of decisions?
+- Is a per-repository budget the right unit, or per person per day?
+- Do teams want candidates committed in the branch, or kept out of the diff (Git notes, a `refs/rerail/` ref) at the
+  cost of `gh` not reading them?
