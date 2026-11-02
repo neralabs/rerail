@@ -61,12 +61,17 @@ impl CrossFileScheduler {
     pub(super) fn register(
         state: &mut WorkspaceState,
         index: usize,
-        code_rule: &mut CompiledCodeRule,
+        code_rule: &mut Arc<CompiledCodeRule>,
     ) -> Result<()> {
         if code_rule.clauses.iter().any(
             |clause| matches!(&clause.kind, ClauseKind::Forbid(query) if !query.calls().is_empty()),
         ) {
-            state.crossfile.calls.register(index, code_rule)?;
+            // Copies the rule, which its compiled handle still holds: only a rule with `calls`
+            // terms gains clauses here, and a host builds many workspaces from one compiled rule.
+            state
+                .crossfile
+                .calls
+                .register(index, Arc::make_mut(code_rule))?;
         }
         Ok(())
     }
