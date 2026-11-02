@@ -36,6 +36,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O41 | Phase 4 / 10 | Producer labels in the lowering: `match_tree` reads a semantic leaf a producer answers as a label (O24, t15) | open |
 | O42 | Phase 4 / 10 | Three-valued semantic labels: `binds` is unknown at 36 fixture nodes; a set label under `not` reads unknown as false (t15) | open |
 | O43 | Phase 4 / 10 | Capture-dependent semantic filters as joins: `binds.bindings.within` reads a capture's range (SIM113) (t15) | open |
+| O44 | Phase 2 / 4 | Semantic rows as derivations: per path, table reading and module path; not registered in `facts/families.rs` (t15) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -921,3 +922,14 @@ captures' ranges as an input (`Region`). The gate binds no capture, so it checks
 unbound case: the count reads as 0. **Closure:** in the wave, a join between the label's chain
 rows and the capture's column (O24's direction for shared bindings), validated by S1's gate on
 SIM113 with its captures bound.
+
+## O44. Semantic rows as derivations
+
+**Requirement.** The producers' rows depend on the tape and on three inputs no derivation carries
+today: the table reading (the target Python version where it changes the table: annotations
+deferred from 3.14, typing modules), the stub flag (from the host's path), and the module path
+(which qualifies definitions and relative imports). `facts/families.rs` derives `tape`, `core`,
+`prefilter` and `kinds` from a path's names alone. **Closure:** a `{scope}#semantic:{path}`
+derivation keyed by those inputs, reading the tape name. Its output is the rows' digest, so an
+edit that keeps them (a comment, a literal) rebinds no reader. Validated by an edit that keeps the
+rows and leaves their labels' readers unrun.
