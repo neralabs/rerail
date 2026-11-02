@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-air302-airflow3-moved-to-provider",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Import Airflow hooks, operators and other names that moved into provider packages in Airflow 3.0 from their provider modules; the old core import paths are gone.",
   "scope": { "include": ["**/*"], "exclude": [] },

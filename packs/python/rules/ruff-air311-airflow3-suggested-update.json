@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-air311-airflow3-suggested-update",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Replace Airflow APIs that Airflow 3 deprecated but still supports with their newer equivalents, and stop passing the sla arguments; the old ones are expected to be removed.",
   "scope": { "include": ["**/*"], "exclude": [] },
