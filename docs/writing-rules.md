@@ -116,8 +116,8 @@ only those needs no approval.
   as shipped.
 - **What you save in the dashboard is approved as you save it.**
 - **Everything else waits for your approval:**
-  - a new rule created by you that `/rerail-create`, `rerail rules add`, `rerail rules import` or a coding agent stores, and
-    every change to such a rule's content;
+  - a new rule created by you that `/rerail-create`, `rerail rules add`, `rerail rules import` (without `--approve`) or a
+    coding agent stores, and every change to such a rule's content;
   - the rules of a pack added from a folder or a tarball (`rerail packs add <folder>`), and every rule an update of such a
     pack adds or changes.
 

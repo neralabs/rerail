@@ -401,7 +401,8 @@ in two ways:
     and `tokens.json`.
 - **Symlink targets count** wherever a checkout root is known (`checkoutPathBoundary`). A tracked
   `docs/a.md -> ../.env` is secret-like. A link target is judged by secret-like name only, so a pnpm
-  `node_modules/<pkg>` link into `.pnpm/` still passes.
+  `node_modules/<pkg>` link into `.pnpm/` still passes. Only path-shaped words (a `/` or `\`, a leading `.` or `~`, or
+  a dot-extension) are looked up on disk; every word is still judged by name.
 
 **What remains:**
 
@@ -410,6 +411,8 @@ in two ways:
 - **Conversation text.** User prompts and assistant messages pass whole.
 - **Name-only judging.** `violations_list`, `audits_list`, `repository_audit_entries_list` and `rerail rules evidence`
   still judge findings by name only, not by symlink target.
+- **Extensionless links.** A link named without a separator, leading dot or extension (`notes -> .env`, read as
+  `cat notes`) is not looked up on disk, so its target is not judged.
 
 ### T6: Secrets at rest
 
@@ -427,8 +430,11 @@ in two ways:
     guessable password. A `$` inside a value does not make it code; only a value that starts with `$` does.
   - **Never touched.** Hashes, UUIDs, integrity strings, `data:` URIs, code, filesystem paths (so `PWD=/…` stays),
     and identifiers made of words (`getAuthTokenFromHeader`, `kubernetes-secret-name`).
-- **Secret-like files.** A tool result for a call that names a secret-like path is stored without its output.
-  Preimages of a secret-like file, or of one whose text holds a secret, keep only a hash and size.
+- **Secret-like files.** A tool result for a call that names a secret-like path is stored without its output
+  (`callNamesSecretPath` in `persistEvent`, `src/runtime/runtime.ts`). The judgment is written to the session's
+  ledger (`secret-call`, `secret-result`), so a result that arrives after the daemon restarted or the host
+  reconnected is withheld too. Preimages of a secret-like file, or of one whose text holds a secret, keep only a hash
+  and size.
 - **Erasure.** Database writers run with `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM` and
   checkpoints again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
@@ -600,8 +606,10 @@ These are risks for maintainers, not users.
 
 - **The device key.** It goes to `security -i` on stdin, no longer in `argv` (`src/activation/device-keystore.ts`).
 - **The engine socket.** It lives in a per-user folder, `tmpdir()/rerail-<uid>/`, that is checked to be the person's
-  own, 0700 and not a symlink before `listen` (`src/runtime/engine-service.ts`). On Linux, another user who creates
-  that folder first makes the daemon refuse to start. That is a denial of service, not an exposure.
+  own, 0700 and not a symlink before `listen` (`src/runtime/engine-service.ts`). On Linux, another user can create
+  that folder first; the daemon then listens in a `run` folder beside its database, under the 0700 Rerail home
+  (`chooseEngineSocketPath`), and records that path in `daemon.json`, where hooks find it. Only when no folder can be
+  used does the start fail, with an error that names each folder, why it was refused, and who must remove it.
 - **Error text.** `app.onError` returns a generic error and logs the detail.
 
 **What remains:**

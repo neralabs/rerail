@@ -868,8 +868,14 @@ describe("Claude Code commands", () => {
     for (const file of commandFiles) expect(change(first.changes, "claude-code", file).action).toBe("created");
     expect((await readdir(directory)).sort()).toEqual(commandFiles);
     for (const file of commandFiles) {
+      const text = await readFile(join(directory, file), "utf8");
       // Enumerated per invocation: no command may run `daemon`, `mcp-bridge` or anything else the launcher offers.
-      expect(await readFile(join(directory, file), "utf8")).not.toContain(`Bash(${command} *)`);
+      expect(text).not.toContain(`Bash(${command} *)`);
+      // `rules import --approve` approves every rule of a dump, and approving is the person's: no grant reaches it.
+      const allowed = [...(text.match(/^allowed-tools: (.*)$/mu)?.[1] ?? "").matchAll(/Bash\((.*?)\)(?:, |$)/gu)].map(match => match[1]!);
+      for (const line of [`${command} rules import rules.json`, `${command} rules import rules.json --approve`]) {
+        expect(allowed.filter(pattern => pattern.endsWith(" *") ? line.startsWith(pattern.slice(0, -1)) : line === pattern)).toEqual([]);
+      }
     }
 
     const overview = await read("rerail");

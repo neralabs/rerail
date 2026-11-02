@@ -166,6 +166,23 @@ function unresolvedCodeRuleCalls(ledger: readonly LedgerEntry[]): Extract<Ledger
   return [...pending.values()];
 }
 
+/**
+ * The session's secret calls still awaiting their result, and the results already stored without their output, as the
+ * ledger records them: a result that arrives after the runtime state was rebuilt is judged by its call all the same.
+ */
+function secretCallsOf(ledger: readonly LedgerEntry[]): { calls: Set<string>; results: Set<string> } {
+  const calls = new Set<string>();
+  const results = new Set<string>();
+  for (const entry of ledger) {
+    if (entry.type === "secret-call") calls.add(entry.toolCallId);
+    else if (entry.type === "secret-result") {
+      calls.delete(entry.toolCallId);
+      results.add(entry.eventId);
+    }
+  }
+  return { calls, results };
+}
+
 
 const PrimitiveSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
 const ContentRefSchema = z
@@ -231,6 +248,8 @@ const LedgerEntrySchema = z.union([
     })).optional(),
   }),
   z.object({ type: z.literal("policy-result"), toolCallId: z.string() }),
+  z.object({ type: z.literal("secret-call"), toolCallId: z.string() }),
+  z.object({ type: z.literal("secret-result"), toolCallId: z.string(), eventId: z.string() }),
 ]);
 
 type LedgerEntry =
@@ -242,7 +261,9 @@ type LedgerEntry =
   | { type: "rule-mutation"; mutation: RuleMutation }
   | { type: "rule-match"; ruleId: string; turn: number }
   | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>> }
-  | { type: "policy-result"; toolCallId: string };
+  | { type: "policy-result"; toolCallId: string }
+  | { type: "secret-call"; toolCallId: string }
+  | { type: "secret-result"; toolCallId: string; eventId: string };
 
 export function compactValidated<T>(value: unknown): T {
   // Zod has already validated this value; the round-trip removes explicit undefined keys for exact optional types.
@@ -482,7 +503,10 @@ interface RuntimeSessionState {
   yieldWaits: number;
   /** Generated-edit findings no boundary waited for, in the order they arrived, until the session's next yield. */
   missedFindings: MissedFinding[];
-  /** The session's tool calls whose input names a secret-like path (`callNamesSecretPath`), until their result is stored. */
+  /**
+   * The session's tool calls whose input names a secret-like path (`callNamesSecretPath`), until their result is stored.
+   * The ledger records both ends (`secret-call`, `secret-result`), so a session reopened between them still knows.
+   */
   secretCalls: Set<string>;
   /** The results stored without their output (`withheldOutput`): their samples are recorded without text too. */
   withheldResults: Set<string>;
@@ -1187,6 +1211,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const watermarks = await JsonlWatermarkStore.open(join(directory, "watermarks.jsonl"));
     // Saved settings win over the runtime's defaults; `#scheduleAuditRequests` keeps the strategy current.
     const auditSettings = this.#controls.getWorkspaceSettings(checkout.cwd);
+    const secrets = secretCallsOf(ledger);
     const opened: RuntimeSessionState = {
       descriptor: session,
       checkout,
@@ -1221,8 +1246,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       editCheckWaits: 0,
       yieldWaits: 0,
       missedFindings: [],
-      secretCalls: new Set(),
-      withheldResults: new Set(),
+      secretCalls: secrets.calls,
+      withheldResults: secrets.results,
       closed: false,
     };
     // Set when the evaluator failed to open: what it observed while opening belongs to no live evaluator.
@@ -1577,9 +1602,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async persistEvent(event: AdapterEvent): Promise<void> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     const state = this.#session(sessionId);
-    if (event.kind === "call" && callNamesSecretPath(event.input, state.descriptor.cwd)) state.secretCalls.add(event.toolCallId);
-    const withheld = event.kind === "result" && state.secretCalls.delete(event.toolCallId);
-    if (withheld) state.withheldResults.add(event.eventId);
+    if (event.kind === "call" && callNamesSecretPath(event.input, state.descriptor.cwd)) {
+      // Recorded before the event counts as processed: a call sent again after a crash here is judged again.
+      await this.#append(state, { type: "secret-call", toolCallId: event.toolCallId });
+      state.secretCalls.add(event.toolCallId);
+    }
+    const withheld = event.kind === "result" && state.secretCalls.has(event.toolCallId);
     this.#sessionStore.append({
       sessionId,
       eventId: event.eventId,
@@ -1587,6 +1615,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
       payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
     }, state.descriptor);
+    if (withheld) {
+      await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
+      state.secretCalls.delete(event.toolCallId);
+      state.withheldResults.add(event.eventId);
+    }
     await this.#append(state, { type: "event", eventId: event.eventId });
     state.processed.add(event.eventId);
   }

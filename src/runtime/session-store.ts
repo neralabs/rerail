@@ -4,6 +4,7 @@ import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-or
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryPendingBoundary } from "../engine/code-rule/code-rule-bridge.js";
+import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
@@ -354,6 +355,13 @@ export class SqliteSessionReader {
   readonly path: string;
   readonly #database: LazyReadonlyRerailDatabase;
   readonly #repositoryIds: string | readonly string[] | undefined;
+  /**
+   * Each repository and owner checkouts' last `awaitingApproval`, with the rule configuration signature it was counted
+   * at. The status line polls `hud`, and the signature already hashes every row the count resolves (attachments,
+   * settings, attached library rules and approvals, the catalog), so an unchanged one means an unchanged count: the
+   * same key the engine reloads a checkout's rules by.
+   */
+  readonly #awaitingApproval = new Map<string, { readonly signature: string; readonly count: number }>();
 
   constructor(path: string, { repositoryId }: RepositoryScope = {}) {
     this.path = path;
@@ -390,12 +398,14 @@ export class SqliteSessionReader {
         .orderBy(desc(events.sequence)).limit(1).get();
       // Coverage written before repository configuration has no rule signature and is never current.
       const owners = coverage?.ownerCheckoutPaths == null ? null : JSON.parse(coverage.ownerCheckoutPaths) as string[];
-      const ruleCatalog = loadRuleCatalog();
-      const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && owners !== null
-        && coverage.ruleSignature === ruleConfigurationSignature(database, ruleCatalog, coverage.repositoryId, owners);
-      const awaitingApproval = coverage?.repositoryId == null || owners === null ? null
-        : listRepositoryRules(database, ruleCatalog, coverage.repositoryId, owners.length === 0 ? {} : { checkoutPath: owners[0]!, parentCheckoutPaths: owners.slice(1) })
-          .awaitingApproval;
+      let activeRuleCount: number | null = null;
+      let awaitingApproval: number | null = null;
+      if (coverage?.repositoryId != null && owners !== null) {
+        const ruleCatalog = loadRuleCatalog();
+        const signature = ruleConfigurationSignature(database, ruleCatalog, coverage.repositoryId, owners);
+        if (coverage.ruleSignature === signature) activeRuleCount = coverage.activeRuleCount;
+        awaitingApproval = this.#awaitingApprovalAt(database, ruleCatalog, coverage.repositoryId, owners, signature);
+      }
       // Per rule, not per hook output (plan D5): the person counts the steer lines they saw, and one edit can steer two
       // rules. A receipt naming no rules still delivered one steer.
       const steeringCount = baseline?.complete === 1
@@ -404,8 +414,18 @@ export class SqliteSessionReader {
         }).from(events)
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total
         : null;
-      return { activeRuleCount: current ? coverage.activeRuleCount : null, steeringCount, awaitingApproval };
+      return { activeRuleCount, steeringCount, awaitingApproval };
     });
+  }
+
+  #awaitingApprovalAt(database: RerailDatabase, ruleCatalog: RuleCatalog, repositoryId: string, owners: readonly string[], signature: string): number {
+    const key = [repositoryId, ...owners].join("\0");
+    const cached = this.#awaitingApproval.get(key);
+    if (cached?.signature === signature) return cached.count;
+    const options = owners.length === 0 ? {} : { checkoutPath: owners[0]!, parentCheckoutPaths: owners.slice(1) };
+    const count = listRepositoryRules(database, ruleCatalog, repositoryId, options).awaitingApproval;
+    this.#awaitingApproval.set(key, { signature, count });
+    return count;
   }
 
   /**

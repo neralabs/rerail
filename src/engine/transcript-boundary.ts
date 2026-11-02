@@ -30,7 +30,7 @@ export const WITHHELD_PAYLOAD: Readonly<Withheld> = {
 /** How deep, and how many strings, a tool input is read: a tool input is small, and a pathological one is not read whole. */
 const INPUT_DEPTH = 8;
 const INPUT_STRINGS = 512;
-/** How many of a tool input's tokens are resolved on disk, in the order the input holds them; the rest by name alone. */
+/** How many of a tool input's path-shaped tokens are resolved on disk, in input order; the rest by name alone. */
 const INPUT_RESOLUTIONS = 64;
 
 /** Shell, prose and brace-glob delimiters around a token that may be a path. */
@@ -38,6 +38,12 @@ const TOKEN_BREAK = /[\s"'`|;&<>(),:={}]+/u;
 
 /** A segment that is no name: `.`, `..` and runs of dots, or a JavaScript spread or prose ellipsis (`...props`). */
 const NOT_A_NAME = /^(?:\.+|\.{3}.*)$/u;
+
+/**
+ * A token shaped like a path: it has a separator, starts with `.` or `~`, or ends in an extension. Only such a token is
+ * resolved on disk; a bare word (a commit message's, a flag's value) is judged by its name, which needs no file system.
+ */
+const PATH_SHAPED = /[\\/]|^[.~]|\.[^.]+$/u;
 
 /** How a token is judged: by `judge` on its own name and, within a checkout when one is known, by where it leads. */
 interface TokenJudge {
@@ -54,7 +60,8 @@ function textNamesPath(text: string, { judge, boundary }: TokenJudge): boolean {
     if (segments.length === 0) continue;
     if (judge(segments.join("/"))) return true;
     // Where a link leads is judged secret-like or not, never hidden: `node_modules/pkg` leads into `.pnpm/`.
-    const led = boundary?.leadsTo(path);
+    if (boundary === undefined || !PATH_SHAPED.test(path)) continue;
+    const led = boundary.leadsTo(path);
     if (led !== undefined && sensitiveByName(led)) return true;
   }
   return false;
@@ -85,8 +92,8 @@ const callNames = (input: unknown, judge: (path: string) => boolean, root: strin
  * `/mnt/secrets/..data/password` and `C:\Users\me\.aws\credentials` are all outside, and `src/.hidden/a.ts` is too.
  * With the checkout the call ran in (`root`), a path is also outside when it links to a secret-like one
  * ({@link sensitiveByName}), so `cat docs/a.md` is outside when `docs/a.md` links to `.env`, while a link into a hidden
- * folder alone (pnpm's `node_modules/pkg` into `.pnpm/`) is not; the first `INPUT_RESOLUTIONS` distinct tokens are
- * resolved, the rest judged by name.
+ * folder alone (pnpm's `node_modules/pkg` into `.pnpm/`) is not; only a path-shaped token (`docs/a.md`, `.envrc`,
+ * `notes.txt`) is resolved, the first `INPUT_RESOLUTIONS` distinct ones, and a bare word by its name alone.
  * It reads names, not a shell: a path built at run time (`cat $(echo .e)nv`) is not seen. An input deeper or larger
  * than it reads counts as naming one.
  */

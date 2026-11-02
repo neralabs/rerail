@@ -4,14 +4,14 @@ import { readFile, stat, writeFile, rm, rename } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo, Server as NetServer } from "node:net";
-import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
-import { startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
@@ -137,7 +137,8 @@ export function sourceUiRoot(): string {
 /**
  * A short, database-derived local IPC endpoint isolates each Rerail home's engine service. On POSIX it lives in this
  * user's own directory in the temp directory, `rerail-<uid>`, which the engine service makes 0700 and checks before
- * listening. Names stay short: a socket path must fit 104 bytes on macOS and 108 on Linux.
+ * listening; the daemon falls back to a `run` folder beside the database when that one is refused. Names stay short:
+ * a socket path must fit 104 bytes on macOS and 108 on Linux.
  */
 export function defaultEngineSocketPath(
   databasePath: string,
@@ -333,7 +334,12 @@ export class RerailDaemon {
     const ui: DaemonState["ui"] = uiRoot === undefined || options.dev === true ? "dev" : "bundled";
     const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth);
     const databasePath = resolve(options.databasePath ?? defaultRerailDatabasePath());
-    const kernelSocketPath = options.kernelSocketPath ?? defaultEngineSocketPath(databasePath);
+    // Anyone on the machine can make `rerail-<uid>` in a shared temp directory first, so a refused one falls back to a
+    // `run` folder beside the database, checked the same way. Clients find the socket through the state file, never by
+    // computing it. A socket path the caller named is used or refused, never replaced.
+    const defaultSocketPath = defaultEngineSocketPath(databasePath);
+    const kernelSocketPath = options.kernelSocketPath
+      ?? await chooseEngineSocketPath([defaultSocketPath, join(dirname(databasePath), "run", basename(defaultSocketPath))]);
     const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
     const storageRoot = join(workspaceRoot, ".rerail", "sessions");
     const modelPath = bundledModelPath();
