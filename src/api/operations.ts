@@ -89,7 +89,7 @@ const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
   blind: z.enum(AUDIT_BLIND_REASONS).optional(),
 }).strict();
 
-export const auditRecordSchema = createSelectSchema(audits).extend({
+export const auditRecordSchema = createSelectSchema(audits).omit({ baseline: true }).extend({
   paths: z.array(z.string()),
   violations: z.array(codeRuleViolationSchema),
   failures: z.array(auditFailureSchema),
@@ -256,7 +256,7 @@ const violationRecordSchema = z.object({
   ruleId: z.string(),
   clauseId: z.string(),
   code: z.string(),
-  mode: z.enum(RULE_MODES),
+  mode: z.enum(RULE_MODES).describe("How the violation was recorded: `log` when its rule or its audit was in Log mode, so the agent was not told."),
   message: z.string(),
   path: z.string().nullable(),
   span: codeRuleSourceSpanSchema.nullable(),
@@ -264,6 +264,7 @@ const violationRecordSchema = z.object({
   sessionId: z.string(),
   auditId: z.string(),
   at: z.number().int().describe("Start time of the audit that reported the violation."),
+  baseline: z.boolean().describe("It came from the repository's baseline scan: already in the code, not the work of `sessionId`, which only ran that scan."),
   host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded."),
 }).strict();
 
@@ -367,7 +368,8 @@ export const operations: readonly Operation[] = [
       rules: z.record(z.string(), ruleActivitySchema),
       sessions: z.object({
         started: z.number().int().nonnegative().describe("Sessions that started at or after `since`."),
-        withViolations: z.number().int().nonnegative().describe("Distinct sessions with a violation reported at or after `since`, in any mode."),
+        withViolations: z.number().int().nonnegative().describe("Distinct sessions with a violation reported at or after `since`, in any mode, a baseline scan's aside."),
+        baselineViolations: z.number().int().nonnegative().describe("Violations of baseline scans started at or after `since`: already in the code, no session's work."),
       }),
     }),
     handler: (stores, input, caller) => {
@@ -394,7 +396,7 @@ export const operations: readonly Operation[] = [
       return {
         since: input.since,
         rules,
-        sessions: { started: stores.reader.sessionCount(input.since, ids), withViolations: stores.audits.sessionsWithViolations(input.since, ids) },
+        sessions: { started: stores.reader.sessionCount(input.since, ids), withViolations: stores.audits.sessionsWithViolations(input.since, ids), baselineViolations: stores.audits.baselineViolations(input.since, ids) },
       };
     },
   }),
@@ -555,9 +557,9 @@ export const operations: readonly Operation[] = [
       }, historyScope(stores, caller, input.repository));
       return {
         total: page.total,
-        violations: page.violations.map(({ violation: found, sessionId, auditId, at, host }) => {
+        violations: page.violations.map(({ violation: found, sessionId, auditId, at, baseline, host }) => {
           const { id, ruleId, clauseId, code, mode, message, path, span, fix } = agentViolation(caller, found);
-          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host };
+          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, baseline, host };
         }),
         nextCursor: page.nextCursor,
       };

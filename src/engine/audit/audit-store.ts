@@ -57,7 +57,8 @@ function unlistedFailures(database: RerailDatabase): SQL<number> {
 }
 /** An `audits` row with `unlistedFailures`, which `record` reads. */
 function auditColumns(database: RerailDatabase) {
-  return { ...getTableColumns(audits), unlistedFailureCount: unlistedFailures(database) };
+  const { baseline: _baseline, ...columns } = getTableColumns(audits);
+  return { ...columns, unlistedFailureCount: unlistedFailures(database) };
 }
 
 export interface AuditQuery {
@@ -158,6 +159,8 @@ export interface ViolationHistoryQuery {
 
 /** One violation with the audit that produced it; `at` is the audit's start, `host` its session's coding agent. */
 export interface ViolationHistoryEntry {
+  /** It came from the repository's baseline scan, so `sessionId` only says which session ran that scan. */
+  baseline: boolean;
   violation: CodeRuleViolation;
   sessionId: string;
   auditId: string;
@@ -187,6 +190,8 @@ export interface AuditReader {
   listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage;
   /** Distinct sessions with a violation from an audit started at or after `since`. */
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number;
+  /** Violations of repository baseline scans started at or after `since`: what the code held, no session's work. */
+  baselineViolations(since: number, repositoryIds?: readonly string[]): number;
 }
 
 /** A repository's runs are the runs of its sessions; unscoped (`undefined`) readers see every run. */
@@ -214,7 +219,7 @@ function paging(query: Pick<AuditQuery, "limit" | "offset">): { limit: number; o
   };
 }
 
-function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
+function record(row: Omit<AuditRow, "baseline"> & { unlistedFailureCount: number }): AuditRecord {
   const blindFiles = blindFilePaths(row.failures);
   return {
     auditId: row.auditId,
@@ -501,8 +506,11 @@ function ruleActivity(database: RerailDatabase, since: number, repositoryId?: Re
   }]));
 }
 
+const BASELINE_AUDITS = sql`(SELECT ${audits.auditId} FROM ${audits} WHERE ${audits.baseline} = 1)`;
+
 /**
- * Distinct sessions with a violation from an audit started at or after `since`. The rollup holds only violations
+ * Distinct sessions with a violation from an audit started at or after `since`, a baseline scan's aside: it is not the
+ * work of the session that ran it. The rollup holds only violations
  * that name a rule, so the few stored without one are read from `audit_violations` (index on rule and start).
  */
 function sessionsWithViolations(database: RerailDatabase, since: number, repositoryId?: Repository): number {
@@ -514,8 +522,25 @@ function sessionsWithViolations(database: RerailDatabase, since: number, reposit
       SELECT ${auditViolations.sessionId} FROM ${auditViolations}
       WHERE ${auditViolations.ruleId} IS NULL AND ${auditViolations.startedAt} >= ${since}
         AND ${scopedSessions(auditViolations.sessionId, repositoryId)}
-    )
+    ) candidate
+    WHERE EXISTS (SELECT 1 FROM ${auditViolations}
+      WHERE ${auditViolations.sessionId} = candidate.session_id AND ${auditViolations.startedAt} >= ${since}
+        AND ${auditViolations.auditId} NOT IN ${BASELINE_AUDITS})
   `)[0]?.sessions ?? 0;
+}
+
+function baselineViolations(database: RerailDatabase, since: number, repositoryId?: Repository): number {
+  return database.all<{ violations: number }>(sql`
+    SELECT count(*) AS violations FROM ${auditViolations}
+    WHERE ${auditViolations.startedAt} >= ${since} AND ${scopedSessions(auditViolations.sessionId, repositoryId)}
+      AND ${auditViolations.auditId} IN ${BASELINE_AUDITS}
+  `)[0]?.violations ?? 0;
+}
+
+/** A stored violation as it was recorded: its `mode` says Log when its audit logged it, whatever its rule's mode was. */
+function recordedViolation(payload: string, logged: number): CodeRuleViolation {
+  const violation = JSON.parse(payload) as CodeRuleViolation;
+  return logged === 1 ? { ...violation, mode: "log" } : violation;
 }
 
 /** A history row's place in newest-first order: audit start, then audit id (both descending), then report order. */
@@ -535,6 +560,8 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
     scopedSessions(auditViolations.sessionId, repositoryId),
     ruleId === null ? undefined : eq(auditViolations.ruleId, ruleId),
     sessionId === null ? undefined : eq(auditViolations.sessionId, sessionId),
+    // A baseline scan is the repository's, not the session's that ran it: still in a rule's history, not in the session's.
+    sessionId === null ? undefined : sql`${auditViolations.auditId} NOT IN ${BASELINE_AUDITS}`,
   );
   const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, historyCursorSchema);
   const continuing = after === undefined ? undefined : sql`(
@@ -544,13 +571,13 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
   )`;
   // The page and its total from one snapshot, so a commit between them cannot make them disagree.
   const { rows, total } = database.transaction(() => ({
-    rows: database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string; at: number; host: string | null }>(sql`
+    rows: database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string; at: number; logged: number; baseline: number; host: string | null }>(sql`
     SELECT
       json_extract(${audits.violations}, '$[' || page.ordinal || ']') AS payload,
       page.audit_id AS auditId, page.ordinal AS ordinal, page.session_id AS sessionId, page.started_at AS at,
-      ${sessions.host} AS host
+      page.logged AS logged, ${audits.baseline} AS baseline, ${sessions.host} AS host
     FROM (
-      SELECT ${auditViolations.auditId}, ${auditViolations.ordinal}, ${auditViolations.sessionId}, ${auditViolations.startedAt}
+      SELECT ${auditViolations.auditId}, ${auditViolations.ordinal}, ${auditViolations.sessionId}, ${auditViolations.startedAt}, ${auditViolations.logged}
       FROM ${auditViolations}
       WHERE ${and(matching, continuing)}
       ORDER BY ${auditViolations.startedAt} DESC, ${auditViolations.auditId} DESC, ${auditViolations.ordinal}
@@ -567,10 +594,11 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
   return {
     violations: shown.map(row => ({
       // The payload is this daemon's own serialized violation, re-read from the audit that wrote it.
-      violation: JSON.parse(row.payload) as CodeRuleViolation,
+      violation: recordedViolation(row.payload, row.logged),
       sessionId: row.sessionId,
       auditId: row.auditId,
       at: row.at,
+      baseline: row.baseline === 1,
       host: row.host,
     })),
     total,
@@ -716,6 +744,9 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number {
     return sessionsWithViolations(this.#database, since, repositoryIds);
   }
+  baselineViolations(since: number, repositoryIds?: readonly string[]): number {
+    return baselineViolations(this.#database, since, repositoryIds);
+  }
 
   latestSummary(sessionId: string): AuditSummary | undefined {
     return latestAuditSummary(this.#database, sessionId);
@@ -777,6 +808,10 @@ export class SqliteAuditReader implements AuditReader {
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number {
     const database = this.#database.open();
     return database === undefined ? 0 : sessionsWithViolations(database, since, repositoryIds ?? this.#repositoryId);
+  }
+  baselineViolations(since: number, repositoryIds?: readonly string[]): number {
+    const database = this.#database.open();
+    return database === undefined ? 0 : baselineViolations(database, since, repositoryIds ?? this.#repositoryId);
   }
 
   latestSummary(sessionId: string): AuditSummary | undefined {

@@ -26,7 +26,8 @@ export function violationKeySql(value: string): string {
 
 /**
  * The `audit_violations` rows of the audit a trigger holds as `NEW`, from its entries at ordinal `from` on: repeats
- * of a (rule, key) among them collapse onto the first copy, `logged` when any copy was in Log mode.
+ * of a (rule, key) among them collapse onto the first copy, `logged` when the audit ran in Log mode, which tells the
+ * agent nothing whatever its rules' modes, or any copy's rule was in Log mode.
  */
 const violationRows = (from: string): string => {
   const key = violationKeySql("violation.value");
@@ -37,7 +38,7 @@ const violationRows = (from: string): string => {
         json_extract(violation.value, '$.ruleId') AS rule_id,
         ${key} AS violation_key,
         row_number() OVER copies AS copy,
-        max(coalesce(json_extract(violation.value, '$.mode') = 'log', 0)) OVER copies AS logged
+        max(NEW.mode = 'log' OR coalesce(json_extract(violation.value, '$.mode') = 'log', 0)) OVER copies AS logged
       FROM json_each(NEW.violations_json) violation
       WHERE violation.key >= ${from}
       -- The whole partition: with ORDER BY alone the frame would end at the current row, and the first copy, the one

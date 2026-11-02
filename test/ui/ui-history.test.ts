@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { data, ui } from "../../ui/state.js";
-import { filterRanked, historyEmpty, historyRuleId, rankedRules } from "../../ui/history-model.js";
+import { filterRanked, historyEmpty, historyRuleId, rankedRules, violationSource } from "../../ui/history-model.js";
 import { parseRoute } from "../../ui/routes.js";
 
 const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 };
@@ -146,5 +146,15 @@ describe("what History says with no rule to list", () => {
 
     expect(rankedRules()).toEqual([]);
     expect(historyEmpty()).toBeNull();
+  });
+});
+
+describe("where a violation in History came from", () => {
+  it("names the baseline scan, with no session to open, because no session's work produced it", () => {
+    expect(violationSource({ sessionId: "s1", host: "claude-code", baseline: true })).toEqual({ label: "Baseline scan", sessionId: null });
+  });
+
+  it("is the session that reported it otherwise", () => {
+    expect(violationSource({ sessionId: "s-abcdef12", host: "claude-code", baseline: false })).toEqual({ label: "claude-abcdef12", sessionId: "s-abcdef12" });
   });
 });

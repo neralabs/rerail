@@ -8,7 +8,7 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
-import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
+import { auditViolations, audits, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
 
@@ -481,7 +481,11 @@ export class SqliteSessionReader {
           (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
           (SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = page.session_id
             ORDER BY ${events.sequence} DESC LIMIT 1) AS lastEventAt,
-          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount,
+          -- A baseline scan's violations are the repository's, not the work of the session that ran it. Log-only, they
+          -- are in the logged count too, so the steered count below needs no such step.
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)
+            - (SELECT count(*) FROM ${audits} baseline JOIN ${auditViolations} ON ${auditViolations.auditId} = baseline.audit_id
+              WHERE baseline.session_id = page.session_id AND baseline.baseline = 1) AS violationCount,
           -- Steered is everything not logged: counted as total minus logged, both index-only (the logged count reads the
           -- partial index audit_violations_key_logged); "logged = 0" would read every violation row of the session.
           (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)

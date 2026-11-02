@@ -5,13 +5,13 @@
  * steered tile opens Steered) narrow the list to the violations recorded on Steer or Block, or on Log.
  */
 import { h, setAttr, setText, setContent, syncChildren, icon } from "../dom.js";
-import { fmt, plural, dayLabel, daysAgo, shortSessionId } from "../format.js";
+import { fmt, plural, dayLabel, daysAgo } from "../format.js";
 import { data, ui, rangeLabel } from "../state.js";
 import { MODE_LABEL, ruleMode, messageText } from "../derive.js";
 import { loadMoreFindings, refreshNow } from "../poll.js";
 import { invalidate, loadMore } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
-import { OUTCOME_CHIPS, inRange, rankedRules, filterRanked, historyRuleId, historyTitle, historyOrigin, historyEmpty } from "../history-model.js";
+import { OUTCOME_CHIPS, inRange, rankedRules, filterRanked, historyRuleId, historyTitle, historyOrigin, historyEmpty, violationSource } from "../history-model.js";
 
 export const needs = ["rules", "packs", "activity", "findings"];
 
@@ -160,8 +160,11 @@ function updateViolation(node, item, told) {
   setAttr(diff, "hidden", !differs);
   setText(diff, differs ? x.message : "");
   const open = node.querySelector(".open");
-  setAttr(open, "data-i", x.sessionId);
-  setText(open, shortSessionId(x.sessionId, x.host));
+  const source = violationSource(x);
+  setAttr(open, "data-i", source.sessionId ?? "");
+  setAttr(open, "disabled", source.sessionId === null ? "" : null);
+  setAttr(open, "title", source.sessionId === null ? "Already in the code when Rerail first scanned this repo" : "Open this session");
+  setText(open, source.label);
 }
 
 /** The shown rule's loaded violations, by day; empty while its first page is still to come. */

@@ -213,6 +213,7 @@ declare module "*/ui/views/index.js" {
 declare module "*/ui/history-model.js" {
   export interface RankedRule { id: string; title: string; origin: string; count: number }
   export function filterRanked(ranked: RankedRule[], query: string): RankedRule[];
+  export function violationSource(x: { sessionId: string; host: string | null; baseline?: boolean }): { label: string; sessionId: string | null };
   export function historyOrigin(id: string): string;
   export function rankedRules(outcome?: "all" | "steered" | "logged"): RankedRule[];
   export function historyRuleId(ranked?: RankedRule[]): string | null;
@@ -271,6 +272,7 @@ declare module "*/ui/first-open.js" {
   export type FirstOpenState = "no-repo" | "missing" | "not-set-up" | "stopped" | "no-packs" | "packs-no-session" | "mature";
   export interface RepositoryFacts { scoped: boolean; missing: boolean; setUp: boolean; stopped: boolean; ruleCount: number; sessionsEver: number }
   export function firstOpenState(facts: RepositoryFacts): FirstOpenState;
+  export function baselineNote(violations: number | undefined): string;
   export function bannerFor(state: FirstOpenState, welcomeDismissed: boolean): "stopped" | "welcome" | null;
   export function overviewBody(facts: { ruleCount: number; sessionsEver: number; topCount: number }): "no-rules" | "no-sessions" | "no-violations" | "lists";
   export function steeredTally(activity: Record<string, { measured?: boolean; distinctViolations: number; loggedViolations?: number; rerails?: number }>): { steered: number; total: number };

@@ -162,8 +162,9 @@ function onTurnEnd(b, e, pl) {
 export function loadedFrom(sessionId) {
   const detail = data.sessionDetail.get(sessionId), slot = data.sessionFindings;
   const events = detail?.earlier ? detail.events[0]?.observedAt ?? Infinity : -Infinity;
-  // Violations of one audit share its start and may straddle a page: the oldest loaded start is not yet complete.
-  const violations = slot.owner === sessionId && slot.next !== null ? (slot.rows.at(-1)?.at ?? Infinity) + 1 : -Infinity;
+  // Violations of one audit share its start and may straddle a page. The oldest loaded audit still shows, with Load
+  // earlier counting what is left of it: hiding it until complete would leave an audit larger than a page blank.
+  const violations = slot.owner === sessionId && slot.next !== null ? slot.rows.at(-1)?.at ?? Infinity : -Infinity;
   return Math.max(events, violations);
 }
 

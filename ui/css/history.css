@@ -101,6 +101,7 @@ body[data-panel="open"] .hist > aside{display:none}
 .hist .ev .diff{display:block;margin-top:2px;font-size:12px;color:var(--muted-foreground);overflow-wrap:anywhere}
 .hist .ev .diff[hidden]{display:none}
 .hist .ev .open{font-size:12px;color:var(--brand-foreground);white-space:nowrap}
+.hist .ev .open:disabled{color:var(--muted-foreground);cursor:default}
 .hist .day{padding:10px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-foreground);display:flex;align-items:center;gap:8px}
 .hist .day::after{content:"";flex:1;height:1px;background:var(--border)}
 .hist .day + .ev{border-top:0}

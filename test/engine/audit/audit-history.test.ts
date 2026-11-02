@@ -3,12 +3,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
+import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { SqliteAuditStore, type RuleActivityTotals } from "../../../src/engine/audit/audit-store.js";
 import type { CodeRuleViolation } from "../../../src/engine/code-rule/code-rule.js";
 import { openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
 import { RERAIL_BASELINE_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
-import { SqliteSessionStore } from "../../../src/runtime/index.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -39,12 +40,12 @@ const scopeSql = (repositories: readonly string[] | undefined): string => reposi
 
 function oracleActivity(client: Database.Database, since: number, repositories?: readonly string[]): Map<string, RuleActivityTotals> {
   const rows = client.prepare(`
-    WITH in_range AS (SELECT audit_id, session_id, started_at, violations_json, rule_revisions_json FROM audits audit
+    WITH in_range AS (SELECT audit_id, session_id, started_at, mode, violations_json, rule_revisions_json FROM audits audit
       WHERE started_at >= ? AND ${scopeSql(repositories)}),
     violations AS (
       SELECT json_extract(violation.value, '$.ruleId') AS ruleId,
         count(DISTINCT ${KEY("violation.value")}) AS distinctViolations,
-        count(DISTINCT CASE WHEN json_extract(violation.value, '$.mode') = 'log' THEN ${KEY("violation.value")} END) AS loggedViolations,
+        count(DISTINCT CASE WHEN audit.mode = 'log' OR json_extract(violation.value, '$.mode') = 'log' THEN ${KEY("violation.value")} END) AS loggedViolations,
         count(DISTINCT audit.session_id) AS sessions, max(audit.started_at) AS lastSeenAt
       FROM in_range audit, json_each(audit.violations_json) violation GROUP BY ruleId),
     audited AS (
@@ -65,7 +66,10 @@ interface HistoryRow { auditId: string; sessionId: string; at: number; ruleId: s
 function oracleHistory(client: Database.Database, since: number, repositories?: readonly string[]): HistoryRow[] {
   return client.prepare(`
     SELECT payload, auditId, sessionId, at, ruleId FROM (
-      SELECT violation.value AS payload, audit.audit_id AS auditId, audit.session_id AS sessionId, audit.started_at AS at,
+      SELECT CASE WHEN audit.mode = 'log' OR max(coalesce(json_extract(violation.value, '$.mode') = 'log', 0))
+          OVER (PARTITION BY audit.audit_id, json_extract(violation.value, '$.ruleId'), ${KEY("violation.value")}) = 1
+        THEN json_set(violation.value, '$.mode', 'log') ELSE violation.value END AS payload,
+        audit.audit_id AS auditId, audit.session_id AS sessionId, audit.started_at AS at,
         json_extract(violation.value, '$.ruleId') AS ruleId,
         row_number() OVER (PARTITION BY audit.audit_id, json_extract(violation.value, '$.ruleId'), ${KEY("violation.value")} ORDER BY violation.key) AS copy
       FROM audits audit, json_each(audit.violations_json) violation
@@ -261,6 +265,152 @@ describe("derived audit history", () => {
       store.close();
       database.$client.close();
     }
+  });
+
+  describe("a Log-mode audit", () => {
+    const steerRule = { id: "v", ruleId: "rule-a", clauseId: "clause", code: "even", mode: "steer", message: "m", path: "src/a.ts", captures: {}, variables: {} } as CodeRuleViolation;
+    const logAudit = (store: SqliteAuditStore): void => {
+      const auditId = store.start({
+        sessionId: "s1", workspaceRoot: "/w", scope: "repository", mode: "log", revision: 1, catalogRevision: null,
+        ruleRevisions: [{ ruleId: "rule-a", revision: 1 }], paths: [],
+      });
+      store.finish(auditId, { status: "completed", violations: [steerRule] });
+    };
+
+    it("records a Steer rule's violation as logged, because it told the agent nothing", async () => {
+      const path = await temporaryDatabase();
+      const database = openRerailDatabase(path);
+      const store = new SqliteAuditStore(path);
+      const sessions = new SqliteSessionReader(path);
+      try {
+        openSessions(path);
+        logAudit(store);
+        expect(store.ruleActivity(0).get("rule-a")).toMatchObject({ distinctViolations: 1, loggedViolations: 1 });
+        expect(store.listViolationHistory({ since: 0 }).violations[0]!.violation.mode).toBe("log");
+        expect(sessions.sessionPage({ limit: 50 }).sessions.find(row => row.sessionId === "s1")).toMatchObject({ violationCount: 1, steeredViolations: 0 });
+      } finally {
+        sessions.close();
+        store.close();
+        database.$client.close();
+      }
+    });
+
+    it("is corrected when a file written with the earlier triggers is upgraded, and new audits use the new ones", async () => {
+      const path = await temporaryDatabase();
+      const database = openRerailDatabase(path);
+      const store = new SqliteAuditStore(path);
+      try {
+        openSessions(path);
+        logAudit(store);
+        // As an earlier build left it: the row logged by the rule's mode, the trigger not reading the audit's, the step not run.
+        const client = database.$client;
+        client.exec(`UPDATE audit_violations SET logged = 0; UPDATE rule_violation_rollup SET last_logged_at = NULL;
+          DROP TRIGGER audits_history_insert; CREATE TRIGGER audits_history_insert AFTER INSERT ON audits BEGIN SELECT 1; END;
+          DELETE FROM schema_migrations WHERE id = 'audit-history-log-mode-audits';`);
+      } finally {
+        store.close();
+        database.$client.close();
+      }
+      const upgraded = openRerailDatabase(path);
+      const after = new SqliteAuditStore(path);
+      try {
+        expect(after.ruleActivity(0).get("rule-a")).toMatchObject({ distinctViolations: 1, loggedViolations: 1 });
+        const trigger = upgraded.$client.prepare("SELECT sql FROM sqlite_master WHERE name = 'audits_history_insert'").get() as { sql: string };
+        expect(trigger.sql).toContain("NEW.mode = 'log'");
+      } finally {
+        after.close();
+        upgraded.$client.close();
+      }
+    });
+  });
+
+  describe("a repository's baseline scan", () => {
+    const found = (id: string) => ({ id, ruleId: "rule-a", clauseId: "clause", code: "even", mode: "steer", message: "m", path: `src/${id}.ts`, captures: {}, variables: {} }) as CodeRuleViolation;
+    const audit = (store: SqliteAuditStore, mode: "log" | "steer", ...ids: string[]): string => {
+      const auditId = store.start({
+        sessionId: "s1", workspaceRoot: "/w", scope: mode === "log" ? "repository" : "touched-files", mode, revision: 1, catalogRevision: null,
+        ruleRevisions: [{ ruleId: "rule-a", revision: 1 }], paths: [],
+      });
+      store.finish(auditId, { status: "completed", violations: ids.map(found) });
+      return auditId;
+    };
+
+    /** The session that happened to start first, holding the repository's baseline; `work` is what it found itself. */
+    async function scanned(work: readonly string[]) {
+      const path = await temporaryDatabase();
+      const database = openRerailDatabase(path);
+      const store = new SqliteAuditStore(path);
+      const controls = new SqliteAuditControlStore(path);
+      const sessions = new SqliteSessionReader(path);
+      openSessions(path);
+      controls.finishRepositoryAudit("s1", "/w", audit(store, "log", "old-1", "old-2"), "completed");
+      if (work.length > 0) audit(store, "steer", ...work);
+      const row = () => sessions.sessionPage({ limit: 50 }).sessions.find(session => session.sessionId === "s1")!;
+      const close = () => { sessions.close(); controls.close(); store.close(); database.$client.close(); };
+      return { store, row, close };
+    }
+
+    it("is not the work of the session that happened to start first", async () => {
+      const { store, row, close } = await scanned([]);
+      try {
+        expect(row()).toMatchObject({ violationCount: 0, steeredViolations: 0 });
+        expect(store.listViolationHistory({ since: 0, sessionId: "s1" })).toMatchObject({ total: 0, violations: [] });
+        expect(store.sessionsWithViolations(0)).toBe(0);
+      } finally {
+        close();
+      }
+    });
+
+    it("leaves what that session found itself counted", async () => {
+      const { store, row, close } = await scanned(["mine"]);
+      try {
+        expect(row()).toMatchObject({ violationCount: 1, steeredViolations: 1 });
+        expect(store.listViolationHistory({ since: 0, sessionId: "s1" }).violations.map(entry => entry.violation.id)).toEqual(["mine"]);
+        expect(store.sessionsWithViolations(0)).toBe(1);
+      } finally {
+        close();
+      }
+    });
+
+    it("stays in the rule's history, marked as the baseline, and is counted for the repository", async () => {
+      const { store, close } = await scanned(["mine"]);
+      try {
+        const history = store.listViolationHistory({ since: 0, ruleId: "rule-a" });
+        expect(history.violations.map(entry => [entry.violation.id, entry.baseline])).toEqual([["mine", false], ["old-1", true], ["old-2", true]]);
+        expect(store.baselineViolations(0)).toBe(2);
+        expect(store.baselineViolations(0, [REPOSITORY_B])).toBe(0);
+      } finally {
+        close();
+      }
+    });
+
+    it("marks the baseline a file already holds when it is upgraded, not a scan someone asked for", async () => {
+      const path = await temporaryDatabase();
+      const database = openRerailDatabase(path);
+      const store = new SqliteAuditStore(path);
+      let baseline: string;
+      try {
+        openSessions(path);
+        baseline = audit(store, "log", "old");
+        const asked = audit(store, "log", "asked");
+        const link = database.$client.prepare(`INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at)
+          VALUES (?, 's1', ?, 'completed', 1)`);
+        link.run("/w", baseline);
+        link.run("/w2", asked);
+        database.$client.prepare(`INSERT INTO audit_requests (id, session_id, workspace_root, scope, mode, paths_json, status, created_at, audit_ids_json)
+          VALUES ('r', 's1', '/w2', 'repository', 'log', '[]', 'completed', 1, json_array(?))`).run(asked);
+        database.$client.exec("UPDATE audits SET baseline = 0; DELETE FROM schema_migrations WHERE id = 'audits-baseline';");
+      } finally {
+        store.close();
+        database.$client.close();
+      }
+      const upgraded = openRerailDatabase(path);
+      try {
+        expect(upgraded.$client.prepare("SELECT audit_id AS auditId FROM audits WHERE baseline = 1").all()).toEqual([{ auditId: baseline }]);
+      } finally {
+        upgraded.$client.close();
+      }
+    });
   });
 
   it("follows an older writer that replaces an audit with INSERT OR REPLACE, renames it, then deletes it", async () => {

@@ -10,7 +10,7 @@ import { data, ui, activityAllOf, fires, rangeLabel, repoName, rulesArray, ruleS
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
-import { bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules } from "../first-open.js";
+import { baselineNote, bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules } from "../first-open.js";
 
 export const needs = ["rules", "packs", "activity", "recentSessions"];
 
@@ -251,7 +251,7 @@ function build() {
 
 function renderLists(top, repo) {
   const label = rangeLabel();
-  setText(page.topNote, `Rules ranked by violations logged, ${label}.`);
+  setText(page.topNote, [`Rules ranked by violations logged, ${label}.`, baselineNote(data.activitySessions?.baselineViolations)].filter(Boolean).join(" "));
   syncChildren(page.topList, top, item => item.id, ruleRow, updateRuleRow);
 
   const recent = data.recentSessions;

@@ -3,6 +3,7 @@
  * first-open state (which banner, which empty block), the tiles' figures and the Most violations logged ranking.
  * Nothing here reads `data` or `ui`; `views/overview.js` passes in what it needs.
  */
+import { fmt } from "./format.js";
 
 /**
  * @typedef {"no-repo" | "missing" | "not-set-up" | "stopped" | "no-packs" | "packs-no-session" | "mature"} FirstOpenState
@@ -55,6 +56,12 @@ export function overviewBody({ ruleCount, sessionsEver, topCount }) {
   if (ruleCount === 0) return "no-rules";
   if (topCount > 0) return "lists";
   return sessionsEver === 0 ? "no-sessions" : "no-violations";
+}
+
+/** What the Overview adds under its rule ranking when a baseline scan is in range, so those do not read as a session's work. */
+export function baselineNote(violations) {
+  if (!violations) return "";
+  return `${fmt(violations)} ${violations === 1 ? "was" : "were"} already in the code when Rerail first scanned this repo.`;
 }
 
 /**

@@ -255,6 +255,7 @@ export class SqliteAuditControlStore {
     status: "completed" | "failed" | "interrupted",
     error: string | null = null,
   ): void {
+    if (auditId !== null) this.#database.update(audits).set({ baseline: true }).where(eq(audits.auditId, auditId)).run();
     this.#database.update(repositoryAudits).set({
       auditId: auditId, status, error, finishedAt: Date.now(),
     }).where(and(

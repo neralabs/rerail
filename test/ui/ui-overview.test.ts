@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules, LIVE_MINUTES, TOP_RULES,
+  baselineNote, bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules, LIVE_MINUTES, TOP_RULES,
   type RepositoryFacts,
 } from "../../ui/first-open.js";
 
@@ -130,5 +130,17 @@ describe("a recent session's live state", () => {
   it("measures from the start when no event was recorded, and is none once ended", () => {
     expect(liveState({ endedAt: null, startedAt: now - 5 * MINUTE, lastEventAt: null }, now)).toBe("live");
     expect(liveState({ endedAt: now - MINUTE, startedAt: now - 5 * MINUTE, lastEventAt: now - MINUTE }, now)).toBeNull();
+  });
+});
+
+describe("the note under Most violations logged", () => {
+  it("says how many were already in the code, so they do not read as a session's work", () => {
+    expect(baselineNote(840)).toBe("840 were already in the code when Rerail first scanned this repo.");
+    expect(baselineNote(1)).toBe("1 was already in the code when Rerail first scanned this repo.");
+  });
+
+  it("says nothing without a baseline scan in the range", () => {
+    expect(baselineNote(0)).toBe("");
+    expect(baselineNote(undefined)).toBe("");
   });
 });

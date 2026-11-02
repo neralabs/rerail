@@ -387,7 +387,10 @@ settings were saved keeps the scope they name. Saved scope/mode/strategy changes
 affect subsequent automatic evaluations,
 including running sessions; they do not rewrite a running evaluation or its
 recorded results. Every repository in retained scan history receives one
-automatic full-repository, `log`-only baseline. When Rerail becomes active in a
+automatic full-repository, `log`-only baseline. It reports what the code already
+held rather than a session's work, so it counts neither for the session that ran it
+nor in that session's `violations_list`; a rule's history keeps its violations,
+with `baseline: true`. When Rerail becomes active in a
 historical repository without that baseline, it creates the repository audit before
 continuing with ordinary session evaluation. That automatic baseline is never
 repeated. A later user-requested scan becomes the latest result shown on

@@ -4,6 +4,7 @@
  */
 import { data, ui, sinceFor, titleOf, attachedPackOf, packOfRule } from "./state.js";
 import { isByRerail } from "./derive.js";
+import { shortSessionId } from "./format.js";
 
 /** History by rule's chips: the `ui.histOutcome` value and its label. */
 export const OUTCOME_CHIPS = [["all", "All"], ["steered", "Steered"], ["logged", "Logged"]];
@@ -80,4 +81,9 @@ export function historyEmpty(ranked = rankedRules("all")) {
   const everLogged = Object.values(sinceFor() === 0 ? data.activity : data.activityAll)
     .some(a => a.measured !== false && a.distinctViolations > 0);
   return everLogged ? { kind: "nothingInRange" } : { kind: "noViolations", sessions };
+}
+
+/** Where a violation came from: the session that reported it, to open, or the baseline scan, which is no session's work. */
+export function violationSource(x) {
+  return x.baseline ? { label: "Baseline scan", sessionId: null } : { label: shortSessionId(x.sessionId, x.host), sessionId: x.sessionId };
 }

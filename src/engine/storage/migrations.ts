@@ -97,6 +97,40 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       addColumn(database, "repositories", "follow_gitignore", "integer DEFAULT true NOT NULL");
     },
   },
+  {
+    // A Log-mode audit's violations are logged whatever their rules' modes: it tells the agent nothing. The triggers
+    // that decide it are dropped for the DDL right after to create again, and the rows they already wrote corrected.
+    // No floor: an older build reads the same columns, and its writes to `audits` go through the new triggers.
+    id: "audit-history-log-mode-audits",
+    up(database) {
+      if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_violations'`).length === 0) return;
+      for (const trigger of ["audits_history_insert", "audits_history_violations_append", "audits_history_violations_update"]) {
+        database.run(sql.raw(`DROP TRIGGER IF EXISTS \`${trigger}\``));
+      }
+      database.run(sql.raw(`UPDATE audit_violations SET logged = 1
+        WHERE logged = 0 AND audit_id IN (SELECT audit_id FROM audits WHERE mode = 'log')`));
+      database.run(sql.raw(`UPDATE rule_violation_rollup SET last_logged_at = (
+          SELECT max(started_at) FROM audit_violations violation
+          WHERE violation.session_id = rule_violation_rollup.session_id AND violation.rule_id = rule_violation_rollup.rule_id
+            AND violation.violation_key = rule_violation_rollup.violation_key AND violation.logged = 1)
+        WHERE session_id IN (SELECT session_id FROM audits WHERE mode = 'log')`));
+    },
+  },
+  {
+    // Which audits are a repository's automatic first scan, so they stop counting as the work of the session that ran
+    // them. An existing file knows it from `repository_audits`, less the scans someone asked for, which also land there;
+    // a baseline such a scan has since replaced there can no longer be told apart and stays with its session. No floor:
+    // an older build never reads the column, and its inserts take the default.
+    id: "audits-baseline",
+    up(database) {
+      addColumn(database, "audits", "baseline", "integer DEFAULT false NOT NULL");
+      const held = database.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('audits', 'repository_audits', 'audit_requests')`);
+      if (held.length < 3) return;
+      database.run(sql.raw(`UPDATE audits SET baseline = 1
+        WHERE audit_id IN (SELECT audit_id FROM repository_audits)
+          AND NOT EXISTS (SELECT 1 FROM audit_requests request, json_each(request.audit_ids_json) asked WHERE asked.value = audits.audit_id)`));
+    },
+  },
 ];
 
 /** The derived audit history tables as `audit-history-derived-tables` introduced them. */

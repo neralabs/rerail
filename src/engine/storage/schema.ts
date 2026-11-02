@@ -358,9 +358,12 @@ export const audits = sqliteTable(
     status: text("status", { enum: AUDIT_STATUSES }).$type<AuditStatus>().notNull(),
     violations: text("violations_json", { mode: "json" }).$type<CodeRuleViolation[]>().notNull(),
     failures: text("failures_json", { mode: "json" }).$type<AuditFailure[]>().notNull(),
+    /** The repository's automatic first scan: what its code already held, not the work of the session that ran it. */
+    baseline: integer("baseline", { mode: "boolean" }).notNull().default(false),
   },
   table => [
     index("audits_session_started").on(table.sessionId, table.startedAt, table.auditId),
+    index("audits_baseline").on(table.auditId).where(sql`${table.baseline} = 1`),
     index("audits_status").on(table.status),
     index("audits_scope").on(table.scope),
     index("audits_mode").on(table.mode),

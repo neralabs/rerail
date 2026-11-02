@@ -217,6 +217,19 @@ describe("the selected session's violations", () => {
   });
 });
 
+describe("a session's one large audit", () => {
+  it("shows the page of it that has loaded, rather than nothing until the last page", async () => {
+    answer = url => {
+      const offset = Number(url.searchParams.get("cursor") ?? 0), limit = Number(url.searchParams.get("limit"));
+      const rows = Array.from({ length: 840 }, (_, n) => violation(n, "s1", 5_000)).slice(offset, offset + limit);
+      return { violations: rows, total: 840, nextCursor: offset + limit < 840 ? String(offset + limit) : null };
+    };
+    data.sessionDetail.set("s1", { head: null, gaps: null, events: [], nextAfter: 0, loaded: true, earlier: false, loading: null });
+    await loadSessionFindings("s1");
+    expect(sessionCorrections("s1")).toHaveLength(200);
+  });
+});
+
 describe("a session's transcript", () => {
   /** A session of 1,010 events and 300 violations, the newest violation at the last event. */
   function sessionDaemon(url: URL): unknown {
@@ -251,8 +264,8 @@ describe("a session's transcript", () => {
     await loadEarlier("s1");
     expect(eventQueries().at(-1)).toBe("?before=511");
     expect(sequences()[0]).toBe(11);
-    // Now the violations limit the window, up to (not including) their oldest loaded audit start.
-    expect(sessionCorrections("s1")).toHaveLength(199);
+    // Now the violations limit the window, as far back as their oldest loaded audit start.
+    expect(sessionCorrections("s1")).toHaveLength(200);
 
     // The violations reach back less far: their next page, and no events request.
     await loadEarlier("s1");
