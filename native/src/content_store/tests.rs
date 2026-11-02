@@ -1260,6 +1260,35 @@ fn hold_writer(path: &std::path::Path) -> Connection {
     blocker
 }
 
+/// The slice's push writes each document's tape with `put_tape` on the push's thread, while the
+/// overlay's background writer holds the write lock on its own thread's connection for a layer
+/// (open item O70, notes/t18-slice-at-scale.md). The store's other writes wait another writer out
+/// under `retry_busy`; `put_tape` begins its transaction once, within one busy timeout, so a layer
+/// write that outlasts the busy timeout fails the push `Busy` (S8 at 2,650 files, every whole
+/// memory47 worktree).
+#[test]
+#[ignore = "O70: put_tape does not wait out another writer"]
+fn a_tape_write_waits_out_another_writer_as_the_store_writes_do() {
+    let _state = BusyTestState;
+    BUSY_TIMEOUT_OVERRIDE.set(Some(Duration::from_millis(20)));
+    let (path, store) = store("tape-waits-writer");
+    let source = store.put_source(b"source", &[]).unwrap();
+    // Another writer holds the lock for ten busy timeouts, then commits.
+    let held = |holder: Connection| {
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            holder.execute_batch("COMMIT").unwrap();
+        })
+    };
+    let writer = held(hold_writer(&path));
+    store.write_derivation_layer(&[], &[]).expect("a retried write waits the writer out");
+    writer.join().unwrap();
+    let writer = held(hold_writer(&path));
+    let tape = store.put_tape(source, 1, 1, 1, b"tape");
+    writer.join().unwrap();
+    assert!(tape.is_ok(), "{tape:?}");
+}
+
 /// How much of a deadline a test's busy attempt spends without sleeping it (`BUSY_ATTEMPT_HOOK`).
 const SPENT_PER_ATTEMPT: Duration = Duration::from_millis(600);
 
