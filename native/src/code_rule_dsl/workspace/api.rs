@@ -129,7 +129,7 @@ impl CodeRuleDslWorkspace {
     /// rule per folder of the checkout (`mode: null` is off there; `suppressions: "ignore"` reports
     /// violations a linter's suppression comment would silence, `"honour"` or no `suppressions`
     /// lets the comment silence them); the compiled code rule itself is never changed.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn add_code_rule(
         &mut self,
         compiled: &CompiledCodeRuleDsl,
@@ -291,7 +291,7 @@ impl CodeRuleDslWorkspace {
         self.package_manifests.load(Ordering::Acquire)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn try_apply(&self, request_json: String) -> Result<Option<String>> {
         if self.closed.load(Ordering::Acquire) || request_json.len() > 8192 {
             return Ok(None);
@@ -548,7 +548,7 @@ impl CodeRuleDslWorkspace {
 
     /// A snapshot-qualified reference to the deepest node spanning exactly `startByte..endByte`
     /// in `path`'s current version, or null when no node spans exactly that range.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn node_reference(
         &self,
         path: String,
@@ -566,7 +566,7 @@ impl CodeRuleDslWorkspace {
 
     /// The node a reference names, as JSON, loading its file through the storage contract. A
     /// reference whose file version is no longer current is refused.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn resolve_node_reference(&self, reference: String) -> Result<String> {
         let reference: documents::NodeReference =
             serde_json::from_str(&reference).map_err(json_error)?;
@@ -739,74 +739,76 @@ impl Task for WorkspaceStorageTask {
     type JsValue = StorageAttachment;
 
     fn compute(&mut self) -> Result<StorageAttachment> {
-        check_closed(&self.closed)?;
-        // A workspace Git cannot describe (no repository, an unreadable untracked directory, a
-        // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
-        // and interactive edits evaluate without reuse. Only a root outside any repository is
-        // expected; any other cause is reported, so reuse is never lost silently.
-        let discovery_started = Instant::now();
-        let discovered = crate::git_workspace::discover(std::path::Path::new(&self.root));
-        let discovery_milliseconds = discovery_started.elapsed().as_secs_f64() * 1000.0;
-        let discovered = match discovered {
-            Ok(discovered) => discovered,
-            Err(error) => {
-                return Ok(StorageAttachment {
-                    attached: false,
-                    reason: (!error.is_no_repository()).then(|| error.to_string()),
-                    discovery_milliseconds,
-                    publication_milliseconds: 0.0,
-                });
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            check_closed(&self.closed)?;
+            // A workspace Git cannot describe (no repository, an unreadable untracked directory, a
+            // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
+            // and interactive edits evaluate without reuse. Only a root outside any repository is
+            // expected; any other cause is reported, so reuse is never lost silently.
+            let discovery_started = Instant::now();
+            let discovered = crate::git_workspace::discover(std::path::Path::new(&self.root));
+            let discovery_milliseconds = discovery_started.elapsed().as_secs_f64() * 1000.0;
+            let discovered = match discovered {
+                Ok(discovered) => discovered,
+                Err(error) => {
+                    return Ok(StorageAttachment {
+                        attached: false,
+                        reason: (!error.is_no_repository()).then(|| error.to_string()),
+                        discovery_milliseconds,
+                        publication_milliseconds: 0.0,
+                    });
+                }
+            };
+            // A busy store is a cache miss: the workspace runs without reuse, and says why.
+            let publication_started = Instant::now();
+            let attached = attach_storage(
+                &self.root,
+                discovered,
+                std::mem::take(&mut self.store_path),
+                Arc::clone(&self.secret_names),
+            )?;
+            let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
+            let context = match attached {
+                Attached::Storage(context) => context,
+                Attached::Busy(reason) => {
+                    return Ok(StorageAttachment {
+                        attached: false,
+                        reason: Some(reason),
+                        discovery_milliseconds,
+                        publication_milliseconds,
+                    });
+                }
+            };
+            let guard = match self.state.lock() {
+                Ok(guard) => guard,
+                Err(error) => {
+                    discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
+                    return Err(invalid("policy workspace is unavailable"));
+                }
+            };
+            // A close that lands while this holds the lock cannot clear the state; the lease does on drop.
+            let mut state = StateLease {
+                guard: Some(guard),
+                mutex: &self.state,
+                closed: &self.closed,
+            };
+            check_closed(&self.closed)?;
+            if state.revision != 0 || state.storage.is_some() {
+                return Err(invalid(
+                    "storage must be attached before the workspace's first apply",
+                ));
             }
-        };
-        // A busy store is a cache miss: the workspace runs without reuse, and says why.
-        let publication_started = Instant::now();
-        let attached = attach_storage(
-            &self.root,
-            discovered,
-            std::mem::take(&mut self.store_path),
-            Arc::clone(&self.secret_names),
-        )?;
-        let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
-        let context = match attached {
-            Attached::Storage(context) => context,
-            Attached::Busy(reason) => {
-                return Ok(StorageAttachment {
-                    attached: false,
-                    reason: Some(reason),
-                    discovery_milliseconds,
-                    publication_milliseconds,
-                });
+            state.storage = Some(context);
+            #[cfg(test)]
+            if let Some(on_attached) = ON_STORAGE_ATTACHED.take() {
+                on_attached();
             }
-        };
-        let guard = match self.state.lock() {
-            Ok(guard) => guard,
-            Err(error) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                return Err(invalid("policy workspace is unavailable"));
-            }
-        };
-        // A close that lands while this holds the lock cannot clear the state; the lease does on drop.
-        let mut state = StateLease {
-            guard: Some(guard),
-            mutex: &self.state,
-            closed: &self.closed,
-        };
-        check_closed(&self.closed)?;
-        if state.revision != 0 || state.storage.is_some() {
-            return Err(invalid(
-                "storage must be attached before the workspace's first apply",
-            ));
-        }
-        state.storage = Some(context);
-        #[cfg(test)]
-        if let Some(on_attached) = ON_STORAGE_ATTACHED.take() {
-            on_attached();
-        }
-        Ok(StorageAttachment {
-            attached: true,
-            reason: None,
-            discovery_milliseconds,
-            publication_milliseconds,
+            Ok(StorageAttachment {
+                attached: true,
+                reason: None,
+                discovery_milliseconds,
+                publication_milliseconds,
+            })
         })
     }
 
@@ -830,10 +832,12 @@ impl Task for WorkspaceApplyTask {
     type Output = ResultText;
     type JsValue = ResultText;
     fn compute(&mut self) -> Result<ResultText> {
-        let _slot = cpu_slot()
-            .try_lock()
-            .map_err(|_| invalid("WORKSPACE_BUSY"))?;
-        self.apply_with_slot()
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            let _slot = cpu_slot()
+                .try_lock()
+                .map_err(|_| invalid("WORKSPACE_BUSY"))?;
+            self.apply_with_slot()
+        })
     }
     fn resolve(&mut self, _env: Env, output: ResultText) -> Result<ResultText> {
         check_closed(&self.closed)?;
@@ -1238,26 +1242,28 @@ impl Task for WorkspaceResultPageTask {
     type JsValue = String;
 
     fn compute(&mut self) -> Result<String> {
-        if self.maximum_bytes == 0 || self.maximum_bytes > 64 * 1024 * 1024 {
-            return Err(invalid(
-                "result page limit must be between 1 byte and 64 MiB",
-            ));
-        }
-        check_closed(&self.closed)?;
-        let guard = match self.state.lock() {
-            Ok(guard) => guard,
-            Err(error) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                return Err(invalid("policy workspace is unavailable"));
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            if self.maximum_bytes == 0 || self.maximum_bytes > 64 * 1024 * 1024 {
+                return Err(invalid(
+                    "result page limit must be between 1 byte and 64 MiB",
+                ));
             }
-        };
-        let mut state = StateLease {
-            guard: Some(guard),
-            mutex: &self.state,
-            closed: &self.closed,
-        };
-        check_closed(&self.closed)?;
-        serialize_result_page(&mut state, self.cursor, self.maximum_bytes)
+            check_closed(&self.closed)?;
+            let guard = match self.state.lock() {
+                Ok(guard) => guard,
+                Err(error) => {
+                    discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
+                    return Err(invalid("policy workspace is unavailable"));
+                }
+            };
+            let mut state = StateLease {
+                guard: Some(guard),
+                mutex: &self.state,
+                closed: &self.closed,
+            };
+            check_closed(&self.closed)?;
+            serialize_result_page(&mut state, self.cursor, self.maximum_bytes)
+        })
     }
 
     fn resolve(&mut self, _env: Env, output: String) -> Result<String> {
@@ -1374,61 +1380,63 @@ impl Task for WorkspaceCompletionTask {
     type JsValue = ();
 
     fn compute(&mut self) -> Result<()> {
-        check_closed(&self.closed)?;
-        // One deadline for the publication under the lock and the completion write after it,
-        // so an apply waiting on the lock waits at most one.
-        let _deadline = OperationDeadline::enter();
-        let (storage, catalog, revision, server_graph) = {
-            let mut state = self.lock_state()?;
-            let Some(storage) = state.storage.clone() else {
-                return Ok(());
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            check_closed(&self.closed)?;
+            // One deadline for the publication under the lock and the completion write after it,
+            // so an apply waiting on the lock waits at most one.
+            let _deadline = OperationDeadline::enter();
+            let (storage, catalog, revision, server_graph) = {
+                let mut state = self.lock_state()?;
+                let Some(storage) = state.storage.clone() else {
+                    return Ok(());
+                };
+                if state.store_cooling_down() {
+                    return Err(invalid(StoreError::Busy.to_string()));
+                }
+                let catalog = candidate_catalog(&state.code_rules)?;
+                // Files a busy store left unpublished are published before the completion is
+                // recorded; a store that stays busy keeps them unpublished and reports busy.
+                publish_unpublished(&mut state, &storage, &self.closed)?;
+                if state.store_cooling_down() {
+                    return Err(invalid(StoreError::Busy.to_string()));
+                }
+                let server_graph = state
+                    .code_rules
+                    .iter()
+                    .any(|code_rule| code_rule.reads_server_graph());
+                (storage, catalog, i64::from(state.revision), server_graph)
             };
-            if state.store_cooling_down() {
-                return Err(invalid(StoreError::Busy.to_string()));
-            }
-            let catalog = candidate_catalog(&state.code_rules)?;
-            // Files a busy store left unpublished are published before the completion is
-            // recorded; a store that stays busy keeps them unpublished and reports busy.
-            publish_unpublished(&mut state, &storage, &self.closed)?;
-            if state.store_cooling_down() {
-                return Err(invalid(StoreError::Busy.to_string()));
-            }
-            let server_graph = state
-                .code_rules
-                .iter()
-                .any(|code_rule| code_rule.reads_server_graph());
-            (storage, catalog, i64::from(state.revision), server_graph)
-        };
-        let completed_at = unix_seconds()?;
-        let written = if let Some(repository) = &storage.repository {
-            let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(
-                repository.worktree_root.join(&storage.repository_prefix),
-            )
-            .reading_server_graphs(server_graph);
-            let directories =
-                reusable_directories(repository, &storage.repository_prefix, &mut manifests);
-            storage.store.complete_directories(
-                WorkspaceCompletion {
-                    workspace_id: storage.workspace_id,
+            let completed_at = unix_seconds()?;
+            let written = if let Some(repository) = &storage.repository {
+                let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(
+                    repository.worktree_root.join(&storage.repository_prefix),
+                )
+                .reading_server_graphs(server_graph);
+                let directories =
+                    reusable_directories(repository, &storage.repository_prefix, &mut manifests);
+                storage.store.complete_directories(
+                    WorkspaceCompletion {
+                        workspace_id: storage.workspace_id,
+                        revision,
+                        completed_at,
+                    },
+                    catalog,
+                    &directories,
+                )
+            } else {
+                storage.store.complete_workspace_revision(
+                    storage.workspace_id,
                     revision,
+                    catalog,
                     completed_at,
-                },
-                catalog,
-                &directories,
-            )
-        } else {
-            storage.store.complete_workspace_revision(
-                storage.workspace_id,
-                revision,
-                catalog,
-                completed_at,
-            )
-        };
-        if matches!(written, Err(StoreError::Busy)) {
-            self.lock_state()?
-                .note_store_busy("while recording repository reuse");
-        }
-        written.map_err(|error| invalid(error.to_string()))
+                )
+            };
+            if matches!(written, Err(StoreError::Busy)) {
+                self.lock_state()?
+                    .note_store_busy("while recording repository reuse");
+            }
+            written.map_err(|error| invalid(error.to_string()))
+        })
     }
 
     fn resolve(&mut self, _env: Env, output: ()) -> Result<()> {

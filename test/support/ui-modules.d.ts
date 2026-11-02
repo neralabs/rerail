@@ -249,8 +249,12 @@ declare module "*/ui/settings-model.js" {
     tone: "on" | "warn" | "off" | "";
     command: { text: string; label: string } | null;
     problem?: string;
+    data?: { text: string; warn: boolean };
   }
-  export function agentStatus(agent: { id: string; name: string; found: boolean; connected: boolean; problem: string | null }): AgentStatus;
+  export function agentStatus(agent: {
+    id: string; name: string; found: boolean; connected: boolean; problem: string | null;
+    rerailData: { access: "kept-out" | "file-tools" | "open"; why: string };
+  }): AgentStatus;
   export function installedLabel(ms: number | null | undefined): string | null;
 }
 

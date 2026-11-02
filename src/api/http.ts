@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { zodToOpenAPIRegistry, type ZodOpenAPIMetadata } from "@asteasolutions/zod-to-openapi";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
@@ -20,7 +20,7 @@ import { semanticSchemaComponents } from "../engine/code-rule/code-rule-schema-s
 
 import { conversationRuleSchema, matchConditionSchema, sampleSourceSchema } from "../engine/catalog/rule-schema.js";
 import { auditControlsSchema, auditRequestSchema } from "../engine/audit/audit-control-schema.js";
-import { DAEMON_ACCESS_HEADER } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_HEADER, sameSecret } from "../runtime/daemon-control.js";
 import { ApiError, invokeOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { eventRecordSchema, auditRecordSchema, presentationPreferenceSchema } from "./operations.js";
 import { deciderSchema, effectiveRuleSchema, libraryRuleRecordSchema, repositorySummarySchema } from "./repository-contracts.js";
@@ -171,13 +171,6 @@ export function hostAllowlist(publicHosts: PublicHosts): MiddlewareHandler {
     if (!allowedHost(context.req.header("host"), publicHosts)) return context.json({ error: "host-not-allowed" }, 421);
     await next();
   };
-}
-
-/** Whether `presented` is `token`, in time independent of where they differ. */
-export function sameSecret(presented: string | undefined, token: string): boolean {
-  if (presented === undefined) return false;
-  const digest = (text: string) => createHash("sha256").update(text).digest();
-  return timingSafeEqual(digest(presented), digest(token));
 }
 
 const ACCESS_REQUIRED = "Every request to the Rerail daemon needs its access capability. "

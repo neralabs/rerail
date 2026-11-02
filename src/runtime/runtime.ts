@@ -38,7 +38,7 @@ import { makeLedgerFolder, openLedgerFile, readLedgerFile, writeLedgerFile } fro
 import { keepPrivate } from "../engine/storage/private-files.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
-import { lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
+import { recordCheckout } from "../engine/catalog/repository-registry.js";
 import { RepositoryStartWatch } from "./repository-start.js";
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../engine/native/semantic-primitives.js";
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
@@ -627,11 +627,6 @@ export interface RerailRuntimeOptions {
   databasePath?: string;
   /** The folder whose start state gates this runtime (`startGate`); each session's own folder decides its rules. */
   workspaceRoot: string;
-  /**
-   * False for callers without the daemon token: their sessions only attach to checkouts already recorded, and
-   * nothing is recorded, set up or imported for them. Defaults to true.
-   */
-  trusted?: boolean;
   /** Defaults for checkouts without saved audit settings; saved settings win. */
   auditSettings?: Partial<CheckoutAuditSettings>;
   /** Delivers a completed background code-rule result without waiting for another host event. */
@@ -676,7 +671,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
-  readonly #trusted: boolean;
   readonly #sessions = new Map<string, RuntimeSessionState>();
   /** Kept past disposal for late receipts, with the repository each session was attributed to. */
   readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number; repositoryKey: string | null }>();
@@ -706,7 +700,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#discoveryWaitMs = options.discoveryWaitMs;
     this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
-    this.#trusted = options.trusted ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
       ...auditorOptions,
       // `workspaceRoot` is the session folder `openSession` resolved once.
@@ -1823,22 +1816,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * The checkout the session starts in, from its folder resolved once here. A trusted caller records it. A caller
-   * without the daemon token is refused unless that resolved folder is in a recorded,
-   * started checkout: the check and every later use share one resolution, so a folder swapped after a caller's own
-   * check gains nothing.
+   * The checkout the session starts in, from its folder resolved once here, and recorded: the check and every later
+   * use share one resolution, so a folder swapped after a caller's own check gains nothing.
    */
   #startingCheckout(session: AdapterSession): StartingCheckout {
     // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
     const cwd = realpathSync(session.cwd);
-    const { database } = this.#catalogs;
-    const known = this.#trusted ? recordCheckout(database, cwd) : lookupCheckout(database, cwd);
+    const known = recordCheckout(this.#catalogs.database, cwd);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
-    const eligibility = this.#catalogs.refresh(start.checkoutRoot);
-    if (!this.#trusted && (eligibility === "unrecorded" || eligibility === "stopped")) {
-      throw new RangeError("session cwd is not in a started checkout");
-    }
+    this.#catalogs.refresh(start.checkoutRoot);
     return { root: start.checkoutRoot, folder: start.path, cwd };
   }
 

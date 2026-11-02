@@ -76,7 +76,7 @@ pub struct CodeRuleDslRuntime;
 
 #[napi]
 impl CodeRuleDslRuntime {
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn compile(
         source: String,
         format: String,
@@ -108,7 +108,7 @@ impl CodeRuleDslRuntime {
 /// `absolute` whose dialect's label is `label`: a dotted string, a list of names when one keeps
 /// a dot, or null outside a package and for a family without modules (`Adapter::module_path`).
 /// Hosts and the native repository ingestion paths share this one derivation.
-#[napi]
+#[napi(catch_unwind)]
 pub fn module_path(label: String, absolute: String) -> Option<napi::Either<String, Vec<String>>> {
     match language::adapter::module_path(&label, std::path::Path::new(&absolute))? {
         Value::String(module) => Some(napi::Either::A(module)),
@@ -173,7 +173,7 @@ impl PackageFacts {
 /// publishes the file, or null without one and for a family that reads none
 /// (`Adapter::PACKAGE_MANIFESTS`). Hosts and the native repository ingestion paths share this one
 /// derivation; a host reading many files reads them through one `PackageFactsReader`.
-#[napi]
+#[napi(catch_unwind)]
 pub fn package_facts(label: String, absolute: String, root: String) -> Option<PackageFacts> {
     PackageFactsReader::new(root).facts(label, absolute)
 }
@@ -195,7 +195,7 @@ impl PackageFactsReader {
     }
 
     /// `package_facts` for the file at `absolute` below the reader's root.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn facts(&self, label: String, absolute: String) -> Option<PackageFacts> {
         if !language::adapter::package_manifests(&label) {
             return None;
@@ -214,7 +214,7 @@ impl PackageFactsReader {
 /// The nearest `package.json` at or above `absolute` (a file or a folder's `package.json`),
 /// never above `root`, whatever reads it: the package an edit of any file belongs to, so a host
 /// can tell which applied sources it may change. Null without one.
-#[napi]
+#[napi(catch_unwind)]
 // Only JavaScript calls it.
 #[cfg_attr(test, allow(dead_code))]
 pub fn nearest_package(absolute: String, root: String) -> Option<PackageFacts> {
@@ -294,7 +294,7 @@ impl napi::Task for ServerGraphTask {
     type JsValue = Option<Vec<String>>;
 
     fn compute(&mut self) -> Result<Option<Vec<String>>> {
-        Ok(self.members())
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || Ok(self.members()))
     }
 
     fn resolve(
@@ -310,7 +310,7 @@ impl napi::Task for ServerGraphTask {
 /// reads on disk (`module_graph::Config`): its `tsconfig.json` (else `jsconfig.json`), then the
 /// `extends` bases followed, relative to `root`. Conformance forwards them with a corpus, as it
 /// forwards its `package.json` files.
-#[napi]
+#[napi(catch_unwind)]
 pub fn module_config_files(root: String, folder: String) -> Vec<String> {
     module_graph::config_on_disk(std::path::Path::new(&root), &folder)
         .files()
@@ -354,7 +354,7 @@ impl CompiledCodeRuleDsl {
         self.inner.reads_server_graph()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn evaluate(&self, snapshot_json: String, mode: String) -> Result<String> {
         let (snapshot, _) = parse_snapshot(&snapshot_json, self.inner.reads_server_graph())?;
         let evaluation = evaluate_code_rule(&self.inner, &snapshot, &mode)?;
@@ -385,7 +385,7 @@ pub struct CodeRuleDslEditor {
 
 #[napi]
 impl CodeRuleDslEditor {
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn evaluate(&mut self, mode: String) -> Result<String> {
         let evaluation = evaluate_code_rule(&self.code_rule, &self.snapshot, &mode)?;
         let current = violation_ids(&evaluation.violations);

@@ -1,7 +1,8 @@
 /**
  * Settings (`#settings`). General: theme, the status line, when Rerail was installed, where history is kept (and
  * clearing the shown repo's), and the shown repo's Follow .gitignore. Repos: every repo Rerail knows, with how many
- * rules it has and a switch where it has any. Coding agents: which are connected, with the command that changes it.
+ * rules it has and a switch where it has any. Coding agents: which are connected, whether each connected one's tools
+ * can read Rerail's data, with the command that changes the connection.
  * Uninstall: the command. Settings are the machine's: the page shows with or without a repository in scope.
  */
 import { h, setContent, icon } from "../dom.js";
@@ -81,10 +82,12 @@ function repos() {
     h("div.list", null, data.repositories.length ? data.repositories.map(repoRow) : h("div.empty", null, h("p", null, "Rerail has not seen a repo yet."))));
 }
 
+/** One coding agent: its name over its state, for a connected one whether its tools can read Rerail's data, and the command that changes it. */
 function agentRow(agent) {
   const status = agentStatus(agent);
   return h(`div.agent${status.tone === "off" ? ".off" : ""}`, { "data-agent": agent.id },
     h("div.rt2", null, h("span", null, agent.name), h(`span.st${status.tone && status.tone !== "off" ? `.${status.tone}` : ""}`, null, status.state),
+      status.data ? h(`span.st${status.data.warn ? ".warn" : ""}`, null, status.data.text) : null,
       status.problem ? h("span.tip", null, status.problem) : null),
     status.command === null ? null : copyButton(status.command.text, status.command.label));
 }

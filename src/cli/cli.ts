@@ -51,6 +51,7 @@ import {
   stopDaemon,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
+  type DaemonLookup,
   type RunningDaemon,
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
@@ -68,6 +69,7 @@ import { runShowMeCommand } from "./show-me.js";
 import { runPacksCommand } from "./packs-cli.js";
 import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { modelStatusLine } from "../engine/native/model-status.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -268,6 +270,17 @@ async function runStatusCommand(home: string): Promise<number> {
   } else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
   else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
   else process.stdout.write(`Rerail is on in ${name}.\n`);
+  const code = printDaemonStatus(lookup);
+  // Last, for each connected coding agent, whether its tools can read Rerail's data on this computer.
+  for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
+    // Each sentence names its coding agent.
+    if (agent.connected) process.stdout.write(`${agent.rerailData.why}\n`);
+  }
+  return code;
+}
+
+/** What `rerail status` says of the daemon, and the exit code that goes with it. */
+function printDaemonStatus(lookup: DaemonLookup): number {
   if (lookup.status === "absent") {
     process.stdout.write("The Rerail daemon is not running. Start it with rerail daemon start.\n");
     return 3;
