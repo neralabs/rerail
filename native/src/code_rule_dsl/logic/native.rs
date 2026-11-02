@@ -137,7 +137,7 @@ impl Aggregate<i64, Option<i64>> for FlatJoin {
 /// Semi-naive waves over the component's graph: a wave re-evaluates the dependents of the nodes that changed in the
 /// previous one, each from all of its inputs (the seed, copy sources and binary transfers), in `lat`. A node that
 /// has changed `widen` times takes `lat.widen` of its next value; a lattice of unbounded height needs one.
-/// Where `lattice_fixpoint` solves: the CPU here, or the device's file-local FIX waves (list step
+/// Where `lattice_fixpoint` solves: the CPU here, or the device work queue's file-local FIX (list step
 /// 17, `transducer::packed::metal_lattice`) for the flat lattice without widening.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(in crate::code_rule_dsl) enum Binding {
@@ -201,7 +201,7 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
         }
         x
     };
-    // The device's FIX waves (one dispatch, a threadgroup per component) where it solves the same system.
+    // The device work queue (one persistent dispatch, a cell an item) where it solves the same system.
     #[cfg(target_os = "macos")]
     if binding == Binding::Metal && flat && widen.is_none() && !absorb {
         let copies = copies.iter().map(|&(a, b)| (a as u32, b as u32)).collect::<Vec<_>>();
@@ -209,8 +209,9 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
         let system = crate::code_rule_dsl::transducer::packed::metal_lattice::System { seeds: &seed, copies: &copies, bins: &bins };
         let solved = crate::code_rule_dsl::transducer::packed::metal_lattice::solve(&system)
             .map_err(|error| user_err(format!("lattice_fixpoint on Metal: {error:?}")))?;
-        crate::code_rule_dsl::prof::count("lattice.device_components", solved.components);
-        return finish(conn, p, target, solved.values, solved.waves, solved.visits, t);
+        crate::code_rule_dsl::prof::count("lattice.device_retries", solved.retries as usize);
+        // On the queue a wave is a launch: the device decides each further evaluation.
+        return finish(conn, p, target, solved.values, solved.launches as u32, solved.visits, t);
     }
     let _ = binding;
     let mut val = seed.clone();

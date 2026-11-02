@@ -25,4 +25,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0024 | A wave's execution shape: one node space, sets as bitmaps evaluated natively from SQL's plan, labels and roots as device micro walks, integer match records, a RAM working set written back | accepted |
 | 0025 | The tape format becomes v9np: random access for anchor indexing (O8's measurements on Rerail's grammars) | accepted |
 | 0026 | Nodes live in tapes: no per-node structure beside a tape; how each node attribute is read from the tape or a bare index; enforced by `check-node-structures` | accepted |
-| 0027 | Device-decided loops run inside one dispatch: a threadgroup's own loop (label groups, file-local lattice FIX), bounded by structure; no ICBs on Metal | accepted |
+| 0027 | Device-side enqueue is a work queue inside a persistent dispatch: workers push the items their work creates and idle workers take them, with no unbounded wait; first used by file-local lattice FIX | accepted |
