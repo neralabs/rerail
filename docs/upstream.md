@@ -108,12 +108,22 @@ test cases under `fixtures/`, and `fixtures.expected.json`, the expected finding
 scored but is nobody's own evidence. The ESLint-based generators share `scripts/pack-data/eslint-expected.mjs`.
 
 For the ECMA tool-packs the generators also write a rename variant of every upstream unit under `fixtures/renamed/`
-(`fixtures/renamed/<the original's path>`): a copy whose identifiers and string and number literal contents are
-renamed by `scripts/pack-data/rename/ecmascript.ts` (same length and character shape, one bijective map per file, the
-language's keywords, standard library and common host names protected). Upstream lints the copy like any unit, so its
-expected findings are upstream's own answer on it, and its `source.units` entry carries `renamedFrom`, the key of the
-original. The conformance runner scores variants apart from the originals, as `holds-under-rename`: a port that
-matches the test cases' names or literals instead of the construct fails it. A family without variants yet takes its
+(`fixtures/renamed/<the original's path>`): a copy whose identifiers are renamed by
+`scripts/pack-data/rename/ecmascript.ts` (same length and character shape, one bijective map per file that keeps every
+two names' order, so sorting rules judge the same order; the language's keywords, standard library, common host,
+framework and test-runner API names, hook-shaped and `…Sync` names, and what a package exports (imported names,
+members of a package's binding, props of its components) protected). Literals are kept: a rule reads them (the digits of a number, a
+URL, a font name), so renaming them would change upstream's answer rather than test the port. Upstream lints the copy
+like any unit, so its expected findings are upstream's own answer on it, and its `source.units` entry carries
+`renamedFrom`, the key of the original. The conformance runner scores variants apart from the originals, as
+`holds-under-rename`: a port that matches the test cases' names instead of the construct fails it, and so does one
+that the renaming takes every finding from while none survives (it held vacuously, which blocks), unless the rule's
+`gates.yaml` entry gives a `rename_exempt` reason ([conformance/README.md](../conformance/README.md)).
+
+A generator that lints each upstream case under the case's own language (`ecmaVersion`, `sourceType`,
+`parserOptions`) records it in the unit's `source.units` entry as `languageOptions`, where it differs from ESLint's
+defaults for the file's extension, and the conformance runner evaluates the unit under it
+([pack-format.md](pack-format.md#conformancejson-divergencesjson-upstream)). A family without variants yet takes its
 overfit evidence from the samples alone.
 
 Last, each generator writes the tool-pack's per-file provenance through the shared writer,
