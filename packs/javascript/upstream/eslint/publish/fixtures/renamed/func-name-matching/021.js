@@ -1,1 +1,0 @@
-var uua = {fhu: function ckj() {}};

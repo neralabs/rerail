@@ -1,1 +1,0 @@
-({ get d(){}, set d(reu){}, get f(){}, q: function(){}, set f(fhm){} })

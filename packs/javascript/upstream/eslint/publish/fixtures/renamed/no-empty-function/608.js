@@ -1,1 +1,0 @@
-const wth = async () => {}; // allow: methods

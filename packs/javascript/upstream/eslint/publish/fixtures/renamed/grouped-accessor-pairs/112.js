@@ -1,1 +1,0 @@
-(class { set [k+p](ymm){} get [k-p](){} get [k+p](){} set [k-p](plc){} })

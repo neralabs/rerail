@@ -1,1 +1,0 @@
-const B = class extends D {override set ihr(value: string) {}}; // allow: privateConstructors

@@ -1,1 +1,0 @@
-(class { async xcugwx() { await 1 } })

@@ -1,1 +1,0 @@
-var ttv = function() {}; // allow: asyncMethods

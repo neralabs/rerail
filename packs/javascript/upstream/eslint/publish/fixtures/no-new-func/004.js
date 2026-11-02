@@ -1,1 +1,0 @@
-const fn = () => { class Function {}; new Function() }

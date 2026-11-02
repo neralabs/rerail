@@ -1,1 +1,0 @@
-class N extends S { override ttq() {} } // allow: arrowFunctions

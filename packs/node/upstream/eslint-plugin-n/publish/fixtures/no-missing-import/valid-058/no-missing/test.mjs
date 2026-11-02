@@ -1,1 +1,0 @@
-import 'http://localhost/module.js';

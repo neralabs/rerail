@@ -1,1 +1,0 @@
-var foo = () => { var bar = true; var baz = false; }

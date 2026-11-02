@@ -1,1 +1,0 @@
-nbz -= deh - dem

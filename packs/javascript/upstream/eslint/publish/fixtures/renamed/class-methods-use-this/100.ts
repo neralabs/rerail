@@ -1,1 +1,0 @@
-class Wgw implements Edq { override zqwoymnp = () => {} }

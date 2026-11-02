@@ -1,1 +1,0 @@
-Object.create(foo, { set: { value: function(val) { return 1; } } })

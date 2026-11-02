@@ -1,1 +1,0 @@
-class L extends O {static override set pne(value: string) {}} // allow: asyncMethods

@@ -1,1 +1,0 @@
-<input type="checkbox" checked={checked} disabled={disabled} id={id} onChange={onChange} />

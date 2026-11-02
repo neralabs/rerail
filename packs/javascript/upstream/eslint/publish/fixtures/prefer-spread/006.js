@@ -1,1 +1,0 @@
-foo.apply(undefined, [1, 2]);

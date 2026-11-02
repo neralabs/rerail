@@ -1,1 +1,0 @@
-const K = class extends L {override get zza(): string { /* empty */ }};

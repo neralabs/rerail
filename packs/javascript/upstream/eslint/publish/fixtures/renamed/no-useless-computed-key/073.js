@@ -1,1 +1,0 @@
-class Sib { set [2](value) {} }

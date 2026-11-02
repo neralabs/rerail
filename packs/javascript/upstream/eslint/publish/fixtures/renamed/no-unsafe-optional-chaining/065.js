@@ -1,1 +1,0 @@
-(lwn?.hja ?? fwy) * fwj;

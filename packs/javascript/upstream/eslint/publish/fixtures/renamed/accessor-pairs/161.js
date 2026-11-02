@@ -1,1 +1,0 @@
-var r = { get v1() {}, set n1(jnk) {}, get v2() {}, set v2(gru) {}, get n2() {}, set v1(grv) {} };

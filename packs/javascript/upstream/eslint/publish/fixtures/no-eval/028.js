@@ -1,1 +1,0 @@
-class C extends function () { this.eval('foo'); } {}

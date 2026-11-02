@@ -1,1 +1,0 @@
-lib.Object.create(null)

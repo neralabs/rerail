@@ -1,1 +1,0 @@
-'multi-npmignore/x.js'

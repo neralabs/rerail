@@ -1,1 +1,0 @@
-x = { set(val) { return 1; } }

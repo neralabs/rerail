@@ -1,1 +1,0 @@
-var R = class {static *uuk() {}};

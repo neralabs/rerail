@@ -1,1 +1,0 @@
-new (wyd?.thx ?? ykw)()

@@ -1,1 +1,0 @@
-let foo, bar = require('bar');

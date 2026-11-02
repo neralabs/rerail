@@ -1,1 +1,0 @@
-class C extends N { override async ryy(ztqbk: string) {} } // allow: decoratedFunctions

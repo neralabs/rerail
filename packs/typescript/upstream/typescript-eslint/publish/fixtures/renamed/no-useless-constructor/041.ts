@@ -1,5 +1,0 @@
-
-class X {
-  public constructor() {}
-}
-      

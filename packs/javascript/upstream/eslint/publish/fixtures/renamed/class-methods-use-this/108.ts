@@ -1,1 +1,0 @@
-const Egq = class implements Cdi { lzdeso() {} };

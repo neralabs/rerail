@@ -1,1 +1,0 @@
-const K = class {constructor(lgzbh: string) {}}; // allow: arrowFunctions

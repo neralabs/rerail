@@ -1,1 +1,0 @@
-class P {@rysfmuyej() get wce(): string {}} // allow: asyncMethods

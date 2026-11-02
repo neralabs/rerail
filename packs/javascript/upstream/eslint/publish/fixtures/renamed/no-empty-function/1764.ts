@@ -1,1 +1,0 @@
-class F extends H {override set mtf(value: string) {}} // allow: asyncFunctions

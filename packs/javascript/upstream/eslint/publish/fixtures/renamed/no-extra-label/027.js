@@ -1,1 +1,0 @@
-C: while(true) { /*comment*/break C; }

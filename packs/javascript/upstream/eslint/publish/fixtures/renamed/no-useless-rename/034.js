@@ -1,1 +1,0 @@
-var nsr = 0; export {nsr as 'bar'};

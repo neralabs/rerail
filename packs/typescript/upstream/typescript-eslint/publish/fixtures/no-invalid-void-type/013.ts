@@ -1,1 +1,0 @@
-type Generic<T> = [T];

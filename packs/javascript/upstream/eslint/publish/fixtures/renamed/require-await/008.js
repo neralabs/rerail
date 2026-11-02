@@ -1,1 +1,0 @@
-async function zuz() { await (async () => { await icYuydyldks() }) }

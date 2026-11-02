@@ -1,1 +1,0 @@
-async function kri() { for (var o; o < x; o++) { await gng; } }

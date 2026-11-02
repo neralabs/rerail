@@ -1,3 +1,0 @@
-if (tqc) asJkuksnjwp(); 
- else
-;

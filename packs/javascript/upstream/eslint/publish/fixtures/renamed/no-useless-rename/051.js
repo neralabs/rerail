@@ -1,1 +1,0 @@
-var ovv = 0;var jek = 0;export {ovv as ovv, jek as jer};

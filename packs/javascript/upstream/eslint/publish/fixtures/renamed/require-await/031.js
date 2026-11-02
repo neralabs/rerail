@@ -1,1 +1,0 @@
-const ggi = { async: async function czb() { brp(); } }

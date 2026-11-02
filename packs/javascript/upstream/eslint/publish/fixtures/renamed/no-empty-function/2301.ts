@@ -1,1 +1,0 @@
-class C extends D { override async jix(onaek: string) {} } // allow: getters

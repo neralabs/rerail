@@ -1,1 +1,0 @@
-var w = { get r() {}, ...s, set r(vfk) {} };

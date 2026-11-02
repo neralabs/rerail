@@ -1,1 +1,0 @@
-var d = 1; function bps(k = function() { arq(d); }) { k(); } bps();

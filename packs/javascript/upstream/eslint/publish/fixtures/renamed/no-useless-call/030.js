@@ -1,1 +1,0 @@
-a.d.k.ssp.apply(a.d.k, [1, 2]);

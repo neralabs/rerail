@@ -1,1 +1,0 @@
-class G {static set qmr(value: string) {}} // allow: constructors

@@ -1,1 +1,0 @@
-class C extends J {override get kjf(): string {}} // allow: asyncMethods

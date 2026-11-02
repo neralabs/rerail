@@ -1,1 +1,0 @@
-var nkq = fdp, rnmaf = qccm;

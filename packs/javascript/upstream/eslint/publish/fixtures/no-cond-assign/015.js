@@ -1,1 +1,0 @@
-if (function(node) { return node = parentNode; }) { }

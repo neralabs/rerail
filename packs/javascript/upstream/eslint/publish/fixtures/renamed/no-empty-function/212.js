@@ -1,1 +1,0 @@
-function* trh() {} // allow: overrideMethods

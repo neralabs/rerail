@@ -1,1 +1,0 @@
-var foo = function() {}; bar(function(){ baz(function() { qux(foo); }) });

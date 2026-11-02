@@ -1,1 +1,0 @@
-var qwe = {set kdm(value) {}}; // allow: decoratedFunctions

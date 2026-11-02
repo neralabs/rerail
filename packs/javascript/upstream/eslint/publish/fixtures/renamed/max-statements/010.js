@@ -1,1 +1,0 @@
-var mbk = { ['thing']() { var cek = 1; var cep = 2; } }

@@ -1,1 +1,0 @@
-class B { get [b]() {} set [b](hcw) {} }

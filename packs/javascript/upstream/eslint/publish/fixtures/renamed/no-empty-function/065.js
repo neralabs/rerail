@@ -1,1 +1,0 @@
-var N = class {*vcz() {}}; // allow: generatorMethods

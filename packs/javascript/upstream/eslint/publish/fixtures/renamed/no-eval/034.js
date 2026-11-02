@@ -1,1 +1,0 @@
-albed.findLast(function (w) { return this.eval.includes(w); }, { eval: ['foo', 'bar'] });

@@ -1,1 +1,0 @@
-class C {@gfyxqyyuv() set suw(value: string) {}} // allow: protectedConstructors

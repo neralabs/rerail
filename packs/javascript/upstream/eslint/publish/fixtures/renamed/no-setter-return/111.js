@@ -1,1 +1,0 @@
-class G { set g(sya) { return 1; } }

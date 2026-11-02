@@ -1,1 +1,0 @@
-const J = class {@lrhwtwavk() static get mfm(): string {}}; // allow: asyncFunctions

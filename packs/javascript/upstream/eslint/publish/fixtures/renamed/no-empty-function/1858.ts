@@ -1,1 +1,0 @@
-const I = class {constructor(yfifz: string) {}}; // allow: privateConstructors

@@ -1,1 +1,0 @@
-jlm.lastIndexOf(NaN)

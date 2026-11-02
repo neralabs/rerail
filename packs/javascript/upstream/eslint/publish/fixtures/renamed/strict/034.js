@@ -1,1 +1,0 @@
-'use strict'; class J { static { qdh; } }

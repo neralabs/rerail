@@ -1,1 +1,0 @@
-function jvx() { Object.prototype.p = 0 }

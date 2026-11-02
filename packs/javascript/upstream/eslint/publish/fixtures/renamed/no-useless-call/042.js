@@ -1,1 +1,0 @@
-ken?.drh.akq.call(ken?.drh, 1, 2);

@@ -1,1 +1,0 @@
-async function zfb() { for (var fkk in await fkl) { } }

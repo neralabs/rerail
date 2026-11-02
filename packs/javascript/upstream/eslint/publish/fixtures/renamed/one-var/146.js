@@ -1,1 +1,0 @@
-let jam = true; switch(jam) { case true: let ebc = 2; break; case false: let ebl = 3; break; }

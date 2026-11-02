@@ -1,1 +1,0 @@
-var kkc = function() { g: while (true) try {} finally { switch (true) { case true: break g; } } }

@@ -1,1 +1,0 @@
-({ set ezn(vzb = function() { return 1; }) {} })

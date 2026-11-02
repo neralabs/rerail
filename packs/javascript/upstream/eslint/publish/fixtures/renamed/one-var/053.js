@@ -1,1 +1,0 @@
-let f = 0, k = 1; xyv(); let m = 2;

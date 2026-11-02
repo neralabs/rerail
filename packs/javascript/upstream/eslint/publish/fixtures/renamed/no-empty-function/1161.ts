@@ -1,1 +1,0 @@
-const kwt = {etb(qksvu: string) {}}; // allow: generatorMethods

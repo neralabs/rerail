@@ -1,1 +1,0 @@
-Object.defineProperty(lqu, { set(wep) { return 1; } }, 'bar')

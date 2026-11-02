@@ -1,1 +1,0 @@
-class N {*wht() {}} // allow: protectedConstructors

@@ -1,1 +1,0 @@
-const l = []; let o; ({u: [o] = l} = {}); gpk(o);

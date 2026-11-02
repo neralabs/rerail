@@ -1,1 +1,0 @@
-A: switch (a) { case 0: while (j) { break A; } }

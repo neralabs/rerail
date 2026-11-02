@@ -1,1 +1,0 @@
-class J {@mzpgubyra() set sfg(value: string) {}} // allow: asyncMethods

@@ -1,1 +1,0 @@
-var tmn, vct; [tmn = 1, vct = 2] = []

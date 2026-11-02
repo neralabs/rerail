@@ -1,1 +1,0 @@
-jfq(Number.NaN / 2)

@@ -1,1 +1,0 @@
-this.m = this.q + r

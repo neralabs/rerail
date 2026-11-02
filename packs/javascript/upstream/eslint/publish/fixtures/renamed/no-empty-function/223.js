@@ -1,1 +1,0 @@
-var cnm = function*() {}; // allow: privateConstructors

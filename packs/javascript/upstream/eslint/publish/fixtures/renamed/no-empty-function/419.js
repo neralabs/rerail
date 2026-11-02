@@ -1,1 +1,0 @@
-class B {static get whv() {}} // allow: privateConstructors

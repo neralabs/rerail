@@ -1,1 +1,0 @@
-Object.defineProperties(Array.prototype, {p: {value: 0}, q: {value: 0}})

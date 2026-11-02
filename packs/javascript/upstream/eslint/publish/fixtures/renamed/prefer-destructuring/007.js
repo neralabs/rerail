@@ -1,1 +1,0 @@
-var { iya: lmf } = object;

@@ -1,1 +1,0 @@
-(class { async hka() { await fdOtgyglpyi() } })

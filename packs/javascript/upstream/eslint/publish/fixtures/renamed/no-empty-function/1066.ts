@@ -1,1 +1,0 @@
-function nmk() {} // allow: constructors

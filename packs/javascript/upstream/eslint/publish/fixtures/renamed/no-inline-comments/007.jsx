@@ -1,1 +1,0 @@
-xdl(); /* globals xdl */

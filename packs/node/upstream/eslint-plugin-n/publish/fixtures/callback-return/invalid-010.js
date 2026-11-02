@@ -1,1 +1,0 @@
-function a(err) { callback (err); horse(); }

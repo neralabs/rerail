@@ -1,3 +1,0 @@
-while (msa && 
- msu) 
- xyz()

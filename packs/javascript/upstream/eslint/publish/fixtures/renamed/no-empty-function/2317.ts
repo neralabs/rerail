@@ -1,1 +1,0 @@
-class F extends I { @ihuqvodch() override tam() {} } // allow: asyncMethods

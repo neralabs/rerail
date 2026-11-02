@@ -1,1 +1,0 @@
-class D {static set tww(value) {}} // allow: decoratedFunctions

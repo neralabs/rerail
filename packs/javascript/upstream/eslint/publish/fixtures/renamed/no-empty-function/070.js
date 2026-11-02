@@ -1,1 +1,0 @@
-var kzy = {get cfu() { bev(); }};

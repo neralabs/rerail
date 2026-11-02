@@ -1,1 +1,0 @@
-const fn = async () => { for await (const e of asyncIterate()) { /* ... */ } }

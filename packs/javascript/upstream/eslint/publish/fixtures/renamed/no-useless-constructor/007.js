@@ -1,1 +1,0 @@
-class F extends M { constructor(...fsux){ super(...fsux); omUudxvpzea(); } }

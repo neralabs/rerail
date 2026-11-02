@@ -1,1 +1,0 @@
-<MyComponent {...props} children="Children" />;

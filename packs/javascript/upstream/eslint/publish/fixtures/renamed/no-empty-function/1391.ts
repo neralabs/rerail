@@ -1,1 +1,0 @@
-class K {static *txg(vcqcq: string) {}} // allow: functions

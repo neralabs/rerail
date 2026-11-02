@@ -1,1 +1,0 @@
-var o; class V { static { if (yaa) { var r; } } }

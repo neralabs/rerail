@@ -1,1 +1,0 @@
-function aue(Math) { Math(); }

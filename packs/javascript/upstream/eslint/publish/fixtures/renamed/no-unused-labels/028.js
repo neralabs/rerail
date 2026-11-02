@@ -1,2 +1,0 @@
-ngc()
-G: (function() {})()

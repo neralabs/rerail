@@ -1,1 +1,0 @@
-function* uue() {} // allow: getters

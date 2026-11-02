@@ -1,1 +1,0 @@
-glr.Object.prototype.hasOwnProperty.call(obj, prol)

@@ -1,1 +1,0 @@
-const B = class {@lmxhksgyb() get vcr(): string { /* empty */ }};

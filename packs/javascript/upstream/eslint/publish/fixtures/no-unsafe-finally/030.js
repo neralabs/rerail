@@ -1,1 +1,0 @@
-var foo = function() { a: switch (true) { case true: try {} finally { switch (true) { case true: break a; } } } }

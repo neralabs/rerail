@@ -1,1 +1,0 @@
-(class { get [`abc`](){} set [`abc`](vpj){} })

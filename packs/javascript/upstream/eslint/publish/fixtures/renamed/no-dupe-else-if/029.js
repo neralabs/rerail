@@ -1,1 +1,0 @@
-if (l && r) {} else if (l) {} else if (r) {}

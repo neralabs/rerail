@@ -1,1 +1,0 @@
-class H extends S { override yzx() {} } // allow: generatorMethods

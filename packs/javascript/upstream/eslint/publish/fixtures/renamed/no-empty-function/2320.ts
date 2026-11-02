@@ -1,1 +1,0 @@
-class H extends P { override sjy() {} }

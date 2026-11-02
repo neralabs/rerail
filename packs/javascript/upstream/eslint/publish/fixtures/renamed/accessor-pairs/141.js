@@ -1,1 +1,0 @@
-var y = { get ' a'() {}, set 'a'(owl) {} };

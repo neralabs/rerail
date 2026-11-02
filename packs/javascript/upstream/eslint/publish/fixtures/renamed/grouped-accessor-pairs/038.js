@@ -1,1 +1,0 @@
-class H { static set h(tep){} r(){} static h(){} }

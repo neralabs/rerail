@@ -1,1 +1,0 @@
-if (a) while (cond) { bar(); } else baz();

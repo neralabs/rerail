@@ -1,1 +1,0 @@
-const cnp = (grold: string) => {}; // allow: generatorFunctions

@@ -1,1 +1,0 @@
-let o; function ycb() { o = o || qwp(); qwy(o); }

@@ -1,1 +1,0 @@
-let qzt = 'car';

@@ -1,1 +1,0 @@
-class K { static { const b = 0; if (tcv) { const f = 0; } } }

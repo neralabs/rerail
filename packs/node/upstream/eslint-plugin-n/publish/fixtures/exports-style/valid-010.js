@@ -1,1 +1,0 @@
-module = {}; module.foo = 1

@@ -1,1 +1,0 @@
-for (await using resource of resources) {}

@@ -1,1 +1,0 @@
-ihw.hvq((hvr, j) => <Ihw key={j} />)

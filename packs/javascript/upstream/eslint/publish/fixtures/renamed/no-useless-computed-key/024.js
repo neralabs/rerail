@@ -1,1 +1,0 @@
-class Sru { static ['constructor']() {} }

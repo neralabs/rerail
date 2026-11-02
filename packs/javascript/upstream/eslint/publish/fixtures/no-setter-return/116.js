@@ -1,1 +1,0 @@
-(class { set a(val) { return null; } })

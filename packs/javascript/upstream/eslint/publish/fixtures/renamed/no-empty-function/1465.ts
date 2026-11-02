@@ -1,1 +1,0 @@
-const vjm = {get rwx(): string {}}; // allow: generatorMethods

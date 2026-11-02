@@ -1,1 +1,0 @@
-var hooks = require('dns'); hooks.Resolver

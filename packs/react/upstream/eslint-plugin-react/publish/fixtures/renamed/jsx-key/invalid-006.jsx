@@ -1,1 +1,0 @@
-[1, 2 ,3].map(s => s ? <Dti s={s} key="1" /> : <NzegxZrv s={s} />);

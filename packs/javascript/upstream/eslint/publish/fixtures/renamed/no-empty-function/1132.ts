@@ -1,1 +1,0 @@
-const ajl = function*(yrsml: string) {}; // allow: methods

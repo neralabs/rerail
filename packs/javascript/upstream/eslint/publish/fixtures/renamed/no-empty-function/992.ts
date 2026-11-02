@@ -1,1 +1,0 @@
-class J { @lyrxejzre() async uuy(xnmhf: string) { jic(); } }

@@ -1,5 +1,0 @@
-
-class Z {
-  constructor();
-}
-    

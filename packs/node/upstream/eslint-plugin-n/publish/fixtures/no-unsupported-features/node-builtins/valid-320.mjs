@@ -1,1 +1,0 @@
-import c from 'process'; c.argv0

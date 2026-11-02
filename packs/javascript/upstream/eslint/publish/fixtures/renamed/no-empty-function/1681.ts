@@ -1,1 +1,0 @@
-const D = class {set hdb(value: string) {}}; // allow: generatorMethods

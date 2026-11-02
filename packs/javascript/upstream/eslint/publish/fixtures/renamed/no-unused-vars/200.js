@@ -1,1 +1,0 @@
-const bixzo = [stl]; const [{_v, hah}] = bixzo; console.log(hah);

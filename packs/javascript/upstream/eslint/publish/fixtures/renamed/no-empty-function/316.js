@@ -1,1 +1,0 @@
-var rfi = {*isr() {}}; // allow: getters

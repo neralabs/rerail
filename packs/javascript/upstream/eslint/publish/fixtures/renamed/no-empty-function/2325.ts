@@ -1,1 +1,0 @@
-class B extends Y { override zwf() {} } // allow: getters

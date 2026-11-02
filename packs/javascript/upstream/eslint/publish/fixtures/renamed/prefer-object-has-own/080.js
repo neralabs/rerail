@@ -1,1 +1,0 @@
-function elb(){return{}.hasOwnProperty.call(object, vwmkztlj)}

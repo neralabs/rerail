@@ -1,1 +1,0 @@
-Object.Gxgbqu(nnj, { ffx: { set: function(xgq) { return 1; } } })

@@ -1,1 +1,0 @@
-class P { qjpcs = () => { "use strict"; } }

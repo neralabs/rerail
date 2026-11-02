@@ -1,1 +1,0 @@
-React.createElement("iframe", { sazjrjv: "allow-same-origin" })

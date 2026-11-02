@@ -1,1 +1,0 @@
-propertyIsEnumerable(eyr, 'bar')

@@ -1,1 +1,0 @@
-'use strict'; function jmz() { return function() { gwb(); 'use strict'; return; }; }

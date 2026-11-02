@@ -1,1 +1,0 @@
-class J { *kur(lhfsp: string) {} } // allow: asyncMethods

@@ -1,1 +1,0 @@
-eku.setInterval('hi')

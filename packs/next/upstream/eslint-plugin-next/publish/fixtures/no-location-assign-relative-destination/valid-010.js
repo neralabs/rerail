@@ -1,1 +1,0 @@
-location.href = 'mailto:user@example.com'

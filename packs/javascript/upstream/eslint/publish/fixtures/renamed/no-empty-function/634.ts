@@ -1,1 +1,0 @@
-const fhq = {dwa: function(wuzyf: string) {}}; // allow: functions

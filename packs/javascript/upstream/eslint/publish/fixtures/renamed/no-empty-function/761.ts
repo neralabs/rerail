@@ -1,1 +1,0 @@
-const B = class {static get dkz(): string { /* empty */ }};

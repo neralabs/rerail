@@ -1,1 +1,0 @@
-<picture inert={false} onError={foo} onLoad={bar} />

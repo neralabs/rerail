@@ -1,1 +1,0 @@
-import {lookup} from 'dns'; lookup()

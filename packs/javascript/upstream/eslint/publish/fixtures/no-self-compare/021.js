@@ -1,1 +1,0 @@
-class C { #field; foo() { this.#field === this.#field; } }

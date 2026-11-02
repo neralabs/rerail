@@ -1,1 +1,0 @@
-async function lem() { (lem, await xwp?.lem)[1]; }

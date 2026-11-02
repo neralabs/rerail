@@ -1,4 +1,0 @@
-
-                do Object();
-                while (a);
-                

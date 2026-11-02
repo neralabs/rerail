@@ -1,1 +1,0 @@
-foo.cku((cku, g) => <Foo key={'foo-' + g} />)

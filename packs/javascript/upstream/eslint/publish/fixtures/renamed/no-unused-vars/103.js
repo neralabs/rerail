@@ -1,1 +1,0 @@
-(function(dehq) { for ( let name of dehq ) { return true } })({})

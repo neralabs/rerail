@@ -1,1 +1,0 @@
-do igb(); while (rkq)

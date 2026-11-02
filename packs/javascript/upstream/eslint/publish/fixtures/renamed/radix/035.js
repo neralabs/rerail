@@ -1,1 +1,0 @@
-class I { #parseInt; mvs() { Number.#parseInt(); } }

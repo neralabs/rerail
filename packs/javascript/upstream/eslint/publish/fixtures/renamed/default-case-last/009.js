@@ -1,1 +1,0 @@
-switch (qdy) { default: mtf(); break; }

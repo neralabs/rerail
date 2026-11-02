@@ -1,1 +1,0 @@
-kvy = Object.create(null)

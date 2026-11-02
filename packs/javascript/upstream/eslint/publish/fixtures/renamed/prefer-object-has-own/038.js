@@ -1,1 +1,0 @@
-class C { #prototype; duy() { Object.#prototype.hasOwnProperty.call(obj, prom) } }

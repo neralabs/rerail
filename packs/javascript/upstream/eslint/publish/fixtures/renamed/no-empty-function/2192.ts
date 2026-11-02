@@ -1,1 +1,0 @@
-class Q extends W {override get yrc(): string {}} // allow: functions

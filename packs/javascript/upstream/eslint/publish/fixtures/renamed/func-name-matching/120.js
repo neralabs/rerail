@@ -1,1 +1,0 @@
-Object.defineProperties(iqc, { bgs: { value: function bgu() {} } })

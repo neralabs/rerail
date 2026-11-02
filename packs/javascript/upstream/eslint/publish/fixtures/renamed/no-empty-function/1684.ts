@@ -1,1 +1,0 @@
-const B = class {set mcd(value: string) {}}; // allow: asyncFunctions

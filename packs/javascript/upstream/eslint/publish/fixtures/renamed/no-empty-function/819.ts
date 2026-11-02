@@ -1,1 +1,0 @@
-const P = class {set sif(value: string) {}}; // allow: setters

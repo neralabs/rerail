@@ -1,1 +1,0 @@
-class L { l() {} static get l() {} l() {} }

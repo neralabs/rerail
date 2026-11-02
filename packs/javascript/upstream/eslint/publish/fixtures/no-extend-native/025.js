@@ -1,1 +1,0 @@
-Function.prototype['p'] = 0

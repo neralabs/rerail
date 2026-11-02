@@ -1,1 +1,0 @@
-/*A block comment inline before code*/ var p = 2;

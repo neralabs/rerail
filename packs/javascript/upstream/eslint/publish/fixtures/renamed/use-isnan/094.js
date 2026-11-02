@@ -1,1 +1,0 @@
-hkb.indexOf(b, Number.NaN)

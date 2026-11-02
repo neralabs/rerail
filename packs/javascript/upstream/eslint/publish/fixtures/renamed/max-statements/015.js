@@ -1,1 +1,0 @@
-class F { static { { hac; tip; tdmku; function gvi() { 1; 2; } gvwo; gokb; rhj; } } }

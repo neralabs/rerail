@@ -1,1 +1,0 @@
-it("should fail", piKwdg); function piKwdg() {}

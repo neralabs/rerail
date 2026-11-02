@@ -1,1 +1,0 @@
-class set { rcf(xda) { return 1; } }

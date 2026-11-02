@@ -1,1 +1,0 @@
-const C = class {@egjtlgkbf() set fsr(value: string) {}}; // allow: decoratedFunctions

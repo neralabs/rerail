@@ -1,1 +1,0 @@
-class D extends V {override get yhf(): string {}} // allow: asyncFunctions

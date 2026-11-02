@@ -1,1 +1,0 @@
-q = function g(){}; class A { set a(jmv) { return 1; } };

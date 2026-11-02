@@ -1,1 +1,0 @@
-declare namespace ns { var bar: 'car' }

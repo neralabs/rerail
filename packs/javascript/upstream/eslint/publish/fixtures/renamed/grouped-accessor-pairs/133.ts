@@ -1,1 +1,0 @@
-type S = { set lxab(value: any): void, get lxab(): any }

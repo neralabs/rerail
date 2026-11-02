@@ -1,1 +1,0 @@
-let {njz: ern, erq: erq} = wju;

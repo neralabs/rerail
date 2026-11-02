@@ -1,1 +1,0 @@
-class B { constructor() {} get [`constructor`]() {} }

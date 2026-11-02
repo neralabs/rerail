@@ -1,1 +1,0 @@
-import type d from 'types-only';

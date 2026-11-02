@@ -1,1 +1,0 @@
-(class { set [a+u](vxq){} get [a+u](){} })

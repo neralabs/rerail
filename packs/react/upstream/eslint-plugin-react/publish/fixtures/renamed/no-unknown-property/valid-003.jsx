@@ -1,1 +1,0 @@
-<Fod.bar for="bar" />;

@@ -1,2 +1,0 @@
-a
-  ['SHOUT_CASE'];

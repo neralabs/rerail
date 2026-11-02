@@ -1,1 +1,0 @@
-function rxa() { var bqc = true, bqz = false; var a; var b; var f = true, l = false; }

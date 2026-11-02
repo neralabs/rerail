@@ -1,1 +1,0 @@
-let kvi = <bar>'bar';

@@ -1,1 +1,0 @@
-class F extends N {override set smy(value: string) {}} // allow: getters

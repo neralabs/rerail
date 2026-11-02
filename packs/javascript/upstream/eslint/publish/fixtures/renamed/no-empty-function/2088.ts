@@ -1,1 +1,0 @@
-const B = class {@lwdnthzst() get trm(): string {}};

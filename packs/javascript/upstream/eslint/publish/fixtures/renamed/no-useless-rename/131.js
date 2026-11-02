@@ -1,2 +1,0 @@
-({krt: krt//comment
-,ebf} = {});

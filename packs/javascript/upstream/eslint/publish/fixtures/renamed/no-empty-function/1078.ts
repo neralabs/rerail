@@ -1,1 +1,0 @@
-const daz = function(qtdsx: string) {}; // allow: getters

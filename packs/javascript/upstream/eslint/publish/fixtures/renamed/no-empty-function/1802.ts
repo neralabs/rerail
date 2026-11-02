@@ -1,1 +1,0 @@
-const K = class extends T {static override set uhy(value: string) {}}; // allow: constructors

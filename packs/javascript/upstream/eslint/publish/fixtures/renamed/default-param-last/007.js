@@ -1,1 +1,0 @@
-function q(k, m = 5, ...o) {}

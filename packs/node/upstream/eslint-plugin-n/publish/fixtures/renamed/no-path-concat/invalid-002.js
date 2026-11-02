@@ -1,1 +1,0 @@
-var fqnwRvgw = __filename + "/foo.js";

@@ -1,1 +1,0 @@
-class M {@oweilsrrf() static set prm(value: string) {}} // allow: getters

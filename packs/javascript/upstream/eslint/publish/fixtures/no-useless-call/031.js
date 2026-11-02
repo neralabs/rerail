@@ -1,1 +1,0 @@
-a.b(x, y).c.foo.apply(a.b(x, y).c, [1, 2]);

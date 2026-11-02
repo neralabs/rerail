@@ -1,1 +1,0 @@
-class A { set a(val) { try { return 1; } catch(e) {} } }

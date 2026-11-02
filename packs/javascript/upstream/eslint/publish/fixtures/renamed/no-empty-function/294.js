@@ -1,1 +1,0 @@
-var L = class {wss() {}}; // allow: protectedConstructors

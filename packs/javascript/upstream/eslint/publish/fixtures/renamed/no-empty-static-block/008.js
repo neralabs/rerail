@@ -1,1 +1,0 @@
-class Qdp { static { hft(); } static {} }

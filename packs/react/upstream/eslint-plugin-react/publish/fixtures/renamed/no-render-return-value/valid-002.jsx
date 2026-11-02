@@ -1,1 +1,0 @@
-ReactDOM.render(<div ref={ref => this.oxgr = ref}/>, document.body);

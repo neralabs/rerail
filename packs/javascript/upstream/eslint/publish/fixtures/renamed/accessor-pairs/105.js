@@ -1,1 +1,0 @@
-class W { get w() {} get w() {} set w(zwt) {} }

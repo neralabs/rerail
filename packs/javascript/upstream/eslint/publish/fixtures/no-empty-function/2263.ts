@@ -1,1 +1,0 @@
-class B extends C {static override set foo(value: string) {}} // allow: constructors

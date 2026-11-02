@@ -1,1 +1,0 @@
-class Function {}; new Function()

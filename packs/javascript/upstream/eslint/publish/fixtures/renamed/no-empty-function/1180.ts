@@ -1,1 +1,0 @@
-class C { dep(nsjvv: string) {} } // allow: asyncMethods

@@ -1,1 +1,0 @@
-Reflect.defineProperty(ohi, 'bar', { 'set'(uoz) { return 1; } })

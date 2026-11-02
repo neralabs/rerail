@@ -1,1 +1,0 @@
-import(/* webpackChunkName: "my-chunk-name" */ './locale/en');

@@ -1,1 +1,0 @@
-callback((1, b), vvgu)

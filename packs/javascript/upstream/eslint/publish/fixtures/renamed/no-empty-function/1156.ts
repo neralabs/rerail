@@ -1,1 +1,0 @@
-const piv = {nja: function*(ulnpb: string) {}}; // allow: overrideMethods

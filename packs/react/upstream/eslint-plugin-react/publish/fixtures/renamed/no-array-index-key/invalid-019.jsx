@@ -1,1 +1,0 @@
-foo.map((ajc, h) => React.createElement('Foo', { key: h }))

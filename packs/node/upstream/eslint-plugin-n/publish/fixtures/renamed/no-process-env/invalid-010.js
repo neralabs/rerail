@@ -1,1 +1,0 @@
-process['env'][OWCU_QLB]

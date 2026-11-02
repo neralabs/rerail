@@ -1,1 +1,0 @@
-import { tmkw } from './my-folder'

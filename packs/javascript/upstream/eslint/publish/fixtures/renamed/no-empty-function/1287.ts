@@ -1,1 +1,0 @@
-const X = class {private static ypc() {}}; // allow: generatorMethods

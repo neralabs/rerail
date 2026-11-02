@@ -1,1 +1,0 @@
-class B { constructor(hoe) { return 1; } }

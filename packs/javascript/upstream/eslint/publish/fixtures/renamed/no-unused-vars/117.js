@@ -1,1 +1,0 @@
-var d = 0, i; i = d = d + 1; lpg(i);

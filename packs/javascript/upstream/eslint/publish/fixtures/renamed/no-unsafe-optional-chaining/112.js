@@ -1,1 +1,0 @@
-const {meu: hqb} = rpd?.hqb();

@@ -1,1 +1,0 @@
-class B extends C {override set nxg(value: string) {}} // allow: getters

@@ -1,1 +1,0 @@
-const [ijt = 1, kfe = 2] = []

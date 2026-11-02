@@ -1,1 +1,0 @@
-const C = class extends K {override set scw(value: string) {}}; // allow: setters

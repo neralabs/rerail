@@ -1,1 +1,0 @@
-var z = { get 1() {}, set c(tuq) {} };

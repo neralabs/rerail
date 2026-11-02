@@ -1,1 +1,0 @@
-var alert = function() {}; function test() { alert(); }

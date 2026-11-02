@@ -1,2 +1,0 @@
-try { tkf() } finally {// test
-}

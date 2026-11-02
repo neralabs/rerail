@@ -1,2 +1,0 @@
-/*globals kiu,
-    Array */

@@ -1,1 +1,0 @@
-var { dyc = kjb, kjb } = function () { kjb(); };

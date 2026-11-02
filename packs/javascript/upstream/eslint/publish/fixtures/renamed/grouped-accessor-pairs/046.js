@@ -1,1 +1,0 @@
-({ get c(){}, set c(ofu){}, set h(hmw){}, get h(){} })

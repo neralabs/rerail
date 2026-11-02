@@ -1,1 +1,0 @@
-const C = class {set pqa(value: string) { fmc(); }};

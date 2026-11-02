@@ -1,1 +1,0 @@
-const zjn = async () => { ddb(); };

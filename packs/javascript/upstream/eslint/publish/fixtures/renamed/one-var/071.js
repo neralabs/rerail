@@ -1,1 +1,0 @@
-var o, p; var u = 0, w = 1;

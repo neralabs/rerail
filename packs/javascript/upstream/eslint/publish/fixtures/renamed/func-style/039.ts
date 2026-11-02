@@ -1,1 +1,0 @@
-const object: { nmr: () => void } = { nmr: function(): void {} };

@@ -1,1 +1,0 @@
-class K extends R {static override get zty(): string {}}

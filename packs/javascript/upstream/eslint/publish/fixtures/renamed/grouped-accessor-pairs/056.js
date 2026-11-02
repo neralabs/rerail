@@ -1,1 +1,0 @@
-class C { c(){} set q(wfl){} get q(){} r(){} get t(){} set t(qzd){} }

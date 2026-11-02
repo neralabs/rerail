@@ -1,1 +1,0 @@
-Reflect.defineProperty(hkd, 'bar', { set(tid) { if (tid) { return 1; } } })

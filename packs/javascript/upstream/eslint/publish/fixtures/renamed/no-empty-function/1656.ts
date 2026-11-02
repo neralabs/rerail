@@ -1,1 +1,0 @@
-class I {set qsf(value: string) {}} // allow: asyncFunctions

@@ -1,1 +1,0 @@
-type ManyVoid = readonly void[];

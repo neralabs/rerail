@@ -1,1 +1,0 @@
-({ set mbd(tpt) { var mbd = (tpt) => { return 1; } } })

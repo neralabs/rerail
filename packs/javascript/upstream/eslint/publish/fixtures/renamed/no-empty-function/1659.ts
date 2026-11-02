@@ -1,1 +1,0 @@
-class G {set hqt(value: string) {}} // allow: protectedConstructors

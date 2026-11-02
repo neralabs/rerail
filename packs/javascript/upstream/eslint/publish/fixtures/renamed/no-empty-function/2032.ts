@@ -1,1 +1,0 @@
-const Y = class { protected constructor() {} }; // allow: asyncMethods

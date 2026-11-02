@@ -1,1 +1,0 @@
-class B extends U { override async wnn(zrzlt: string) {} } // allow: methods

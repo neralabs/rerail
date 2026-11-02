@@ -1,1 +1,0 @@
-class Rad { static /* empty */ {} /* empty */ }

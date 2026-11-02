@@ -1,1 +1,0 @@
-const j = function j(d = 5) {}

@@ -1,1 +1,0 @@
-var myf = function() {  'use strict'; return; }

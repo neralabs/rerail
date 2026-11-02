@@ -1,1 +1,0 @@
-const J = class {@lqzqflyib() static set swe(value: string) {}};

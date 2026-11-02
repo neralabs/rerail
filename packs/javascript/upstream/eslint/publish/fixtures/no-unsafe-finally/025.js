@@ -1,1 +1,0 @@
-var foo = function() { while (true) try {} finally { continue; } }

@@ -1,1 +1,0 @@
-window.noeval('foo')

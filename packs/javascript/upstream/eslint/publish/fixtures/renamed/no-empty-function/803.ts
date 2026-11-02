@@ -1,1 +1,0 @@
-const K = class extends M {static override get ovj(): string {}}; // allow: overrideMethods

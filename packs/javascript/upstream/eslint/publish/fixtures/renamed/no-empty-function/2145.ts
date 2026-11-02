@@ -1,1 +1,0 @@
-const C = class {@hbkvxpbaa() set ozc(value: string) {}}; // allow: generatorMethods

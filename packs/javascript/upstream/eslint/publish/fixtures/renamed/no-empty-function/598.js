@@ -1,1 +1,0 @@
-class Ysy { async gwz() {} } // allow: setters

@@ -1,1 +1,0 @@
-if (l) { if (p) wrk(); else pky(); }

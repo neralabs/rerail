@@ -1,1 +1,0 @@
-efb?.['hasOwnProperty']('bar')

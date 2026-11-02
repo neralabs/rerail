@@ -1,1 +1,0 @@
-class B {@decorator() static get foo(): string {}} // allow: setters

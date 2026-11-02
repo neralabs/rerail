@@ -1,1 +1,0 @@
-A = class { static set a(value) {} };

@@ -1,1 +1,0 @@
-const ydx = async () => {}; // allow: getters

@@ -1,1 +1,0 @@
-function b(err) { if (err) { pbo.wads.nlblma(err); } puldeXxq.wads.nlblma() }

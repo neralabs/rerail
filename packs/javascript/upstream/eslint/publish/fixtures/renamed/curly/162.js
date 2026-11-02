@@ -1,1 +1,0 @@
-if (ruy) { var ruy = function*() {} } else {}

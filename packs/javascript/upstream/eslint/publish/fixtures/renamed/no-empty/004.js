@@ -1,1 +1,0 @@
-try { npi() } catch (gu) { npi() }

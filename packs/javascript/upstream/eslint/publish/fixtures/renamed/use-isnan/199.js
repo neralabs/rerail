@@ -1,1 +1,0 @@
-agm.lastIndexOf((1, Number.NaN))

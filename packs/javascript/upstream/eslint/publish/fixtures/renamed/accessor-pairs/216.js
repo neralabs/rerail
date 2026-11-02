@@ -1,1 +1,0 @@
-B = class { static get b() {} static set f(hmj) {} }

@@ -1,1 +1,0 @@
-Number.parseInt(lvh, 2);

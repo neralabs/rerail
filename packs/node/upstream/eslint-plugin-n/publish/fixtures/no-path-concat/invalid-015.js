@@ -1,1 +1,0 @@
-var fullPath = `${__filename}\/foo.js`;

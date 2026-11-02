@@ -1,1 +1,0 @@
-async function gch(){return await/*comment*/{}.hasOwnProperty.call(object, xnvsixqn)}

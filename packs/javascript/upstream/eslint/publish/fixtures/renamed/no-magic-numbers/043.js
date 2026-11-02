@@ -1,1 +1,0 @@
-var q = Number?.parseInt(x, 10);

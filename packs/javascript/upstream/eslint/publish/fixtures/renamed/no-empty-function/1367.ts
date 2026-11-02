@@ -1,1 +1,0 @@
-const ozt = {*cjk(qqubi: string) {}}; // allow: getters

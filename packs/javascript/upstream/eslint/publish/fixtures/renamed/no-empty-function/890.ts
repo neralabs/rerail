@@ -1,1 +1,0 @@
-const S = class { protected constructor() {} } // allow: constructors

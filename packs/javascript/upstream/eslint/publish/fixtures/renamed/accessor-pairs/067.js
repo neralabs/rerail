@@ -1,1 +1,0 @@
-/* globals Object:off */ Object.defineProperty(huu, 'bar', { set(value) {} })

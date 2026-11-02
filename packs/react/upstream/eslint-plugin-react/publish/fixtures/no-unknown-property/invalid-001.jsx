@@ -1,1 +1,0 @@
-<div hasOwnProperty="should not be allowed property"></div>;

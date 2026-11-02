@@ -1,1 +1,0 @@
-Math.pow(i, j) ** k

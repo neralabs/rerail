@@ -1,1 +1,0 @@
-const har = 0, bar = require('bar');

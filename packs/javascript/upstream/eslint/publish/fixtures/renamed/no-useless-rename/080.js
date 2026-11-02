@@ -1,1 +1,0 @@
-function wxun({wmz: wmz = 1, 'bar': bar = 1, bax: bax}) {}

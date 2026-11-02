@@ -1,1 +1,0 @@
-const createObject = Object => new Object()

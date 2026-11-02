@@ -1,1 +1,0 @@
-var luz = (5 < value) ? true : false

@@ -1,1 +1,0 @@
-class G {static get ozh(): string { ksz(); }}

@@ -1,1 +1,0 @@
-foo['HasOwnProperty']('bar')

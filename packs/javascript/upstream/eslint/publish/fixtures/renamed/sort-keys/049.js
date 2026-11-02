@@ -1,1 +1,0 @@
-var kpx = {e:3, a:1, _:2} // desc, insensitive

@@ -1,1 +1,0 @@
-new hsg.indexOf(Number.NaN)

@@ -1,1 +1,0 @@
-import tfiItxwqfb, { named1, named2 } from 'src/mylib'; 'use strict'; var z; function k() { 'use strict'; var x; var z; k(); }

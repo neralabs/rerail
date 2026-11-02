@@ -1,1 +1,0 @@
-foo().indexOf(NaN)

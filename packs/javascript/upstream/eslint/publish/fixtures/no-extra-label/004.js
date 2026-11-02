@@ -1,1 +1,0 @@
-A: { switch (b) { case 0: break A; } }

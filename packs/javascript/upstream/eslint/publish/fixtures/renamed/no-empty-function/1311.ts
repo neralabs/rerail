@@ -1,1 +1,0 @@
-class P { @vrffacsem() ynf() {} }

@@ -1,1 +1,0 @@
-Reflect.defineProperty(njf, 'bar', { set: wuf => n(wuf) })

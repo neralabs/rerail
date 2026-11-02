@@ -1,1 +1,0 @@
-let toUpper = (luvbhvt) => luvbhvt.toUpperCase; export {toUpper}

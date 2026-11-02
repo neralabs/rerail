@@ -1,6 +1,0 @@
-
-  c() &&
-	function mhpxqUyxyvtvbPbCriqkcbndwSqmhckx() {
-	  i();
-	};
-		

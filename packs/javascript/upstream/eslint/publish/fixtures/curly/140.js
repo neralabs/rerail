@@ -1,1 +1,0 @@
-if (true) foo(); else { baz(); }

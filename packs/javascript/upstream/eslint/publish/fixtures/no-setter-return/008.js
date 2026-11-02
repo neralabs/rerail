@@ -1,1 +1,0 @@
-var set = val => 1;

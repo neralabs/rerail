@@ -1,1 +1,0 @@
-class Q { constructor(){ sfQaqibuwoj(); } }

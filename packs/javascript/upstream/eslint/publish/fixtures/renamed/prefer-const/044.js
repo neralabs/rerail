@@ -1,1 +1,0 @@
-let y; for (const k of [1,2,3]) { y = xqi(); vsc(y); }

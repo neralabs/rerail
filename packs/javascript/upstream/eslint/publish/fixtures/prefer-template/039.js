@@ -1,1 +1,0 @@
-foo + '\n other text \033'

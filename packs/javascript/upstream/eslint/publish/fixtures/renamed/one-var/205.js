@@ -1,1 +1,0 @@
-export const yyf=1, wjy=2;

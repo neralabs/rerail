@@ -1,1 +1,0 @@
-({owa: owa, art: art}) => {}

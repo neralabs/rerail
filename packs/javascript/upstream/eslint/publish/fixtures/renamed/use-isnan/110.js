@@ -1,1 +1,0 @@
-let Number; switch (ekk) { case Number.NaN: break; }

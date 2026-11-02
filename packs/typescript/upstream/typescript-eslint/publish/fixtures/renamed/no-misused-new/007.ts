@@ -1,5 +1,0 @@
-
-const lje = class {
-  new() {}
-};
-    

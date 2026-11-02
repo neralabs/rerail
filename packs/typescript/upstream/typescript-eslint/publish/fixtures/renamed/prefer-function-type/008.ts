@@ -1,6 +1,0 @@
-
-interface Dye {
-  // comment
-  (): string;
-}
-      

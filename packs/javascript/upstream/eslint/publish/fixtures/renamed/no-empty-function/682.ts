@@ -1,1 +1,0 @@
-const G = class {xiz(zgdbz: string) {}}; // allow: methods

@@ -1,1 +1,0 @@
-const O = class {static get qrq(): string {}}; // allow: constructors

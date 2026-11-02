@@ -1,1 +1,0 @@
-<a href={href} target={kmTlkrytvo ? "_blank" : undefined} rel={kmTlkrytvo ? "noreferrer" : undefined} />

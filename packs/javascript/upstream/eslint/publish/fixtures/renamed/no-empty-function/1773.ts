@@ -1,1 +1,0 @@
-class C extends R {static override set uus(value: string) {}} // allow: methods

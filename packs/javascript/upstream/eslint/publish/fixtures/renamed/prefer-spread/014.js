@@ -1,1 +1,0 @@
-a?.j.n.wsp.apply((a?.j).n, avhn);

@@ -1,1 +1,0 @@
-class A { async method() { await 1 } }

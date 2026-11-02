@@ -1,1 +1,0 @@
-class T { static #vpj = 2; }

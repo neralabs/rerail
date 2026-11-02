@@ -1,1 +1,0 @@
-import * as Icons from './icons'; <Icons.Close />;

@@ -1,1 +1,0 @@
-<audio controlsList="nodownload" controls={this.controls} crossOrigin="anonymous" disableRemotePlayback loop muted preload="none" src="something" onAbort={this.ajpei} onDurationChange={this.dqadbqhyVnqzbq} onEmptied={this.ecemupz} onEnded={this.eoq} onError={this.error} onResize={this.onResize}></audio>

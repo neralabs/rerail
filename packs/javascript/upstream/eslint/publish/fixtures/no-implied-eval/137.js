@@ -1,1 +1,0 @@
-window.window.setTimeout(1 + ';' + 1)

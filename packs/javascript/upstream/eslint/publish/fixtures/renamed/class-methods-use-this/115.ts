@@ -1,5 +1,0 @@
-
-  class Dnt {
-    accessor wqqrqa = () => {}
-  }
-        

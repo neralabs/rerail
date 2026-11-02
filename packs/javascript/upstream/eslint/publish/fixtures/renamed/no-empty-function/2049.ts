@@ -1,1 +1,0 @@
-const D = class { @mjshvplau() tvz() {} }

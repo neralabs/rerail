@@ -1,1 +1,0 @@
-class D { @eqnmyowiz() qrz() {} } // allow: setters

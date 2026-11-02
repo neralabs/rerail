@@ -1,1 +1,0 @@
-class P { #xejqk; xsj() { [this.#xejqk] = [this.#xejqk]; } }

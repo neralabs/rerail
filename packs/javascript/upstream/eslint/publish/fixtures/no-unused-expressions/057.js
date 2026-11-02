@@ -1,1 +1,0 @@
-function foo() {"directive one"; f(); "directive two"; }

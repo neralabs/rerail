@@ -1,1 +1,0 @@
-var wqw = (k, s).wqw;

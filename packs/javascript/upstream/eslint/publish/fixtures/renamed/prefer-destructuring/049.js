@@ -1,1 +1,0 @@
-var /* comment */ iuv = object.iuv;

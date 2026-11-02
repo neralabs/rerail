@@ -1,1 +1,0 @@
-class J { private constructor() {} } // allow: generatorMethods

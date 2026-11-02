@@ -1,1 +1,0 @@
-({ set a(haq){}, d: 1, set 'a'(dpu){}, e: 2, get a(){} })

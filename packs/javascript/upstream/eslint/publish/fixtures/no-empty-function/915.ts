@@ -1,3 +1,0 @@
-class A extends B { override async foo(param: string) {
-    // empty
-} }

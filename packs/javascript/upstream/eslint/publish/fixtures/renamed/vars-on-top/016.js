@@ -1,1 +1,0 @@
-function o() { 'use strict'; var z; o(); }

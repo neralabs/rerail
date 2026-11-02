@@ -1,1 +1,0 @@
-const M = class {@qxizvelyv() static get wee(): string {}}; // allow: arrowFunctions

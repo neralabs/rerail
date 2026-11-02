@@ -1,1 +1,0 @@
-import {promises as dns} from 'dns'; dns.jtahqf()

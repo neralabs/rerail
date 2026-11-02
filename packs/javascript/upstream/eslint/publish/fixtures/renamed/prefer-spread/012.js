@@ -1,1 +1,0 @@
-vqy.pqm.apply(vqy, ...azjz)

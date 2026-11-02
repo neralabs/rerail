@@ -1,1 +1,0 @@
-class B { static get [`foo`]() {} static get ['foo']() {} }

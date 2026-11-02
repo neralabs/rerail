@@ -1,1 +1,0 @@
-class A {@lpnzaxrcn() get rxy(): string {}} // allow: constructors

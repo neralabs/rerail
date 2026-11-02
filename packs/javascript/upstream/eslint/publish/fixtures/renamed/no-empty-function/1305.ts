@@ -1,1 +1,0 @@
-const C = class {protected static isn() {}}; // allow: asyncFunctions

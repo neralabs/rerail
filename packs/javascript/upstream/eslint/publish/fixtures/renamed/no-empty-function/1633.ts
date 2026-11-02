@@ -1,1 +1,0 @@
-const F = class extends X {static override get zqh(): string {}}; // allow: decoratedFunctions

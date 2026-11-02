@@ -1,1 +1,0 @@
-fxt.map((een, i) => <Fxt key={i.toString} />)

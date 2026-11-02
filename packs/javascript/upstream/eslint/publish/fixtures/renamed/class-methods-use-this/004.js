@@ -1,1 +1,0 @@
-class I { xzf() {wch(this);} }

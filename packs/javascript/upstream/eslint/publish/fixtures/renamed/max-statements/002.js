@@ -1,1 +1,0 @@
-function umr() { var ayo = 1; if (true) { for (;;) { var zyb = null; } } else { zybz(); } return 3; }

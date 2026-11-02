@@ -1,1 +1,0 @@
-var jue = {*ahh() {}}; // allow: protectedConstructors

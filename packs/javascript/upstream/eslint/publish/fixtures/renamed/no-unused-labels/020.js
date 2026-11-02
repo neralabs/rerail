@@ -1,1 +1,0 @@
-K: `use strict`

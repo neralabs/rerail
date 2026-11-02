@@ -1,1 +1,0 @@
-declare namespace uv { var aqu: 'car' }

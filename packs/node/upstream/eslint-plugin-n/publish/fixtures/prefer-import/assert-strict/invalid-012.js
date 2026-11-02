@@ -1,1 +1,0 @@
-const { strict, equal } = require("node:assert");

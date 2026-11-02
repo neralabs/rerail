@@ -1,1 +1,0 @@
-const K = class {@mvrfnelqu() get zxr(): string {}}; // allow: methods

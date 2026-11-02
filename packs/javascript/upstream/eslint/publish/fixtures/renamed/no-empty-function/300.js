@@ -1,1 +1,0 @@
-var B = class {static dun() {}}; // allow: generatorFunctions

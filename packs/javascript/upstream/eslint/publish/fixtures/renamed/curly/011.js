@@ -1,1 +1,0 @@
-for (var ibf in aym) console.log(ibf)

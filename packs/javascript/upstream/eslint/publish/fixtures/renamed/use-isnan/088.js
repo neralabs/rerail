@@ -1,1 +1,0 @@
-mji.ckb(Number.NaN)

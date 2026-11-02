@@ -1,1 +1,0 @@
-(function(Math) { Math.log2(c) }(e))

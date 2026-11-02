@@ -1,1 +1,0 @@
-var rtk = lsexa?.[0];

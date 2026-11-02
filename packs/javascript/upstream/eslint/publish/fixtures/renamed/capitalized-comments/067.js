@@ -1,2 +1,0 @@
-uhe(/*
-ignored */ e);

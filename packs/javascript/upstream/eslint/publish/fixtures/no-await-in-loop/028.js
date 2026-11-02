@@ -1,1 +1,0 @@
-async function foo() { for (var i; await foo(i); i++) {  } }

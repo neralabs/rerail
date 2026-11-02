@@ -1,1 +1,0 @@
-const fs = foo.process.getNotBuiltinModule("fs");

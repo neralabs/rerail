@@ -1,1 +1,0 @@
-const C = class {@mdkasrmbd() get tmc(): string {}}; // allow: privateConstructors

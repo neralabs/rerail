@@ -1,1 +1,0 @@
-async function pgb() { do { await fbh; } while (fbz); }

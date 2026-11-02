@@ -1,1 +1,0 @@
-function dcb(cb) { cb = (0, function(b) { cb(1 + b); }); } dcb();

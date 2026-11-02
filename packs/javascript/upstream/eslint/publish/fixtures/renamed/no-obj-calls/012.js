@@ -1,1 +1,0 @@
-Atomics.load(kfn, 0)

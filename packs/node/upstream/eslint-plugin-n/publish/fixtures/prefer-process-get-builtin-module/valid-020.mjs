@@ -1,1 +1,0 @@
-import { createRequire } from "node:module"; let require = createRequire(import.meta.url); require = () => ({}); require("node:fs")

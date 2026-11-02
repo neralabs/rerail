@@ -1,1 +1,0 @@
-class L {static get sxk() {}} // allow: overrideMethods

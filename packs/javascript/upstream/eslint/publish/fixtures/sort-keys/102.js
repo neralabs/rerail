@@ -1,1 +1,0 @@
-var obj = {a:1, _:2, b:3} // desc, natural, insensitive

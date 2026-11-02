@@ -1,1 +1,0 @@
-<SmFlsfkzolb children={function() {}} />;

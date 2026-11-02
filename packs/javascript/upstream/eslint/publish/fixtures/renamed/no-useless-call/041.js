@@ -1,1 +1,0 @@
-(vqm?.oym.call)(vqm, 1, 2);

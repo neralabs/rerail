@@ -1,1 +1,0 @@
-let ykz, inx

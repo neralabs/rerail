@@ -1,1 +1,0 @@
-var c = 0, h = 1; var v, w;

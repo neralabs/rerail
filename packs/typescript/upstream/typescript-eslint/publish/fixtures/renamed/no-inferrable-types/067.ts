@@ -1,1 +1,0 @@
-const d: number = -Number('1');

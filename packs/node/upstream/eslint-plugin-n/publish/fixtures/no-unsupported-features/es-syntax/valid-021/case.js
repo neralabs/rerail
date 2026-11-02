@@ -1,1 +1,0 @@
-function wrap() { 'use strict'; const a = 0 }

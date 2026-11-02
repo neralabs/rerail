@@ -1,1 +1,0 @@
-function umq({ c: [{ s }]}) {} umq();

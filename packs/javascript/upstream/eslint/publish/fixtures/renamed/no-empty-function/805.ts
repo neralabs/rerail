@@ -1,1 +1,0 @@
-const sho = {set cef(value: string) { /* empty */ }};

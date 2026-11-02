@@ -1,1 +1,0 @@
-(function(Number) { Number.isInteger(e) }(h))

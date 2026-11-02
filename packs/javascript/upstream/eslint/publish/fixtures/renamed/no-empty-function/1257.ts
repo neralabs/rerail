@@ -1,1 +1,0 @@
-const A = class {vyj(ypuge: string) {}}; // allow: arrowFunctions

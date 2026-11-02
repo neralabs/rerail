@@ -1,1 +1,0 @@
-const gqqzraQvkpes = Object => new Object()

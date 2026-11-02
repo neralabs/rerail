@@ -1,1 +1,0 @@
-function xbj() {} // allow: getters

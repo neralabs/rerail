@@ -1,1 +1,0 @@
-const P = class {qfc(tvwjw: string) {}}; // allow: generatorFunctions

@@ -1,1 +1,0 @@
-var P = class {*vxf() {}}; // allow: functions

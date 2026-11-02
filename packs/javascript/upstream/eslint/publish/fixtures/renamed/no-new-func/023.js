@@ -1,1 +1,0 @@
-var fe = function () { function Function() {} }; Function('', '')

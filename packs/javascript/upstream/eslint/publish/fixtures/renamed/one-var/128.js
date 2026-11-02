@@ -1,1 +1,0 @@
-await using v = 0; await using x = 1;

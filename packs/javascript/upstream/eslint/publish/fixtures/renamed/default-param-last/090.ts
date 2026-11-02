@@ -1,1 +1,0 @@
-const xby = (l = 1, n?: number, u: number) => {};

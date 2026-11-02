@@ -1,1 +1,0 @@
-type Jja = Bas['baz'];

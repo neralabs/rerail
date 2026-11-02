@@ -1,1 +1,0 @@
-class A { foo() {var a = function () {this};} }

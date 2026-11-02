@@ -1,1 +1,0 @@
-try {} catch ({ jvr, ...ael }) { console.log(ael); }

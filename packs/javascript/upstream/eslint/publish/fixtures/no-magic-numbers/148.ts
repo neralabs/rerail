@@ -1,1 +1,0 @@
-type Foo = { bar: 2 | 3 };

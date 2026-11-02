@@ -1,1 +1,0 @@
-function gse() { return function() { 'use strict'; return; }; }

@@ -1,1 +1,0 @@
-function foo(Math) { Math.pow(a, b); }

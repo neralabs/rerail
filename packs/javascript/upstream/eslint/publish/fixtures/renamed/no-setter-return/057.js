@@ -1,1 +1,0 @@
-(class { set [() => { return 1; }](pfu) {} })

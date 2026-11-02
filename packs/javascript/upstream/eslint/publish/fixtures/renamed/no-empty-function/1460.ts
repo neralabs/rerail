@@ -1,1 +1,0 @@
-const wwv = {get uhc(): string {}};

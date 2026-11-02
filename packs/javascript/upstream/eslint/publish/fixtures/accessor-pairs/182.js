@@ -1,1 +1,0 @@
-(Reflect?.defineProperty)(obj, 'foo', {set: function(value) {}});

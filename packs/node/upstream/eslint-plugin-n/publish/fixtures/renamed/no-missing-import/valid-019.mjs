@@ -1,1 +1,0 @@
-import bhq from 'no-exist-package-0';

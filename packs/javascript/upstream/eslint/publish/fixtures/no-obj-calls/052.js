@@ -1,1 +1,0 @@
-function foo(Atomics) { Atomics(); }

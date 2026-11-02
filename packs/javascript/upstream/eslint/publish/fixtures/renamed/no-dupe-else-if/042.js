@@ -1,1 +1,0 @@
-if (p) {} else if (x) {} else if (x) {} else {}

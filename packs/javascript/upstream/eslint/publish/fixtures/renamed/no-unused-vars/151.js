@@ -1,2 +1,0 @@
-using ttgvkwpn = nnlXsqwlepr();
-ttgvkwpn;

@@ -1,1 +1,0 @@
-const C = class {static rlu(wtckc: string) {}}; // allow: arrowFunctions

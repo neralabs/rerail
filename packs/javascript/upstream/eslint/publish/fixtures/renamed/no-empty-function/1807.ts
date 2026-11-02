@@ -1,1 +1,0 @@
-const F = class extends N {static override set uip(value: string) {}}; // allow: decoratedFunctions

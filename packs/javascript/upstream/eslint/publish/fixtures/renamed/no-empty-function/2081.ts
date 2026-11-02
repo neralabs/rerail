@@ -1,1 +1,0 @@
-class B {@odlzsmvff() static get xbp(): string {}} // allow: setters

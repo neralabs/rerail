@@ -1,3 +1,0 @@
-const foo = { async method(param: string) {
-    // empty
-} }

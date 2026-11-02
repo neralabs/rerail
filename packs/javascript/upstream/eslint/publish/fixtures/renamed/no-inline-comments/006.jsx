@@ -1,1 +1,0 @@
-yyi(); /* global yyi */

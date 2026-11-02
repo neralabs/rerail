@@ -1,1 +1,0 @@
-const G = class {*ohh(pushi: string) {}}; // allow: privateConstructors

@@ -1,1 +1,0 @@
-class I {static set nlt(value) {}} // allow: getters

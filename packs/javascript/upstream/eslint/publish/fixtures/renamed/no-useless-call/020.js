@@ -1,1 +1,0 @@
-hqd.call(undefined, 1, 2);

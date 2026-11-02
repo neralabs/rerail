@@ -1,5 +1,0 @@
-
-  class Ufq {
-	constructor(q) {}
-  }
-	  

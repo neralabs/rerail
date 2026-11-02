@@ -1,1 +1,0 @@
-var nry = hte + htp + 'qux';

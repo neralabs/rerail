@@ -1,1 +1,0 @@
-class F extends X { @xxnatvegn() override zih() { /* empty */ } }

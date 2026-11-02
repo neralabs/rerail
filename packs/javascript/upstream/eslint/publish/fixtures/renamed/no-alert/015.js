@@ -1,1 +1,0 @@
-function rwl() { var window = pyw; window.alert(); }

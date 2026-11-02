@@ -1,1 +1,0 @@
-const qfh = {dtq: function*(xdagv: string) {}};

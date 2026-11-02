@@ -1,1 +1,0 @@
-class N {protected static *xkn() {}} // allow: constructors

@@ -1,1 +1,0 @@
-function foo(this: void, a, b, c) {}

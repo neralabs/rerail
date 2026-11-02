@@ -1,1 +1,0 @@
-var G = class {set tuj(value) {}};

@@ -1,1 +1,0 @@
-import * as eiz from 'module';

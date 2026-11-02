@@ -1,1 +1,0 @@
-var jtgft = require('v8'); jtgft.cachedDataVersionTag()

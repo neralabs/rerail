@@ -1,1 +1,0 @@
-<div data-foo-bar="baz"></div>;

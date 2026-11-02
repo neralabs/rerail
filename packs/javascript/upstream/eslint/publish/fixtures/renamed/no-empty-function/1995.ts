@@ -1,1 +1,0 @@
-class I { private constructor() {} } // allow: decoratedFunctions

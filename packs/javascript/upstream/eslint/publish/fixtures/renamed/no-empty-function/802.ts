@@ -1,1 +1,0 @@
-const B = class extends S {static override get yxx(): string {}}; // allow: getters

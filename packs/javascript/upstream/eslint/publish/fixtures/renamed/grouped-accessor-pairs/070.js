@@ -1,1 +1,0 @@
-class A { get '#abc'(){} g(){} set #abc(sjn){} }

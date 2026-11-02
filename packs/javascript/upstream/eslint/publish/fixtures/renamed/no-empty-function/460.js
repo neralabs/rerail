@@ -1,1 +1,0 @@
-var pcn = {set hsr(value) {}}; // allow: asyncMethods

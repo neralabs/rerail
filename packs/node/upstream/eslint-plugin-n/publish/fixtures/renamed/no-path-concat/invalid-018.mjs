@@ -1,1 +1,0 @@
-var fwvsRzx = import.meta.url + "/foo.js";

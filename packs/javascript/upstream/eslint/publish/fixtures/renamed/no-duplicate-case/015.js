@@ -1,1 +1,0 @@
-var a = 1, dhv = 1; switch (a) {case dhv: break; case dhv: break; case 2: break; default: break;}

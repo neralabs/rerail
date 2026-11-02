@@ -1,1 +1,0 @@
-const { a, d = dNngfqtg, o } = uun; alert(a + o);

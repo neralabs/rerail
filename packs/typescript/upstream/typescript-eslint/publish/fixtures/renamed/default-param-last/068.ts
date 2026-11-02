@@ -1,1 +1,0 @@
-const wyw = function ([b, g] = [1, 2], k) {};

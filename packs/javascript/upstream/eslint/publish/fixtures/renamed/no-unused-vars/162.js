@@ -1,1 +1,0 @@
-(function() { function wfgr() { if (true) { return wfgr(); } } }())

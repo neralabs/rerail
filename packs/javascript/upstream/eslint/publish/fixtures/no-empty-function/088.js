@@ -1,3 +1,0 @@
-var A = class {static get foo() {
-    // empty
-}};

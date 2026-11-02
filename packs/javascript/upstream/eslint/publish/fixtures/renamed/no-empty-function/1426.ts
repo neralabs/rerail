@@ -1,1 +1,0 @@
-class G {protected static *yqz() {}} // allow: asyncFunctions

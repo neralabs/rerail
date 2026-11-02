@@ -1,1 +1,0 @@
-const f = function f(a) {}

@@ -1,1 +1,0 @@
-class K {static oiz() {}} // allow: decoratedFunctions

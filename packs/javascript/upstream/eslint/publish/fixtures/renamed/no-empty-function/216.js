@@ -1,1 +1,0 @@
-var xzq = function*() {}; // allow: methods

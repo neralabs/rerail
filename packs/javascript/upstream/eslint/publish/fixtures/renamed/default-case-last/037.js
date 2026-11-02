@@ -1,1 +1,0 @@
-switch (qaw) { case 1: default: case 2: }

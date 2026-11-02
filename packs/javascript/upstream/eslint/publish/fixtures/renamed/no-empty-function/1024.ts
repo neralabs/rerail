@@ -1,1 +1,0 @@
-class F extends H {override set qxu(value: string) { /* empty */ }}

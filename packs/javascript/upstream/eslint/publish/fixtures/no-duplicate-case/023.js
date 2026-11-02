@@ -1,1 +1,0 @@
-switch (a) { case a: break; case b: break; case a: break; case c: break; case a: break; }

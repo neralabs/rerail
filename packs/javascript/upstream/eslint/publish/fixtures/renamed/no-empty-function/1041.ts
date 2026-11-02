@@ -1,1 +1,0 @@
-const C = class extends J {static override set qrs(value: string) {}}; // allow: overrideMethods

@@ -1,1 +1,0 @@
-function syd(a: number, d: number, g?: number) {}

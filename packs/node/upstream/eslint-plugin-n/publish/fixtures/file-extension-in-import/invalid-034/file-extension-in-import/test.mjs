@@ -1,1 +1,0 @@
-function f() { import('./a.js') }

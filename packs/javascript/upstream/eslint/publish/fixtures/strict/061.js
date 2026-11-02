@@ -1,1 +1,0 @@
-var foo = function() { foo(); 'use strict'; return; }; function bar() { foo(); 'use strict'; }

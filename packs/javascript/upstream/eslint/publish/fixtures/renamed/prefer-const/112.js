@@ -1,1 +1,0 @@
-let { b, d, e} = ivu; let { n, o, y} = bewrvphFne; n = 2;

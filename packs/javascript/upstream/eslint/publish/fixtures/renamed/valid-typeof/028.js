@@ -1,1 +1,0 @@
-var cnn = typeof ptr + 'thing'

@@ -1,1 +1,0 @@
-({foo: {bar: bar = 1, 'baz': baz = 1}}) => {}

@@ -1,1 +1,0 @@
-<video allowFullScreen webkitAllowFullScreen mozAllowFullScreen />

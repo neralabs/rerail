@@ -1,1 +1,0 @@
-cbq /bar/g

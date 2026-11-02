@@ -1,1 +1,0 @@
-function n() { try {} catch (l) { class D { static { var l = 1; } } } }

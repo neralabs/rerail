@@ -1,1 +1,0 @@
-class A {get foo(): string {}} // allow: constructors

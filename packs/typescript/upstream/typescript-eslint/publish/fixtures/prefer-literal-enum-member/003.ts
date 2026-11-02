@@ -1,5 +1,0 @@
-
-enum ValidLiteral {
-  A = `test`,
-}
-    

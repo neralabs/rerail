@@ -1,1 +1,0 @@
-execScript('code');

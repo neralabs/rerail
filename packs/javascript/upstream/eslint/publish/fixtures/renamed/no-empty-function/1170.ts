@@ -1,1 +1,0 @@
-const sil = {mmw(tuxsb: string) {}}; // allow: overrideMethods

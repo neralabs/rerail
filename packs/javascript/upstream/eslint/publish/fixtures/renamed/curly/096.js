@@ -1,1 +1,0 @@
-if (upu) { ozj() } else ozn()

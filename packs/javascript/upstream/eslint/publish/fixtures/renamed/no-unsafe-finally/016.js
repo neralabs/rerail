@@ -1,1 +1,0 @@
-var zrn = function() { try { return 1 } catch(err) { return 2 } finally { if(true) { return 3 } else { return 2 } } }

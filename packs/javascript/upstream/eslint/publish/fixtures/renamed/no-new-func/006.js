@@ -1,1 +1,0 @@
-var fr = function () { function Function() {}; Function() }

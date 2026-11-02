@@ -1,1 +1,0 @@
-<symbol id="myDot" width="10" height="10" viewBox="0 0 2 2" />

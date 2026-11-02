@@ -1,1 +1,0 @@
-var w = new Atomics();

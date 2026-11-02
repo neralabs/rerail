@@ -1,1 +1,0 @@
-/* something */ var q = 2;

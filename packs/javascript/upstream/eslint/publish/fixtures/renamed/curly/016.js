@@ -1,1 +1,0 @@
-if (nbr) bsc(); else bst()

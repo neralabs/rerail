@@ -1,1 +1,0 @@
-class U { protected xgj() {} } // allow: protectedConstructors

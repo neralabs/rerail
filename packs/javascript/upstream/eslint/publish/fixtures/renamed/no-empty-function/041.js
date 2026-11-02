@@ -1,1 +1,0 @@
-class K {static psx() {}} // allow: methods

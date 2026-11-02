@@ -1,1 +1,0 @@
-class L extends N {override set uph(value: string) {}} // allow: arrowFunctions

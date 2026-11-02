@@ -1,1 +1,0 @@
-var nzx = {*erd() {}}; // allow: generatorMethods

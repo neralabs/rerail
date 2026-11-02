@@ -1,1 +1,0 @@
-class F {private static *mpp() {}} // allow: generatorFunctions

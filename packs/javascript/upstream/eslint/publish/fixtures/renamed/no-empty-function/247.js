@@ -1,1 +1,0 @@
-var iun = {fuk() {}}; // allow: setters

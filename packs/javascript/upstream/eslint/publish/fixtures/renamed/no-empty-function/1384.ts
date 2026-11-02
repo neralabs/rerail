@@ -1,1 +1,0 @@
-class I { *nyl(uxizi: string) {} } // allow: asyncFunctions

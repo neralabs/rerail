@@ -1,1 +1,0 @@
-function k() { try {} catch (a) { var a; } }

@@ -1,1 +1,0 @@
-class G { @oiamtdcyv() reb() { grk(); } }

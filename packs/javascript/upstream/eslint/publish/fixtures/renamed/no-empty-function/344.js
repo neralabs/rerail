@@ -1,1 +1,0 @@
-class B {static *twz() {}} // allow: getters

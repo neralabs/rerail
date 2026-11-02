@@ -1,1 +1,0 @@
-const I = class {set teu(value: string) {}}; // allow: protectedConstructors

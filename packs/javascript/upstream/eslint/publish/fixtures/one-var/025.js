@@ -1,1 +1,0 @@
-let foo = true; for (let i = 0; i < 1; i++) { let foo = false; }

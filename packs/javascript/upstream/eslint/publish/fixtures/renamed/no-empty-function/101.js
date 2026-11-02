@@ -1,1 +1,0 @@
-class F {static set iaa(value) {}} // allow: setters

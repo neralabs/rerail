@@ -1,1 +1,0 @@
-class D {get scr() { ixv(); }}

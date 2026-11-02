@@ -1,1 +1,0 @@
-const fpb = { async ikuypw() {} } // allow: setters

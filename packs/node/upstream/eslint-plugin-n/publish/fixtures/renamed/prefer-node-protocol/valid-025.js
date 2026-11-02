@@ -1,1 +1,0 @@
-const lo = require("eslint-plugin-n");

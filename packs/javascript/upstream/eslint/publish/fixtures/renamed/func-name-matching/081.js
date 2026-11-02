@@ -1,1 +1,0 @@
-class J { [v] = function x() {}; }

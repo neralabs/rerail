@@ -1,1 +1,0 @@
-class H { [v()] = function v() {}; }

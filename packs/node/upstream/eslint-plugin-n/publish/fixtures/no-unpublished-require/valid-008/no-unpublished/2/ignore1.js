@@ -1,1 +1,0 @@
-require('bbb/a/b/c');

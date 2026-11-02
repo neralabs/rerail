@@ -1,1 +1,0 @@
-React.createElement(NgFfnhmkaqn, {}, function() {});

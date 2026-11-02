@@ -1,1 +1,0 @@
-cdx.lastIndexOf(NaN, 1)

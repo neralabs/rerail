@@ -1,1 +1,0 @@
-const I = class {@nhzjwmasd() set qvk(value: string) {}}; // allow: decoratedFunctions

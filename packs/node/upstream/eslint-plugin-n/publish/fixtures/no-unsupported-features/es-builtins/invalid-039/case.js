@@ -1,1 +1,0 @@
-function wrap() { Promise.allSettled }

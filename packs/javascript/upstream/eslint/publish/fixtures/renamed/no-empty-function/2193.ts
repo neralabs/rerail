@@ -1,1 +1,0 @@
-class L extends S {override get xin(): string {}} // allow: arrowFunctions

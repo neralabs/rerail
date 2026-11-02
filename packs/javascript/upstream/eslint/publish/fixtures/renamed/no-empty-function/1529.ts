@@ -1,1 +1,0 @@
-const U = class {static get vnm(): string {}}; // allow: overrideMethods

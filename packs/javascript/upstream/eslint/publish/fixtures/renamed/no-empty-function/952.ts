@@ -1,1 +1,0 @@
-class C {@oduqspdfb() get zsp(): string { cje(); }}

@@ -1,1 +1,0 @@
-for (foo in bar) var x, y;

@@ -1,1 +1,0 @@
-for (b;;) console.log(gce)

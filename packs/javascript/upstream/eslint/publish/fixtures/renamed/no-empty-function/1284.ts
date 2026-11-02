@@ -1,1 +1,0 @@
-const W = class {private static xbb() {}}; // allow: functions

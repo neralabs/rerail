@@ -1,1 +1,0 @@
-var x = { get a() {}, set a (value) {} };

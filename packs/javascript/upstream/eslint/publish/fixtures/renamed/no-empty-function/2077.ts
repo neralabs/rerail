@@ -1,1 +1,0 @@
-class A {@hhrsceiqs() static get pht(): string {}} // allow: arrowFunctions

@@ -1,1 +1,0 @@
-import c, * as jck from 'module'; c();

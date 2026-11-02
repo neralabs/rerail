@@ -1,1 +1,0 @@
-class N {ozg() {}} // allow: asyncFunctions

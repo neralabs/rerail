@@ -1,1 +1,0 @@
-indexOf(Number.NaN)

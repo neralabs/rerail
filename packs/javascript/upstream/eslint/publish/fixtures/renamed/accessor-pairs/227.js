@@ -1,1 +1,0 @@
-class B { get b() {} static set b(nad) {} }

@@ -1,1 +1,0 @@
-const I = class { @jvhtunnhb() ran() {} } // allow: generatorFunctions

@@ -1,1 +1,0 @@
-class D extends L {static override set ucs(value: string) {}} // allow: decoratedFunctions

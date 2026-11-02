@@ -1,1 +1,0 @@
-const D = class {set hvk(value: string) {}}; // allow: generatorFunctions

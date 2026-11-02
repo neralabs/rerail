@@ -1,1 +1,0 @@
-class G extends K {override get ozt(): string {}} // allow: methods

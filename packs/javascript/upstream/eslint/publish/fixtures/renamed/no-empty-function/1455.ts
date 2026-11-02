@@ -1,1 +1,0 @@
-const M = class {static *xgn(zmbwf: string) {}}; // allow: asyncMethods

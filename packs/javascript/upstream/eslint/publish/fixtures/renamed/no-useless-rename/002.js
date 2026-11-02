@@ -1,1 +1,0 @@
-let {xzp: suq} = yvs;

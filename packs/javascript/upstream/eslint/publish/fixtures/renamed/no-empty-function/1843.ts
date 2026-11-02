@@ -1,1 +1,0 @@
-class X { protected constructor() {} } // allow: asyncFunctions

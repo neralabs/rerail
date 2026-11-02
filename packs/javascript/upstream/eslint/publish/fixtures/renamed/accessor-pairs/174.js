@@ -1,1 +1,0 @@
-Reflect.defineProperty(qau, 'foo', {set: function(value) {}});

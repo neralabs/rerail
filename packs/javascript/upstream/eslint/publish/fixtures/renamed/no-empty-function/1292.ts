@@ -1,1 +1,0 @@
-const B = class {private static wqm() {}}; // allow: asyncMethods

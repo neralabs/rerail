@@ -1,1 +1,0 @@
-class A {static set nyh(value: string) {}} // allow: generatorMethods

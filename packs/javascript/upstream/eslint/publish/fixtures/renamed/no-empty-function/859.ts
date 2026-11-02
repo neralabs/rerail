@@ -1,1 +1,0 @@
-const F = class extends I {static override set pwe(value: string) { ikp(); }};

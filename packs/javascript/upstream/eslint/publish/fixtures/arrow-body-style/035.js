@@ -1,1 +1,0 @@
-scores.map(score => { return x in +(score / maxScore).toFixed(2)});

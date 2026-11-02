@@ -1,1 +1,0 @@
-var xnx; [xnx.g, xnx.t] = [0, 1];

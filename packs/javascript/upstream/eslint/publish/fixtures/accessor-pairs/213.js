@@ -1,1 +1,0 @@
-A = class { set [a + b](foo) {} };

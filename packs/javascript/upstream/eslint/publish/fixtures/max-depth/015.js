@@ -1,1 +1,0 @@
-function foo() { for (let x of foo) { if (true) {} } }

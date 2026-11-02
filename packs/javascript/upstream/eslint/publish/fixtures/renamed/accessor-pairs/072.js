@@ -1,1 +1,0 @@
-class B { get b() {} set j(zqn) {} static get r() {} static set y(jsf) {} }

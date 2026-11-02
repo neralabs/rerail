@@ -1,1 +1,0 @@
-const oxr = { async pzdazo() {} } // allow: methods

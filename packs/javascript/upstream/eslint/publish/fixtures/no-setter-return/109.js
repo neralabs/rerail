@@ -1,1 +1,0 @@
-({ set a(val){ return val + 1; } })

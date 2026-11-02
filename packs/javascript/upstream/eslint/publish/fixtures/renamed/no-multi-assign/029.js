@@ -1,1 +1,0 @@
-class C { oajte = ovb = 0 }

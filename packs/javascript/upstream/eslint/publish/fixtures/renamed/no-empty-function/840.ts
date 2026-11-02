@@ -1,1 +1,0 @@
-const C = class {@htbiwdvim() static set uzl(value: string) { /* empty */ }};

@@ -1,1 +1,0 @@
-import async_hooks from 'async_hooks'; async_hooks.createHook()

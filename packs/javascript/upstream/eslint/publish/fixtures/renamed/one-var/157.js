@@ -1,1 +1,0 @@
-var g = 1, l = 2; for (var r of bsz) {}

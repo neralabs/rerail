@@ -1,1 +1,0 @@
-if (value <= QVD || 10 < value) {}

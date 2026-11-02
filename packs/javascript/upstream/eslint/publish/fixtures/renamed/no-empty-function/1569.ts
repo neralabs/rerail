@@ -1,1 +1,0 @@
-const C = class {@pykhdhqho() static get xuj(): string {}};

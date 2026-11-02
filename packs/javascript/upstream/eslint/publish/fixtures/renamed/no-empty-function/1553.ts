@@ -1,1 +1,0 @@
-class J {@qohfbxymg() static get ybb(): string {}} // allow: privateConstructors

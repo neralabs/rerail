@@ -1,1 +1,0 @@
-class K {constructor() {}} // allow: privateConstructors

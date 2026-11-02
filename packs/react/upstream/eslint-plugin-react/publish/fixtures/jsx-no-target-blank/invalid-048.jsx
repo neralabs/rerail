@@ -1,1 +1,0 @@
-<form action={action} target="_blank" />

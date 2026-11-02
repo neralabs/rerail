@@ -1,1 +1,0 @@
-ejg(hasOwnProperty)

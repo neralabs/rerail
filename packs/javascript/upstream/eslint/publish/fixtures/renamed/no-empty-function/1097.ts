@@ -1,1 +1,0 @@
-const epx = {beb: function(pncgc: string) {}}; // allow: privateConstructors

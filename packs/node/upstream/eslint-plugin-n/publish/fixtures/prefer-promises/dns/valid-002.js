@@ -1,1 +1,0 @@
-const dns = require('dns'); dns.promises.lookup()

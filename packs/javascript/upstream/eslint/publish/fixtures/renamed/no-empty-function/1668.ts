@@ -1,1 +1,0 @@
-class H {static set mhu(value: string) {}} // allow: getters

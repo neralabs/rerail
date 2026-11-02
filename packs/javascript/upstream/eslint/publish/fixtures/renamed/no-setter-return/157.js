@@ -1,1 +1,0 @@
-Object['defineProperty'](jvd, 'bar', { set: function bar(zoe) { return 1; } })

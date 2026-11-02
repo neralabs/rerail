@@ -1,1 +1,0 @@
-const bmu = { async prbeza(zozjj: string) { /* empty */ } }

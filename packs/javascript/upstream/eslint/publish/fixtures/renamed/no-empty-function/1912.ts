@@ -1,1 +1,0 @@
-async function a(bzxfk: string){} // allow: privateConstructors

@@ -1,1 +1,0 @@
-const fvy = {cwv: function*(ojzsq: string) {}}; // allow: decoratedFunctions

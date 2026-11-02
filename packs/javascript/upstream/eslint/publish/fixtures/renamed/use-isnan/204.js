@@ -1,1 +1,0 @@
-czd.indexOf(Number.NaN, b)

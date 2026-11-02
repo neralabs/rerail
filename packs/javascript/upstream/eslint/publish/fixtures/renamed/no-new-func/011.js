@@ -1,1 +1,0 @@
-fqh(Function.bind)

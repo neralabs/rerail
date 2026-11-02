@@ -1,1 +1,0 @@
-function f() { for (const x of xs) {} }

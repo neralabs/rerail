@@ -1,1 +1,0 @@
-class D { #kgpms; kyc() { this.#kgpms = this.#kgpms; } }

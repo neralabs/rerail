@@ -1,1 +1,0 @@
-interface F { get nwae(): any, set nwae(value: any): void }

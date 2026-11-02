@@ -1,1 +1,0 @@
-var q1 = { get g() {} }, q2 = { set g(juf) {} };

@@ -1,1 +1,0 @@
-iaz?.apply?.(undefined, azwc);

@@ -1,1 +1,0 @@
-class Uvq { static { var jvb; } }

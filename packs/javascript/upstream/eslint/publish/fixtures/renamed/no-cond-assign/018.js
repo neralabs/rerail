@@ -1,1 +1,0 @@
-switch (zyc) { case e = f: fgi(); }

@@ -1,1 +1,0 @@
-const qwg = { async ysvejm() {} } // allow: decoratedFunctions

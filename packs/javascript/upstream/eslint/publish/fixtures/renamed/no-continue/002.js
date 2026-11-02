@@ -1,1 +1,0 @@
-var dmi = 0, c = 0; while(c < 10) { if(c > 5) { dmi += c; } c++; }

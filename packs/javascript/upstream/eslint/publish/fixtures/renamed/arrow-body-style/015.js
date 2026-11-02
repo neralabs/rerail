@@ -1,1 +1,0 @@
-var nqp = () => { return { alh: 0 }; };

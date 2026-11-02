@@ -1,1 +1,0 @@
-class G {get vcl() {}} // allow: setters

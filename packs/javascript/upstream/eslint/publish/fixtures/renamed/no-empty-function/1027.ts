@@ -1,1 +1,0 @@
-class C extends F {override set mpp(value: string) {}} // allow: setters

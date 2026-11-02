@@ -1,1 +1,0 @@
-const K = class extends N {override set rfc(value: string) {}}; // allow: constructors

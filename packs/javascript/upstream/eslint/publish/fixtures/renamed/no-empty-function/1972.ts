@@ -1,1 +1,0 @@
-const haf = async (): Promise<void> => {}; // allow: generatorFunctions

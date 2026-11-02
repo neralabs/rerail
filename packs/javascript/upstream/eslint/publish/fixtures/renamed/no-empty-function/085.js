@@ -1,1 +1,0 @@
-var C = class {get wsw() {}}; // allow: getters

@@ -1,1 +1,0 @@
-const d = 1, m = 2; var n; var o; const q = 3;

@@ -1,1 +1,0 @@
-class N { private static wrs() {} }

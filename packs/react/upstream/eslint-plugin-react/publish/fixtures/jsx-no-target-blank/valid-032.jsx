@@ -1,1 +1,0 @@
-<a {...someObject} href="/absolute/path"></a>

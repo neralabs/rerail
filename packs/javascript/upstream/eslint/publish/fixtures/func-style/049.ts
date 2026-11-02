@@ -1,1 +1,0 @@
-const foo: () => { bar(): void } = (): { bar(): void } => ({ bar(): void { super.baz(); } });

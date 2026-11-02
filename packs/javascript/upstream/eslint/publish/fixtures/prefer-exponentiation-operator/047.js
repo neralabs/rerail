@@ -1,1 +1,0 @@
-typeof Math.pow(a, b)

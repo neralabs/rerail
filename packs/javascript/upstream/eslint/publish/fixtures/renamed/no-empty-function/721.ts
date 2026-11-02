@@ -1,1 +1,0 @@
-class C { *jsq(kjxrg: string) { /* empty */ } }

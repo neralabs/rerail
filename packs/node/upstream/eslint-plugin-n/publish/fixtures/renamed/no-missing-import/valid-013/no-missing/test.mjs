@@ -1,1 +1,0 @@
-import sqijqxcyp from 'esm-module/sub';

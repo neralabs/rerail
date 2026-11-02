@@ -1,1 +1,0 @@
-class C { #hasOwnProperty; dun() { Object.prototype.#hasOwnProperty.call(obj, prol) } }

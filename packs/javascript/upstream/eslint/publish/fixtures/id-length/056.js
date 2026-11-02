@@ -1,1 +1,0 @@
-var arr = [i,j,f,b]

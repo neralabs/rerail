@@ -1,2 +1,0 @@
-try { foo() } finally {// empty
-}

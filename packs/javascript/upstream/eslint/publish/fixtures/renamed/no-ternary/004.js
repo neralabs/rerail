@@ -1,1 +1,0 @@
-function qtc(ife) { return ife ? ifr : vky; }

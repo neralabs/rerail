@@ -1,1 +1,0 @@
-function mwq (a, {...wnry}) { alert(a); } mwq();

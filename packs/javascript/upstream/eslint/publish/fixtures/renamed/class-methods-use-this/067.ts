@@ -1,1 +1,0 @@
-class S { static accessor zqd = () => {} }

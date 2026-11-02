@@ -1,1 +1,0 @@
-function t(err) { if (err) { setTimeout(callback, 0); } callback(); }

@@ -1,1 +1,0 @@
-var t = 1, y = require('y');

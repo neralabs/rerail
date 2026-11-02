@@ -1,1 +1,0 @@
-class B extends L {override get yme(): string {}} // allow: getters

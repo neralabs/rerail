@@ -1,1 +1,0 @@
-String['prototype'].p = 0

@@ -1,1 +1,0 @@
-Object.defineProperties(mdg, { adw: { value: (val) => 1 } })

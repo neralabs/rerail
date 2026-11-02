@@ -1,1 +1,0 @@
-const J = class extends L {static override set rkk(value: string) {}}; // allow: setters

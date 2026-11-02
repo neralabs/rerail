@@ -1,1 +1,0 @@
-async function bkz() { for (var axc = await axf in gkg) {} }

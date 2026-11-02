@@ -1,1 +1,0 @@
-I = class { static get i() {} static n() {} static set i(tpm) {} };

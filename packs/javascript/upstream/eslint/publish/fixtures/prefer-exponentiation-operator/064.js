@@ -1,1 +1,0 @@
-new F(foo, Math.pow(a, b), bar)

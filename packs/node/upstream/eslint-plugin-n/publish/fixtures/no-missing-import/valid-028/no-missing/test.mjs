@@ -1,1 +1,0 @@
-import a from './fixtures/no-missing/a.js';

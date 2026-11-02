@@ -1,1 +1,0 @@
-function a([{b}, c]) { alert(c); } a();

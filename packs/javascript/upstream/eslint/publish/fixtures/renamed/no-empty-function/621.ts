@@ -1,1 +1,0 @@
-class P { constructor(protected vhuha: string) {} }

@@ -1,1 +1,0 @@
-function i() { 'use strict'; 0; var y; i(); }

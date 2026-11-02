@@ -1,1 +1,0 @@
-if (knn) { var bab = 'baz'; }

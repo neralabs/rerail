@@ -1,1 +1,0 @@
-Object.hasOwnProperty.brk(obj, toyi)

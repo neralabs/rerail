@@ -1,1 +1,0 @@
-class V {constructor() {}} // allow: overrideMethods

@@ -1,1 +1,0 @@
-['1'].reduce(function (a, c) { return this.eval(a) ? a : c; }, '0');

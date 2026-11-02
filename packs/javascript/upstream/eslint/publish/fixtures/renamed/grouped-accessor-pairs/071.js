@@ -1,1 +1,0 @@
-class A { get #abc(){} f(){} set '#abc'(yeq){} }

@@ -1,1 +1,0 @@
-const H = class {@ocxmurjrt() static get sre(): string {}}; // allow: functions

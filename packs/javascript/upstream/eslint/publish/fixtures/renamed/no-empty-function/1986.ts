@@ -1,1 +1,0 @@
-class N { private constructor() {} } // allow: arrowFunctions

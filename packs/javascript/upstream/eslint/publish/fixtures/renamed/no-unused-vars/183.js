@@ -1,1 +1,0 @@
-(function(rnm, nwz, nwi) { return nwz; })();

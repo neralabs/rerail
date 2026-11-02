@@ -1,1 +1,0 @@
-var handler = function (e) {};

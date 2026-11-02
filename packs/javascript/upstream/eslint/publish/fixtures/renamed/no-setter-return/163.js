@@ -1,1 +1,0 @@
-Object?.defineProperty(kfs, 'bar', { set(ydb) { return 1; } })

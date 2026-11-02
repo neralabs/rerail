@@ -1,1 +1,0 @@
-import { default as gfp, a } from 'module'; alert(a);

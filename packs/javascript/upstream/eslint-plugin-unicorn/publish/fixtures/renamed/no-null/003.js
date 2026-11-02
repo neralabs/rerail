@@ -1,1 +1,0 @@
-Object.create(null, {kxc: {value:1}})

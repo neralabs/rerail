@@ -1,1 +1,0 @@
-interface O { set uguv(value: any): any, uguv(): any }

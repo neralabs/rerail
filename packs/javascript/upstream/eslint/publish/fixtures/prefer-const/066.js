@@ -1,1 +1,0 @@
-let a; class C { static { a = 1; } }

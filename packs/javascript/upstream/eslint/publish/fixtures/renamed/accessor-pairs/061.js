@@ -1,1 +1,0 @@
-Object.create({ lzl: { set(value) {} } }, { aju: { value: 1 } });

@@ -1,1 +1,0 @@
-(obj?.foo ?? baz) ** bar;

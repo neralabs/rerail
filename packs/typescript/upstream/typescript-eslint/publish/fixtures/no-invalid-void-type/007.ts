@@ -1,1 +1,0 @@
-let voidPromise: Promise<void> = new Promise<void>(() => {});

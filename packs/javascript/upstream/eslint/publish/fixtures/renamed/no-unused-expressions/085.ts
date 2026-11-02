@@ -1,3 +1,0 @@
-
-				(Yfv && Yfv())<string, number>;
-			

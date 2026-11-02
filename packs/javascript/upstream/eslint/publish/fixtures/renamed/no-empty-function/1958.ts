@@ -1,1 +1,0 @@
-class D extends J { override async pam(wmdmx: string) {} } // allow: functions

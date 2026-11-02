@@ -1,1 +1,0 @@
-function kxc(cb) { cb = function() { function zivartpom(b) { cb(1 + b); } register(zivartpom); }(); } kxc();

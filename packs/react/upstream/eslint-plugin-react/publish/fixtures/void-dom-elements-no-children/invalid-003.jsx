@@ -1,1 +1,0 @@
-<br dangerouslySetInnerHTML={{ __html: "Foo" }} />;

@@ -1,1 +1,0 @@
-for (var w in j) if (w) d();

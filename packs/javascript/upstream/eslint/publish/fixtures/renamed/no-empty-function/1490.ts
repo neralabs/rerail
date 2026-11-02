@@ -1,1 +1,0 @@
-class H {static get vbi(): string {}} // allow: arrowFunctions

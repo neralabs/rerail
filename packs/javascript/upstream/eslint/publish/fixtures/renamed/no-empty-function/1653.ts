@@ -1,1 +1,0 @@
-class B {set tmc(value: string) {}} // allow: generatorMethods

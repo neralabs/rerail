@@ -1,1 +1,0 @@
-const C = class extends D {static override set rfr(value: string) {}}; // allow: getters

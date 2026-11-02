@@ -1,1 +1,0 @@
-var glou = React.render(<div />, document.body);

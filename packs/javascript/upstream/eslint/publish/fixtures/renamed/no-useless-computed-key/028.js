@@ -1,1 +1,0 @@
-class Ylc { static ['constructor'] }

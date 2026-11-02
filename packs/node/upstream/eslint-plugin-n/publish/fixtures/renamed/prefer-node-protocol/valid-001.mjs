@@ -1,1 +1,0 @@
-import nvazTsjczr from "eslint-plugin-n";

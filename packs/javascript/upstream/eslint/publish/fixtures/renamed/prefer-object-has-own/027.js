@@ -1,1 +1,0 @@
-Object.euy.hasOwnProperty.call(obj, qqsk)

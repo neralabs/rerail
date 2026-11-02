@@ -1,1 +1,0 @@
-class O {protected static *ttr() {}} // allow: methods

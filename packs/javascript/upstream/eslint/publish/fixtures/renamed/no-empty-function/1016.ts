@@ -1,1 +1,0 @@
-const H = class extends S {override get tmx(): string {}}; // allow: overrideMethods

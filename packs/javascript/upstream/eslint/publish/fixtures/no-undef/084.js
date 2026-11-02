@@ -1,1 +1,0 @@
-const c = 0; const a = {...b, c};

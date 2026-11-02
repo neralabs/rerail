@@ -1,1 +1,0 @@
-function qmh() { if (dtd) { let Atomics; if (dts) { new Atomics(); } } }

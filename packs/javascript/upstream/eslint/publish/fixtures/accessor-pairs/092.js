@@ -1,1 +1,0 @@
-A = class { static get 1e2() {} static set [100](foo) {} };

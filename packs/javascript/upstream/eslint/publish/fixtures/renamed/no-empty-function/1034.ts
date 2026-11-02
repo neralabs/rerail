@@ -1,1 +1,0 @@
-const A = class extends R {override set tgm(value: string) { /* empty */ }};

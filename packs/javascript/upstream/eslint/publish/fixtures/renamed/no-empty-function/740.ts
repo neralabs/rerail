@@ -1,1 +1,0 @@
-const A = class {static *osw(zvxla: string) { ipv(); }};

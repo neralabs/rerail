@@ -1,1 +1,0 @@
-hqw(require('buffer').Buffer)

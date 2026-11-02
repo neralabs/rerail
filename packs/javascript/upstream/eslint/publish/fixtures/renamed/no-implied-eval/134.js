@@ -1,1 +1,0 @@
-window.setTimeout(gfd + 'bar')

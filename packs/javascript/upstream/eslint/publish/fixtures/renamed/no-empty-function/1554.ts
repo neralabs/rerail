@@ -1,1 +1,0 @@
-class A {@kxylckusf() static get zng(): string {}} // allow: protectedConstructors

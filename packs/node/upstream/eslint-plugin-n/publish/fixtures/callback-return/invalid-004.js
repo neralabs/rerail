@@ -1,1 +1,0 @@
-function a(callback) { if (err) { callback(); horse && horse(); } }

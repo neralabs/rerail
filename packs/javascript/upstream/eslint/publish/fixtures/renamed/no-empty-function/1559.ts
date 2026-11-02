@@ -1,1 +1,0 @@
-const A = class {@ezavversm() get sel(): string {}}; // allow: generatorFunctions

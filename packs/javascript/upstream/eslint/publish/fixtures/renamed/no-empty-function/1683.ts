@@ -1,1 +1,0 @@
-const L = class {set szj(value: string) {}}; // allow: constructors

@@ -1,1 +1,0 @@
-luy + 'does not autofix octal escape sequence' + '\033'

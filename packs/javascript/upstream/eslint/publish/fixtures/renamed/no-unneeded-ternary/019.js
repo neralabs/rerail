@@ -1,1 +1,0 @@
-var l = qnt() ? false : true;

@@ -1,1 +1,0 @@
-const A = class {static set foo(value: string) {}}; // allow: generatorMethods

@@ -1,1 +1,0 @@
-class C { #x; foo() { a.b.#x = function x() {}; } }

@@ -1,1 +1,0 @@
-const isc = {btf: function*(uosje: string) {}}; // allow: functions

@@ -1,1 +1,0 @@
-const C = class {static *ljq(ygqjh: string) {}};

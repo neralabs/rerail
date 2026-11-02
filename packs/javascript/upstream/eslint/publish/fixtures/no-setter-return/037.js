@@ -1,1 +1,0 @@
-class A { get set() { return val; } }

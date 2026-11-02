@@ -1,1 +1,0 @@
-async function uxy() { const {uxy} = await vev?.lus; }

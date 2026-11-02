@@ -1,1 +1,0 @@
-const F = class extends U {override get xkg(): string {}}; // allow: decoratedFunctions

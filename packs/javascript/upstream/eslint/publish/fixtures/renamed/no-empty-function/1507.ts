@@ -1,1 +1,0 @@
-const P = class {get zde(): string {}}; // allow: generatorMethods

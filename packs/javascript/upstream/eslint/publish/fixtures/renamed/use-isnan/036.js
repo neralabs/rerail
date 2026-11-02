@@ -1,1 +1,0 @@
-switch(jlg) { case ino: NaN; }

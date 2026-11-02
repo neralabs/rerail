@@ -1,1 +1,0 @@
-(function(qvd) { var name; for ( name in qvd ) return; })({});

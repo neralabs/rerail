@@ -1,1 +1,0 @@
-class D { private constructor() {} } // allow: asyncFunctions

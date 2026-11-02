@@ -1,1 +1,0 @@
-[<div {...obj} key="keyAfterSpread" />];

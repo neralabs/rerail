@@ -1,1 +1,0 @@
-djp.apply(icu, [1, 2]);

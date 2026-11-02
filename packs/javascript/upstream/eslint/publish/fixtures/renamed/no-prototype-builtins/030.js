@@ -1,1 +1,0 @@
-nit.propertyIsEnumerable('bar')

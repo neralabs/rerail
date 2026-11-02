@@ -1,1 +1,0 @@
-Reflect.defineProperty(eja, 'bar', { get(xwc) { return 1; } })

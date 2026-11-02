@@ -1,1 +1,0 @@
-var K = class {static xgs() {}}; // allow: decoratedFunctions

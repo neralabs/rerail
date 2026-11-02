@@ -1,1 +1,0 @@
-Math.pow(c, f, i, j)

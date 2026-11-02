@@ -1,1 +1,0 @@
-async function c(mowst: string){} // allow: generatorMethods

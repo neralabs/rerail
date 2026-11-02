@@ -1,1 +1,0 @@
-var foo = () => { if (true) { if (false) { if (true) { } } } }

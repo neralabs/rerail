@@ -1,1 +1,0 @@
-<a target="_blank" {...svpbbfGzsib} rel="noopener noreferrer"></a>

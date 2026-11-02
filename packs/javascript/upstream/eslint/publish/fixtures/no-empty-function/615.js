@@ -1,1 +1,0 @@
-const foo = async () => {}; // allow: privateConstructors

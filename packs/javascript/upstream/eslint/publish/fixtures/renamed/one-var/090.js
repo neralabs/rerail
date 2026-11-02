@@ -1,1 +1,0 @@
-var dob = 1, doo = 2; mzx(); var mzx = 3, mzws;

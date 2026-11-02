@@ -1,1 +1,0 @@
-<a target="_blank" rel="noreferrer" {...spreadProps}></a>

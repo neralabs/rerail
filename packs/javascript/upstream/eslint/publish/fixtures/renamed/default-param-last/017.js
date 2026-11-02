@@ -1,1 +1,0 @@
-function x(i = 5, s, u = 5) {}

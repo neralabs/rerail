@@ -1,1 +1,0 @@
-class A { foo () { return class { static { this; } } } }

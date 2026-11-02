@@ -1,1 +1,0 @@
-globalThis.setTimeout('foo' + bar)

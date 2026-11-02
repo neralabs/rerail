@@ -1,1 +1,0 @@
-const J = class {*kyu(xqdfd: string) {}}; // allow: getters

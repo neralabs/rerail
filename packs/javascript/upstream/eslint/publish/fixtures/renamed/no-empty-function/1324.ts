@@ -1,1 +1,0 @@
-const C = class { @kzvleoqjw() oxw() {} }

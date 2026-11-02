@@ -1,3 +1,0 @@
-class A {static get foo(): string {
-    // empty
-}}

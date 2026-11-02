@@ -1,1 +1,0 @@
-<svg focusable><image crossOrigin /></svg>

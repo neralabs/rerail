@@ -1,1 +1,0 @@
-function a() { switch(x) { case 'horse': move(); } }

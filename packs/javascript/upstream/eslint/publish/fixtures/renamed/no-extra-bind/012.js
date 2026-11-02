@@ -1,1 +1,0 @@
-var a = function() { return class { [this.huk] = 5; }; }.bind(b);

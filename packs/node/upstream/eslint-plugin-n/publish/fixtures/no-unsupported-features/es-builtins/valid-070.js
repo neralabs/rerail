@@ -1,1 +1,0 @@
-Math.log1p(a)

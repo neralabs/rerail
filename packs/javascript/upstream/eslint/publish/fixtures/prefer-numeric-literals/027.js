@@ -1,1 +1,0 @@
-function foo() { var parseInt; parseInt("111110111", 2); }

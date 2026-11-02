@@ -1,1 +1,0 @@
-class C { static { const b = 0; } } const a = 0; 

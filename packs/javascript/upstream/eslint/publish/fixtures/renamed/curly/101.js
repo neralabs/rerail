@@ -1,2 +1,0 @@
-do 
- kki(); while (rgb)

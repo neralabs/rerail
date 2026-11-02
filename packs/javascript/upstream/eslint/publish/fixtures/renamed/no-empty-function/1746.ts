@@ -1,1 +1,0 @@
-const H = class {@olodarevy() static set ueq(value: string) {}}; // allow: generatorFunctions

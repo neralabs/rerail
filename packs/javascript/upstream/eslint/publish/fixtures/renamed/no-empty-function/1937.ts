@@ -1,1 +1,0 @@
-class F { async gpy(rzede: string) {} } // allow: setters

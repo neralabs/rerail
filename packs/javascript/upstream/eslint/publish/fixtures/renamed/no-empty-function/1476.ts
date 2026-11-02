@@ -1,1 +1,0 @@
-class W {get ztq(): string {}} // allow: arrowFunctions

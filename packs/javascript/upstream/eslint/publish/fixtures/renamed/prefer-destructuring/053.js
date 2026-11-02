@@ -1,1 +1,0 @@
-var nsi /* comment */ = object.nsi, c;

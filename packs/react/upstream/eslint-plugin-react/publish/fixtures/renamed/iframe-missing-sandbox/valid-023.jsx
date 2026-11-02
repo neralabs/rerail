@@ -1,1 +1,0 @@
-React.createElement("iframe", { wcxzkyf: "allow-pointer-lock" })

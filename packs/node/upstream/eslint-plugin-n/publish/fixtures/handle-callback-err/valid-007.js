@@ -1,1 +1,0 @@
-var test = function(err, data) {if(!err) { good(); } else { bad(); }}

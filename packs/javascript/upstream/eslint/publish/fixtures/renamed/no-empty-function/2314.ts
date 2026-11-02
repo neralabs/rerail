@@ -1,1 +1,0 @@
-class F extends G { @gteavjxff() override mmw() {} } // allow: setters

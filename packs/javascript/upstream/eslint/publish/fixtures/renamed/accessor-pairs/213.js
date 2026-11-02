@@ -1,1 +1,0 @@
-L = class { set [l + p](sej) {} };

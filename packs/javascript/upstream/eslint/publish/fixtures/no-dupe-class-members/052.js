@@ -1,1 +1,0 @@
-class A { [null]() {} 'null'() {} }

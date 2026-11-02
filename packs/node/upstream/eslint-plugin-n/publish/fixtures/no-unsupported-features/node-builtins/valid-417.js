@@ -1,1 +1,0 @@
-var { cachedDataVersionTag } = require('v8'); cachedDataVersionTag()

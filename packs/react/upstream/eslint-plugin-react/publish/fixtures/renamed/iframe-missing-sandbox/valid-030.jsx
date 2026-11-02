@@ -1,1 +1,0 @@
-React.createElement("iframe", { skgvkbm: "allow-top-navigation-by-user-activation" })

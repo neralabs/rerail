@@ -1,1 +1,0 @@
-<div onclick="bar"></div>;

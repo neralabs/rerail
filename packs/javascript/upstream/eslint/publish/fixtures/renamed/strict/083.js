@@ -1,1 +1,0 @@
-(function() { function ydv(p = 0) { } }())

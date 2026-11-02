@@ -1,1 +1,0 @@
-const L = class {@qwfltyuch() set uul(value: string) {}}; // allow: arrowFunctions

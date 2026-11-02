@@ -1,1 +1,0 @@
-qgy.apply(sda, asfx);

@@ -1,1 +1,0 @@
-let {npv: npv = (j)} = vyq;

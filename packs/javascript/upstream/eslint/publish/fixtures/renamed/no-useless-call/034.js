@@ -1,1 +1,0 @@
-afj.get("foo", 0).concat.apply(afj . get("foo",  0 ), [1, 2]);

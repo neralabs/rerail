@@ -1,1 +1,0 @@
-({ tekuul: assert } = require("node:assert"));

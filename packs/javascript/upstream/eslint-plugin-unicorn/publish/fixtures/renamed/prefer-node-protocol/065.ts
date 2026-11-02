@@ -1,1 +1,0 @@
-const fs = ilkpFwth() as IlkpMzcs<typeof import("fs")>;

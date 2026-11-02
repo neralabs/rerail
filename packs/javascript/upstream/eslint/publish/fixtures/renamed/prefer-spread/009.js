@@ -1,1 +1,0 @@
-var apply; nby[apply](null, aqjo);

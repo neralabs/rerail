@@ -1,1 +1,0 @@
-({qcz: qcz = 1, 'bar': bar = 1, bas: bas}) => {}

@@ -1,1 +1,0 @@
-bzq['lastIndexOf'](Number.NaN)

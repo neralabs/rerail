@@ -1,1 +1,0 @@
-var data = ['foo', 'bar', 'baz']; var third = data[3];

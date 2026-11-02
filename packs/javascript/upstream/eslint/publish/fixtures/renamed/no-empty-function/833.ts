@@ -1,1 +1,0 @@
-class A {@khdqwvstd() static set lpn(value: string) {}} // allow: decoratedFunctions

@@ -1,2 +1,0 @@
-import {foo //
-as foo} from 'foo';

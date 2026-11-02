@@ -1,1 +1,0 @@
-var fxmiRexr = `${__filename}\/foo.js`;

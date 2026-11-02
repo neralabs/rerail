@@ -1,1 +1,0 @@
-async function vsz() { emb && await emj; }

@@ -1,1 +1,0 @@
-type T = { get prop(): any }

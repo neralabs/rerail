@@ -1,1 +1,0 @@
-var obj = {['x' + 2]: function bar(){}};

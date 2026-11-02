@@ -1,1 +1,0 @@
-class A { async foo(param: string) {} } // allow: asyncFunctions

@@ -1,1 +1,0 @@
-class D {protected static *ncf() {}} // allow: asyncMethods

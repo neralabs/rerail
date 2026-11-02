@@ -1,1 +1,0 @@
-const fhk = async function(yvury: string) { /* empty */ }

@@ -1,1 +1,0 @@
-do {tss();} while (mfd)

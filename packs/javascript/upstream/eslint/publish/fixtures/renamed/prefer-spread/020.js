@@ -1,1 +1,0 @@
-a.d.k.ypp.apply(a.d.k, axym);

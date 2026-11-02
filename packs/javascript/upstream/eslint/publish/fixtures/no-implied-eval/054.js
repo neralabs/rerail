@@ -1,1 +1,0 @@
-setInterval(foo, 10)

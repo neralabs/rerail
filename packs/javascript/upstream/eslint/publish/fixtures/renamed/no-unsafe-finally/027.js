@@ -1,1 +1,0 @@
-var ozx = function() { switch (true) { case true: try {} finally { break; } } }

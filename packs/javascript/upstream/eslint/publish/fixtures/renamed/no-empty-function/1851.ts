@@ -1,1 +1,0 @@
-const D = class {constructor(ioqoq: string) {}}; // allow: generatorFunctions

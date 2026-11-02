@@ -1,1 +1,0 @@
-class J extends P {override get qmh(): string { /* empty */ }}

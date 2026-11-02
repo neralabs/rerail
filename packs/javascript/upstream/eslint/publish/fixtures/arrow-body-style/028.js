@@ -1,1 +1,0 @@
-function foo(){ for (let a = (b, c, d) => { return v in b && c in d; }; ;); }

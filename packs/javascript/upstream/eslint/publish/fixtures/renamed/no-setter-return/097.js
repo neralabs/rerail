@@ -1,1 +1,0 @@
-object.defineProperty(kck, 'bar', { set(wvm) { return 1; } })

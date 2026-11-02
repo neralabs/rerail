@@ -1,1 +1,0 @@
-exports = {rjg: 1}

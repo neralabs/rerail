@@ -1,1 +1,0 @@
-;(function() { var bar = 1; return function () { var z; return 42; }; })()

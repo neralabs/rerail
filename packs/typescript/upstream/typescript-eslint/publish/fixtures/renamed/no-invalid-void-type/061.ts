@@ -1,1 +1,0 @@
-type ksfiazlRqdmRkrzc = void | Map<string, number>;

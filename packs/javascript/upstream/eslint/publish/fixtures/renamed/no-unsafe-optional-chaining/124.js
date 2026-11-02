@@ -1,1 +1,0 @@
-class I extends yuw?.mwg {}

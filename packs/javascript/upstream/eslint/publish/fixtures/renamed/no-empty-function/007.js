@@ -1,1 +1,0 @@
-var yep = function() { /* empty */ };

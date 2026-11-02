@@ -1,1 +1,0 @@
-const B = class extends H {override get mvm(): string {}}; // allow: methods

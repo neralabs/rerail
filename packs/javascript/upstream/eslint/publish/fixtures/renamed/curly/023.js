@@ -1,2 +1,0 @@
-do kob() 
- while (zez)

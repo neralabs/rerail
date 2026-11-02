@@ -1,1 +1,0 @@
-class B { set f(yfj) {} get f() {} set b(fkb) {} }

@@ -1,1 +1,0 @@
-let Object; Object.defineProperty(foo, 'bar', { get() {} })

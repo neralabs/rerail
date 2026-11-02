@@ -1,1 +1,0 @@
-var tiz = {*ehq() {}}; // allow: constructors

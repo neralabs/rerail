@@ -1,1 +1,0 @@
-const I = class {static udw(xbivn: string) {}}; // allow: asyncMethods

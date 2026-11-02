@@ -1,1 +1,0 @@
-const AQ_UQRUJF = +42;

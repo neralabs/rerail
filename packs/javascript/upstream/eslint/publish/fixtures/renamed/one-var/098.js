@@ -1,1 +1,0 @@
-const k = 0; class Y { static { const v = 0; } }

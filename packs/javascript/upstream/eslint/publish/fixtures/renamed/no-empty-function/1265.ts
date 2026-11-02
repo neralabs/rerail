@@ -1,1 +1,0 @@
-const C = class {iyx(jkdye: string) {}}; // allow: privateConstructors

@@ -1,1 +1,0 @@
-const D = class {ghr(rhwsb: string) {}}; // allow: overrideMethods

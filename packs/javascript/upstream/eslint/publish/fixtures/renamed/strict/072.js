@@ -1,1 +1,0 @@
-class D { rzl() { "use strict"; } }

@@ -1,1 +1,0 @@
-for (var w in q) { if (w) continue; i(); }

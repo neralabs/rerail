@@ -1,1 +1,0 @@
-const ojr = window.Temporal; new ojr();

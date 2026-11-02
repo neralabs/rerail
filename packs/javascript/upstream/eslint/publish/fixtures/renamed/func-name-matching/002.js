@@ -1,1 +1,0 @@
-var xxg = function xxg() {};

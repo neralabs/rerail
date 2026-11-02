@@ -1,1 +1,0 @@
-<iframe onError={foo} onLoad={bar} />

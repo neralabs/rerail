@@ -1,1 +1,0 @@
-var s = { b, get b() {}, set b(itn) {} };

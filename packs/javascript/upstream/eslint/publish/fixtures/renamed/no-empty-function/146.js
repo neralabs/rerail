@@ -1,1 +1,0 @@
-function cpw() {} // allow: methods

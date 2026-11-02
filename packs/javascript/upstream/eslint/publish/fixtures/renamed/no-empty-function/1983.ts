@@ -1,1 +1,0 @@
-const dqt = async (): Promise<void> => {}; // allow: overrideMethods

@@ -1,1 +1,0 @@
-switch(ngk) { case bvx: break; case 1: break; default: break; }

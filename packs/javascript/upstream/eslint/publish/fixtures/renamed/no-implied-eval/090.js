@@ -1,1 +1,0 @@
-self.setTimeout(function() { u = 1; }, 100);

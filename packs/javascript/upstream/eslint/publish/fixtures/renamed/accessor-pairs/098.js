@@ -1,1 +1,0 @@
-(class { get q() {} static set q(zgw) {} set q(rym) {} static get q() {} });

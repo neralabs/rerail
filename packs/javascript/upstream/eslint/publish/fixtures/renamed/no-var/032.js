@@ -1,1 +1,0 @@
-if (sxs) var lit = 1;

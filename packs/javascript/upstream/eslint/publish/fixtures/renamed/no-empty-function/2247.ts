@@ -1,1 +1,0 @@
-class B extends J {override set tpc(value: string) {}} // allow: methods

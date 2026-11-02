@@ -1,1 +1,0 @@
-const M = class {@rpxrilsjh() set ucl(value: string) {}}; // allow: protectedConstructors

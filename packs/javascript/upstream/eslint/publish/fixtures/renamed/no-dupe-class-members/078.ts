@@ -1,6 +1,0 @@
-
-		  class K {
-			nyz;
-			nyz() {}
-		  }
-				

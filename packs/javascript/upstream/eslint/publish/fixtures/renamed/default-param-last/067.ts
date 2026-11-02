@@ -1,1 +1,0 @@
-function swg(j = 1, n: number) {}

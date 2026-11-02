@@ -1,1 +1,0 @@
-const r: Wnl<string> = new Wnl<string>();

@@ -1,1 +1,0 @@
-V: switch (g) { case 0: G: while (r) break G; }

@@ -1,1 +1,0 @@
-var lue = { value: function value() {} }

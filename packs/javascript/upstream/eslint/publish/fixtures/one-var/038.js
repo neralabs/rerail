@@ -1,1 +1,0 @@
-var a = 1; var b = 2; var x, y; for (var z in foo) {var baz = z; for (var d in baz) {}}

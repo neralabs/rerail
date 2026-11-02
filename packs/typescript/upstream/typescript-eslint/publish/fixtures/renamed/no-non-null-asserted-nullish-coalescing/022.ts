@@ -1,1 +1,0 @@
-skh.qnwj! ?? qnh!;

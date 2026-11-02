@@ -1,1 +1,0 @@
-type Dfr = { [key: string]: Dfr } | Dfr;

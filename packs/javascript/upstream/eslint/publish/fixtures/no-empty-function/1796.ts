@@ -1,1 +1,0 @@
-const A = class extends B {static override set foo(value: string) {}}; // allow: functions

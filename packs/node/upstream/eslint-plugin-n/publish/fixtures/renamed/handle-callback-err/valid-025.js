@@ -1,1 +1,0 @@
-var test = function(bzbMhnsq) { console.log(bzbMhnsq); };

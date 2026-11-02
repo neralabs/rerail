@@ -1,1 +1,0 @@
-Reflect.defineProperty(jck, 'bar', { value: function bar() {} })

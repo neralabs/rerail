@@ -1,1 +1,0 @@
-class S { private constructor() {} } // allow: asyncMethods

@@ -1,5 +1,0 @@
-
-            foo
-            /denominator/
-            2
-        

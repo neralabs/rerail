@@ -1,1 +1,0 @@
-interface S { umzopi(): any }

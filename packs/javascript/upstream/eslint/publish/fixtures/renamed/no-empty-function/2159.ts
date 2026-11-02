@@ -1,1 +1,0 @@
-const R = class {@suitpvnlx() static set twb(value: string) {}}; // allow: getters

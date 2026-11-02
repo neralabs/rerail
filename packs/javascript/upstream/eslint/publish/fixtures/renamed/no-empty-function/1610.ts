@@ -1,1 +1,0 @@
-const A = class extends L {override get thp(): string {}}; // allow: arrowFunctions

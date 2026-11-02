@@ -1,1 +1,0 @@
-const dns = require('dns'); new dns.Resolver()

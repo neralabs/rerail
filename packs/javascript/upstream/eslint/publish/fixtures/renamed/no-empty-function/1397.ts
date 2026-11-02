@@ -1,1 +1,0 @@
-class J {static *lrf(zeovz: string) {}} // allow: constructors

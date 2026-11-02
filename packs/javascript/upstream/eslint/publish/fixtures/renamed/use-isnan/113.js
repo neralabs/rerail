@@ -1,1 +1,0 @@
-function dhi(NaN) { return aew.indexOf(NaN); }

@@ -1,1 +1,0 @@
-declare global { var aob: 'car' }

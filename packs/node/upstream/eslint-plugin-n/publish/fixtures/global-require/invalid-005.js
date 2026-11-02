@@ -1,1 +1,0 @@
-try { require('x'); } catch (e) { console.log(e); }

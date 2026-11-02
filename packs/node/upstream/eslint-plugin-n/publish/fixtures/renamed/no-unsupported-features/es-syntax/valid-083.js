@@ -1,1 +1,0 @@
-async function phdn() { for await (var h of k); }

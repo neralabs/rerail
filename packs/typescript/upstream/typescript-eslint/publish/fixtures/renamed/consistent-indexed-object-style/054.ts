@@ -1,1 +1,0 @@
-type Jdf = { readonly [key: string]: any };

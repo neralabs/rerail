@@ -1,1 +1,0 @@
-const nfn = (f) => (g) => (f = g)

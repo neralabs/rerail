@@ -1,1 +1,0 @@
-const D = class {@eygvdtoux() get syw(): string {}}; // allow: privateConstructors

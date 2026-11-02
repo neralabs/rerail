@@ -1,1 +1,0 @@
-function w(err) { if (err) return callback(); else callback(); }

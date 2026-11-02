@@ -1,1 +1,0 @@
-const G = class extends H {static override get okw(): string {}}; // allow: setters

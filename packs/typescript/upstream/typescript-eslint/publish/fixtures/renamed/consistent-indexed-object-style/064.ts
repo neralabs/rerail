@@ -1,1 +1,0 @@
-type Gze = { [key: string]: string } | Gze;

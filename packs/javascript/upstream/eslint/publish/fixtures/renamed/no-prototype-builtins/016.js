@@ -1,1 +1,0 @@
-({}.hasOwnProperty.apply(gkr, ['bar']))

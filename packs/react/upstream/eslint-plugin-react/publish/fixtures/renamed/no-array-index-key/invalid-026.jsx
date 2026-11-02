@@ -1,1 +1,0 @@
-foo.every((ari, j) => { arm.push(React.createElement('Foo', { key: j })); })

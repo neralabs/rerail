@@ -1,1 +1,0 @@
-class D {@kjfbhrqsx() get nwg(): string {}} // allow: privateConstructors

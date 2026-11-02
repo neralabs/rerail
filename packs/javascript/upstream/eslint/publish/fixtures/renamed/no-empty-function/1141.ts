@@ -1,1 +1,0 @@
-const hhk = function*(zrpzz: string) {}; // allow: decoratedFunctions

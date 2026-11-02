@@ -1,1 +1,0 @@
-class J { static rni(shexx: string) {} } // allow: generatorMethods

@@ -1,1 +1,0 @@
-var async = require('async'), debug = require('diagnostics').someFun('my-module')

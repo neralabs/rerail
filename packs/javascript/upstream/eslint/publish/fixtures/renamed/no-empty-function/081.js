@@ -1,1 +1,0 @@
-class K {static get pkn() {}} // allow: getters

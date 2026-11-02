@@ -1,1 +1,0 @@
-React.createElement("button", {type: condition ? "reset" : "button"})

@@ -1,1 +1,0 @@
-class T { protected xun() {} } // allow: functions

@@ -1,1 +1,0 @@
-let {d = 0, l} = qnt, m = d; l = d;

@@ -1,1 +1,0 @@
-var { bar = foo, foo } = function () { foo(); };

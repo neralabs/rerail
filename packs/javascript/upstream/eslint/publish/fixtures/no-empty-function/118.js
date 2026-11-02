@@ -1,1 +1,0 @@
-const foo = { async method() { bar(); } }

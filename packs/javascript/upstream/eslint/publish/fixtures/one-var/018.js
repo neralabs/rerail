@@ -1,1 +1,0 @@
-function foo() { const a = 1; var c = true; if (a) {const c = true; } }

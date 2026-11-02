@@ -1,1 +1,0 @@
-cnj + '\n other text \033'

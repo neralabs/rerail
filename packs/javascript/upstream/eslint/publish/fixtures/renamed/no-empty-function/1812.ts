@@ -1,1 +1,0 @@
-class N { constructor(ywaew: string) {} } // allow: methods

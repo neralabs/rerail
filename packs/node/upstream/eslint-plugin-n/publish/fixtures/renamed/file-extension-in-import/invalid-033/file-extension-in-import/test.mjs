@@ -1,1 +1,0 @@
-function h() { import('./a') }

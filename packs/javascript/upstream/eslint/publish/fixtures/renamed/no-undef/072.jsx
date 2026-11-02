@@ -1,1 +1,0 @@
-function Bih() { return <div/> } <Bih />;

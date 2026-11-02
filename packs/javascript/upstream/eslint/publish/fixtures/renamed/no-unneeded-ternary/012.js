@@ -1,1 +1,0 @@
-qcn ? qcn : pht;

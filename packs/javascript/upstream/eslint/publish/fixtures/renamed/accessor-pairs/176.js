@@ -1,1 +1,0 @@
-Object.create(null, {hhu: {set: function(value) {}}});

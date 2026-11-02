@@ -1,1 +1,0 @@
-function foo(Number) { return arr.indexOf(Number.NaN); }

@@ -1,1 +1,0 @@
-var A = class {static *foo() {}}; // allow: methods

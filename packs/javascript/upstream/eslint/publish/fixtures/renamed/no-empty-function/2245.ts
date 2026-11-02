@@ -1,1 +1,0 @@
-class N extends P {override set sty(value: string) {}} // allow: arrowFunctions

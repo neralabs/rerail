@@ -1,1 +1,0 @@
-const M = class { @onedjewne() tlg() {} } // allow: privateConstructors

@@ -1,1 +1,0 @@
-class P {@xzrruleji() static get ysv(): string {}} // allow: privateConstructors

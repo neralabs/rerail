@@ -1,1 +1,0 @@
-var obj; [obj.a, obj.b] = [0, 1];

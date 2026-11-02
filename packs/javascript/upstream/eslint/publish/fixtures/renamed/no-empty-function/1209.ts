@@ -1,1 +1,0 @@
-class A { protected qtz() {} } // allow: privateConstructors

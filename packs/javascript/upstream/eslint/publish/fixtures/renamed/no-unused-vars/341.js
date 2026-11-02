@@ -1,1 +1,0 @@
-const [a, ...trww] = iqi; alert(a);

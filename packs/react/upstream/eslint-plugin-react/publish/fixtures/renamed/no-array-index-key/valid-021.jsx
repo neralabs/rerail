@@ -1,1 +1,0 @@
-frq.flatMap((e) => <Frq key={e} />)

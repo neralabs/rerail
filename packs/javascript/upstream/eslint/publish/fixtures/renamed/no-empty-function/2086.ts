@@ -1,1 +1,0 @@
-class R {@ydpzirhhk() static get zcf(): string {}} // allow: protectedConstructors

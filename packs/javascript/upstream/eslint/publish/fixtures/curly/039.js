@@ -1,1 +1,0 @@
-while (foo) { let bar = 'baz'; }

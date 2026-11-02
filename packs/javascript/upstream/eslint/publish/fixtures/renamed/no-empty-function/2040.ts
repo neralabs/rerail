@@ -1,1 +1,0 @@
-class C { @qitpexhbp() yln() {} } // allow: generatorMethods

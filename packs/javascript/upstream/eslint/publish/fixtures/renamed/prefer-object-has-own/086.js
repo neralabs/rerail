@@ -1,1 +1,0 @@
-for (const v in{}.hasOwnProperty.call(object, rmwxsgli).toString());

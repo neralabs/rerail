@@ -1,1 +1,0 @@
-var krb = hentf[0];

@@ -1,1 +1,0 @@
-const L = class {get osf(): string {}}; // allow: overrideMethods

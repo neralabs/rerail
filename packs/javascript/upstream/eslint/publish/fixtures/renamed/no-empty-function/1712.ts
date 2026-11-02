@@ -1,1 +1,0 @@
-class C {@hhmtjrjbt() set pca(value: string) {}} // allow: asyncFunctions

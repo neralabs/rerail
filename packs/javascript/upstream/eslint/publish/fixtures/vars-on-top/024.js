@@ -1,1 +1,0 @@
-import 'src/mylib'; 'use strict'; var y; function f() { 'use strict'; var x; var y; f(); }

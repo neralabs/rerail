@@ -1,1 +1,0 @@
-qww[ /* comment */ 'bar' ]

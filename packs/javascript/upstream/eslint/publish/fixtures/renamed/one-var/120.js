@@ -1,1 +1,0 @@
-class O { static { let g; let m = 0; } }

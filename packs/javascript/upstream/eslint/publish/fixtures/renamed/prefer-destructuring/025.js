@@ -1,1 +1,0 @@
-var {ajj} = object.lyx;

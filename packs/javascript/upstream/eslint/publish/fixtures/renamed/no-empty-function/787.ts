@@ -1,1 +1,0 @@
-class G extends O {override get umq(): string {}} // allow: getters

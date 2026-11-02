@@ -1,1 +1,0 @@
-<object onLoad={bar} />

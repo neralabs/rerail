@@ -1,1 +1,0 @@
-const myv = async () => {}; // allow: setters

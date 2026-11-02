@@ -1,1 +1,0 @@
-class Lky { set[.2](value) {} }

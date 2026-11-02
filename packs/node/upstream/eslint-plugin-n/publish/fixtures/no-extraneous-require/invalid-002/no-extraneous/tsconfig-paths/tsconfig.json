@@ -1,9 +1,0 @@
-{
-    "compilerOptions": {
-        "paths": {
-            "~configurations/*": ["./src/configurations/*"],
-            "@configurations/*": ["./src/configurations/*"],
-            "#configurations/*": ["./src/configurations/*"]
-        }
-    }
-}

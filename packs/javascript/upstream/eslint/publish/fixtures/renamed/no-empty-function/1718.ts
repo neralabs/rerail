@@ -1,1 +1,0 @@
-class B {@hwaajcvvp() static set rjf(value: string) {}} // allow: functions

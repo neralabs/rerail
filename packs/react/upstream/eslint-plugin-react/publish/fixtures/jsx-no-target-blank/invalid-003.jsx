@@ -1,1 +1,0 @@
-<a target="_blank" rel={1} href="https://example.com/3"></a>

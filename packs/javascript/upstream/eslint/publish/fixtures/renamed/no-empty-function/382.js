@@ -1,1 +1,0 @@
-var tum = {get bli() {}}; // allow: functions

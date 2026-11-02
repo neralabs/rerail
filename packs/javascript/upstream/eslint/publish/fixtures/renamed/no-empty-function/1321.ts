@@ -1,1 +1,0 @@
-class G { @sxednpdyy() udq() {} } // allow: privateConstructors

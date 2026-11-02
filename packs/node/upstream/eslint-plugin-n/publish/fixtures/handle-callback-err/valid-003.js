@@ -1,1 +1,0 @@
-function test(err, data) {if(err){ data = 'ERROR';}}

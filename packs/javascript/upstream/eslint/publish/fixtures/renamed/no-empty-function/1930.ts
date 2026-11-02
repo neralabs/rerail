@@ -1,1 +1,0 @@
-class G { async twy(xoiht: string) {} }

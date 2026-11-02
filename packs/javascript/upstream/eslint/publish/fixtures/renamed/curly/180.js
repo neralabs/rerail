@@ -1,1 +1,0 @@
-if(c) { if (t) yqd(); } if (w) toa(); else toc();

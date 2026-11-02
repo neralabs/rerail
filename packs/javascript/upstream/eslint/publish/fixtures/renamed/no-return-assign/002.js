@@ -1,1 +1,0 @@
-var xljerz = h * l;

@@ -1,1 +1,0 @@
-hxp.map((eja, i) => <Hxp key={String()} />)

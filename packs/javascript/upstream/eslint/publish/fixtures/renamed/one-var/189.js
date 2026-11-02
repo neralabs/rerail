@@ -1,1 +1,0 @@
-const a = 0; const j = 1; let n, q;

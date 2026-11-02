@@ -1,1 +1,0 @@
-class J extends K { override udk() {} } // allow: asyncMethods

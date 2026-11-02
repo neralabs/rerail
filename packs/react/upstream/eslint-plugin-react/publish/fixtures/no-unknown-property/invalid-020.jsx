@@ -1,1 +1,0 @@
-<div onLoad={this.load} />

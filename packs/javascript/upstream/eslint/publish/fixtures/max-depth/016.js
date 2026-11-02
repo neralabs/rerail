@@ -1,1 +1,0 @@
-function foo() { while (true) { if (true) { if (false) { } } } }

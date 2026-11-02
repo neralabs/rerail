@@ -1,1 +1,0 @@
-A: if (a) { if (foo()) { break A; } bar(); };

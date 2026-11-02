@@ -1,1 +1,0 @@
-function qsu(cb) { cb = function(b) { return cb(1 + b); }(); } qsu();

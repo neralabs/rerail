@@ -1,1 +1,0 @@
-function load(require) { return require("node:fs") }

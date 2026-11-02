@@ -1,1 +1,0 @@
-<App dangerouslySetInnerHTML={{ __html: "<span>hello</span>" }} />;

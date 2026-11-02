@@ -1,1 +1,0 @@
-var g = function() { return /=foo/; };

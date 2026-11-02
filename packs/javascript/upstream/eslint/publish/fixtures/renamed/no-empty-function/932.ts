@@ -1,1 +1,0 @@
-class N { protected constructor() { zvi(); } }

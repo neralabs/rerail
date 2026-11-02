@@ -1,1 +1,0 @@
-class L { @sdinksdnb() async xph(ypihx: string) {} } // allow: methods

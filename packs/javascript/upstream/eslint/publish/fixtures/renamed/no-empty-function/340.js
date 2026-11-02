@@ -1,1 +1,0 @@
-class B {static *gzf() {}} // allow: functions

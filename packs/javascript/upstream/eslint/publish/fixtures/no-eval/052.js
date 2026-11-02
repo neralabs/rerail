@@ -1,1 +1,0 @@
-var EVAL = globalThis.eval; EVAL('foo')

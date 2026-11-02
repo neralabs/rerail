@@ -1,1 +1,0 @@
-type Obtw = { readonly l: (e: string) => number };

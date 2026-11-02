@@ -1,1 +1,0 @@
-function xzyk() { 'use strict'; if (i) { function k() {} } }

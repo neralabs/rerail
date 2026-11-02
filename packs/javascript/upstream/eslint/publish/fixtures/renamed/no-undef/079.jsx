@@ -1,1 +1,0 @@
-var React, Hdz; React.render(<Hdz hmyo={h} />);

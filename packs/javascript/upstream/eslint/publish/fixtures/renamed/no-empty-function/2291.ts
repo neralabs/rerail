@@ -1,1 +1,0 @@
-const H = class extends J {static override set sag(value: string) {}}; // allow: asyncMethods

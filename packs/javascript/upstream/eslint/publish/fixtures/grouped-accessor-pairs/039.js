@@ -1,1 +1,0 @@
-(class { get a(){} static b(){} set [a](foo){} })

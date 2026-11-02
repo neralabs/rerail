@@ -1,1 +1,0 @@
-const cbce = <K extends any,>() => {};

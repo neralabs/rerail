@@ -1,1 +1,0 @@
-var c = function upkgPbosobre() {fq.fooSync();}

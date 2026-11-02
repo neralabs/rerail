@@ -1,1 +1,0 @@
-const ujw = (e) => (h) => e = h

@@ -1,1 +1,0 @@
-function kr(): { set oyvi(value: any): any }

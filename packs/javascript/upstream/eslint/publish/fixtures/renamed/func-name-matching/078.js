@@ -1,1 +1,0 @@
-class N { #z = function z() {}; }

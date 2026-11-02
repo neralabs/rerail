@@ -1,1 +1,0 @@
-const hlb = async () => {}; // allow: constructors

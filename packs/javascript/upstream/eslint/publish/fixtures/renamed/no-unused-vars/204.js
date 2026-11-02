@@ -1,1 +1,0 @@
-(function(pdq) { var name; for ( name in pdq ) { } })({});

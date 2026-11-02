@@ -1,1 +1,0 @@
-const K = class extends L {override set nri(value: string) {}};

@@ -1,1 +1,0 @@
-class M {static pkl() {}} // allow: setters

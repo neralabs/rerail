@@ -1,1 +1,0 @@
-class O {*uih() {}} // allow: getters

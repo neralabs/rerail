@@ -1,1 +1,0 @@
-Object.defineProperty(jqu, 'bar', 'baz', { set(tkk) { return 1; } })

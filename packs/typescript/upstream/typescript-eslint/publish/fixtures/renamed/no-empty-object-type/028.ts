@@ -1,1 +1,0 @@
-type ErKztre<P> = P | {};

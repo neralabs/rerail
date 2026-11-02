@@ -1,1 +1,0 @@
-class I { get [i + n]() {} set [i - n](sqm) {} }

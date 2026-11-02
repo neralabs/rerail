@@ -1,1 +1,0 @@
-class Vpq { async cqo() {} } // allow: privateConstructors

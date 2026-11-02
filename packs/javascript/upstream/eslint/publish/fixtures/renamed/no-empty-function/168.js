@@ -1,1 +1,0 @@
-var dkl = function() {}; // allow: protectedConstructors

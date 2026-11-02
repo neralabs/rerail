@@ -1,1 +1,0 @@
-var z = { get s() {}, set s(wte) {} };

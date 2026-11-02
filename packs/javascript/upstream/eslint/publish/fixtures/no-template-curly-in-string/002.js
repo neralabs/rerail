@@ -1,1 +1,0 @@
-templateFunction`Hello, ${name}`;

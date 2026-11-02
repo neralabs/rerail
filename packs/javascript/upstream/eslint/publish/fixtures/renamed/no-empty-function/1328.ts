@@ -1,1 +1,0 @@
-const K = class { @vbhqheyqh() ycu() {} } // allow: generatorMethods

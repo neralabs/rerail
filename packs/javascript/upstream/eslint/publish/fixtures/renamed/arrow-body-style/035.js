@@ -1,1 +1,0 @@
-pbdvvc.map(pbdvv => { return y in +(pbdvv / maqCqaqt).toFixed(2)});

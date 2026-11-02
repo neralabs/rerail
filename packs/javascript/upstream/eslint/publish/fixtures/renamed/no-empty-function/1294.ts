@@ -1,1 +1,0 @@
-const J = class {private static rpk() {}}; // allow: protectedConstructors

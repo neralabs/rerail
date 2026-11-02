@@ -1,1 +1,0 @@
-const C = class extends M {override set ogu(value: string) {}}; // allow: asyncFunctions

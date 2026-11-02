@@ -1,1 +1,0 @@
-a = a instanceof x

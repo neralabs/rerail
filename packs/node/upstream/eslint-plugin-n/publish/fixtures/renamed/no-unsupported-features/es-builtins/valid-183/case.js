@@ -1,1 +1,0 @@
-(function(Uint16Array) { Uint16Array }(k))

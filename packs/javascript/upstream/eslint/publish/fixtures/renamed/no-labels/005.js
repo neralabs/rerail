@@ -1,1 +1,0 @@
-U: while (u) { break U; }

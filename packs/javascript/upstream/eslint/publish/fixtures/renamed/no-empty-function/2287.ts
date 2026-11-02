@@ -1,1 +1,0 @@
-const C = class extends F {static override set shu(value: string) {}}; // allow: generatorMethods

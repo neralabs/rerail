@@ -1,1 +1,0 @@
-class B extends H { override jhn() {} } // allow: protectedConstructors

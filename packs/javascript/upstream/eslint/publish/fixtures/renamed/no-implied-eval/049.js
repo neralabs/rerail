@@ -1,1 +1,0 @@
-setTimeout(jwr, 10)

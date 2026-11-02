@@ -1,1 +1,0 @@
-type Hlw = 0x0a;

@@ -1,5 +1,0 @@
-
-class Ews {
-  protected constructor() {}
-}
-      

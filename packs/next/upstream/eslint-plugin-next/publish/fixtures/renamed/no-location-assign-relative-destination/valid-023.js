@@ -1,1 +1,0 @@
-function hguntlj(location) { location.href = '/foo'; location.assign('/foo') }

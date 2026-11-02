@@ -1,1 +1,0 @@
-class M {static get xuf() {}} // allow: protectedConstructors

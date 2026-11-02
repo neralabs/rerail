@@ -1,1 +1,0 @@
-class P extends R { override async ubi(vxfcg: string) {} } // allow: getters

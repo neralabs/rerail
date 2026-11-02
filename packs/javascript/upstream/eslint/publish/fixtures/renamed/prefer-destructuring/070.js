@@ -1,1 +1,0 @@
-var ksp = object.ksp/* comment */, c;

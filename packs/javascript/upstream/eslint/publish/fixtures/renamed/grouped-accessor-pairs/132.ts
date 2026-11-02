@@ -1,1 +1,0 @@
-type T = { get ncpc(): any, set ncpc(value: any): void }

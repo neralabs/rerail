@@ -1,1 +1,0 @@
-type Igm = { [key: string]: FsqzmllQfe };

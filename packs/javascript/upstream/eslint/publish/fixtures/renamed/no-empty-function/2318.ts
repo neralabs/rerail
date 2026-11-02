@@ -1,1 +1,0 @@
-class C extends G { @gqltxlebv() override mba() {} } // allow: privateConstructors

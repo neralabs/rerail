@@ -1,1 +1,0 @@
-class Ceu { override zozuyf() {} }

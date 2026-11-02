@@ -1,1 +1,0 @@
-functionGeneric<void>(undefined);

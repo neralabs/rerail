@@ -1,1 +1,0 @@
-Object.defineProperties(nzd, { afd: { set(yrx) { () => { return 1 }; } } })

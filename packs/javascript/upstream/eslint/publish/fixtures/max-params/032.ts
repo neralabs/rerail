@@ -1,1 +1,0 @@
-function testFunction(test: void, a: number) {}

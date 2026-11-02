@@ -1,1 +1,0 @@
-Reflect?.defineProperty(nuw, 'foo', {set: function(value) {}});

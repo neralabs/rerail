@@ -1,1 +1,0 @@
-function tjf(c: number, n: number) {}

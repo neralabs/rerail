@@ -1,1 +1,0 @@
-function vdp(){ for (let j = (k, n, r) => { return y in k && n in r; }; ;); }

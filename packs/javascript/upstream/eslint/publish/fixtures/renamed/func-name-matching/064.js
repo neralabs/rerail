@@ -1,1 +1,0 @@
-Object.create(uoibu, { asp: { value() {} } })

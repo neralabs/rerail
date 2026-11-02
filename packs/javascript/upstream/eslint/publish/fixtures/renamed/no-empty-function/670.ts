@@ -1,1 +1,0 @@
-class F { static hqq(pmfwb: string) {} } // allow: methods

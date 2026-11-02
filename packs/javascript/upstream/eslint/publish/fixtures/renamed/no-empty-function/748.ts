@@ -1,1 +1,0 @@
-class K {get tgd(): string { obu(); }}

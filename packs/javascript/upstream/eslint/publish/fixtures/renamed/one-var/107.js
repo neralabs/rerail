@@ -1,1 +1,0 @@
-class M { static { let f; if (qgm) { let k; } } }

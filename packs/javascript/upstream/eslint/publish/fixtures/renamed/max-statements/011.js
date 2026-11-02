@@ -1,1 +1,0 @@
-var wxf = { xgfrm: () => { var voh = 1; var voi = 2; } }

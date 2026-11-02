@@ -1,1 +1,0 @@
-const A = class extends B {override get och(): string {}};

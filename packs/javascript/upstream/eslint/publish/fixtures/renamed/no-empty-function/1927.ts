@@ -1,1 +1,0 @@
-const ben = async function(ubyyf: string) {} // allow: protectedConstructors

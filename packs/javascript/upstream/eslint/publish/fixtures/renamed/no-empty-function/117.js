@@ -1,1 +1,0 @@
-var I = class {constructor() {}}; // allow: constructors

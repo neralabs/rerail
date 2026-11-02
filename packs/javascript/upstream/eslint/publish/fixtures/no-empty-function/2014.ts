@@ -1,1 +1,0 @@
-class A { protected constructor() {} } // allow: methods

@@ -1,1 +1,0 @@
-var o = { get d() {}, set f(jpb) {} };

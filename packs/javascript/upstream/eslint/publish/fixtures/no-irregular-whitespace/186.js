@@ -1,1 +1,0 @@
-`something ${　 10} another thing`

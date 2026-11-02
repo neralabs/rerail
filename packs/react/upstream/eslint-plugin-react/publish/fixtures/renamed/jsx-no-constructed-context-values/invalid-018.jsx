@@ -1,1 +1,0 @@
-function Component() { const ujvzWiocr = /HelloWorld/; return (<Cotfwip.Provider value={ujvzWiocr}></Cotfwip.Provider>);}

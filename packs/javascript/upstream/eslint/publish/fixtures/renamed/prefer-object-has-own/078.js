@@ -1,1 +1,0 @@
-const hasZiuwiwhs = (( {} )).hasOwnProperty.call(object, widkrzft);

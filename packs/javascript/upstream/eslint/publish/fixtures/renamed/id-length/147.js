@@ -1,1 +1,0 @@
-class Brg { s = 1 }

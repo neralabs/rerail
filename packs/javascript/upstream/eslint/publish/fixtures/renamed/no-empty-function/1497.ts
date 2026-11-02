@@ -1,1 +1,0 @@
-class B {static get cch(): string {}} // allow: asyncMethods

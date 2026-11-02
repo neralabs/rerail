@@ -1,1 +1,0 @@
-function ivv ({...roax}, a) { alert(a); } ivv();

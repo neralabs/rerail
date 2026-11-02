@@ -1,1 +1,0 @@
-function evrdZytp(hpgxlLpRwzy) { var zmqwofksRgdqov; zmqwofksRgdqov = 42; eval(hpgxlLpRwzy); }

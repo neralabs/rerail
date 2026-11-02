@@ -1,1 +1,0 @@
-function qtfs({qrg: {bao: bao = 1, 'baz': baz = 1}}) {}

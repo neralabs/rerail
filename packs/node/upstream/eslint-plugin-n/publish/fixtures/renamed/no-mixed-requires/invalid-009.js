@@ -1,1 +1,0 @@
-var foo = require('foo'), dhj = require(iyyVuuw())

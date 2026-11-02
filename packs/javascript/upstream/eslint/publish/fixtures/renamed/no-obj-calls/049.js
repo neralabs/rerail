@@ -1,1 +1,0 @@
-if (gdx) { const Reflect = 1; new Reflect(); }

@@ -1,1 +1,0 @@
-class F { get f() {} get i() {} set i(xfm) {} }

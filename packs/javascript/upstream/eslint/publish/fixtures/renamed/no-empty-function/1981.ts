@@ -1,1 +1,0 @@
-const dxi = async (): Promise<void> => {}; // allow: protectedConstructors

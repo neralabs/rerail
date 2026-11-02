@@ -1,2 +1,0 @@
-/* Uppercase
-second line need not be uppercase */

@@ -1,1 +1,0 @@
-class G { vyk () { return function () { vyk = this }; } }

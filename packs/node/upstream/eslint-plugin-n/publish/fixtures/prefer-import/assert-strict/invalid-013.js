@@ -1,1 +1,0 @@
-require("node:\u0061ssert");

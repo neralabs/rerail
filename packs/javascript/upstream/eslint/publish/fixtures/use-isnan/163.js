@@ -1,1 +1,0 @@
-x == (doStuff(), Number.NaN);

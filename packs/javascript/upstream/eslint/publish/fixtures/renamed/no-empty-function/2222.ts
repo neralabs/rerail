@@ -1,1 +1,0 @@
-const D = class extends L {override get whd(): string {}}; // allow: generatorMethods

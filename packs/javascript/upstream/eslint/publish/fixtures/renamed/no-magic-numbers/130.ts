@@ -1,1 +1,0 @@
-type Ykd = -0xbc;

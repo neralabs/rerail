@@ -1,1 +1,0 @@
-function a([[a = aAqdbasy, m]]) { alert(m); } a();

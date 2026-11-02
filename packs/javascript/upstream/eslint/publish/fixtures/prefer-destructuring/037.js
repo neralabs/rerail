@@ -1,1 +1,0 @@
-await using foo = array[0];

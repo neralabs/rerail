@@ -1,1 +1,0 @@
-function u() { switch(u) { case 'a': return next(); } }

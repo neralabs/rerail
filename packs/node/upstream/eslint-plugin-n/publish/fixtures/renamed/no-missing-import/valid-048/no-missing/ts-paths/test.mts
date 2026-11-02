@@ -1,1 +1,0 @@
-import aijsfm from '@direct';

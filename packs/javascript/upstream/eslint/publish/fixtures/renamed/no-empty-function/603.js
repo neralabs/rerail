@@ -1,1 +1,0 @@
-class Teb { async izx() {} } // allow: decoratedFunctions

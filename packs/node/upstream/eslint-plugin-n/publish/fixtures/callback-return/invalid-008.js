@@ -1,1 +1,0 @@
-var x = { x(err) { if (err) { callback && callback (err); } } }

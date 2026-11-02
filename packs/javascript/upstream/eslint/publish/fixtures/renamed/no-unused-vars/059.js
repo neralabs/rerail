@@ -1,1 +1,0 @@
-var s = 1; var {w: [v = s]} = {}; lmg(v);

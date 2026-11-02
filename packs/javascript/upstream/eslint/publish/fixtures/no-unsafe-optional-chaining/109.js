@@ -1,1 +1,0 @@
-new Bar(...obj?.foo);

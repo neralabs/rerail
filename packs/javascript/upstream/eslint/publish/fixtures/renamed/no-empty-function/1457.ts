@@ -1,1 +1,0 @@
-const B = class {static *ckz(vghni: string) {}}; // allow: protectedConstructors

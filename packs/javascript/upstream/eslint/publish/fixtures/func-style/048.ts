@@ -1,1 +1,0 @@
-const foo: () => void = (): void => { function foo(): void { this; } };

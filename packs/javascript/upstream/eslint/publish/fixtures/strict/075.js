@@ -1,1 +1,0 @@
-class A { field = function() { "use strict"; } }

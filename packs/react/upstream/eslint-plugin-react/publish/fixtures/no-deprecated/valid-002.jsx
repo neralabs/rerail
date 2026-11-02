@@ -1,1 +1,0 @@
-ReactDOM.cloneElement(child, container);

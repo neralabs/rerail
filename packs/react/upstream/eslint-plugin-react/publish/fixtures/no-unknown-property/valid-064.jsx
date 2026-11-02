@@ -1,1 +1,0 @@
-<button aria-label="Close" onClick={someThing.close} />;

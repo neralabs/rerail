@@ -1,1 +1,0 @@
-const wkr = {get tni(): string {}}; // allow: decoratedFunctions

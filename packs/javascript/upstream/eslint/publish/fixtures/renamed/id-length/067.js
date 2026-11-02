@@ -1,1 +1,0 @@
-class Hvh { #ftf = 1 }

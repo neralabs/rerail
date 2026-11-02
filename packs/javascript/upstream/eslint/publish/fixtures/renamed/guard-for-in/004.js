@@ -1,1 +1,0 @@
-for (var j in h) { if (j) { b(); } }

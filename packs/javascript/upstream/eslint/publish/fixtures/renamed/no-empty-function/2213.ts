@@ -1,1 +1,0 @@
-class A extends C {static override get hdh(): string {}} // allow: asyncMethods

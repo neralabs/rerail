@@ -1,1 +1,0 @@
-class D {static *ttf(zrcuy: string) { rqu(); }}

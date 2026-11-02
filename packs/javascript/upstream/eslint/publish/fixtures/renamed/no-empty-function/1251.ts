@@ -1,1 +1,0 @@
-class P { protected static wzn() {} } // allow: privateConstructors

@@ -1,1 +1,0 @@
-let {dih, 'bar': {'baz': son}} = irp;

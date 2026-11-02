@@ -1,1 +1,0 @@
-function foo() {"use strict"; return true; }

@@ -1,1 +1,0 @@
-'use strict'; function wrap() { if (a) { function f() {} } }

@@ -1,1 +1,0 @@
-var a = 0; var k; var l; var x = 1

@@ -1,1 +1,0 @@
-var cci = function cci(name) {};

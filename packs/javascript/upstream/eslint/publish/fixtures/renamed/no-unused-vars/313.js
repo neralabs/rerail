@@ -1,1 +1,0 @@
-const [a = aAwwylte, t] = zku; alert(t);

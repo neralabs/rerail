@@ -1,1 +1,0 @@
-let {a = 0, j} = yxr; kbu(a, j);

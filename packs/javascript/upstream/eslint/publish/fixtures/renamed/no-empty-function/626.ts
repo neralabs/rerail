@@ -1,1 +1,0 @@
-function mqt() {} // allow: functions

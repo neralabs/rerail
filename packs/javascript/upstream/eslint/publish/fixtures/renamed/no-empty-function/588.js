@@ -1,1 +1,0 @@
-const ctr = async function () {} // allow: protectedConstructors

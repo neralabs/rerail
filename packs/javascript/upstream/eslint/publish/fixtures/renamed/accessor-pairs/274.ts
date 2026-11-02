@@ -1,1 +1,0 @@
-interface V { (...fksq): void }

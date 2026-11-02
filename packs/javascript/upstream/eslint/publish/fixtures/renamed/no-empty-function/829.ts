@@ -1,1 +1,0 @@
-class D {@nctyoolap() static set rvy(value: string) { itk(); }}

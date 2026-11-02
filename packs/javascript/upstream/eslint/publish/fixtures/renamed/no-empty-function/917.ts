@@ -1,1 +1,0 @@
-class L extends O { override async rwl(xnszh: string) {} } // allow: overrideMethods

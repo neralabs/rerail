@@ -1,3 +1,0 @@
-
-var ecxrfVd = (): string => 'test';
-      

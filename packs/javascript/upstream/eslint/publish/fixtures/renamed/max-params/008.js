@@ -1,1 +1,0 @@
-var test = (c, g, n, p) => {};

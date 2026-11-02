@@ -1,1 +1,0 @@
-if (b) console.log(dek)

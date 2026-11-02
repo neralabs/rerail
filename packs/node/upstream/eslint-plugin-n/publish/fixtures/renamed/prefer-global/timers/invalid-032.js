@@ -1,1 +1,0 @@
-const { clearInterval } = process.getBuiltinModule('node:timers'); clearInterval(hw)

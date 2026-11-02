@@ -1,1 +1,0 @@
-var n; var c; var y;

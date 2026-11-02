@@ -1,1 +1,0 @@
-var u = { get ['abc']() {}, set ['abc'](leq) {} };

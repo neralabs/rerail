@@ -1,1 +1,0 @@
-const o = 0; const c = {...f, o};

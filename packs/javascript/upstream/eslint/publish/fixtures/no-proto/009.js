@@ -1,1 +1,0 @@
-test[`__proto__`] = function () {};

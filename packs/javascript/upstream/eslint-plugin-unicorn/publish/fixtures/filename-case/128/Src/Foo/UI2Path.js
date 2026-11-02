@@ -1,1 +1,0 @@
-/* Filename: Src/Foo/UI2Path.js */

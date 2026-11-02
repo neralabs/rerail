@@ -1,1 +1,0 @@
-j(Math.pow(h, i))

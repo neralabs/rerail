@@ -1,1 +1,0 @@
-(class { static set j(zsy){} r(){} static get j(){} })

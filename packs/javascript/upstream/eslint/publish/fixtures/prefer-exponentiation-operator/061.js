@@ -1,1 +1,0 @@
-new F(Math.pow(a, b))

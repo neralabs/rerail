@@ -1,1 +1,0 @@
-class O { 1 = function z0() {}; }

@@ -1,1 +1,0 @@
-class G { static { let b, e; if (tbj) ({ b, e } = tbj); } }

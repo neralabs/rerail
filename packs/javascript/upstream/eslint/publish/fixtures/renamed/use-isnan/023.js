@@ -1,1 +1,0 @@
-aqz(2 * Number.NaN)

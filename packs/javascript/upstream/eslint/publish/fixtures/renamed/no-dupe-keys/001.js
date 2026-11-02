@@ -1,1 +1,0 @@
-var fff = { __proto__: 1, pmr: 2};

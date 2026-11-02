@@ -1,1 +1,0 @@
-function Component() { const dcu = {}; return (<Cozxomu.Provider value={dcu}></Cozxomu.Provider>) }

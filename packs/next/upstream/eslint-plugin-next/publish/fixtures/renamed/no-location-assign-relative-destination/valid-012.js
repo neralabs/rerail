@@ -1,1 +1,0 @@
-location.assign(`https://example.com/${xfcq}`)

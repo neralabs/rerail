@@ -1,1 +1,0 @@
-class C { #apply; foo() { foo.#apply(undefined, args); } }

@@ -1,1 +1,0 @@
-class G { syx() { } } class M { syx() { } }

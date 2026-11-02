@@ -1,1 +1,0 @@
-var F = class {*ney() {}}; // allow: protectedConstructors

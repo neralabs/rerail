@@ -1,1 +1,0 @@
-zrt.fmh?.bsm.call(zrt.fmh, 1, 2);

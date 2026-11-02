@@ -1,1 +1,0 @@
-const mqb = async function(wgite: string) {} // allow: setters

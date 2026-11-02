@@ -1,1 +1,0 @@
-var fwgaEmll = `${__filename}/foo.js`;

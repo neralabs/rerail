@@ -1,1 +1,0 @@
-class B extends C {override get foo(): string {}} // allow: asyncMethods

@@ -1,1 +1,0 @@
-var sgl = { hus: 1, pw: 2 };

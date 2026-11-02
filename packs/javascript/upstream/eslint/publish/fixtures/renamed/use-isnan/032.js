@@ -1,1 +1,0 @@
-switch(gzk) { case NaN: break; }

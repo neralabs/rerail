@@ -1,1 +1,0 @@
-var b = w === 2 ? 'true' : 'false';

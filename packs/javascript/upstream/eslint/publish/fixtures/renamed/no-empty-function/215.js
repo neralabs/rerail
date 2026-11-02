@@ -1,1 +1,0 @@
-var qkm = function*() {}; // allow: arrowFunctions

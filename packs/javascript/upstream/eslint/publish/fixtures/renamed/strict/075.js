@@ -1,1 +1,0 @@
-class F { qxkcl = function() { "use strict"; } }

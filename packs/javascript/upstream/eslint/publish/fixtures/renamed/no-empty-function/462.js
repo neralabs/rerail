@@ -1,1 +1,0 @@
-var luz = {set kwq(value) {}}; // allow: protectedConstructors

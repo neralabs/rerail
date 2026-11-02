@@ -1,3 +1,0 @@
-const obj = {foo: function(param: string) {
-    // empty
-}};

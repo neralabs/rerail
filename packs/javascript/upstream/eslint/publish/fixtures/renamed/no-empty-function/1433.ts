@@ -1,1 +1,0 @@
-const B = class {*evy(uypzx: string) {}}; // allow: functions

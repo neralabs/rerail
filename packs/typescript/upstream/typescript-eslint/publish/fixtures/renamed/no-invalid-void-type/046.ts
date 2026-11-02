@@ -1,1 +1,0 @@
-type AhwkmMquw = keyof void;

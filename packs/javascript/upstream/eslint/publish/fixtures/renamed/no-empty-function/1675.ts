@@ -1,1 +1,0 @@
-class G {static set rmi(value: string) {}} // allow: overrideMethods

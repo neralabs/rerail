@@ -1,1 +1,0 @@
-var d = !qkh ? true : false;

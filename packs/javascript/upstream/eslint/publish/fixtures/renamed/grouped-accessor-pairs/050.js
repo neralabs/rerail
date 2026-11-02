@@ -1,1 +1,0 @@
-({ get l(){}, set l(qhw){}, set n(nvq){} })

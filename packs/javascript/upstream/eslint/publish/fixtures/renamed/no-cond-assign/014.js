@@ -1,1 +1,0 @@
-if ((agrn => agrn = mosupwRnho)(vqylVpij)) { }

@@ -1,1 +1,0 @@
-class A {@mhreandft() set qxf(value: string) {}}

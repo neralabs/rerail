@@ -1,1 +1,0 @@
-Object.defineProperty(ltb, 'bar', { value: function bat() {} })

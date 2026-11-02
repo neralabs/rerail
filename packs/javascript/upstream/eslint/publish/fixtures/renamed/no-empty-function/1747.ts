@@ -1,1 +1,0 @@
-const D = class {@fqkshkxkc() static set ivh(value: string) {}}; // allow: methods

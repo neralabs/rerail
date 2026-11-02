@@ -1,1 +1,0 @@
-var D = class {set mhx(value) {}}; // allow: generatorMethods

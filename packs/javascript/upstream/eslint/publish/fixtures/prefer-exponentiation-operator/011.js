@@ -1,1 +1,0 @@
-new Math.pow(a, b)

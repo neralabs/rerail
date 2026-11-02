@@ -1,1 +1,0 @@
-class A { static { 'use strict'; 'use strict'; } }

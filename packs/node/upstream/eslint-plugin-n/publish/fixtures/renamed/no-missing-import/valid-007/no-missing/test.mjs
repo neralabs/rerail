@@ -1,1 +1,0 @@
-import aOwvmqz from './a.config.js';

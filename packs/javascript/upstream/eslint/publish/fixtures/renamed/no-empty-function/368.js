@@ -1,1 +1,0 @@
-var G = class {static *ore() {}}; // allow: functions

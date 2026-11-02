@@ -1,1 +1,0 @@
-const Component = () => <Cowlzfj.Provider value={props}></Cowlzfj.Provider>

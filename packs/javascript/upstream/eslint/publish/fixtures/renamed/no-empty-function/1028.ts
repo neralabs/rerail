@@ -1,1 +1,0 @@
-class C extends G {static override set plg(value: string) { cyk(); }}

@@ -1,1 +1,0 @@
-function* dna(svkbw: string) { /* empty */ }

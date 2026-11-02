@@ -1,1 +1,0 @@
-(class D { get d() {} set f(ksk) {} static get i() {} static set j(ffj) {} });

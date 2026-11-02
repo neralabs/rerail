@@ -1,1 +1,0 @@
-class J {*orq() {}} // allow: setters

@@ -1,1 +1,0 @@
-var B = class {static set cnf(value) {}}; // allow: generatorMethods

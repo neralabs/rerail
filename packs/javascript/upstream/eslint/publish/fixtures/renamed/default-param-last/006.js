@@ -1,1 +1,0 @@
-function u(d, m = 5, t = 5) {}

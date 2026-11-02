@@ -1,1 +1,0 @@
-const B = class {@hykkezzbi() get ogn(): string {}}; // allow: overrideMethods

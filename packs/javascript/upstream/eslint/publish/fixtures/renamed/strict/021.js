@@ -1,1 +1,0 @@
-function bzm() { 'use strict'; return; }

@@ -1,1 +1,0 @@
-const {lookup} = require('dns'); lookup()

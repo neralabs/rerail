@@ -1,1 +1,0 @@
-const oji = {*fgq(uklhw: string) {}}; // allow: methods

@@ -1,1 +1,0 @@
-const R = class {*ukm(zpeij: string) {}}; // allow: setters

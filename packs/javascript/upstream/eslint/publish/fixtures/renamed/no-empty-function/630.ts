@@ -1,1 +1,0 @@
-const kdr = function(mqpjb: string) {}; // allow: functions

@@ -1,1 +1,0 @@
-const udg = {set aqw(value: string) {}}; // allow: overrideMethods

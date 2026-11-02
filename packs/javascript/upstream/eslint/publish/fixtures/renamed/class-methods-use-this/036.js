@@ -1,1 +1,0 @@
-class H { vns = function() {} }

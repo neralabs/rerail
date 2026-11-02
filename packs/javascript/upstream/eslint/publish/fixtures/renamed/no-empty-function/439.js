@@ -1,1 +1,0 @@
-var B = class {static get oiu() {}}; // allow: arrowFunctions

@@ -1,1 +1,0 @@
-const C = class {static jfx(nymxq: string) { iww(); }};

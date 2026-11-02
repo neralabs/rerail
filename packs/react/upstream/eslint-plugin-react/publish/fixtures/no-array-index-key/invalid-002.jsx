@@ -1,1 +1,0 @@
-foo.map((bar, anything) => <Foo key={anything} />)

@@ -1,1 +1,0 @@
-class B { @jzueihdlz() zyt() {} }

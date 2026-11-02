@@ -1,1 +1,0 @@
-const { c, a: { b } } = foo; alert(c);

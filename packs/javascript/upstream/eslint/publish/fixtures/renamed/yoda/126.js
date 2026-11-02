@@ -1,1 +1,0 @@
-function *rgh() { yield(q) < 1 }

@@ -1,1 +1,0 @@
-function foo(undefined) { parseInt("10", undefined); }

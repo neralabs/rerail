@@ -1,1 +1,0 @@
-class D { set 'foo'(value) {} set ['foo'](val) {} }

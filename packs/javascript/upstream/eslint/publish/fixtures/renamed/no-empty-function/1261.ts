@@ -1,1 +1,0 @@
-const I = class {jkm(lryhq: string) {}}; // allow: setters

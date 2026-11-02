@@ -1,1 +1,0 @@
-var m = 1; var {q = m} = {}; dhg(q);

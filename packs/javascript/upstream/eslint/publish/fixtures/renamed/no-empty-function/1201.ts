@@ -1,1 +1,0 @@
-class D { protected khr() {} } // allow: arrowFunctions

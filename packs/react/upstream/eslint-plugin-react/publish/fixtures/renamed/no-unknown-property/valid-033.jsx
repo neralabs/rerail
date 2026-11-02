@@ -1,1 +1,0 @@
-<source onLoad={eiv} onError={jpr} />

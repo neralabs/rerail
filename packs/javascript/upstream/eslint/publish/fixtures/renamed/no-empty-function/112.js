@@ -1,3 +1,0 @@
-class U {constructor() {
-    // empty
-}}

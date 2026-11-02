@@ -1,1 +1,0 @@
-const flnjyruv = "src/foo-js/bar.js";

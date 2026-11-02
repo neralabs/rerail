@@ -1,1 +1,0 @@
-const msbh = ({ zxufx = 123 }) => {}

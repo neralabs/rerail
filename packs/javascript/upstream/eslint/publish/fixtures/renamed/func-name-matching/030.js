@@ -1,1 +1,0 @@
-function b(zxf = function elj() {}) {}

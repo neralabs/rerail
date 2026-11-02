@@ -1,1 +1,0 @@
-function fn(): { set prop(value: any): any }

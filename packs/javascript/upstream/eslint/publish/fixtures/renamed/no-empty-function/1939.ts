@@ -1,1 +1,0 @@
-class B { async cwu(qtomq: string) {} } // allow: asyncFunctions

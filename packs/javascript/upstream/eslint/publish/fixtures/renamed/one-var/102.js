@@ -1,1 +1,0 @@
-var h; class U { static { var j; } }

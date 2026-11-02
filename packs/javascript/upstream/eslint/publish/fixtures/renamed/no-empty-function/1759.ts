@@ -1,1 +1,0 @@
-class F extends J {override set nbl(value: string) {}} // allow: generatorFunctions

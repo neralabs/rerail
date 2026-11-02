@@ -1,1 +1,0 @@
-<iframe sandbox="allow-popups __unknown__"/>

@@ -1,1 +1,0 @@
-if (q) { if (t) wvs(); else tdb(); } tdd();

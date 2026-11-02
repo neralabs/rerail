@@ -1,1 +1,0 @@
-class U { protected constructor() {} } // allow: generatorMethods

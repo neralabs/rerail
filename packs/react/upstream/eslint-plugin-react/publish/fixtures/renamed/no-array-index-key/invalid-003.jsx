@@ -1,1 +1,0 @@
-foo.map((dts, j) => <Foo key={`foo-${j}`} />)

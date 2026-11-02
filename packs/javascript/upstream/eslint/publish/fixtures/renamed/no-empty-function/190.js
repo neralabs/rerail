@@ -1,1 +1,0 @@
-var siy = () => {}; // allow: getters

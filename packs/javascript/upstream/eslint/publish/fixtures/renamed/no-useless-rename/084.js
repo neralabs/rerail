@@ -1,1 +1,0 @@
-({wae: wae, ura: urd}) => {}

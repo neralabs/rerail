@@ -1,1 +1,0 @@
-(Object) => Object.hasOwnProperty.call(obj, qhxt)

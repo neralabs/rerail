@@ -1,1 +1,0 @@
-Math.pow(a = c, i = l)

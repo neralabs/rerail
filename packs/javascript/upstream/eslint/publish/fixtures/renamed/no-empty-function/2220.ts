@@ -1,1 +1,0 @@
-const A = class extends G {override get man(): string {}}; // allow: generatorFunctions

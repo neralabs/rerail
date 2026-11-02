@@ -1,1 +1,0 @@
-class I extends J { @mbdtsfcze() override ngs() {} } // allow: setters

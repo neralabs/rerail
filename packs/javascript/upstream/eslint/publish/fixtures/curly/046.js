@@ -1,3 +1,0 @@
-if (foo) { 
- function bar() {} 
- }

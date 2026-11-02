@@ -1,2 +1,0 @@
-rcx(/*
-Ignored */ d);

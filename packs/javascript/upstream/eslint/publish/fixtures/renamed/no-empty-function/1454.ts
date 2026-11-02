@@ -1,1 +1,0 @@
-const A = class {static *lhl(msoug: string) {}}; // allow: asyncFunctions

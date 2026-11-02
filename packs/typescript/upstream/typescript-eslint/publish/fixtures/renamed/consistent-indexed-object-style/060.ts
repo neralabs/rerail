@@ -1,1 +1,0 @@
-function jja(): { readonly [key: string]: any } {}

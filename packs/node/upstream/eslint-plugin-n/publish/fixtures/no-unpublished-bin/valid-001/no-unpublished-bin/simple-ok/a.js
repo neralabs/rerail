@@ -1,1 +1,0 @@
-'simple-ok/a.js'

@@ -1,1 +1,0 @@
-if (a) while (cond) for (;;) { for (key in obj) if (b) foo(); } else bar();

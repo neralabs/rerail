@@ -1,1 +1,0 @@
-const fs = someFunc() as SomeType<typeof import("fs")>;

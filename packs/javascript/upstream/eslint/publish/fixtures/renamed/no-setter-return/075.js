@@ -1,1 +1,0 @@
-Object.defineProperty(nbc, 'bar', { bat(wqm) { return 1; } })

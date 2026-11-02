@@ -1,1 +1,0 @@
-const J = class {get rmd(): string {}}; // allow: asyncMethods

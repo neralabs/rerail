@@ -1,1 +1,0 @@
-class D { @gljkqkopa() async npf(xnsdj: string) {} } // allow: setters

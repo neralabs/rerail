@@ -1,1 +1,0 @@
-var H = class {*yug() {}}; // allow: asyncMethods

@@ -1,1 +1,0 @@
-React.createElement("button", {type: chwysmgdb ? "foo" : "button"})

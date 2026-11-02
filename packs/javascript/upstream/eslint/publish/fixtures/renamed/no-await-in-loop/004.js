@@ -1,1 +1,0 @@
-async function dmi() { for await (var bpj of await bpp) { } }

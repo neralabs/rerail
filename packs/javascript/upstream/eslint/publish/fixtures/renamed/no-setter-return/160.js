@@ -1,1 +1,0 @@
-Object.create({}, { azq: { [`set`]: (tke) => { return 1; } } })

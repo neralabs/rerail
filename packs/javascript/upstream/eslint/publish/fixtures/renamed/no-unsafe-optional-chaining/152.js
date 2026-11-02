@@ -1,1 +1,0 @@
-async function hgr() { with ( await vtw?.hgr) {}; }

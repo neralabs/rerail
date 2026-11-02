@@ -1,5 +1,0 @@
-
-                do {}
-                while (f)
-                Object()
-                

@@ -1,1 +1,0 @@
-class C { #call; wrap(foo) { foo.#call(undefined, 1, 2); } }

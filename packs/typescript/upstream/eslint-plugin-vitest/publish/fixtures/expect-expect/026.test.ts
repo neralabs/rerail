@@ -1,1 +1,0 @@
-test('should fail', () => request.get().foo().expect(456));

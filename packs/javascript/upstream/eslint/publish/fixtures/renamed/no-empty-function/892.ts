@@ -1,1 +1,0 @@
-const bah = { async htbshf(mklnh: string) { aeg(); } }

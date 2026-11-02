@@ -1,1 +1,0 @@
-class k { jhywg() { if (err) { callback(); } callback(); } } 

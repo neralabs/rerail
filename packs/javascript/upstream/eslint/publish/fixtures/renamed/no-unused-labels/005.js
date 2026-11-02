@@ -1,1 +1,0 @@
-I: for (var w = 0; w < 10; ++w) { opr(); if (i) continue I; mpq(); }

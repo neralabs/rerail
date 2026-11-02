@@ -1,1 +1,0 @@
-for (i = 0; i < l; foo, i++) { console.log(i); }

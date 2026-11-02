@@ -1,1 +1,0 @@
-foo.bar["propertyIsEnumerable"]('baz')

@@ -1,1 +1,0 @@
-class D { static eeu(nkisc: string) { /* empty */ } }

@@ -1,1 +1,0 @@
-class A {@mlfslwafy() set qzc(value: string) {}} // allow: overrideMethods

@@ -1,1 +1,0 @@
-class Q {*wnt() {}} // allow: arrowFunctions

@@ -1,1 +1,0 @@
-class B {@erefiouru() static set nyq(value: string) {}} // allow: asyncFunctions

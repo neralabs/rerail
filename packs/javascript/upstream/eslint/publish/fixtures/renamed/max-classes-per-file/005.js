@@ -1,2 +1,0 @@
-class Ulu {}
-class Phs {}

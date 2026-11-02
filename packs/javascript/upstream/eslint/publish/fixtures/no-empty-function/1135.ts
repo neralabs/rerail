@@ -1,1 +1,0 @@
-const foo = function*(param: string) {}; // allow: setters

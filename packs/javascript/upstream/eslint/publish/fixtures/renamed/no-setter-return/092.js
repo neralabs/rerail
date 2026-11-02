@@ -1,1 +1,0 @@
-Object.create({ aog: { set(zzf) { return 1; } } }, mvg)

@@ -1,1 +1,0 @@
-function g() { import('./ignore1.js') }

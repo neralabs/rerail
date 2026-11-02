@@ -1,1 +1,0 @@
-React.createElement(MyComponent, {children: "Children", className: "class-name"});

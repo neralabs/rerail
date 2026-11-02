@@ -1,5 +1,0 @@
-
-interface Base {}
-
-interface Base {}
-      

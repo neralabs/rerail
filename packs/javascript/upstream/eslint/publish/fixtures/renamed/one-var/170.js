@@ -1,1 +1,0 @@
-var jmw, bar = require('bar');

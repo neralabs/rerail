@@ -1,1 +1,0 @@
-function n() {}; function l(...hojz) { return n(...hojz); }

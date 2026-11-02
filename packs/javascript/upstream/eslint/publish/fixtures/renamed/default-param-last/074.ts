@@ -1,1 +1,0 @@
-function hjd(a = 1, b?: number, g: number) {}

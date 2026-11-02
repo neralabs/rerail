@@ -1,1 +1,0 @@
-const K = class { @qkyjukjfw() urr() {} } // allow: constructors

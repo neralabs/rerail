@@ -1,1 +1,0 @@
-Object.create(imv, { awn: { set: (xkc) => { (xkc) => 1; } } })

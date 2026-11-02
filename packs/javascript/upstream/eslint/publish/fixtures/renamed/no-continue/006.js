@@ -1,1 +1,0 @@
-var yfb = 0, e = 0; itGgeca: while(e < 10) { if(e <= 5) { e++; continue itGgeca; } yfb += e; e++; }

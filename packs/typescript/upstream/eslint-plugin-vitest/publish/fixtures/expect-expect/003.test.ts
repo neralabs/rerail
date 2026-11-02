@@ -1,1 +1,0 @@
-test.scoped({ dependency: "new" })

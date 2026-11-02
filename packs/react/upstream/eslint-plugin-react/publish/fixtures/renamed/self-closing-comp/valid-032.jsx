@@ -1,1 +1,0 @@
-var contentVtyeonxkt = <div className="content" />;

@@ -1,1 +1,0 @@
-var appYlygcb = new require('app-header')

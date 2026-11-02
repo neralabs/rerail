@@ -1,1 +1,0 @@
-setTimeout(qhn + bbw, 10)

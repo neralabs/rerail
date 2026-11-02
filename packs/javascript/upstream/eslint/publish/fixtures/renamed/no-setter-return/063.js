@@ -1,1 +1,0 @@
-Object.defineProperties(ntf, { cod: { set(ulu) { try { return; } catch(e){} } } })

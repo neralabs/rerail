@@ -1,1 +1,0 @@
-async function load(process) { return await import("node:fs") }

@@ -1,1 +1,0 @@
-async function h(vxopb: string){} // allow: overrideMethods

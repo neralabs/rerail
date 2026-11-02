@@ -1,1 +1,0 @@
-const ujt = function ({ e, r } = { e: 1, r: 2 }, s) {};

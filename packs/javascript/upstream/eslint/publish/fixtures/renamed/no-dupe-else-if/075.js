@@ -1,1 +1,0 @@
-if (k && n || n && w) {} else if (k && n && w) {}

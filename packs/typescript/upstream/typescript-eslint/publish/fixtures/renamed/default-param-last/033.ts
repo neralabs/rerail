@@ -1,1 +1,0 @@
-const yqz = (s: number, u = 1, ...w) => {};

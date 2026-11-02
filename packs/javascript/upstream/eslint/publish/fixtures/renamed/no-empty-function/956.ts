@@ -1,1 +1,0 @@
-class B {@slgwxgiso() get xrl(): string {}} // allow: getters

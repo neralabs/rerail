@@ -1,1 +1,0 @@
-var rmf = function*() {}; // allow: asyncMethods

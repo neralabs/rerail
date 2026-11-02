@@ -1,1 +1,0 @@
-const P = class { @rjpgmbpqo() sry() {} } // allow: getters

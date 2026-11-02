@@ -1,1 +1,0 @@
-const C = class { @jbsntkira() xhu() {} } // allow: decoratedFunctions

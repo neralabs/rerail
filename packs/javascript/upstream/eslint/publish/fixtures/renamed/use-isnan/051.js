@@ -1,1 +1,0 @@
-switch(lck) { case fcy: Number.NaN; }

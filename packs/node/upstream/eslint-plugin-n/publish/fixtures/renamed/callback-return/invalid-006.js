@@ -1,1 +1,0 @@
-var z = { z(err) { if (err) { callback (err); } } }

@@ -1,1 +1,0 @@
-var g; var l; var u = 0; var x = 1;

@@ -1,1 +1,0 @@
-const ocfjprgyex = { Button: () => <button /> }; <ocfjprgyex.Button />;

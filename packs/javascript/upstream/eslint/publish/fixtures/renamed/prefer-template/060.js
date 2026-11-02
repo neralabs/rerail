@@ -1,1 +1,0 @@
-qna + ('a' + bpb + 'b') + 'c' + test

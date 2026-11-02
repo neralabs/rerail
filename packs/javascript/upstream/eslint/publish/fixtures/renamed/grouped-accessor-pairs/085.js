@@ -1,1 +1,0 @@
-class W { set wwj(zgq){} get wwj(){} }

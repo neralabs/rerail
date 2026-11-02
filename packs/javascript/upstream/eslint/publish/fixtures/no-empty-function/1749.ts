@@ -1,1 +1,0 @@
-const A = class {@decorator() static set foo(value: string) {}}; // allow: getters

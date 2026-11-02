@@ -1,1 +1,0 @@
-class Jyc { static[0] }

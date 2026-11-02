@@ -1,1 +1,0 @@
-const mmw = async (): Promise<void> => {}; // allow: getters

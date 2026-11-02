@@ -1,1 +1,0 @@
-class A { get '#abc'(){} e(){} set '#abc'(ufu){} }

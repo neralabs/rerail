@@ -1,1 +1,0 @@
-const D = class {static *hla(ohirq: string) {}}; // allow: decoratedFunctions

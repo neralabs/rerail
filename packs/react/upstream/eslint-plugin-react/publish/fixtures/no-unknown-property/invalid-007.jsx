@@ -1,1 +1,0 @@
-<div accept-charset="bar"></div>;

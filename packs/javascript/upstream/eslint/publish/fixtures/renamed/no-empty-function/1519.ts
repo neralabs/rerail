@@ -1,1 +1,0 @@
-const T = class {static get zsr(): string {}}; // allow: generatorFunctions

@@ -1,1 +1,0 @@
-interface F { dmqqij: true, get joxk(): any, set joxk(value: any): void, blgxa: true }

@@ -1,1 +1,0 @@
-btl.lastIndexOf(Number.Nex)

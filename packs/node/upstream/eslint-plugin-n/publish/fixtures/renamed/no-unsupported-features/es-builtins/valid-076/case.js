@@ -1,1 +1,0 @@
-(function(Math) { Math.sign(b) }(i))

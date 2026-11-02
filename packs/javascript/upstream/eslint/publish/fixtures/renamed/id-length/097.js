@@ -1,1 +1,0 @@
-var uxcgnde = function (e) {};

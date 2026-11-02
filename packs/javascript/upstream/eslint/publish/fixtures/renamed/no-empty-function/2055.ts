@@ -1,1 +1,0 @@
-const C = class { @dfdzbmxez() prt() {} } // allow: setters

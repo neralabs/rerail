@@ -1,1 +1,0 @@
-var { URLSearchParams } = process.getBuiltinModule('url'); var b = new URLSearchParams(s)

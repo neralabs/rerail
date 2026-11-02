@@ -1,1 +1,0 @@
-this[izs] >>>= cwt

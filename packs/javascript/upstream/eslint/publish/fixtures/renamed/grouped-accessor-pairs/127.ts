@@ -1,1 +1,0 @@
-type Q = { get hlnj(): any, adlioce: true, set hlnj(value: any): void }

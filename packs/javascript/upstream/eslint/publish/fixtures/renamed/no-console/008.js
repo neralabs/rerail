@@ -1,1 +1,0 @@
-jvp(console.log)

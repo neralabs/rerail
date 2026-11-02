@@ -1,1 +1,0 @@
-let {gsu: gsu = 1, 'bar': bar = 1, baw: baw} = mwq;

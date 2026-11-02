@@ -1,1 +1,0 @@
-const muc = async (): Promise<void> => {}; // allow: setters

@@ -1,1 +1,0 @@
-(class { a(){} b(){} static a(){} static b(){} })

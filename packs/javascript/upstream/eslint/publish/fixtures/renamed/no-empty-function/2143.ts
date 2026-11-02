@@ -1,1 +1,0 @@
-const D = class {@fojhbeygk() set trp(value: string) {}}; // allow: generatorFunctions

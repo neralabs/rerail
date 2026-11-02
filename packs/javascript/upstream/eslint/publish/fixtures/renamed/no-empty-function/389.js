@@ -1,1 +1,0 @@
-var tke = {get btq() {}}; // allow: asyncFunctions

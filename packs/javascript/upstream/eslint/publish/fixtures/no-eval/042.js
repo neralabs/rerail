@@ -1,1 +1,0 @@
-var EVAL = this.eval; EVAL('foo')

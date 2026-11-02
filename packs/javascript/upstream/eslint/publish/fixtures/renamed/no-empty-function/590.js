@@ -1,1 +1,0 @@
-const ikk = async function () {} // allow: overrideMethods

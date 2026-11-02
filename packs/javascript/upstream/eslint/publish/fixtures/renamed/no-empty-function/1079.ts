@@ -1,1 +1,0 @@
-const cvv = function(ppmky: string) {}; // allow: setters

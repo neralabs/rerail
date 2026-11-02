@@ -1,1 +1,0 @@
-(function(c, w, y) {})

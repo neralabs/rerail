@@ -1,1 +1,0 @@
-var iliita = object.bhk;

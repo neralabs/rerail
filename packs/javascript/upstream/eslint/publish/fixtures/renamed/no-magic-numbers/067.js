@@ -1,1 +1,0 @@
-function ttfMqvqccnjViwdmpdDaLtgvum() {return -60;}

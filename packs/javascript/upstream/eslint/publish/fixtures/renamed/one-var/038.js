@@ -1,1 +1,0 @@
-var i = 1; var k = 2; var q, r; for (var v in prh) {var khr = v; for (var l in khr) {}}

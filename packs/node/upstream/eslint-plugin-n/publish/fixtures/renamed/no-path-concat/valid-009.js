@@ -1,1 +1,0 @@
-var ikysVbub = __filename + (test ? ".js" : ".ts");

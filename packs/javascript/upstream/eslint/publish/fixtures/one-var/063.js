@@ -1,1 +1,0 @@
-const a = 0, b = 1; let c, d;

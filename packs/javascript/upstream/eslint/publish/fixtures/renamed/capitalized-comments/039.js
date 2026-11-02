@@ -1,1 +1,0 @@
-/* global fct1, fct2 */

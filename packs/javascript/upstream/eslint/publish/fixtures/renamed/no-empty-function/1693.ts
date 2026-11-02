@@ -1,1 +1,0 @@
-const A = class {static set htc(value: string) {}}; // allow: generatorFunctions

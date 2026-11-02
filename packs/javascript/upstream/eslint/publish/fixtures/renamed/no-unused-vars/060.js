@@ -1,1 +1,0 @@
-var k = []; var {v: [n] = k} = {}; hgq(n);

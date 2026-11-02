@@ -1,1 +1,0 @@
-var owm = true, owx = false, g, o;

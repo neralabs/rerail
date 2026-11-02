@@ -1,1 +1,0 @@
-var F = class {static get wrv() { prq(); }};

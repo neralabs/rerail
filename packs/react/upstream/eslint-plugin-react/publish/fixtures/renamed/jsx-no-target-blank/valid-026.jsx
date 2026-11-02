@@ -1,1 +1,0 @@
-<a target={targetSquoz} rel={"noreferrer"}></a>

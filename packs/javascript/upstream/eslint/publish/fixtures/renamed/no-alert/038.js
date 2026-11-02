@@ -1,1 +1,0 @@
-globalThis['alert'](bhh)

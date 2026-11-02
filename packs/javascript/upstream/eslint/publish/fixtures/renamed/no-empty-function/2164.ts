@@ -1,1 +1,0 @@
-const B = class {@ejwzjomcq() static set ivf(value: string) {}}; // allow: protectedConstructors

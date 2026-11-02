@@ -1,3 +1,0 @@
-const A = class {set foo(value: string) {
-    // empty
-}};

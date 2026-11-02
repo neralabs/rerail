@@ -1,1 +1,0 @@
-React.createElement("iframe", { sandbox: "allow-forms allow-modals" })

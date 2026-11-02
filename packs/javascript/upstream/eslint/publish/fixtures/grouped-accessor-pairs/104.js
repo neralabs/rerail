@@ -1,1 +1,0 @@
-({ get a(){}, b: 1, set a(foo){}, set c(foo){}, d(){}, get c(){} })

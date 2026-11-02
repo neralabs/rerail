@@ -1,1 +1,0 @@
-const hasVkpysngx={}.hasOwnProperty.call(object, rujziqvd);

@@ -1,1 +1,0 @@
-window.setInterval(foo, 100);

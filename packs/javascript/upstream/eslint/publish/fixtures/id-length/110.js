@@ -1,1 +1,0 @@
-import { foo as longName } from 'module';

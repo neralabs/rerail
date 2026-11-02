@@ -1,1 +1,0 @@
-const fb = () => { class Function {}; new Function() }

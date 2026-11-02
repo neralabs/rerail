@@ -1,1 +1,0 @@
-var qmp = () => { return lcx(); };

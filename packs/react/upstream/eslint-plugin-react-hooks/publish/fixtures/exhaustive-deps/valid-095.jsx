@@ -1,6 +1,0 @@
-
-function Example() {
-  useEffect(() => {
-    arguments
-  }, [])
-}

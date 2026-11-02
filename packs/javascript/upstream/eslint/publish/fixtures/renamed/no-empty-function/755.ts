@@ -1,1 +1,0 @@
-class J {static get ngv(): string {}} // allow: getters

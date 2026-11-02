@@ -1,1 +1,0 @@
-type Foo = { [key: string]: Foo } | Foo;

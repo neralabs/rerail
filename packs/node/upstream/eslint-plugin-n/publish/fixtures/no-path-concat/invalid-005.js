@@ -1,1 +1,0 @@
-var path = require("path"); var fullPath = `${__dirname}${path.sep}foo.js`;

@@ -1,1 +1,0 @@
-class B { get #zhs() {} }

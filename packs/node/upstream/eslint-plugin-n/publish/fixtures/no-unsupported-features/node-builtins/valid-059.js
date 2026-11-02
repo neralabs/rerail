@@ -1,1 +1,0 @@
-const hooks = require('node:async_hooks'); new hooks.AsyncLocalStorage()

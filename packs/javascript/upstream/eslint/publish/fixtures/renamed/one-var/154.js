@@ -1,1 +1,0 @@
-var knj = function() { var izl = true; if (rbq) { var izn = false; } }

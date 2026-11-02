@@ -1,1 +1,0 @@
-<div {...this.props} class="foo" is="my-elem"></div>;

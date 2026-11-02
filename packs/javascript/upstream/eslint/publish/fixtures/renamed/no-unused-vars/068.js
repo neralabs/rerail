@@ -1,1 +1,0 @@
-/*exported ssehbnz*/ var ssehbnz = 'great'

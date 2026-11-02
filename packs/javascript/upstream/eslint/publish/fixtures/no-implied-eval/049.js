@@ -1,1 +1,0 @@
-setTimeout(foo, 10)

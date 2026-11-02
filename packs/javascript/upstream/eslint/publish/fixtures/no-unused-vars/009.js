@@ -1,1 +1,0 @@
-var a=10; (function() { setTimeout(function() { alert(a); }, 0); })();

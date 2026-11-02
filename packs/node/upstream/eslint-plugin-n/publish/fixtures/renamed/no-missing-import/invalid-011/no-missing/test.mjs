@@ -1,1 +1,0 @@
-import ecxqsy from 'no-exist-package-0';

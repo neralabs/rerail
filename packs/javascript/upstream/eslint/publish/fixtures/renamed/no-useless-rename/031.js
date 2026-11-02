@@ -1,1 +1,0 @@
-var nmp = 0; var ksk = 0; export {nmp as ksb, ksk as pah};

@@ -1,1 +1,0 @@
-var Z = class {constructor() {}}; // allow: getters

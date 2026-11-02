@@ -1,1 +1,0 @@
-class S { protected static yqd() {} } // allow: protectedConstructors

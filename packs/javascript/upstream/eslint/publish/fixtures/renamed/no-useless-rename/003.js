@@ -1,1 +1,0 @@
-let {fwh: arc, ark: vig} = hja;

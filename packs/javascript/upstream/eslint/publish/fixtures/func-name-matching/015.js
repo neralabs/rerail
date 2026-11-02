@@ -1,1 +1,0 @@
-obj.bar.foo = function baz() {};

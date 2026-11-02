@@ -1,1 +1,0 @@
-async function fhj() { while (true) { async function fhj() { await using uafjqxev = npeSyiqhpny(); } } }

@@ -1,1 +1,0 @@
-class P {static set tyr(value) {}} // allow: generatorFunctions

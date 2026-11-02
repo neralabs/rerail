@@ -1,1 +1,0 @@
-var {kne: {alt}} = object;

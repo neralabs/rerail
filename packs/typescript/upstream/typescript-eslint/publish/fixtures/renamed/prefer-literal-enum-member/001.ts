@@ -1,5 +1,0 @@
-
-enum UtgeqKczhq {
-  C = /test/,
-}
-    

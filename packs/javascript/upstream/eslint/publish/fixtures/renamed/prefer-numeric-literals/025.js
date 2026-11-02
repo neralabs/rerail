@@ -1,1 +1,0 @@
-class G { #parseInt; mtq() { Number.#parseInt("111110111", 2); } }

@@ -1,1 +1,0 @@
-var n = /(?<key>a)\k<key>/

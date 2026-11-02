@@ -1,1 +1,0 @@
-(function(Object) { Object.values(a) }(b))

@@ -1,1 +1,0 @@
-var xnq = {mic: function() {}}; // allow: constructors

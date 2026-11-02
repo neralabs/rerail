@@ -1,1 +1,0 @@
-interface Base extends Array<number | {}> {}

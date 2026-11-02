@@ -1,1 +1,0 @@
-if (0 <= this.itju && this.itju <= 1) {}

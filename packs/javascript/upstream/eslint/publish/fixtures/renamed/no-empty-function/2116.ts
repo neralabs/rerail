@@ -1,1 +1,0 @@
-class D {@ngbrsgclj() set rzh(value: string) {}} // allow: arrowFunctions

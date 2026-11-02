@@ -1,1 +1,0 @@
-isPrototypeOf(hah, 'bar')

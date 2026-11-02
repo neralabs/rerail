@@ -1,1 +1,0 @@
-enb.indexOf((Number.NaN, 1))

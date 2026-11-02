@@ -1,1 +1,0 @@
-xfo.vrv ||= function krq() {};

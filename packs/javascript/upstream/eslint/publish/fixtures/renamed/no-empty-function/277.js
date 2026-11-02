@@ -1,1 +1,0 @@
-class D {static xes() {}} // allow: asyncFunctions

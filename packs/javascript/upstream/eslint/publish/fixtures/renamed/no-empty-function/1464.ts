@@ -1,1 +1,0 @@
-const iwx = {get dyk(): string {}}; // allow: methods

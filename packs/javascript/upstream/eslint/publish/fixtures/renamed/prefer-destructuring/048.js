@@ -1,1 +1,0 @@
-class Ock extends Hwl { static ock() {var hwl = super.ock.hwl} }

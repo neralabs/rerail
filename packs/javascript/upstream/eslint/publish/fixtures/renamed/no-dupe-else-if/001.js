@@ -1,1 +1,0 @@
-if (n) {} else if (s) {}

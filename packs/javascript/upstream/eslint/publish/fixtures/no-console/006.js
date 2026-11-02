@@ -1,1 +1,0 @@
-var console = require('myconsole'); console.log(foo)

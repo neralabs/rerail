@@ -1,1 +1,0 @@
-(class { set l(pei) { var y = () => { return; }; return 2; } })

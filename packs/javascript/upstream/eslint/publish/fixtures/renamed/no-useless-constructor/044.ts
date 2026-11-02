@@ -1,5 +1,0 @@
-
-      class R {
-        protected constructor() {}
-      }
-          

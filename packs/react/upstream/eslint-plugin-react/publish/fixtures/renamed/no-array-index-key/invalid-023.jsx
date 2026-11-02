@@ -1,1 +1,0 @@
-foo.forEach((agp, h) => { agq.push(React.createElement('Foo', { key: h })); })

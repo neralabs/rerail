@@ -1,1 +1,0 @@
-const rnw = {*fxm(yqerj: string) {}}; // allow: overrideMethods

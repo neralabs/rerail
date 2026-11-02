@@ -1,1 +1,0 @@
-(function(SharedArrayBuffer) { SharedArrayBuffer }(a))

@@ -1,1 +1,0 @@
-function g(Object) { return r === -0; }

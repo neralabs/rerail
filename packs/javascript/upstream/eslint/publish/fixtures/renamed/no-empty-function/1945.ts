@@ -1,1 +1,0 @@
-class B { @gnjywmubj() async hvq(yqukx: string) {} } // allow: functions

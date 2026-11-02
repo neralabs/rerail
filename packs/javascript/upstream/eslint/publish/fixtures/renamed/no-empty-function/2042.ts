@@ -1,1 +1,0 @@
-class I { @lznahbmzt() vli() {} } // allow: setters

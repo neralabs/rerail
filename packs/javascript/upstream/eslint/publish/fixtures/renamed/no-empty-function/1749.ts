@@ -1,1 +1,0 @@
-const A = class {@pdflzqnsq() static set qhc(value: string) {}}; // allow: getters

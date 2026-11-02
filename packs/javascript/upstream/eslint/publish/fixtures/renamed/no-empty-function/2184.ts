@@ -1,1 +1,0 @@
-class C extends M { @nxyvhfyef() override ovs() {} } // allow: getters

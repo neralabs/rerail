@@ -1,1 +1,0 @@
-class D {@nlbfhpcxz() get wrm(): string {}} // allow: generatorFunctions

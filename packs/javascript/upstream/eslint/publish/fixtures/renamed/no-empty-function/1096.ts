@@ -1,1 +1,0 @@
-const pwc = {mjn: function(uvaog: string) {}}; // allow: asyncMethods

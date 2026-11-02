@@ -1,1 +1,0 @@
-var crv = window.Intl; new crv;

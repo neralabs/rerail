@@ -1,1 +1,0 @@
-class H {get rmm() {}} // allow: constructors

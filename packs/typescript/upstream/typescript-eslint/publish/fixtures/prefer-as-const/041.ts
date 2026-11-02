@@ -1,1 +1,0 @@
-let foo = 5 as 5;

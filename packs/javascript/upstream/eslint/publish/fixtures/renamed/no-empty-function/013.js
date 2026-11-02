@@ -1,1 +1,0 @@
-var xmw = {uum: function() {}}; // allow: functions

@@ -1,1 +1,0 @@
-bsd |= ykb?.pnh;

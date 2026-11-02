@@ -1,1 +1,0 @@
-function hei(Number) { return anf.indexOf(Number.NaN); }

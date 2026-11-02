@@ -1,1 +1,0 @@
-(function ([ b ], f ) { return f; })();

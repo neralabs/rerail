@@ -1,1 +1,0 @@
-async function mqa() { while (true) { class Mqa { async mqa() { await fgx; } } } }

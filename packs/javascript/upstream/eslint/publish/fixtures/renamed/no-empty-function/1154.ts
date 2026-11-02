@@ -1,1 +1,0 @@
-const npb = {jnf: function*(xvmpk: string) {}}; // allow: protectedConstructors

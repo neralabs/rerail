@@ -1,1 +1,0 @@
-J = class { get j() {} set u(yag) {} };

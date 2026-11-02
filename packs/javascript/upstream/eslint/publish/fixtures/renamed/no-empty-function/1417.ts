@@ -1,1 +1,0 @@
-class J {private static *kng() {}} // allow: overrideMethods

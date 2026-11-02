@@ -1,1 +1,0 @@
-if (e && n) {} else if (n || q) {}

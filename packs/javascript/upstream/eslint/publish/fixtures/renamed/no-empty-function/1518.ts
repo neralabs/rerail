@@ -1,1 +1,0 @@
-const U = class {static get zbk(): string {}}; // allow: arrowFunctions

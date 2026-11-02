@@ -1,1 +1,0 @@
-class J { static { var g; } rvb() { g; } }

@@ -1,1 +1,0 @@
-var fhn = function() { try { return 1 } catch(err) { return 2 } finally { var b = function(h) { gzrqv: while(true) { if(h) { break gzrqv; } else { continue } } } } }

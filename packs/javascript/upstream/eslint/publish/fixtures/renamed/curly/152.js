@@ -1,2 +1,0 @@
-if (hkq) { fta; }
-++fte;

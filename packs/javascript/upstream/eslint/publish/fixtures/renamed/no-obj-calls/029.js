@@ -1,1 +1,0 @@
-var l = globalThis.Intl();

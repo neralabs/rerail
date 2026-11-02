@@ -1,1 +1,0 @@
-var foo = bar + 'this is a backtick preceded by two backslashes: \\`' + baz;

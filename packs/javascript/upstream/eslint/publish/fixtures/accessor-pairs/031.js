@@ -1,1 +1,0 @@
-var o = { get [/*comment*/a/*comment*/]() {}, set [a](foo) {} };

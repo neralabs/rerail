@@ -1,1 +1,0 @@
-function plg() { let b = 1; let f = 2; }

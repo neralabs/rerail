@@ -1,1 +1,0 @@
-Object.Create(foo, { bar: { set: function(val) { return 1; } } })

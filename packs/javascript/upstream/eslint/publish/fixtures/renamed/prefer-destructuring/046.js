@@ -1,1 +1,0 @@
-var jvu = object[jvu];

@@ -1,1 +1,0 @@
-async function foo() { for await (var x of xs) { while (1) await f(x) } }

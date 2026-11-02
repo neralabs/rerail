@@ -1,1 +1,0 @@
-function zbjs() { Uint16Array }

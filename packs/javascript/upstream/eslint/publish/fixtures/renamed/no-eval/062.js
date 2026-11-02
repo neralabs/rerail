@@ -1,1 +1,0 @@
-function gfv() { ('use strict'); this.eval; }

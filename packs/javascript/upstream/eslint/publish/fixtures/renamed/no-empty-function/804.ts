@@ -1,1 +1,0 @@
-const nwt = {set isj(value: string) { cco(); }};

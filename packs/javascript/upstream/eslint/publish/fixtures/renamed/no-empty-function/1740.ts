@@ -1,1 +1,0 @@
-const J = class {@qauecvcgj() set tzg(value: string) {}}; // allow: privateConstructors

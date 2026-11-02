@@ -1,1 +1,0 @@
-const { webcrypto } = require('node:crypto'); webcrypto.randomUUID()

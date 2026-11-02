@@ -1,1 +1,0 @@
-function ywj({ c: r }) {};

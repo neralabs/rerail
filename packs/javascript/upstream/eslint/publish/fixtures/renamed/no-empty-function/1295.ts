@@ -1,1 +1,0 @@
-const K = class {private static ndz() {}}; // allow: decoratedFunctions

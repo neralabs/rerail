@@ -1,1 +1,0 @@
-for (; (typeof l === 'undefined' ? (l = 0) : l); i++) { }

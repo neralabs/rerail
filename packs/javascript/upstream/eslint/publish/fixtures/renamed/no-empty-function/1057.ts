@@ -1,1 +1,0 @@
-class B extends C { override svu() {} } // allow: overrideMethods

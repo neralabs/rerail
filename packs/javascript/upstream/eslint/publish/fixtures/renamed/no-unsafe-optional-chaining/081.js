@@ -1,1 +1,0 @@
-alj ||= tez?.oyj

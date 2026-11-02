@@ -1,1 +1,0 @@
-var qad = function() { 'use strict'; 'use strict'; return; }

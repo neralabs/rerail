@@ -1,1 +1,0 @@
-class C extends Y { constructor(){} }

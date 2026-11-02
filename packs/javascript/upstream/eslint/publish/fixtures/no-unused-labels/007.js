@@ -1,1 +1,0 @@
-A: { var A = 0; console.log(A); break A; console.log(A); }

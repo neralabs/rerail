@@ -1,1 +1,0 @@
-var Number; Number.parseInt();

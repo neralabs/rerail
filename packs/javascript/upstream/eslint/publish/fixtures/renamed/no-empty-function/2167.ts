@@ -1,1 +1,0 @@
-class J { @qfqunglpa() async vyg(xyagj: string) {} } // allow: functions

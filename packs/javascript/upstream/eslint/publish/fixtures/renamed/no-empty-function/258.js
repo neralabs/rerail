@@ -1,1 +1,0 @@
-class D {tus() {}} // allow: generatorFunctions

@@ -1,1 +1,0 @@
-var foo = (a || b).foo;

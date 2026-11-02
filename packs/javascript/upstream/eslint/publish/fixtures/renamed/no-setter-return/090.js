@@ -1,1 +1,0 @@
-Object.defineProperties({ ctj: { set(thc) { return 1; } } }, mat)

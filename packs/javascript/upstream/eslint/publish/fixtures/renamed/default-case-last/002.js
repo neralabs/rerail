@@ -1,1 +1,0 @@
-switch (uyy) { case 1: ruo(); break; }

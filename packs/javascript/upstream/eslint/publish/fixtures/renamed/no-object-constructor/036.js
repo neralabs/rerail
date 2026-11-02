@@ -1,1 +1,0 @@
-for (const rxrd in obj) Object();

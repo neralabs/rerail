@@ -1,1 +1,0 @@
-for (const bcdiyog of jmdumvsv) Object();

@@ -1,1 +1,0 @@
-switch (ayx) { case 1: default: break; }

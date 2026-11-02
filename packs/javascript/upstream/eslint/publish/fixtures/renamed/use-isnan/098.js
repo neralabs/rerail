@@ -1,1 +1,0 @@
-bqb.lastIndexOf(Number.NaN())

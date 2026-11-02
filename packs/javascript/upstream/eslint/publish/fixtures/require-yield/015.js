@@ -1,1 +1,0 @@
-function* foo() { function* bar() { return 0; } yield 0; }

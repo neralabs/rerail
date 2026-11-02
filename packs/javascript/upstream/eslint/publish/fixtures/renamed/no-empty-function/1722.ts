@@ -1,1 +1,0 @@
-class P {@qwasckyag() static set ssp(value: string) {}} // allow: generatorMethods

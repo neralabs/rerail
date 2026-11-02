@@ -1,1 +1,0 @@
-import something from 'cjs-module-with-no-main';

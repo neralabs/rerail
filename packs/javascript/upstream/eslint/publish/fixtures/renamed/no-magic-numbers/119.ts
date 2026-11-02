@@ -1,1 +1,0 @@
-type Smc = Hwm[1 & number];

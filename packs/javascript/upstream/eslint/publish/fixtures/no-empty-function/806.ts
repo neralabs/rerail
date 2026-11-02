@@ -1,3 +1,0 @@
-const obj = {set foo(value: string) {
-    // empty
-}};

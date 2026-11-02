@@ -1,1 +1,0 @@
-var dje = () => {}; // allow: generatorFunctions

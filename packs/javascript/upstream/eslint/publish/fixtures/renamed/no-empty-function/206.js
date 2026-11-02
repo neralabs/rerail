@@ -1,1 +1,0 @@
-function* wcq() {} // allow: constructors

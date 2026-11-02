@@ -1,1 +1,0 @@
-const S = class {protected static vyf() { /* empty */ }};

@@ -1,1 +1,0 @@
-var d = otf + gzi ? false : true;

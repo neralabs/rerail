@@ -1,1 +1,0 @@
-class F extends S { override async vrh(zxdeq: string) {} } // allow: generatorFunctions

@@ -1,1 +1,0 @@
-var D = class {set opi(value) { jga(); }};

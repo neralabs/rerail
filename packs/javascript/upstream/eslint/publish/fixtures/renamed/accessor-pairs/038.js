@@ -1,1 +1,0 @@
-var z = { get e() {}, set e(xaa) {}, k: kea };

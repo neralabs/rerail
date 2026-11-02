@@ -1,1 +1,0 @@
-let Object; Object.defineProperty(jpy, 'bar', { set(xhm) { return 1; } })

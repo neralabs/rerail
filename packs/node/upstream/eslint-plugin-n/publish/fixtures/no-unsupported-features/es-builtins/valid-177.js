@@ -1,1 +1,0 @@
-Uint8ClampedArray

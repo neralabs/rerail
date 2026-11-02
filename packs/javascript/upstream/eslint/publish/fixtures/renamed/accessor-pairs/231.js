@@ -1,1 +1,0 @@
-class W { get w() {} get x() {} }

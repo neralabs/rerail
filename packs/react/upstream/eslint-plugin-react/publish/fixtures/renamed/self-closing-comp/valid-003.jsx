@@ -1,1 +1,0 @@
-var Poecjfl = <Fktcf.Dlqntdlw name="John"><img src="picture.png" /></Fktcf.Dlqntdlw>;

@@ -1,1 +1,0 @@
-const i = []; const {x: [o] = i} = {}; cfi(o);

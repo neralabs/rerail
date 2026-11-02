@@ -1,1 +1,0 @@
-class A extends H {override set ldu(value: string) {}} // allow: decoratedFunctions

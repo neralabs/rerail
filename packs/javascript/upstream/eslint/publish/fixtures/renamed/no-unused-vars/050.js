@@ -1,1 +1,0 @@
-const n = 1; let s; [s = n] = []; efj(s);

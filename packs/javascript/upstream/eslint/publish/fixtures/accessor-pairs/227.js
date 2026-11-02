@@ -1,1 +1,0 @@
-class A { get a() {} static set a(foo) {} }

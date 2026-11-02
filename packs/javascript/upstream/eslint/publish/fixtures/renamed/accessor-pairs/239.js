@@ -1,1 +1,0 @@
-H = class { set h(vee) {} }, class { get h() {} };

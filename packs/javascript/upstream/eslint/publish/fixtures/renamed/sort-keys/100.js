@@ -1,1 +1,0 @@
-var xiw = {p:1, _:2, q:3} // desc, insensitive

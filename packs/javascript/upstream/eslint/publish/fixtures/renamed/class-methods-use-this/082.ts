@@ -1,1 +1,0 @@
-class Qdv { override get uarbzh(): number {} }

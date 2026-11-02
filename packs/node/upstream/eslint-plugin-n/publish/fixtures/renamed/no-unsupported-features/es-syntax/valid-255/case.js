@@ -1,1 +1,0 @@
-async function g() { for await (const j of jp) {} }

@@ -1,1 +1,0 @@
-<Bab {...this.props} b g o />;

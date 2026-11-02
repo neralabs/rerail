@@ -1,3 +1,0 @@
-
-type Yir = Array<Yir>;
-      

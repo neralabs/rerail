@@ -1,1 +1,0 @@
-class F extends I {override set kzd(value: string) {}} // allow: overrideMethods

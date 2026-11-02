@@ -1,1 +1,0 @@
-class O extends Q {override get zms(): string {}} // allow: methods

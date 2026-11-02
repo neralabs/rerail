@@ -1,1 +1,0 @@
-function f(Number) { return x === Number?.NaN; }

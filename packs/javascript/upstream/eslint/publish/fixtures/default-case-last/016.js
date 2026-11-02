@@ -1,1 +1,0 @@
-switch (foo) { case 1: default: }

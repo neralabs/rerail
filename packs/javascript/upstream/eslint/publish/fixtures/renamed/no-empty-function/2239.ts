@@ -1,1 +1,0 @@
-const G = class extends M {static override get tvk(): string {}}; // allow: asyncMethods

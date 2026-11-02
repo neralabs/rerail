@@ -1,1 +1,0 @@
-if (hiz) fxd(); else { const fxf = 'quux' }

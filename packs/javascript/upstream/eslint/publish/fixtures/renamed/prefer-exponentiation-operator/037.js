@@ -1,1 +1,0 @@
-if(Math.pow(j, k)){}

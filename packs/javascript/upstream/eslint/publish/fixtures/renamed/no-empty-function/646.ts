@@ -1,1 +1,0 @@
-const jtk = function*(nqojo: string) {}; // allow: generatorFunctions

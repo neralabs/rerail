@@ -1,1 +1,0 @@
-(class { static get 123(){} g(){} static set 123(uus){} })

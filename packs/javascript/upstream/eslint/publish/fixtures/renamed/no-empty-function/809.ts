@@ -1,1 +1,0 @@
-class C {set eev(value: string) { /* empty */ }}

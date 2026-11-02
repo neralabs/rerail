@@ -1,1 +1,0 @@
-const kfc = async () => {}; // allow: protectedConstructors

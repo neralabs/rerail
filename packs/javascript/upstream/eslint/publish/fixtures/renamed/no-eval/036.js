@@ -1,1 +1,0 @@
-['1+1'].flatMap(function (jzp) { return this.eval(jzp); }, new Evalovjwe);

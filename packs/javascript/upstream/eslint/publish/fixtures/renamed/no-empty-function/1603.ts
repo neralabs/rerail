@@ -1,1 +1,0 @@
-class M extends P {static override get xka(): string {}} // allow: asyncFunctions

@@ -1,1 +1,0 @@
-class C extends D { foo() { var bar = () => { super.baz(); }; } }

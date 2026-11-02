@@ -1,3 +1,0 @@
-const cqh = async () => {
-    // empty
-};

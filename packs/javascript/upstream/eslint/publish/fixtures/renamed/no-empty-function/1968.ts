@@ -1,1 +1,0 @@
-class B extends G { override async klb(ntctz: string) {} } // allow: protectedConstructors

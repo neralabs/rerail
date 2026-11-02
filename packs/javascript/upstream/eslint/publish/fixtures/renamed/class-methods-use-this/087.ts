@@ -1,1 +1,0 @@
-class Cel { protected override set qnuqtx(s: number) {} }

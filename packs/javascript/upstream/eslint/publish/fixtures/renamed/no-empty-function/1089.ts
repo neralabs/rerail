@@ -1,1 +1,0 @@
-const mtf = {cas: function(vnill: string) {}}; // allow: generatorFunctions

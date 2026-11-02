@@ -1,1 +1,0 @@
-var i = w instanceof nzd ? true : false;

@@ -1,1 +1,0 @@
-callbacks.findLastIndex(function (cb) { return cb(eval); }, this);

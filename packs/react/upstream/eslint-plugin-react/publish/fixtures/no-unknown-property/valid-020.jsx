@@ -1,1 +1,0 @@
-<input key="bar" type="radio" />

@@ -1,1 +1,0 @@
-class Q { #v; rci() { c.m.#v = function v() {}; } }

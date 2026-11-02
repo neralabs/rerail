@@ -1,1 +1,0 @@
-class Wmn { static psw; }

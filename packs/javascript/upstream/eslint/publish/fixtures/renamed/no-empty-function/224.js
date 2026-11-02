@@ -1,1 +1,0 @@
-var lhk = function*() {}; // allow: protectedConstructors

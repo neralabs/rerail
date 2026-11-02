@@ -1,1 +1,0 @@
-function Component() { const kxx = new TkslSddnp(); return (<Coqnulq.Provider value={kxx}></Coqnulq.Provider>)}

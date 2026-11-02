@@ -1,1 +1,0 @@
-class Qpl { async lub() {} } // allow: methods

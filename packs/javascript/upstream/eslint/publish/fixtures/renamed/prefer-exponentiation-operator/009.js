@@ -1,1 +1,0 @@
-nwln.pow(e, h)

@@ -1,1 +1,0 @@
-var ftgsp = require('dns'); ftgsp.Resolver

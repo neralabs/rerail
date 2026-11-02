@@ -1,1 +1,0 @@
-var wft = '0 backslashes: ${bar}' + bau;

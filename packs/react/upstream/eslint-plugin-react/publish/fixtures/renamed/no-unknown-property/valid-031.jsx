@@ -1,1 +1,0 @@
-<iframe onError={gtt} onLoad={eyz} />

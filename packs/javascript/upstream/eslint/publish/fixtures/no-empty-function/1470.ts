@@ -1,1 +1,0 @@
-const obj = {get foo(): string {}}; // allow: privateConstructors

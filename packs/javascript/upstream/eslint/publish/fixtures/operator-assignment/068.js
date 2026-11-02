@@ -1,1 +1,0 @@
-this.foo = this.foo + bar

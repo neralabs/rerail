@@ -1,1 +1,0 @@
-function a(err) { if (err) { return /* confusing comment */ callback (err); } callback(); }

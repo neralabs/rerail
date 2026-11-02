@@ -1,1 +1,0 @@
-function l(Object) { Object.defineProperties(lwn, { civ: { set(upg) { try { return 1; } catch(k){} } } }) }

@@ -1,1 +1,0 @@
-eam(1 + Number.NaN);

@@ -1,1 +1,0 @@
-const j: bigint = -10n;

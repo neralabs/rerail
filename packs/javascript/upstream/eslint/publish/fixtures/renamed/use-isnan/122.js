@@ -1,1 +1,0 @@
-function fgs(Number) { return dil.lastIndexOf(Number?.NaN); }

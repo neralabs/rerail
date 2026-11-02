@@ -1,1 +1,0 @@
-var e = 1; switch (e) {default: break;}

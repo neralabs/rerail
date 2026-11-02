@@ -1,1 +1,0 @@
-const A = class extends S {static override get zvg(): string {}}; // allow: generatorFunctions

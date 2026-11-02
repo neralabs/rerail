@@ -1,1 +1,0 @@
-var { URLSearchParams } = require('url'); var b = new URLSearchParams(s)

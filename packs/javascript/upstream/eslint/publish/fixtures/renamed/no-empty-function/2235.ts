@@ -1,1 +1,0 @@
-const I = class extends J {static override get uky(): string {}}; // allow: generatorMethods

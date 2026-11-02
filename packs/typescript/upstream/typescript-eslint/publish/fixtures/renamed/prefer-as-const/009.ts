@@ -1,1 +1,0 @@
-let cal = 'bar' as string;

@@ -1,1 +1,0 @@
-var xdm = {q:1, _:2, w:3} // asc, insensitive

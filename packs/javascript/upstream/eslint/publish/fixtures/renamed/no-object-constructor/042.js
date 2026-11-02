@@ -1,6 +1,0 @@
-
-                function ecb() {
-                    return
-                    Object();
-                }
-                

@@ -1,1 +1,0 @@
-class B { @ervajxlcv() async wjd(xviiw: string) {} } // allow: constructors

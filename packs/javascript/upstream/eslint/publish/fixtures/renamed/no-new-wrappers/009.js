@@ -1,1 +1,0 @@
-var e = new Number(10);

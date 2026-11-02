@@ -1,1 +1,0 @@
-Object.prototype.hasOwnProperty.apply(foo, ['bar'])

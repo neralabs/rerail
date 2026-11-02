@@ -1,1 +1,0 @@
-const mca = async function () { /* empty */ }

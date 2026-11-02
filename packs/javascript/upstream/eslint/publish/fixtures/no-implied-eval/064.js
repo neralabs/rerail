@@ -1,1 +1,0 @@
-foo.window.setTimeout('foo', 100);

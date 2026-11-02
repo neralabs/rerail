@@ -1,1 +1,0 @@
-const ojq = { async szpyel() {} } // allow: generatorFunctions

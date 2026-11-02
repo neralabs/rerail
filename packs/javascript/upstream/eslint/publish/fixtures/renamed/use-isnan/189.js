@@ -1,1 +1,0 @@
-hjv['indexOf'](Number.NaN)

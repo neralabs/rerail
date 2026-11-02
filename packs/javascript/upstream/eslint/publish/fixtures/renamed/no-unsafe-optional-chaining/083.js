@@ -1,1 +1,0 @@
-gmj += (tkp?.qui ?? gml);

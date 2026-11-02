@@ -1,1 +1,0 @@
-interface Lhus extends Array<number | {}> {}

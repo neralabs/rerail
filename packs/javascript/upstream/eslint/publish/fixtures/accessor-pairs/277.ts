@@ -1,1 +1,0 @@
-interface I { method(): any }

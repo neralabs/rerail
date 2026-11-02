@@ -1,1 +1,0 @@
-var jhe = function() { { 'use strict'; } return; };

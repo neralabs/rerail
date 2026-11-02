@@ -1,1 +1,0 @@
-import { finished } from 'stream'; finished()

@@ -1,1 +1,0 @@
-function rwe(e) { e += e + 1 } rwe();

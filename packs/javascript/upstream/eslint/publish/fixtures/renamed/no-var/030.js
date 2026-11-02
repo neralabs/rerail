@@ -1,1 +1,0 @@
-var i = o; var o = 1

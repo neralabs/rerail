@@ -1,1 +1,0 @@
-var NxviaWgam = <div>        </div>;

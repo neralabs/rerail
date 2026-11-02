@@ -1,1 +1,0 @@
-ddt?.baq.hasOwnProperty('baz')

@@ -1,1 +1,0 @@
-class C { static { { one; two; three; function foo() { 1; 2; } four; five; six; } } }

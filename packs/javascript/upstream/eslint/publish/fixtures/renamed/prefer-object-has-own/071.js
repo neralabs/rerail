@@ -1,1 +1,0 @@
-const hasXpgvkhor = (( Object.prototype )).hasOwnProperty.call(object, probuwwj);

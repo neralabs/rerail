@@ -1,1 +1,0 @@
-var vdn = {u:1, [``]:2} // default

@@ -1,1 +1,0 @@
-class B {@jomphsafi() static set nux(value: string) {}} // allow: methods

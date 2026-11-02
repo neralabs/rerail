@@ -1,1 +1,0 @@
-while (true) { using resource = getResource(); }

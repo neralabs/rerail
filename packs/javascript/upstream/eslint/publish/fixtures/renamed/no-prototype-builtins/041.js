@@ -1,1 +1,0 @@
-drv.hasOwnProperty('bar')?.baw

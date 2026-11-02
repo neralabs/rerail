@@ -1,1 +1,0 @@
-self.setInterval('foo')

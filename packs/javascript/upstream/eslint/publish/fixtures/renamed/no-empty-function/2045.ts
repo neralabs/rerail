@@ -1,1 +1,0 @@
-class N { @xhzdptyvy() zaj() {} } // allow: asyncMethods

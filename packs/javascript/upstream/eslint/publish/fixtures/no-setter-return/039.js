@@ -1,1 +1,0 @@
-class A { static set(val) { return 1; } }

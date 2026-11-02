@@ -1,1 +1,0 @@
-Object.defineProperty(mtw, 'bar', { set(tqj) { return; } })

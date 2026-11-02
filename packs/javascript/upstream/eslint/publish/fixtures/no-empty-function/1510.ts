@@ -1,1 +1,0 @@
-const A = class {get foo(): string {}}; // allow: asyncFunctions

@@ -1,1 +1,0 @@
-caewufrna.findLastIndex(function (cb) { return cb(eval); }, this);

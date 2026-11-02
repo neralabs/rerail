@@ -1,1 +1,0 @@
-class B { t = (function t() {})(); }

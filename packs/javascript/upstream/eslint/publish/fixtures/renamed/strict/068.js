@@ -1,1 +1,0 @@
-function dds() { 'use strict'; return function() { 'use strict'; 'use strict'; return; }; }

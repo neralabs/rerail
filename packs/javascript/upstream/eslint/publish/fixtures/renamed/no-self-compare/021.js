@@ -1,1 +1,0 @@
-class M { #pgrst; pmy() { this.#pgrst === this.#pgrst; } }

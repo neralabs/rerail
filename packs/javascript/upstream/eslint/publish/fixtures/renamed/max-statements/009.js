@@ -1,1 +1,0 @@
-var vtz = { xkdky() { var gee = 1; var gei = 2; } }

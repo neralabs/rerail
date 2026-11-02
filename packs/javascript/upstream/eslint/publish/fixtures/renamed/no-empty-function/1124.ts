@@ -1,1 +1,0 @@
-function* xpe(yzpua: string) {} // allow: asyncMethods

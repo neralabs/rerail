@@ -1,1 +1,0 @@
-const txy = function (g?: number) {};

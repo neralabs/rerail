@@ -1,1 +1,0 @@
-const m = 1; let s; ({z: [s = m]} = {}); lyz(s);

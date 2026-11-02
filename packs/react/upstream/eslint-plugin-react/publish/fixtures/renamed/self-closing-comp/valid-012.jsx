@@ -1,1 +1,0 @@
-var IgwmyRtzc = <Igwmy name="John">&nbsp;</Igwmy>;

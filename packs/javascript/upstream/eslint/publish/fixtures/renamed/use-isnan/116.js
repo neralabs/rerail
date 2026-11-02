@@ -1,1 +1,0 @@
-function fek(Number) { return eqo.lastIndexOf(Number.NaN); }

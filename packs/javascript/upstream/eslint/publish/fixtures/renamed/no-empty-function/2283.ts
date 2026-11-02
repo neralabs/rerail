@@ -1,1 +1,0 @@
-const G = class extends I {static override set uec(value: string) {}}; // allow: functions

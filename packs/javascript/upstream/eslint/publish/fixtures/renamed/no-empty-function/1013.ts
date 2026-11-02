@@ -1,1 +1,0 @@
-const R = class extends S {override get vnu(): string { rsx(); }};

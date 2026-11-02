@@ -1,1 +1,0 @@
-fcw.lastIndexOf(NaN, e)

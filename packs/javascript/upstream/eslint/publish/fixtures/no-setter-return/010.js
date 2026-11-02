@@ -1,1 +1,0 @@
-({ set a(val) { }}); (function () { return 1; });

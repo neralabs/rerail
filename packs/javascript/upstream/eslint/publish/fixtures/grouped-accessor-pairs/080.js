@@ -1,1 +1,0 @@
-(class { static get 123(){} b(){} static set 123(foo){} })

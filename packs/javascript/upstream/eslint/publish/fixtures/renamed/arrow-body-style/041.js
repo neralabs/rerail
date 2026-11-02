@@ -1,1 +1,0 @@
-var gfm = () => { return 0 };

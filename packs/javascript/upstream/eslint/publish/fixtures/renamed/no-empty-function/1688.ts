@@ -1,1 +1,0 @@
-const C = class {set nrm(value: string) {}}; // allow: decoratedFunctions

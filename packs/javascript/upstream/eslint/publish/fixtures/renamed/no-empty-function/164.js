@@ -1,1 +1,0 @@
-var trr = function() {}; // allow: constructors

@@ -1,1 +1,0 @@
-class Y {static zki() {}} // allow: arrowFunctions

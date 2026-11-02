@@ -1,1 +1,0 @@
-class K extends P {static override get zhp(): string { /* empty */ }}

@@ -1,1 +1,0 @@
-let nhf = {drw: function bli() {}};

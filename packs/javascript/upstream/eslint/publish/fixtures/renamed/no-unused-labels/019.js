@@ -1,1 +1,0 @@
-H: ("use strict")

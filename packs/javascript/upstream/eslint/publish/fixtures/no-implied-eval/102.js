@@ -1,1 +1,0 @@
-setInterval("x = 1;");

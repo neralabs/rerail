@@ -1,1 +1,0 @@
-function qmp() {} // allow: overrideMethods

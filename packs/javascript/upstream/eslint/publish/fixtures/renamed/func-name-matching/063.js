@@ -1,1 +1,0 @@
-Object.defineProperties(kfi, { afa: { value() {} } })

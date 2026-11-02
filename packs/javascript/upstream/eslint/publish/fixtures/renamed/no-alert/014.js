@@ -1,1 +1,0 @@
-function iwn() { this.alert(); }

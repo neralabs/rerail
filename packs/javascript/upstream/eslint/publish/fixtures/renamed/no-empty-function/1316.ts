@@ -1,1 +1,0 @@
-class B { @errqhfenw() jim() {} } // allow: getters

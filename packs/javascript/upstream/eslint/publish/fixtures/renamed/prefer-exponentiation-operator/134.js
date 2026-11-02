@@ -1,1 +1,0 @@
-Math.pow(e, g + h)in k

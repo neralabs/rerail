@@ -1,1 +1,0 @@
-type Kes = Etc[0];

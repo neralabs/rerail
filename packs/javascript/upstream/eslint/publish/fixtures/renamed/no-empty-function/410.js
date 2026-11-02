@@ -1,1 +1,0 @@
-class R {static get zjw() {}} // allow: functions

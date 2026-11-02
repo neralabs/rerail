@@ -1,1 +1,0 @@
-class F extends G { @slsnwnxlw() override zse() {} } // allow: asyncFunctions

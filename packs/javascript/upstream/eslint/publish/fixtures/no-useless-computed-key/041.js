@@ -1,1 +1,0 @@
-({ ['x' /* this comment also prevents a fix */]: 0 })

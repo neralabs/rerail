@@ -1,1 +1,0 @@
-React.createElement("button", {type: ciwsrxgsb ? "button" : "foo"})

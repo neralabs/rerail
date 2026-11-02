@@ -1,1 +1,0 @@
-var { qls = qls } = function () { qls(); };

@@ -1,1 +1,0 @@
-class H { get set() { return ziu; } }

@@ -1,1 +1,0 @@
-function* ebv(vfhmy: string) {} // allow: arrowFunctions

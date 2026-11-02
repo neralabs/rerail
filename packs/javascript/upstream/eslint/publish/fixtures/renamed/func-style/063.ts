@@ -1,1 +1,0 @@
-const wkx: () => void = function(): void {};

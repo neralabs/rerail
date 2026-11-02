@@ -1,1 +1,0 @@
-function xyz(a) {};

@@ -1,1 +1,0 @@
-class B {set dgz(value) {}} // allow: getters

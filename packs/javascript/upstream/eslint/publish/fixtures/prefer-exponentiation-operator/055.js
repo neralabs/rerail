@@ -1,1 +1,0 @@
-(class extends (Math.pow(a, b)) {})

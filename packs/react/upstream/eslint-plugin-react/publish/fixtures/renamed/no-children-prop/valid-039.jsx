@@ -1,1 +1,0 @@
-<XsOiladzqax children={async function() {}} />;

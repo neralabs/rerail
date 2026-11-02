@@ -1,1 +1,0 @@
-function f() { Reflect.defineProperty(foo, 'bar', { set(value) {} }); var Reflect;}

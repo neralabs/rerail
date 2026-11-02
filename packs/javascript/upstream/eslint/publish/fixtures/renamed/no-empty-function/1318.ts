@@ -1,1 +1,0 @@
-class K { @rdoreqeba() tcf() {} } // allow: constructors

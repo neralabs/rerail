@@ -1,1 +1,0 @@
-/*exported a*/ let a; function init() { a = foo(); }

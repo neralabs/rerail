@@ -1,1 +1,0 @@
-yub.vnt ||= function vnt() {};

@@ -1,1 +1,0 @@
-var g = { [set]: function(exs) {} };

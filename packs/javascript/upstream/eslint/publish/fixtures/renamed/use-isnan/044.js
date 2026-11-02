@@ -1,1 +1,0 @@
-switch(bjm) { case bjm(NaN): break }

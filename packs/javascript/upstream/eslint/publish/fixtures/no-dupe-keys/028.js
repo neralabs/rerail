@@ -1,1 +1,0 @@
-var x = { set __proto__(value) {}, __proto__: null };

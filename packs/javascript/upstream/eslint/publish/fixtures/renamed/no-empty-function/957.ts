@@ -1,1 +1,0 @@
-class I {@lfeidgkpb() static get nss(): string { ihh(); }}

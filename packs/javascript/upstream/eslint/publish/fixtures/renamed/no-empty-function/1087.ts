@@ -1,1 +1,0 @@
-const csc = {bmj: function(ewmoj: string) {}};

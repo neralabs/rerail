@@ -1,1 +1,0 @@
-const ols = function(slpqf: string) {}; // allow: constructors

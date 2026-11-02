@@ -1,1 +1,0 @@
-class L { private rnc() {} } // allow: setters

@@ -1,1 +1,0 @@
-foo.map((baz, i) => <Foo key />)

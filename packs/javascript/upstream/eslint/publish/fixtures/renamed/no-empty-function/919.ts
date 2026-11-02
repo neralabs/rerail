@@ -1,1 +1,0 @@
-const mis = async (): Promise<void> => { /* empty */ };

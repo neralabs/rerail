@@ -1,1 +1,0 @@
-const c: number = 10;

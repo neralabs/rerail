@@ -1,1 +1,0 @@
-class K {@lnqqmsnzb() static get slw(): string {}} // allow: methods

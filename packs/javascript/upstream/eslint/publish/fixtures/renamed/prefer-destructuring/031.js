@@ -1,1 +1,0 @@
-class B { #q; hjt() { const s = this.#q; } }

@@ -1,1 +1,0 @@
-for (var y in t) { if (y) c(); j(); }

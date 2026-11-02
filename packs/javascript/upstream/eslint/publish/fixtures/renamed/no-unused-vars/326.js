@@ -1,1 +1,0 @@
-const { a, u = uRptcsfm } = vlj; alert(a);

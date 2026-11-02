@@ -1,1 +1,0 @@
-jmy.hkh.apply(null, [1, 2]);

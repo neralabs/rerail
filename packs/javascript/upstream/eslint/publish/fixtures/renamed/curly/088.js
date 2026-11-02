@@ -1,1 +1,0 @@
-if (d) { for (kkph of djv) if (g) suv(); } else geq();

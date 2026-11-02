@@ -1,1 +1,0 @@
-function drv(undefined) { parseInt("10", undefined); }

@@ -1,1 +1,0 @@
-class Net implements Mda { sxkcqj() {} }

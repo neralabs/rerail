@@ -1,1 +1,0 @@
-import type * as T from 'mod';

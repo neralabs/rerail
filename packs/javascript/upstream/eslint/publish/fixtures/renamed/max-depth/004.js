@@ -1,1 +1,0 @@
-class Z { static { if (1) { if (2) {} } } }

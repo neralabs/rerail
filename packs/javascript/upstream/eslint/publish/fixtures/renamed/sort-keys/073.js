@@ -1,1 +1,0 @@
-var wpg = {t:1, '':2} // default

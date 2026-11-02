@@ -1,1 +1,0 @@
-const mdq = {set iem(value: string) {}}; // allow: arrowFunctions

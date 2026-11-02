@@ -1,1 +1,0 @@
-A: { foo(); break A; bar(); }

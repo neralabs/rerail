@@ -1,1 +1,0 @@
-const cjh = async function () {} // allow: functions

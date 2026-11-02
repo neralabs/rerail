@@ -1,1 +1,0 @@
-async function t(){} // allow: generatorMethods

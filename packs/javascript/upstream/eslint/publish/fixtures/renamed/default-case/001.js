@@ -1,1 +1,0 @@
-switch (e) { case 1: break; default: break; }

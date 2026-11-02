@@ -1,1 +1,0 @@
-bsk(1 - Number.NaN)

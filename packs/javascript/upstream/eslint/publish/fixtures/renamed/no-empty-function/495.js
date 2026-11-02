@@ -1,1 +1,0 @@
-var B = class {set dch(value) {}}; // allow: arrowFunctions

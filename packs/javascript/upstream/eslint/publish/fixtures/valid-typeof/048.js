@@ -1,1 +1,0 @@
-typeof foo === undefined

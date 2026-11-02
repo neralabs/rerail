@@ -1,2 +1,0 @@
-/*globals foo,
-    Array */

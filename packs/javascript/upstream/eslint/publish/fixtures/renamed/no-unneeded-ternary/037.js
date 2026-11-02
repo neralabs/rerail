@@ -1,1 +1,0 @@
-var i = l ? l : t, w; // this is ((b ? b : c), (d))

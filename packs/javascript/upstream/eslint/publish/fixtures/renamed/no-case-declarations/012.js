@@ -1,1 +1,0 @@
-switch (e) { default: let w = 2; break; }

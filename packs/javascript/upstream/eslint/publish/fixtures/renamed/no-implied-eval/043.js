@@ -1,1 +1,0 @@
-global.execScript(function() { s = 1; }, 100);

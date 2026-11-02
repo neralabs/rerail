@@ -1,1 +1,0 @@
-class Euc { set[2](value) {} }

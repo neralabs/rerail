@@ -1,1 +1,0 @@
-function foo() { if (a) {} else if (b) {} if (c) { if (d) {} } }

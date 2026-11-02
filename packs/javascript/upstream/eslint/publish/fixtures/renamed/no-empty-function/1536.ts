@@ -1,1 +1,0 @@
-class J {@uumghqwvq() get ypg(): string {}} // allow: setters

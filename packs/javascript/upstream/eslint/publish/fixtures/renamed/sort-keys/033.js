@@ -1,1 +1,0 @@
-var zgp = {_:2, f:1, t:3} // asc, insensitive

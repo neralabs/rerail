@@ -1,1 +1,0 @@
-(class { set gph(xdn) { var gph = (xdn) => { return 1; } } })

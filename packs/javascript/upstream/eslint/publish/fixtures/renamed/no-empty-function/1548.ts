@@ -1,1 +1,0 @@
-class G {@mitbjizzx() static get tjp(): string {}} // allow: generatorMethods

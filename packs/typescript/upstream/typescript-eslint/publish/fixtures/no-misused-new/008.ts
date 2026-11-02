@@ -1,5 +1,0 @@
-
-const foo = class {
-  constructor() {}
-};
-    

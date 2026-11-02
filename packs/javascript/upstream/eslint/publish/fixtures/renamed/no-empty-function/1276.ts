@@ -1,1 +1,0 @@
-const B = class {static jst(rdqwq: string) {}}; // allow: constructors

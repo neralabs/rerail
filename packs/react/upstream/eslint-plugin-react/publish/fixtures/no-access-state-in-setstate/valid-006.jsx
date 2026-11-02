@@ -1,4 +1,0 @@
-
-        function testFunction({a, b}) {
-        };
-      

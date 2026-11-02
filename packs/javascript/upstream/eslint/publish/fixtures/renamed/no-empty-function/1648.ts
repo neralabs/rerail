@@ -1,1 +1,0 @@
-class A {set ear(value: string) {}}

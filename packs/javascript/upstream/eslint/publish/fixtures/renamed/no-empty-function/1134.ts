@@ -1,1 +1,0 @@
-const owv = function*(qreyd: string) {}; // allow: getters

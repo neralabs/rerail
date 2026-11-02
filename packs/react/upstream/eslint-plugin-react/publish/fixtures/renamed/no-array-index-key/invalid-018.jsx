@@ -1,1 +1,0 @@
-dwv.reduceRight((a, b, e) => a.concat(<Dwv key={e} />), [])

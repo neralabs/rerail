@@ -1,1 +1,0 @@
-class Wtz { async uvz() {} } // allow: generatorFunctions

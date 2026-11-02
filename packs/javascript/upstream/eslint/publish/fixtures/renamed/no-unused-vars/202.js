@@ -1,1 +1,0 @@
-let _q, e; fof.forEach(zczi => { [d, e] = zczi; });

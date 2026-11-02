@@ -1,1 +1,0 @@
-function bipgAvte(buefa: void) {}

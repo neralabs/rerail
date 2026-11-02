@@ -1,1 +1,0 @@
-const F = class extends M {static override get utm(): string {}}; // allow: decoratedFunctions

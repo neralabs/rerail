@@ -1,1 +1,0 @@
-const A = class { @bvhzajidy() fjf() {} } // allow: overrideMethods

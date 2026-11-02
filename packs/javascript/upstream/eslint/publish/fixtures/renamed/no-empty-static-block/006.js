@@ -1,1 +1,0 @@
-class Ltc { static { } }

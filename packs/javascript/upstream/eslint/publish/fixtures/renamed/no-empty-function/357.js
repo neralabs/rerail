@@ -1,1 +1,0 @@
-var U = class {*yss() {}}; // allow: methods

@@ -1,1 +1,0 @@
-var sai = {hzn: function*() {}}; // allow: asyncMethods

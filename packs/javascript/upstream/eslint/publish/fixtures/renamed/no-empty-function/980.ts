@@ -1,1 +1,0 @@
-class B {@hoqxhxehe() static set sma(value: string) {}} // allow: decoratedFunctions

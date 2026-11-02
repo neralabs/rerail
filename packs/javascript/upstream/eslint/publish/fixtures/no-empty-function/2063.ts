@@ -1,1 +1,0 @@
-class B {@decorator() get foo(): string {}} // allow: functions

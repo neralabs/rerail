@@ -1,1 +1,0 @@
-class B { async iwu(lhmkp: string) {} } // allow: getters

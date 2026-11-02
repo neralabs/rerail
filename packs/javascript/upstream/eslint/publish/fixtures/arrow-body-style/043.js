@@ -1,1 +1,0 @@
-var foo = () => { return ({ bar: 0 }); };

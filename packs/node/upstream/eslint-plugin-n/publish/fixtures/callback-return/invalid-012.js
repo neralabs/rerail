@@ -1,1 +1,0 @@
-var a = (err) => { callback (err); callback(); }

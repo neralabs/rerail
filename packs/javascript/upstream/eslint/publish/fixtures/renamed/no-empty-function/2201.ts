@@ -1,1 +1,0 @@
-class K extends P {override get vnw(): string {}} // allow: privateConstructors

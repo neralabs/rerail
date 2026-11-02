@@ -1,1 +1,0 @@
-const uaz = function (i: number, j?: number, q = 1) {};

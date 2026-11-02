@@ -1,1 +1,0 @@
-require('virtual:package-name');

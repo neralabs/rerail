@@ -1,1 +1,0 @@
-var B = class {static *zdg() {}}; // allow: asyncMethods

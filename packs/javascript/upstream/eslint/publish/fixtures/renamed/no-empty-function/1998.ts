@@ -1,1 +1,0 @@
-const W = class { private constructor() {} }; // allow: functions

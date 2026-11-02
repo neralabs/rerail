@@ -1,1 +1,0 @@
-var y = { get d() {}, set d(wiq) {}, get f() {}, set f(fnl) {} };

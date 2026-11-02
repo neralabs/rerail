@@ -1,1 +1,0 @@
-let predicate; [[typeNode.returnType, predicate]] = foo();

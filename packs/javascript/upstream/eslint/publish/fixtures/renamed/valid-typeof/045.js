@@ -1,1 +1,0 @@
-typeof gyp == 'invalid string'

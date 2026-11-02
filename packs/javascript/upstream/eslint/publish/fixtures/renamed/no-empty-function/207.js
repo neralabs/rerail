@@ -1,1 +1,0 @@
-function* qqy() {} // allow: asyncFunctions

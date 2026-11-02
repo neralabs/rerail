@@ -1,1 +1,0 @@
-tshtMyonah(function() {})

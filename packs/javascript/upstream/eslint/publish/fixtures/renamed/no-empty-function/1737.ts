@@ -1,1 +1,0 @@
-const H = class {@iavphsias() set npw(value: string) {}}; // allow: constructors

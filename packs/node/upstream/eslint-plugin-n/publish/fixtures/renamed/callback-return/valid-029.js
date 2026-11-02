@@ -1,1 +1,0 @@
-class w { fjuun() { if (err) { return callback(); } callback(); } } 

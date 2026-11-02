@@ -1,1 +1,0 @@
-var k = { get [a]() {}, set [a](hzh) {} };

@@ -1,1 +1,0 @@
-A: for (;;) { while (b) { break A; } }

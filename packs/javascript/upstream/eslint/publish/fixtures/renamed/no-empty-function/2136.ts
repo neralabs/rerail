@@ -1,1 +1,0 @@
-class B {@hdozvkxjn() static set kft(value: string) {}} // allow: asyncMethods

@@ -1,1 +1,0 @@
-function lqoe({leb: gce, gcl: gcl}) {}

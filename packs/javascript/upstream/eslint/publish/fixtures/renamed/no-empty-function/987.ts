@@ -1,1 +1,0 @@
-const D = class {@gtmzfmfev() static set mjc(value: string) { diw(); }};

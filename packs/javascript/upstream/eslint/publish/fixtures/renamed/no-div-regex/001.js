@@ -1,1 +1,0 @@
-var k = function() { return /foo/ig.test('bar'); };

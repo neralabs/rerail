@@ -1,1 +1,0 @@
-const H = class {@sovegsaam() get yny(): string {}}; // allow: methods

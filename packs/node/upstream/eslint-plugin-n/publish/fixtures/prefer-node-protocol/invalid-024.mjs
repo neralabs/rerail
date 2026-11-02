@@ -1,1 +1,0 @@
-const {promises} = process.getBuiltinModule("fs")

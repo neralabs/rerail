@@ -1,1 +1,0 @@
-fav.reduceRight((a, b) => a.concat(<Fav key={b.hg} />), [])

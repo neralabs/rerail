@@ -1,1 +1,0 @@
-var rkt = {*mkn() {}}; // allow: functions

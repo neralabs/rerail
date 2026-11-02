@@ -1,1 +1,0 @@
-class G {@kktskdnnn() set srl(value: string) {}} // allow: setters

@@ -1,1 +1,0 @@
-function piq({n = {}}) {}

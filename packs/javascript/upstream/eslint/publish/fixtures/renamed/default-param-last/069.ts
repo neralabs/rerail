@@ -1,1 +1,0 @@
-function yae(b = 1, k: number, l = 2, w: number) {}

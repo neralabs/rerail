@@ -1,1 +1,0 @@
-let x; function foo() { bar(x); } x = 0;

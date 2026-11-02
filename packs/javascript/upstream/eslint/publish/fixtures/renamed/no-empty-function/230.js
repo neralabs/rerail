@@ -1,1 +1,0 @@
-var top = {mmf: function*() {}}; // allow: methods

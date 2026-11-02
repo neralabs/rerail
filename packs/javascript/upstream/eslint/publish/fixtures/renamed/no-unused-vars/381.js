@@ -1,1 +1,0 @@
-let { a } = dez, crb = 'hello'; alert(crb);

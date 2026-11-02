@@ -1,1 +1,0 @@
-var v = { get [h + o]() {}, set [h + o](teh) {} };

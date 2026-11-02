@@ -1,1 +1,0 @@
-const hasYqimlvdp = Object.hasOwn(object, zajfowng);

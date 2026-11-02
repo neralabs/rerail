@@ -1,1 +1,0 @@
-async function qsh() { var c = class C extends (await vpy?.qsh) {}}

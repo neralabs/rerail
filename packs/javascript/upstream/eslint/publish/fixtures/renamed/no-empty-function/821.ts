@@ -1,1 +1,0 @@
-const G = class {static set tjz(value: string) { /* empty */ }};

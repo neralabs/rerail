@@ -1,1 +1,0 @@
-var nab = {_:2, c:1, l:3} // asc, natural

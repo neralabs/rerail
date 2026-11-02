@@ -1,1 +1,0 @@
-function m(){} class Y { static { var m; } }

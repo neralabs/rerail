@@ -1,1 +1,0 @@
-Q: for (var q in uxy) { for (;;) { switch (q) { case 0: continue Q; } } }

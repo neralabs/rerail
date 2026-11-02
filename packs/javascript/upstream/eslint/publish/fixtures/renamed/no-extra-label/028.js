@@ -1,1 +1,0 @@
-D: while(true) { break/**/ D; }

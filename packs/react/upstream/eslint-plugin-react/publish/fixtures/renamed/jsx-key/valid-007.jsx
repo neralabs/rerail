@@ -1,1 +1,0 @@
-[1, 2 ,3].map(t => t ? <Jsn t={t} key="1" /> : <NazuuXwg t={t} key="2" />);

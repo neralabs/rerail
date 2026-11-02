@@ -1,1 +1,0 @@
- (function isu(_i) { return _i + 5 })(5)

@@ -1,1 +1,0 @@
-Object?.defineProperties(obj, {foo: {set: function(value) {}}});

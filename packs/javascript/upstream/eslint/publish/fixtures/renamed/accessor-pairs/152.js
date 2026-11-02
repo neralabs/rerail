@@ -1,1 +1,0 @@
-var r = { get a() {}, set f(pvm) {}, set h(pvm) {}, get m() {} };

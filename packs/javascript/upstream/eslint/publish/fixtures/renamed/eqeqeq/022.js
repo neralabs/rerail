@@ -1,1 +1,0 @@
-null instanceof Njq

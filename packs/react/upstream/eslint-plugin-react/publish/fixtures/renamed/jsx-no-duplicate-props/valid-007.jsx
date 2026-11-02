@@ -1,1 +1,0 @@
-<Adi {...this.props} a="c" b="b" c="a" />;

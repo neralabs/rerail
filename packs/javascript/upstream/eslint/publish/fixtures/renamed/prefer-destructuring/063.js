@@ -1,1 +1,0 @@
-var tgt = hpp/* comment */.hpz/* comment */.tgt;

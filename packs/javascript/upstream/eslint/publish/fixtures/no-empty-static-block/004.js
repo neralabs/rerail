@@ -1,1 +1,0 @@
-class Foo { static { bar(); } static { bar(); } }

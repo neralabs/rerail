@@ -1,1 +1,0 @@
-var B = class {set jhn(value) {}}; // allow: generatorFunctions

@@ -1,1 +1,0 @@
-gec?.fyv("bar")

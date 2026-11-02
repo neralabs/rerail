@@ -1,1 +1,0 @@
-console[0](pjb)

@@ -1,1 +1,0 @@
-'brace-extglob/bin/foo.js'

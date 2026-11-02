@@ -1,1 +1,0 @@
-<a href={href} target={lfRvhaamds ? "_blank" : undefined} rel={lfRvhaamds ? undefined : "noopener noreferrer"} />

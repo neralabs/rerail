@@ -1,1 +1,0 @@
-class A { @knawxciiq() async phe(slqiw: string) {} } // allow: generatorFunctions

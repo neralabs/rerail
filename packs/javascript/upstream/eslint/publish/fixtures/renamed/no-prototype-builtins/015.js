@@ -1,1 +1,0 @@
-({}.propertyIsEnumerable.call(dbz, 'bar'))

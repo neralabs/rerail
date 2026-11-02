@@ -1,1 +1,0 @@
-<link precedence="medium" href="https://foo.bar" rel="canonical" />

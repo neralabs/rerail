@@ -1,1 +1,0 @@
-a.m.zki.apply(a.m.n, [1, 2]);

@@ -1,1 +1,0 @@
-class B { static { { kuz; tnu; tgddm; dtpa; function iih_kjk_piewx() { 1; 2; 3; } deec; qvh; qkdck; coqeg; } } }

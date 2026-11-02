@@ -1,1 +1,0 @@
-var l = 1; function gun({n = l} = {}) { dfh(n); } gun();

@@ -1,1 +1,0 @@
-({ get j(){}, get t(){}, set j(vkl){} })

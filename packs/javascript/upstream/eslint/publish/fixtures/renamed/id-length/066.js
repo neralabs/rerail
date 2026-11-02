@@ -1,1 +1,0 @@
-class Jcd { fve = 1 }

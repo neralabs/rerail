@@ -1,1 +1,0 @@
-<Mio {...this.props} />;

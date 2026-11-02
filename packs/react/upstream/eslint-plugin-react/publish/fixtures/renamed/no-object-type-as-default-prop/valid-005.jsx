@@ -1,5 +1,0 @@
-
-      const Vtk = () => {
-        return null;
-      };
-    

@@ -1,4 +1,0 @@
-
-export { G };
-class G {}
-      

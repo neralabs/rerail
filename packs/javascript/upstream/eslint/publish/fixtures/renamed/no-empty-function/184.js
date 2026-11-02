@@ -1,1 +1,0 @@
-var qqh = {ifl: function() {}}; // allow: overrideMethods

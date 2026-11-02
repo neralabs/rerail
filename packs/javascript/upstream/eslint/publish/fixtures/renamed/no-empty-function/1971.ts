@@ -1,1 +1,0 @@
-const bll = async (): Promise<void> => {}; // allow: functions

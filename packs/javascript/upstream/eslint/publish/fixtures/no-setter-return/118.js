@@ -1,1 +1,0 @@
-class A { set a(val) { return foo(); } }

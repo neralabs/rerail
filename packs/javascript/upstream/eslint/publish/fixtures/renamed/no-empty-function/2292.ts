@@ -1,1 +1,0 @@
-const B = class extends C {static override set jni(value: string) {}}; // allow: privateConstructors

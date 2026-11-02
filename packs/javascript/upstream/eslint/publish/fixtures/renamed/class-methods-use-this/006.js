@@ -1,1 +1,0 @@
-class K { ocd() { if(true) { return this; } } }

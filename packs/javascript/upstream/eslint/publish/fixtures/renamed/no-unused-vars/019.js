@@ -1,1 +1,0 @@
-Xkf.sid = function(siw) { return siw; };

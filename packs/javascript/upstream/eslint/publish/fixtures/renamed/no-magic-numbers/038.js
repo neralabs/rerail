@@ -1,1 +1,0 @@
-const aeep = (divhy = 123) => {}

@@ -1,1 +1,0 @@
-class D { kmh = 2; }

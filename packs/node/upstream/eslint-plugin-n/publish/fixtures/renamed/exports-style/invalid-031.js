@@ -1,1 +1,0 @@
-module.exports = exports = {gee: 1}; exports = yii

@@ -1,1 +1,0 @@
-if (t) { function v() {} }

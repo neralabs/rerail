@@ -1,1 +1,0 @@
-class A { static gva(ixalw: string) {} } // allow: arrowFunctions

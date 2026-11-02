@@ -1,1 +1,0 @@
-const C = class {@qpkvewmnu() static set sen(value: string) {}}; // allow: asyncFunctions

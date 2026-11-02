@@ -1,1 +1,0 @@
-var y = { get d() {}, get b() {}, set d(jzr) {} };

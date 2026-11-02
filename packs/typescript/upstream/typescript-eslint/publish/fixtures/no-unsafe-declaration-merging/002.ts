@@ -1,4 +1,0 @@
-
-namespace Foo {}
-namespace Foo {}
-    

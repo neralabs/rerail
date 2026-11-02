@@ -1,1 +1,0 @@
-type Dnk = { [key: string]: Dnk };

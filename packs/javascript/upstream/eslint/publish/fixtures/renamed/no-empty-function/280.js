@@ -1,1 +1,0 @@
-class P {static zib() {}} // allow: protectedConstructors

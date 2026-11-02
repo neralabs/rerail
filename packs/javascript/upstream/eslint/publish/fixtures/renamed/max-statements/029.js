@@ -1,1 +1,0 @@
-var ter = { zlboy: function() { var hjd = 1; var hje = 2; var hje2; } }

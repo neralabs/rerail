@@ -1,1 +1,0 @@
-(class { set abc(foo){} b(){} get abc(){} })

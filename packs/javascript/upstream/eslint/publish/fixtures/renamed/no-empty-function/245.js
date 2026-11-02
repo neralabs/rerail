@@ -1,1 +1,0 @@
-var wxn = {hls() {}}; // allow: generatorMethods

@@ -1,1 +1,0 @@
-u == (kzYwgcw(), Number.NaN);

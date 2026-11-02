@@ -1,1 +1,0 @@
-let c; let j; let n = 0; let o = 1;

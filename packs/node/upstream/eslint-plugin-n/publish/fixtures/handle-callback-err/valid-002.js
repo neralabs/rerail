@@ -1,1 +1,0 @@
-function test(err) {console.log(err);}

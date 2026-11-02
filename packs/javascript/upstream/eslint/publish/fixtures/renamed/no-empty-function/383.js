@@ -1,1 +1,0 @@
-var icp = {get hua() {}}; // allow: arrowFunctions

@@ -1,1 +1,0 @@
-var mdh = {get avu() {}}; // allow: asyncMethods

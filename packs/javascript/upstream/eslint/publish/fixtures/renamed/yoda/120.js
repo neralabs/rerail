@@ -1,1 +1,0 @@
-function *trq() { yield 1 < a }

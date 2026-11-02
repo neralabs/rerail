@@ -1,1 +1,0 @@
-class A {private static *foo() {}} // allow: decoratedFunctions

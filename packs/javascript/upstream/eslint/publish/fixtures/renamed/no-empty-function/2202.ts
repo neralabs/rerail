@@ -1,1 +1,0 @@
-class G extends J {override get onp(): string {}} // allow: protectedConstructors

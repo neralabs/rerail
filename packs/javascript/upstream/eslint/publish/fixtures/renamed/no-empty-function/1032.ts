@@ -1,1 +1,0 @@
-class L extends M {static override set owu(value: string) {}} // allow: setters

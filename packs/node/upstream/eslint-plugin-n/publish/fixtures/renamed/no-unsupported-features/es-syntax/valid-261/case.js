@@ -1,1 +1,0 @@
-function n() { for (const w of wg) {} }

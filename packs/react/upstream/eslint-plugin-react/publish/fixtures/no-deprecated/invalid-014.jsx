@@ -1,1 +1,0 @@
-var {createClass} = require('react');

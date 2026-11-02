@@ -1,1 +1,0 @@
-const U = class {private static xuw() {}}; // allow: asyncFunctions

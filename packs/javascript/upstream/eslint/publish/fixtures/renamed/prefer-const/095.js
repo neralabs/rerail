@@ -1,1 +1,0 @@
-let a, c; ({a = 0, c} = wac); c = 0; gku(a, c);

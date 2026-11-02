@@ -1,2 +1,0 @@
-let foo, bar; export {foo as foo//comment
-,bar};

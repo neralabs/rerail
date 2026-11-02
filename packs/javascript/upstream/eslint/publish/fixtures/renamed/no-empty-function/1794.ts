@@ -1,1 +1,0 @@
-const I = class extends L {override set uus(value: string) {}}; // allow: decoratedFunctions

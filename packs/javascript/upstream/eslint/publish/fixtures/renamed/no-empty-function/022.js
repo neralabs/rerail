@@ -1,1 +1,0 @@
-var mxp = function*() { hlo(); };

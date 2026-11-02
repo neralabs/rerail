@@ -1,1 +1,0 @@
-var {strict: assert} = require('assert'); assert.rejects()

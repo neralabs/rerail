@@ -1,1 +1,0 @@
-var mooQbQ = (m) => { s =  s + m };

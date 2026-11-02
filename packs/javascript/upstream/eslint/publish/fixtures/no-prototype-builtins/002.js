@@ -1,1 +1,0 @@
-Object.prototype.isPrototypeOf.call(foo, 'bar')

@@ -1,1 +1,0 @@
-Object?.defineProperty(hba, 'bar', { value: function bau() {} })
