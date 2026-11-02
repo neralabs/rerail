@@ -794,4 +794,6 @@ pub(in crate::code_rule_dsl) fn prune(mut prog: Program) -> Program {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod data_layer_tests;
 pub(in crate::code_rule_dsl) mod yaml;
