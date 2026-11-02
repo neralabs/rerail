@@ -1324,7 +1324,7 @@ fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
 /// every clause, as `inside module has dotted_name ^airflow`, so the anchor index selects no root
 /// in a file without an `airflow` import. A utility cannot do that: `compile_util` reduces a plan
 /// that projects relations to its root kinds, so folding the gate into the shared `seen-airflow`
-/// keeps every finding and makes AIR302 about a hundred times slower on such files (NER-2229).
+/// keeps every finding and makes AIR302 about a hundred times slower on such files (#375).
 #[test]
 fn airflow_ports_select_no_root_in_a_file_without_an_airflow_import() {
     let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
