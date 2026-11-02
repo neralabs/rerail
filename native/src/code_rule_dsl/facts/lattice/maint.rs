@@ -1056,4 +1056,38 @@ mod tests {
         assert_eq!(lc.changed, 1000);
         g.edit(0, &[], &[(1500, 1501)], &[], &[]);
     }
+
+    /// Whether this module's tests fail with mutant `n` on (facts-b's `facts-b-unit` gate,
+    /// E3 report § 2: all three killed).
+    fn killed(n: u32) -> bool {
+        let suite: [fn(); 6] = [
+            deleting_the_entry_of_a_cycle_unreaches_it,
+            a_second_witness_keeps_the_level_and_reparents,
+            removing_a_seed_and_adding_another,
+            a_cycle_does_not_support_itself,
+            random_edits_equal_the_naive_fixpoint,
+            a_long_chain_cut_in_the_middle_and_restored,
+        ];
+        super::super::mutant::with(n, || suite.iter().any(|t| std::panic::catch_unwind(t).is_err()))
+    }
+
+    #[test]
+    fn mutant_75_an_invalidated_witness_is_killed() {
+        assert!(killed(75));
+    }
+
+    #[test]
+    fn mutant_77_dred_without_forward_rounds_is_killed() {
+        assert!(killed(77));
+    }
+
+    #[test]
+    fn mutant_79_bf_old_support_is_killed() {
+        assert!(killed(79));
+    }
+
+    #[test]
+    fn no_mutant_passes() {
+        assert!(!killed(0));
+    }
 }
