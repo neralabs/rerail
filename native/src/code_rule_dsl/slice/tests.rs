@@ -439,6 +439,8 @@ fn the_slice_finds_ws_findings_on_real_files() {
         let run = audit(&store, WS, root, &mut rules).unwrap();
         let (spent, wall) = (cpu() - cpu0, wall0.elapsed());
         eprintln!("S7 {name} footprint: {before} MB before the audit, {} MB after{}", footprint(), if w_run.is_none() { " (before W's run)" } else { "" });
+        #[cfg(target_os = "macos")]
+        eprintln!("S7 {name} Metal buffers: peak {} MB", crate::code_rule_dsl::transducer::packed::metal_backend::peak_mb());
         // `RERAIL_S7_HOLD=<path>`: wait here, the audit's state alive, until `path` exists (to
         // inspect the process's heap).
         if let Some(path) = std::env::var_os("RERAIL_S7_HOLD") {

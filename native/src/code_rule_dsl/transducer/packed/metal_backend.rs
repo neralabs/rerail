@@ -17,14 +17,25 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 #[path = "metal_launch.rs"]
 pub(crate) mod launch;
 
-// This is a process-wide buffer budget, shared by anchor selection, execution, and caches.
-// Reserve before mmap/copy/Metal allocation, including page alignment and empty buffers.
-pub(super) const METAL_BUFFER_LIMIT: usize = 2_000_000_000;
+// The device pool: every Metal buffer alive at once, reserved before its mmap, copy or Metal
+// allocation (page alignment and empty buffers included). Its size is the device's share of the
+// process's 500 MB (02-shape §6: the resident tapes, 128-192 MB, and the plan-sized set, lattice
+// and output pools, 32-64 MB), in place of a 2 GB guard (list step 13). A plan's buffers are
+// sized from it (counted, not worst-case: `label_passes`), and a batch that does not fit is
+// refused as `BackendCapacity` and split (`waves::matches::labelled_metal`). S7: peak 248 MB.
+pub(super) const METAL_BUFFER_LIMIT: usize = 256 << 20;
 static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
+/// The most `METAL_BUFFER_BYTES` has held.
+static METAL_BUFFER_PEAK: AtomicUsize = AtomicUsize::new(0);
 
 /// The bytes of Metal buffers alive now (their reservations), in MB.
 pub(in crate::code_rule_dsl) fn reserved_mb() -> usize {
     METAL_BUFFER_BYTES.load(Ordering::Acquire) >> 20
+}
+
+/// The most bytes of Metal buffers alive at once, in MB.
+pub(in crate::code_rule_dsl) fn peak_mb() -> usize {
+    METAL_BUFFER_PEAK.load(Ordering::Acquire) >> 20
 }
 
 /// What the Metal driver says it has allocated for the device, in MB.
@@ -105,6 +116,18 @@ impl BufferReservation {
                 Error::BackendCapacity
             })?;
         if std::ptr::eq(ledger, &METAL_BUFFER_BYTES) {
+            METAL_BUFFER_PEAK.fetch_max(previous + bytes, Ordering::AcqRel);
+            if bytes >= 4 << 20 && std::env::var_os("RERAIL_BUFFERS").is_some() {
+                let trace = std::backtrace::Backtrace::force_capture().to_string();
+                let frames = trace
+                    .lines()
+                    .filter(|line| line.trim_start().starts_with("at ") && line.contains("code_rule_dsl") && !line.contains("metal_backend.rs"))
+                    .take(3)
+                    .map(|line| line.trim().trim_start_matches(|c: char| c.is_ascii_digit() || c == ':' || c == ' ').to_owned())
+                    .collect::<Vec<_>>()
+                    .join(" < ");
+                eprintln!("buffer {} MB (alive {} MB): {frames}", bytes >> 20, (previous + bytes) >> 20);
+            }
             launch::record_buffer_allocation(previous + bytes);
         }
         Ok(Self {

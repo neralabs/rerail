@@ -310,7 +310,7 @@ pub(in crate::code_rule_dsl) fn documents(graph: &(impl Graph + ?Sized), scope: 
 }
 
 /// The tapes labelled on Metal, all at once or, where their label levels outgrow a workspace
-/// (06 S7: 250 files in one chunk), each half on its own: a file's labels read only that file.
+/// (06 S7: 250 files in one chunk) or the evaluation's launch bound, each half on its own: a file's labels read only that file.
 /// Their roots' records come with them (`RootsFound`): a half's program that did not run on the
 /// device makes the program's records `None` for both.
 #[cfg(target_os = "macos")]
@@ -322,7 +322,9 @@ fn labelled_metal(
 ) -> Result<(Vec<crate::code_rule_dsl::tape::TapeDoc>, crate::code_rule_dsl::transducer::packed::RootsFound), crate::code_rule_dsl::transducer::packed::Error> {
     use crate::code_rule_dsl::transducer::packed::{Error as PackedError, RootJobs};
     match lowered.labelled_metal(docs, active, Some(jobs)) {
-        Err(PackedError::BackendCapacity) if docs.len() > 1 => {
+        // A pool or the launch bound the plan cannot fit (list step 13): the batch is split, still
+        // on Metal (a half's chains, and so its rounds, are no longer than the whole's).
+        Err(PackedError::BackendCapacity | PackedError::BackendLaunchLimit) if docs.len() > 1 => {
             let half = docs.len() / 2;
             let split = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
             let part = |range: std::ops::Range<usize>| RootJobs {

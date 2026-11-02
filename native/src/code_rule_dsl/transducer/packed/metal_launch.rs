@@ -9,6 +9,7 @@ use std::rc::Rc;
 #[path = "metal_launch_budget.rs"]
 mod budget;
 use budget::LaunchBudget;
+pub(crate) use budget::KERNEL_LAUNCH_LIMIT;
 
 thread_local! {
     static EVALUATION: RefCell<Option<Rc<RefCell<Evaluation>>>> = const { RefCell::new(None) };
@@ -258,9 +259,9 @@ mod tests {
     #[test]
     fn command_boundaries_and_nested_scopes_do_not_reset_the_limit() {
         let _evaluation = LaunchScope::enter();
-        for _ in 0..60 {
+        for _ in 0..11 {
             let _command = LaunchScope::enter();
-            for _ in 0..10 {
+            for _ in 0..9 {
                 assert!(reserve());
             }
             assert_eq!(check_submission(), Ok(()));
@@ -276,7 +277,7 @@ mod tests {
     fn a_new_evaluation_gets_a_new_budget() {
         {
             let _evaluation = LaunchScope::enter();
-            for _ in 0..600 {
+            for _ in 0..KERNEL_LAUNCH_LIMIT {
                 assert!(reserve());
             }
             assert!(!reserve());
@@ -302,7 +303,7 @@ mod tests {
         use std::sync::Arc;
 
         let _evaluation = LaunchScope::enter();
-        for _ in 0..600 {
+        for _ in 0..KERNEL_LAUNCH_LIMIT {
             assert!(reserve());
         }
         assert!(!reserve());
@@ -389,15 +390,15 @@ mod tests {
         let indirect = MappedBuffer::from_slice(&device, &[1_u32, 1, 1]).unwrap();
         let queue = device.new_command_queue();
         // Separate command buffers and nested scopes must share the same budget.
-        for command_index in 0..60 {
+        for command_index in 0..11 {
             let _nested = LaunchScope::enter();
             let command = queue.new_command_buffer();
             let encoder = command.new_compute_command_encoder();
             encoder.set_label("launch_guard_probe");
             encoder.set_compute_pipeline_state(&pipeline);
             encoder.set_buffer(0, Some(&count.buffer), 0);
-            for launch in 0..10 {
-                match (command_index * 10 + launch) % 3 {
+            for launch in 0..9 {
+                match (command_index * 9 + launch) % 3 {
                     0 => encoder.checked_dispatch_threads(
                         command,
                         MTLSize::new(1, 1, 1),
@@ -421,7 +422,7 @@ mod tests {
             wait_checked(command).unwrap();
             assert_eq!(command.status(), metal::MTLCommandBufferStatus::Completed);
         }
-        assert_eq!(unsafe { count.buffer.contents().cast::<u32>().read() }, 600);
+        assert_eq!(unsafe { count.buffer.contents().cast::<u32>().read() }, KERNEL_LAUNCH_LIMIT as u32);
         let command = queue.new_command_buffer();
         let encoder = command.new_compute_command_encoder();
         encoder.set_label("launch_guard_probe");
@@ -431,7 +432,7 @@ mod tests {
         encoder.end_encoding();
         assert_eq!(commit_checked(command), Err(Error::BackendLaunchLimit));
         assert_eq!(command.status(), metal::MTLCommandBufferStatus::NotEnqueued);
-        assert_eq!(unsafe { count.buffer.contents().cast::<u32>().read() }, 600);
+        assert_eq!(unsafe { count.buffer.contents().cast::<u32>().read() }, KERNEL_LAUNCH_LIMIT as u32);
     }
 
     #[test]
@@ -452,7 +453,7 @@ mod tests {
         encoder.set_label("launch_guard_probe");
         encoder.set_compute_pipeline_state(&pipeline);
         encoder.set_buffer(0, Some(&count.buffer), 0);
-        for _ in 0..601 {
+        for _ in 0..=KERNEL_LAUNCH_LIMIT {
             encoder.checked_dispatch_thread_groups(
                 command,
                 MTLSize::new(1, 1, 1),
