@@ -10,7 +10,7 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     let (_, tape, image, grammar) = fixture(source, GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
     assert_eq!(&bytes[..8], b"TMPTAP9N");
-    assert_eq!(TAPE_FORMAT_VERSION, 9);
+    assert_eq!(TAPE_FORMAT_VERSION, 10);
 
     let memberships = tape.transducer_supertypes().collect::<Vec<_>>();
     assert!(!memberships.is_empty());
@@ -20,11 +20,45 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
 
     let persisted = TapeImage::from_bytes(&bytes, &grammar).unwrap();
     let restored =
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &persisted, &|| false).unwrap();
+        TapeDoc::restore(Arc::new(source.to_owned()), Arc::clone(&grammar), &persisted, &|| false).unwrap();
     assert_eq!(
         restored.transducer_supertypes().collect::<Vec<_>>(),
         memberships
     );
+
+    // Memberships live in the codes: corrupt ones are rejected, in memory and in bytes.
+    let source = Arc::new(source.to_owned());
+    let reject = |candidate: &TapeImage| {
+        assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), candidate, &|| false).is_err());
+        assert!(TapeImage::from_bytes(&candidate.to_bytes().unwrap(), &grammar).map_or(true, |read| {
+            TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &read, &|| false).is_err()
+        }));
+    };
+    let member = image.codes.iter().position(|code| code.class_count > 0).expect("a code with memberships");
+    let concrete = (0..grammar.kinds.kind_count() as u16).find(|&kind| !grammar.kinds.kind_is_supertype(kind)).unwrap();
+    let mut broken = image.clone();
+    broken.codes[member].classes[0] = concrete;
+    reject(&broken);
+    let mut broken = image.clone();
+    broken.codes[member].classes[0] = u16::MAX;
+    reject(&broken);
+    let mut broken = image.clone();
+    let class = broken.codes[member].classes[0];
+    let count = usize::from(broken.codes[member].class_count);
+    broken.codes[member].classes[count] = class;
+    broken.codes[member].class_count += 1;
+    reject(&broken);
+    let mut broken = image.clone();
+    broken.codes[member].class_count = MAX_NODE_SUPERTYPES as u8 + 1;
+    assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &broken, &|| false).is_err());
+    let mut broken = image.clone();
+    broken.codes[member].classes[MAX_NODE_SUPERTYPES - 1] = class;
+    assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &broken, &|| false).is_err());
+    // A code table whose stated length disagrees with its codes.
+    let mut corrupt = bytes.clone();
+    let stated = u64::from_le_bytes(corrupt[72..80].try_into().unwrap());
+    corrupt[72..80].copy_from_slice(&(stated + 2).to_le_bytes());
+    assert!(TapeImage::from_bytes(&corrupt, &grammar).is_err());
 }
 
 #[test]
@@ -199,10 +233,11 @@ fn persisted_image_round_trips_without_parsing() {
     // `out`, Patch 13's `_arrow_body_end`, Patch 14's `yield` name, Patch 21's
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`,
     // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape format (7: one
-    // document per tape; 9: v9np's columns, decision 0025) changes the bytes.
+    // document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes) changes
+    // the bytes.
     assert_eq!(
         digest,
-        "16e71c4bc6f32dbc696b2fc436064521d098b0d348e4d67fe002f1d6935cad2d"
+        "64eb081472ae83e03dbbf108d102bc4c84f06df899c47586db2acf23cde7ea3f"
     );
 }
 
@@ -243,9 +278,8 @@ fn file_documents_persist_apart_and_are_checked() {
             + tables.base.len()
             + tables.off.len()
             + tables.tail.len()
-            + 5 * tables.codes.len()
+            + tables.code_table_bytes()
             + aliases
-            + 6 * tables.supertypes.len()
     );
     assert_eq!(&primary[..8], TAPE_MAGIC);
     let read = image.round_trip(&grammar).unwrap();
@@ -398,13 +432,14 @@ fn persisted_image_rejects_wrong_grammar_and_noncanonical_bytes() {
 fn persisted_image_rejects_oversized_alias_counts_without_allocating() {
     let (_native, _tape, image, grammar) = fixture("x = 1\n", GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
-    // Header count slots (v9np): codes at 64, aliases at 72, alias bytes at 80, supertypes at 88.
+    // Header count slots (v9np): codes at 64, code bytes at 72, aliases at 80, alias bytes at 88.
     for (offset, count) in [
-        (72, u64::MAX >> 1),
-        (72, 1 << 20),
-        (72, 1 << 16 | 1),
+        (80, u64::MAX >> 1),
+        (80, 1 << 20),
+        (80, 1 << 16 | 1),
         (64, u64::MAX >> 1),
         (64, 1 << 20),
+        (72, u64::MAX >> 1),
         (88, u64::MAX >> 1),
     ] {
         let mut corrupt = bytes.clone();
@@ -1542,8 +1577,8 @@ fn a_blade_tapes_errors_are_blades_reading() {
     }
 }
 
-/// The production image's stored bytes against v8's tables (the harness's v7 encoding, which is
-/// v8 without supertypes) on a corpus: `RERAIL_TAPE_SIZE='<lang> <dir>'`.
+/// The production image's stored bytes against v8's as stored (the harness's v7 encoding, which
+/// is v8 without supertypes, plus v8's 6 bytes per supertype membership) on a corpus: `RERAIL_TAPE_SIZE='<lang> <dir>'`.
 #[test]
 #[ignore = "measurement; RERAIL_TAPE_SIZE='<lang> <dir>', --ignored --nocapture"]
 fn stored_tape_bytes_against_v8() {
@@ -1556,20 +1591,21 @@ fn stored_tape_bytes_against_v8() {
         let grammar = Grammar::new(dialect).unwrap();
         let native = StrDoc::new(&doc.source, dialect);
         let image = TapeImage::encode(native.tree.root_node(), &grammar, &doc.source, &|| false).unwrap().primary;
-        let old = super::v9np::V7::encode(&doc.nodes).unwrap().to_bytes().len();
-        let new = image.to_bytes().unwrap().len() - 6 * image.supertypes.len();
+        let old = super::v9np::V7::encode(&doc.nodes).unwrap().to_bytes().len() + 6 * image.membership_count();
+        // v8's bytes without its supertype table; v9np's with its memberships (in the codes).
+        let new = image.to_bytes().unwrap().len();
         nodes += image.node_count();
         v8 += old;
         v9 += new;
-        table += 5 * image.codes.len();
-        memberships += image.supertypes.len();
+        table += image.code_table_bytes();
+        memberships += image.membership_count();
         if image.node_count() < 2_000 {
             small_v8 += old;
             small_v9 += new;
         }
     }
     println!(
-        "{} files, {nodes} nodes: v8 {:.3} B/node, v9np {:.3} B/node ({:.3}x), of which the code table {:.3} B/node; files under 2,000 nodes: {:.3}x; supertype memberships {memberships} ({:.3} per node, {:.3} B/node at 6 B each)",
+        "{} files, {nodes} nodes: v8 {:.3} B/node, v9np {:.3} B/node ({:.3}x), of which the code table {:.3} B/node; files under 2,000 nodes: {:.3}x; supertype memberships {memberships} ({:.3} per node; v8 stored them at {:.3} B/node)",
         docs.len(),
         v8 as f64 / nodes as f64,
         v9 as f64 / nodes as f64,
@@ -1647,4 +1683,107 @@ fn supertype_memberships_against_lookups() {
         misses(&by_context),
         by_context.len(),
     );
+}
+
+/// Every node's restored supertype memberships, after a round trip through the stored bytes, are
+/// exactly what the parser's cursor reports for it, on a corpus; and every node's kind, namedness,
+/// flags, range, field and parent agree with the native tree. `RERAIL_TAPE_SIZE='<lang> <dir>'`.
+#[test]
+#[ignore = "corpus validation; RERAIL_TAPE_SIZE='<lang> <dir>', --ignored --nocapture"]
+fn stored_memberships_are_the_cursors_on_a_corpus() {
+    let spec = std::env::var("RERAIL_TAPE_SIZE").expect("RERAIL_TAPE_SIZE='<lang> <dir>'");
+    let (lang, dir) = spec.split_once(' ').expect("<lang> <dir>");
+    let mut files = Vec::new();
+    let mut stack = vec![std::path::PathBuf::from(dir)];
+    while let Some(at) = stack.pop() {
+        for entry in std::fs::read_dir(&at).unwrap().flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if path.is_dir() {
+                if !matches!(name.to_str(), Some("node_modules" | ".git" | "target" | ".venv" | "venv" | "__pycache__" | "dist" | "site-packages")) {
+                    stack.push(path);
+                }
+            } else if super::v9np::language(lang, &path).is_some() {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    let (mut nodes, mut memberships, mut documents) = (0_usize, 0_usize, 0_usize);
+    let mut checked_detects = false;
+    for path in &files {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let dialect = crate::code_rule_dsl::language::dialect_by_label(crate::code_rule_dsl::language::label_of_path(path.to_str().unwrap()).unwrap()).unwrap();
+        let grammar = Grammar::new(dialect).unwrap();
+        let native = StrDoc::new(&source, dialect);
+        let Some(encoded) = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).ok() else { continue };
+        let image = TapeImage::from_bytes(&encoded.primary.to_bytes().unwrap(), &grammar).unwrap();
+        let tape = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &image, &|| false).unwrap();
+        // The cursor's memberships and the native nodes, in preorder.
+        let mut expected = Vec::new();
+        let mut native_nodes = Vec::new();
+        let mut cursor = native.tree.root_node().walk();
+        let mut parents: Vec<usize> = Vec::new();
+        let mut parent_of = Vec::new();
+        loop {
+            let index = native_nodes.len();
+            let (classes, count) = cursor_supertypes(&cursor);
+            let mut own = classes[..count].to_vec();
+            own.sort_unstable();
+            own.dedup();
+            expected.extend(own.into_iter().map(|class| (index as u32, class)));
+            native_nodes.push((cursor.node(), cursor.field_id().map_or(0, |id| id.get())));
+            parent_of.push(parents.last().copied());
+            if cursor.goto_first_child() {
+                parents.push(index);
+                continue;
+            }
+            let mut done = false;
+            while !cursor.goto_next_sibling() {
+                if !cursor.goto_parent() {
+                    done = true;
+                    break;
+                }
+                parents.pop();
+            }
+            if done {
+                break;
+            }
+        }
+        let path = path.display();
+        assert_eq!(tape.transducer_len(), native_nodes.len(), "{path}: node count");
+        assert_eq!(tape.transducer_supertypes().collect::<Vec<_>>(), expected, "{path}: memberships");
+        for (index, ((node, field), parent)) in native_nodes.iter().zip(&parent_of).enumerate() {
+            let at = index as u32;
+            let kind = if node.is_error() { ERROR_SYMBOL } else { node.kind_id() };
+            assert_eq!(
+                (tape.transducer_kind(at), tape.transducer_field(at), tape.transducer_span(at), tape.transducer_parent(at)),
+                (kind, *field, node.byte_range(), parent.map(|p| p as u32)),
+                "{path}: node {index}"
+            );
+            let flags = tape.node(at);
+            assert_eq!(
+                (flags.is_named(), flags.is_extra(), flags.is_error(), flags.is_missing()),
+                (node.is_named(), node.is_extra(), node.is_error(), node.is_missing()),
+                "{path}: node {index} flags"
+            );
+        }
+        // The comparison is not vacuous: one code's memberships dropped makes it fail.
+        if !checked_detects {
+            if let Some(member) = image.codes.iter().position(|code| code.class_count > 0) {
+                let mut altered = image.clone();
+                let code = &mut altered.codes[member];
+                code.class_count -= 1;
+                code.classes[usize::from(code.class_count)] = 0;
+                let restored = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &altered, &|| false).unwrap();
+                assert_ne!(restored.transducer_supertypes().collect::<Vec<_>>(), expected, "{path}: altered memberships go unnoticed");
+                checked_detects = true;
+            }
+        }
+        nodes += native_nodes.len();
+        memberships += expected.len();
+        documents += 1;
+    }
+    assert!(documents > 0 && checked_detects);
+    println!("{documents} documents, {nodes} nodes, {memberships} memberships: all equal the cursor's");
 }

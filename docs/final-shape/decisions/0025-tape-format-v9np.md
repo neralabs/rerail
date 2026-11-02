@@ -65,10 +65,16 @@ access 2.5–4.3× faster.
 How it is locked:
 - **Flags folded into the code space** (named, extra, missing, error), with a code for the one
   Python kind whose `extra` varies.
-- **Supertype memberships stay in the tape** (W's v8 table). Amended 2026-11-02 (user decision):
-  the sidecar keyed by the tape digest is dropped. Memberships are 0.23–0.45 per node, 1.35–2.7
-  B/node in the tape; a SQL table with a row per membership and its index would be ~25–40 B a row,
-  double or triple the tape. If they must shrink, that happens inside the tape.
+- **Supertype memberships stay in the tape, folded into the codes.** Amended 2026-11-02 (user
+  decisions): no sidecar keyed by the tape digest. Memberships are 0.23–0.54 per node: 1.35–3.2
+  B/node in v8's table, and a SQL table with a row per membership and its index would be ~25–40 B
+  a row, double or triple the tape. A membership is not a function of the node's kind: the
+  grammar's supertype map by kind holds every stored membership but equals the stored set for only
+  74–81% of nodes (an `identifier` listed under both `expression` and `pattern` is parsed as one).
+  By (parent kind, field, kind) a lookup learned from the corpus misses 8–152 nodes per corpus, but
+  no grammar file gives that table. So each node's code carries its own memberships, as the
+  parser's cursor reports them; nodes in the same context share a code. The lookup is the code:
+  exact, with no exceptions list and no shipped table.
 - **No parent column**: parents are rebuilt with a stack where a consumer needs them. Revisit only
   if SQL parent climbs prove hot.
 - **Reads stay behind `TapeDoc`'s `transducer_*` accessors**, so the switch is local to `tape.rs`.
@@ -91,11 +97,24 @@ encoder must stream within the 500 MB budget.
 - no parent column: `restore_tree` rebuilds parents from the sizes with a stack;
 - `TapeDoc` and its accessors are unchanged, so nothing outside `tape.rs` changed.
 
-Supertype memberships stay in the image (amended above; no sidecar). Nothing reads the stored columns randomly yet (the
+Format 10 (2026-11-02): each code also holds its node's memberships (a count and up to 8
+abstract symbols, ascending); the image has no membership table. Nothing reads the stored columns randomly yet (the
 anchor index's SQL reads, `tape/v9np/sql.rs`, are the spike's harness).
 
-Checks: the tape tests (41, adapted from v8's tables to the columns), S7 710 keys = W on CPU and
-Metal, and the prefilter, slice, facts and workspace storage tests.
+Checks:
+- the tape tests (41, adapted from v8's tables to the columns), with corruption cases for the
+  folded memberships;
+- `stored_memberships_are_the_cursors_on_a_corpus`: after a round trip through the stored bytes,
+  every node's memberships equal the parser cursor's, and its kind, field, span, parent and flags
+  the native tree's, on CPython's whole standard library (9.4M nodes) and the whole data-layer
+  repository (Python 32.1M nodes, and its Rust, TypeScript and JavaScript), plus once with its
+  `.venv` (76.5M nodes); a self-check shows a dropped membership is detected;
+- S7 710 keys = W on CPU and Metal; the prefilter, slice, facts, workspace storage, packed
+  transducer and supertype-matching tests.
+
+Stored size (`stored_tape_bytes_against_v8`, against v8 as stored, with its 6 B per membership):
+0.72–0.92× v8 on the sampled corpora (CPython 0.77×, data-layer Python 0.80×, Rust 0.92×,
+TypeScript 0.78×, JavaScript 0.72×); the code table is 0.17–0.53 B/node.
 
 
 

@@ -23,11 +23,13 @@ use std::ops::Range;
 use std::sync::{Arc, Weak};
 use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
-/// v9np (decision 0025): structure-only, regular columns, no parent column.
-pub(super) const TAPE_FORMAT_VERSION: u32 = 9;
+/// v9np (decision 0025): structure-only, regular columns, no parent column; 10: supertype
+/// memberships folded into the codes.
+pub(super) const TAPE_FORMAT_VERSION: u32 = 10;
 const TAPE_MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// The image header: magic, language, the three column widths, version, source length and
-/// digest, and five table lengths.
+/// digest, and five table lengths: nodes, codes, the code table's bytes, aliases, the alias
+/// table's bytes.
 const HEADER_BYTES: usize = 56 + 5 * 8;
 /// `TapeImage::widths[2]`'s high bit: a tail is measured from the node's own start, not from
 /// its last descendant's (for a tree where a node ends before its last descendant starts).
@@ -222,7 +224,7 @@ pub(super) const DERIVED_CLASS_BASE: u16 = 0xf000;
 /// A tape image in v9np's columns (decision 0025; P decision 0003). Each node is a fixed-width
 /// row across five columns, in preorder:
 /// - `code`: u16, an index into `codes`, which folds the node's kind, field, flags (extra, error,
-///   missing) and contextual alias into one code;
+///   missing), contextual alias and supertype memberships into one code;
 /// - `size`: the subtree's node count (2 or 4 bytes: `widths[0]`);
 /// - `base` (one u32 per `CHECKPOINT_STRIDE` nodes, the block's least start) and `off`
 ///   (`widths[1]`): `start(i) = base[i / 16] + off[i]`;
@@ -242,20 +244,34 @@ pub(super) struct TapeImage {
     /// Contextual Tree-sitter aliases whose displayed kind or named flag differs from the static
     /// language catalog. The numeric kind remains the native `kind_id` for matcher parity.
     kind_aliases: Vec<(String, bool)>,
-    /// Query-independent `(node preorder, abstract grammar symbol)` memberships.
-    supertypes: Vec<(u32, u16)>,
     language: GrammarDialect,
     source_len: usize,
     source_digest: [u8; 32],
 }
 
 /// A folded code: kind (10 bits, ERROR's is `ERROR_CODE`) and field (6 bits) as v8's `kf`, the
-/// flags, and the contextual alias (`SENTINEL`: none).
+/// flags, the contextual alias (`SENTINEL`: none), and the node's query-independent supertype
+/// memberships (abstract grammar symbols, ascending; unused slots zero). Memberships depend on
+/// where the node sits, not on its kind alone, so they are the node's own, as the parser's
+/// cursor reports them; nodes in the same context share a code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Code {
     kf: u16,
     flags: u8,
     alias: u16,
+    class_count: u8,
+    classes: [u16; MAX_NODE_SUPERTYPES],
+}
+
+impl Code {
+    fn classes(&self) -> &[u16] {
+        &self.classes[..usize::from(self.class_count)]
+    }
+
+    /// The code's bytes in the image: kf, flags, alias, class count, classes.
+    fn stored_len(&self) -> usize {
+        6 + 2 * usize::from(self.class_count)
+    }
 }
 
 /// A little-endian value of `width` bytes (2 or 4) at row `i` of `column`.
@@ -976,7 +992,8 @@ impl TapeImage {
         let language =
             super::language::tape_tag(self.language).ok_or("unsupported tape language")?;
         let alias_bytes = self.kind_aliases.iter().map(|(name, _)| 5 + name.len()).sum::<usize>();
-        let lengths = [self.node_count(), self.codes.len(), self.kind_aliases.len(), alias_bytes, self.supertypes.len()];
+        let code_bytes = self.codes.iter().map(Code::stored_len).sum::<usize>();
+        let lengths = [self.node_count(), self.codes.len(), code_bytes, self.kind_aliases.len(), alias_bytes];
         let mut bytes = Vec::with_capacity(
             HEADER_BYTES
                 + self.code.len()
@@ -984,9 +1001,8 @@ impl TapeImage {
                 + self.base.len()
                 + self.off.len()
                 + self.tail.len()
-                + self.codes.len() * 5
-                + alias_bytes
-                + self.supertypes.len() * 6,
+                + code_bytes
+                + alias_bytes,
         );
         bytes.extend_from_slice(TAPE_MAGIC);
         bytes.push(language);
@@ -1004,6 +1020,10 @@ impl TapeImage {
             bytes.extend_from_slice(&code.kf.to_le_bytes());
             bytes.push(code.flags);
             bytes.extend_from_slice(&code.alias.to_le_bytes());
+            bytes.push(code.class_count);
+            for class in code.classes() {
+                bytes.extend_from_slice(&class.to_le_bytes());
+            }
         }
         for (name, named) in &self.kind_aliases {
             bytes.push(u8::from(*named));
@@ -1013,10 +1033,6 @@ impl TapeImage {
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(name.as_bytes());
-        }
-        for &(index, supertype) in &self.supertypes {
-            bytes.extend_from_slice(&index.to_le_bytes());
-            bytes.extend_from_slice(&supertype.to_le_bytes());
         }
         Ok(bytes)
     }
@@ -1042,18 +1058,24 @@ impl TapeImage {
         let source_digest: [u8; 32] = reader.take(32)?.try_into().expect("digest width");
         let nodes = reader.length()?;
         let code_count = reader.length()?;
+        let code_bytes = reader.length()?;
         let alias_count = reader.length()?;
         let alias_bytes = reader.length()?;
-        let supertype_count = reader.length()?;
         // Every count must be backed by the bytes before a table is reserved for it.
         let column = |width: usize| nodes.checked_mul(width).ok_or("tape image length overflow");
         let blocks = nodes.div_ceil(CHECKPOINT_STRIDE).checked_mul(4).ok_or("tape image length overflow")?;
         let fixed = [column(2)?, column(usize::from(widths[0]))?, blocks, column(usize::from(widths[1]))?, column(usize::from(widths[2] & !TAIL_FROM_START))?]
             .into_iter()
-            .chain([code_count.checked_mul(5).ok_or("tape image length overflow")?, alias_bytes, supertype_count.checked_mul(6).ok_or("tape image length overflow")?])
+            .chain([code_bytes, alias_bytes])
             .try_fold(0_usize, |total, length| total.checked_add(length))
             .ok_or("tape image length overflow")?;
-        if nodes == 0 || nodes > u32::MAX as usize || code_count == 0 || code_count > usize::from(u16::MAX) + 1 || fixed != bytes.len() - reader.offset {
+        if nodes == 0
+            || nodes > u32::MAX as usize
+            || code_count == 0
+            || code_count > usize::from(u16::MAX) + 1
+            || code_count.checked_mul(6).is_none_or(|minimum| minimum > code_bytes)
+            || fixed != bytes.len() - reader.offset
+        {
             return Err("invalid tape image table lengths".into());
         }
         if alias_count > usize::from(SENTINEL) || alias_count.checked_mul(5).is_none_or(|minimum| minimum > alias_bytes) {
@@ -1066,15 +1088,33 @@ impl TapeImage {
         let tail = reader.take(column(usize::from(widths[2] & !TAIL_FROM_START))?)?.to_vec();
         #[cfg(test)]
         note_table_reservation(code_count);
+        let codes_end = reader.offset + code_bytes;
         let mut codes = Vec::with_capacity(code_count);
         for _ in 0..code_count {
             let kf = u16::from_le_bytes(reader.take(2)?.try_into().expect("u16 width"));
             let flags = reader.u8()?;
             let alias = u16::from_le_bytes(reader.take(2)?.try_into().expect("u16 width"));
-            if flags & !(CODE_EXTRA | CODE_ERROR | CODE_MISSING) != 0 || (alias != SENTINEL && usize::from(alias) >= alias_count) {
+            let class_count = reader.u8()?;
+            if flags & !(CODE_EXTRA | CODE_ERROR | CODE_MISSING) != 0
+                || (alias != SENTINEL && usize::from(alias) >= alias_count)
+                || usize::from(class_count) > MAX_NODE_SUPERTYPES
+            {
                 return Err("noncanonical tape code".into());
             }
-            codes.push(Code { kf, flags, alias });
+            let mut classes = [0_u16; MAX_NODE_SUPERTYPES];
+            for slot in classes.iter_mut().take(usize::from(class_count)) {
+                *slot = u16::from_le_bytes(reader.take(2)?.try_into().expect("u16 width"));
+            }
+            let code = Code { kf, flags, alias, class_count, classes };
+            if code.classes().windows(2).any(|pair| pair[0] >= pair[1])
+                || code.classes().iter().any(|&class| usize::from(class) >= grammar.kinds.kind_count())
+            {
+                return Err("noncanonical supertype membership".into());
+            }
+            codes.push(code);
+        }
+        if reader.offset != codes_end {
+            return Err("noncanonical tape code table length".into());
         }
         let aliases_end = reader.offset + alias_bytes;
         #[cfg(test)]
@@ -1096,26 +1136,10 @@ impl TapeImage {
         if reader.offset != aliases_end {
             return Err("noncanonical contextual grammar alias length".into());
         }
-        #[cfg(test)]
-        note_table_reservation(supertype_count);
-        let mut supertypes = Vec::with_capacity(supertype_count);
-        for _ in 0..supertype_count {
-            let entry = (
-                reader.u32()?,
-                u16::from_le_bytes(reader.take(2)?.try_into().expect("u16 width")),
-            );
-            if entry.0 as usize >= nodes
-                || usize::from(entry.1) >= grammar.kinds.kind_count()
-                || supertypes.last().is_some_and(|previous| *previous >= entry)
-            {
-                return Err("noncanonical supertype membership".into());
-            }
-            supertypes.push(entry);
-        }
         if reader.offset != bytes.len() {
             return Err("trailing tape image bytes".into());
         }
-        Ok(Self { code, size, base, off, tail, widths, codes, kind_aliases, supertypes, language, source_len, source_digest })
+        Ok(Self { code, size, base, off, tail, widths, codes, kind_aliases, language, source_len, source_digest })
     }
 
     /// Parses `source` as `grammar`'s dialect and encodes its documents: with tree-sitter (a PHP
@@ -1289,6 +1313,9 @@ impl TapeImage {
         if count == 0 || u32::try_from(count).is_err() {
             return Err("tape node count out of range".into());
         }
+        supertypes.sort_unstable();
+        supertypes.dedup();
+        let mut memberships = supertypes.iter().peekable();
         let mut kind_aliases = Vec::<(String, bool)>::new();
         let mut codes = Vec::<Code>::new();
         let mut code_ids = std::collections::HashMap::<Code, u16>::new();
@@ -1313,7 +1340,13 @@ impl TapeImage {
                 None => SENTINEL,
             };
             let flags = u8::from(node.extra) * CODE_EXTRA | u8::from(node.error) * CODE_ERROR | u8::from(node.missing) * CODE_MISSING;
-            let folded = Code { kf: node.kf, flags, alias };
+            let mut classes = [0_u16; MAX_NODE_SUPERTYPES];
+            let mut class_count = 0_usize;
+            while let Some(&(_, class)) = memberships.next_if(|&&(at, _)| at as usize == index) {
+                *classes.get_mut(class_count).ok_or("too many supertype memberships")? = class;
+                class_count += 1;
+            }
+            let folded = Code { kf: node.kf, flags, alias, class_count: class_count as u8, classes };
             let id = match code_ids.get(&folded) {
                 Some(&id) => id,
                 None => {
@@ -1360,8 +1393,9 @@ impl TapeImage {
             let from = if from_last { nodes[index + node.size as usize - 1].start } else { node.start };
             put_cell(&mut tail, end(node)? - from, tail_width);
         }
-        supertypes.sort_unstable();
-        supertypes.dedup();
+        if memberships.next().is_some() {
+            return Err("supertype membership of no node".into());
+        }
         checked(budget)?;
         Ok(Self {
             code,
@@ -1372,7 +1406,6 @@ impl TapeImage {
             widths: [size_width as u8, off_width as u8, tail_width as u8 | if from_last { 0 } else { TAIL_FROM_START }],
             codes,
             kind_aliases,
-            supertypes,
             language: grammar.lang,
             source_len: source.len(),
             source_digest: source_digest(source, budget)?,
@@ -1428,6 +1461,18 @@ impl TapeImage {
         self.flagged(CODE_EXTRA)
     }
 
+    /// The supertype memberships the tape holds.
+    #[cfg(test)]
+    pub(super) fn membership_count(&self) -> usize {
+        (0..self.node_count()).map(|i| usize::from(self.codes[usize::from(self.code_at(i))].class_count)).sum()
+    }
+
+    /// The code table's stored bytes.
+    #[cfg(test)]
+    pub(super) fn code_table_bytes(&self) -> usize {
+        self.codes.iter().map(Code::stored_len).sum()
+    }
+
     /// The nodes that carry a contextual alias.
     #[cfg(test)]
     pub(super) fn aliased_nodes(&self) -> usize {
@@ -1447,7 +1492,6 @@ impl TapeImage {
             + self.codes.capacity() * std::mem::size_of::<Code>()
             + self.kind_aliases.capacity() * std::mem::size_of::<(String, bool)>()
             + self.kind_aliases.iter().map(|(name, _)| name.capacity()).sum::<usize>()
-            + self.supertypes.capacity() * std::mem::size_of::<(u32, u16)>()
             + std::mem::size_of::<Self>()
     }
 }
@@ -1719,21 +1763,18 @@ impl TapeDoc {
             {
                 return Err("unknown v9np grammar code".into());
             }
-        }
-        let mut previous = None;
-        for &(node, kind) in &image.supertypes {
-            if previous.is_some_and(|last| last >= (node, kind))
-                || node as usize >= count
-                || usize::from(kind) >= grammar.kinds.kind_count()
-                || !grammar.kinds.kind_is_supertype(kind)
+            if usize::from(code.class_count) > MAX_NODE_SUPERTYPES
+                || code.classes().windows(2).any(|pair| pair[0] >= pair[1])
+                || code.classes[usize::from(code.class_count).min(MAX_NODE_SUPERTYPES)..].iter().any(|&unused| unused != 0)
+                || code.classes().iter().any(|&class| usize::from(class) >= grammar.kinds.kind_count() || !grammar.kinds.kind_is_supertype(class))
             {
                 return Err("invalid abstract node class entry".into());
             }
-            previous = Some((node, kind));
         }
         let from_start = image.widths[2] & TAIL_FROM_START != 0;
         let mut nodes: Vec<Rec> = Vec::with_capacity(count);
         let mut kind_overrides = Vec::new();
+        let mut supertypes = Vec::new();
         // Parents rebuilt from the sizes: the enclosing subtree on the stack.
         let mut parent_stack: Vec<(usize, u64)> = Vec::new();
         let mut unwound = 0usize;
@@ -1749,6 +1790,7 @@ impl TapeDoc {
             if code.alias != SENTINEL {
                 kind_overrides.push((index as u32, code.alias));
             }
+            supertypes.extend(code.classes().iter().map(|&class| (index as u32, class)));
             let size = image.size_at(index);
             if size == 0 || index.checked_add(size as usize).is_none_or(|end| end > count) {
                 return Err("invalid subtree boundary".into());
@@ -1846,7 +1888,7 @@ impl TapeDoc {
             lines,
             kind_aliases: Arc::new(image.kind_aliases.clone()),
             kind_overrides: Arc::new(kind_overrides),
-            supertypes: Arc::new(image.supertypes.clone()),
+            supertypes: Arc::new(supertypes),
             labels: Arc::new(Vec::new()),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
