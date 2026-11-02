@@ -210,8 +210,6 @@ function loadRules(directories: readonly string[]): LoadedRules {
 
 const profileSchema = z.object({
   files: z.number().int(),
-  evaluatedFiles: z.number().int(),
-  evaluatedClauses: z.number().int(),
   restoredLocalResults: z.number().int(),
   storageReadNanoseconds: z.number(),
   storageManifestNanoseconds: z.number(),
@@ -231,13 +229,13 @@ const applySchema = z.object({ revision: z.number().int(), evaluation: evaluatio
 
 /**
  * What a scan evaluated and what it reused from stored results, summed over its applies (`RERAIL_CODE_RULE_PROFILE`'s
- * counters): `files` went through an evaluation job, `evaluatedFiles` of them ran at least one clause (the rest were
- * answered wholly by stored results), `restoredLocalResults` clause results were restored instead of evaluated.
+ * counters): `files` went through an evaluation job, `restoredLocalResults` clause results were restored instead of
+ * evaluated. This branch's profile does not count the files and clauses evaluated.
  */
 type Reuse = z.infer<typeof profileSchema>;
 
 function emptyReuse(): Reuse {
-  return { files: 0, evaluatedFiles: 0, evaluatedClauses: 0, restoredLocalResults: 0, storageReadNanoseconds: 0, storageManifestNanoseconds: 0, storageWriteNanoseconds: 0 };
+  return { files: 0, restoredLocalResults: 0, storageReadNanoseconds: 0, storageManifestNanoseconds: 0, storageWriteNanoseconds: 0 };
 }
 
 function addReuse(into: Reuse, evaluation: z.infer<typeof evaluationSchema> | null | undefined): void {
@@ -245,8 +243,6 @@ function addReuse(into: Reuse, evaluation: z.infer<typeof evaluationSchema> | nu
   into.files += evaluation.metrics.files;
   const profile = evaluation.profile;
   if (profile === undefined) throw new Error("an apply reported no profile: RERAIL_CODE_RULE_PROFILE is not set");
-  into.evaluatedFiles += profile.evaluatedFiles;
-  into.evaluatedClauses += profile.evaluatedClauses;
   into.restoredLocalResults += profile.restoredLocalResults;
   into.storageReadNanoseconds += profile.storageReadNanoseconds;
   into.storageManifestNanoseconds += profile.storageManifestNanoseconds;
@@ -670,8 +666,8 @@ async function run(argv: readonly string[]): Promise<void> {
       const { reuse } = measured.fullScan;
       process.stderr.write(
         `rerail-workspaces: ${name} (pass ${pass}): scan ${Math.round(measured.fullScan.wallMs)} ms, ${measured.fullScan.discoveredFiles} files: ` +
-          `${reuse.files} applied, ${reuse.evaluatedFiles} evaluated (${reuse.evaluatedClauses} clauses, ${reuse.restoredLocalResults} results restored); ` +
-          (measured.reapply === undefined ? "" : `re-apply ${Math.round(measured.reapply.wallMs)} ms, ${measured.reapply.reuse.evaluatedFiles} evaluated; `) +
+          `${reuse.files} applied (${reuse.restoredLocalResults} results restored); ` +
+          (measured.reapply === undefined ? "" : `re-apply ${Math.round(measured.reapply.wallMs)} ms; `) +
           `edits p50 ${measured.edits.wallP50Ms.toFixed(1)} / p95 ${measured.edits.wallP95Ms.toFixed(1)} ms, ` +
           `peak ${(measured.rss.peak / MIB).toFixed(0)} MiB, final ${(measured.rss.final / MIB).toFixed(0)} MiB, after evict+idle ${(measured.rss.afterEvictIdle / MIB).toFixed(0)} MiB, ` +
           `${measured.fullScan.violations} violations, ${JSON.stringify(measured.fullScan.failureCodes)}\n`,
