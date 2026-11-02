@@ -5,7 +5,7 @@
 // and names no ticket, pull request or commit (docs/release.md, "Release notes"). The Release pull request writes
 // versions and changelogs from the changesets themselves and is not checked.
 //
-//   node scripts/release/packs-changesets.mjs BASE   (BASE: the pull request's base commit, its history fetched)
+//   node scripts/release/packs-changesets.mjs BASE   (BASE: the base branch's tip, `origin/main`, its history fetched)
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
