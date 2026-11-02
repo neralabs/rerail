@@ -9,9 +9,11 @@
 //!   worktree writes, mapped privately (copy-on-write pages).
 //! - `maint` (E3): the layered CSR updated in place; `min_level` and `set` maintained per edit
 //!   in the L5 shape. Depends only on `round`.
+//! - `build`: Y2's dead-code product graph enumerated (E1's enumeration).
 //!
 //! facts-b's command-line drivers (`lattice build|run|maint`) are not here: E1's bench is not
 //! copied, and E3's replay is the dead-code producer's workload test.
+pub mod build;
 pub mod cols;
 pub mod maint;
 pub mod round;
