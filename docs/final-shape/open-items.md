@@ -35,6 +35,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
+| O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -904,3 +905,12 @@ scalars (`@rx_matches` 224 uses, `@concat` 66, `@substr` 60, …), three string 
 `@join_nonempty`, `@glob`), and tape builtins (`@within`, `@depth`, `@line`, `@id`, `@qualname`, `@class_path`,
 `@class_prefix`). **Closure:** a fixed catalogue, each entry marked value-creating or not (§12's fourth
 exclusion needs that mark), with `@rx_*` on §16's regex path.
+
+## O62. The shortlex-least route lattice
+
+Of the 70 recursions in the data-layer rules, 4 need a lattice beyond `set`, `flat`, `min` and `max`: `hierarchy`
+(internal-dead-code, public-api-triples) and the two sink searches (serverplan-state-tripwires), each the least
+route under (length, text). The native lattices are `i64`-valued, and `Min`'s widening jumps to its top, losing the
+route. Without `widen` the declaration fails `UnboundedLattice` (`internal_dead_code.hierarchy_unwidened.rdl`).
+**Closure:** a catalogue lattice bounded by its edge relation, or the length as a `min` lattice with the route in
+the findings layer (t17 § 6).
