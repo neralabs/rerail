@@ -1,15 +1,15 @@
 // `just rerail-workspaces <command>`: peak memory and latency of the code-rule workspace over many repositories in one
-// process, on the native or the SQL engine (benchmark/README.md). A port of Tempo's `benchmark:rerailer` (nera-landing
-// PR #2622), which measured native's 564 MiB peak over 47 nera-data-layer workspaces.
+// process (benchmark/README.md). A port of Tempo's `benchmark:rerailer` (nera-landing PR #2622), which measured native's
+// 564 MiB peak over 47 nera-data-layer workspaces. This branch's workspace has one engine, native.
 //
 //   setup --data-layer <nera-data-layer clone> --workspaces <dir>   adds SUBSET's checkouts under <dir>
-//   run --engine native|sql --rules <dir> [--rules <dir> …] --workspaces <dir> --output <file.json>
-//   compare <native.json> <sql.json>                                prints the two runs side by side
+//   run --engine native --rules <dir> [--rules <dir> …] --workspaces <dir> --output <file.json>
+//   compare <left.json> <right.json>                                prints the two runs side by side
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { opendir, readFile, stat } from "node:fs/promises";
-import { cpus, loadavg, release, tmpdir } from "node:os";
+import { cpus, loadavg, release } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -23,10 +23,9 @@ import {
   loadNativeBinding,
   type NativeCodeRuleDslWorkspace,
   type NativeCompiledCodeRuleDsl,
-  REPOSITORY_INDEX_OPTIONS,
   resolveNativeBindingPath,
 } from "../../src/engine/index.js";
-import { compareFindings, runFacts } from "./facts.js";
+import { compareFindings } from "./facts.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rerailRoot = resolve(here, "../..");
@@ -104,12 +103,6 @@ const ALL = [
  * and a half with the #2622 rules.
  */
 const SUBSET = ALL.filter(workspace => ["01", "08", "14", "21", "27", "34", "40", "47"].includes(workspace.name));
-
-/**
- * The production-path loop's workload (`prod-path`): workspace 01 walked as the enforcer walks it without a store, on a
- * fixed sample of its files, then a few edits.
- */
-const PROD_PATH = { only: "01", sample: 40, edits: 8 } as const;
 
 function git(cwd: string, ...args: string[]): string {
   const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
@@ -208,9 +201,9 @@ function loadRules(directories: readonly string[]): LoadedRules {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// One workspace: the enforcer's stored repository audit (attach the content store, index the Git checkout chunk by
-// chunk, the final quiet apply, record the revision, read the result pages), then edits to the resident workspace as
-// the enforcer applies them, then `evictInactive` and an idle wait.
+// One workspace: the enforcer's audit walk without a content store (batches of files, the final quiet apply, read the
+// result pages), then edits to the resident workspace as the enforcer applies them, then `evictInactive` and an idle
+// wait. This branch's engine does not export the repository index's options, so the stored index is not driven here.
 
 const profileSchema = z.object({
   files: z.number().int(),
@@ -224,17 +217,6 @@ const profileSchema = z.object({
 const evaluationSchema = z.object({
   metrics: z.object({ files: z.number().int() }).passthrough(),
   profile: profileSchema.omit({ files: true }).passthrough().optional(),
-}).passthrough();
-const chunkSchema = z.object({
-  revision: z.number().int(),
-  done: z.boolean(),
-  overBudget: z.boolean(),
-  discoveredFiles: z.number().int(),
-  restoredFiles: z.number().int(),
-  readFiles: z.number().int(),
-  reusableDirectories: z.number().int(),
-  evaluation: evaluationSchema.nullable(),
-  failures: z.array(z.object({ code: z.string() })),
 }).passthrough();
 const pageSchema = z.object({
   cursor: z.number().int(),
@@ -339,16 +321,7 @@ function memorySnapshot(workspace: NativeCodeRuleDslWorkspace) {
 }
 
 interface RunOptions {
-  engine: "native" | "sql";
-  sqlBatch: number | undefined;
-  /** Whether the scan is the stored repository index (`on`) or the enforcer's walk without a content store (`off`). */
-  store: boolean;
-  /**
-   * The one content store every workspace of the run attaches (`--store-path`), created if missing and kept, so a
-   * later run, or a later workspace of this one, reuses what earlier ones stored; else each workspace has its own
-   * store in a temporary directory.
-   */
-  storePath: string | undefined;
+  engine: "native";
   /** After the scan, the unchanged re-apply (`--reapply`): every scanned file applied again as it is, then the final apply. */
   reapply: boolean;
   /** The percentage of the workspace's files in scope the walk keeps (`inSample`); 100 keeps every file. */
@@ -419,24 +392,16 @@ async function walkApply(workspace: NativeCodeRuleDslWorkspace, files: readonly 
   return { revision, chunks };
 }
 
-/**
- * The final quiet apply (the deferred workspace-wide pass), the stored revision's record, and every result page, with
- * the time of each.
- */
-async function finishScan(workspace: NativeCodeRuleDslWorkspace, root: string, revision: number, store: boolean, reuse: Reuse) {
+/** The final quiet apply (the deferred workspace-wide pass) and every result page, with the time of each. */
+async function finishScan(workspace: NativeCodeRuleDslWorkspace, root: string, revision: number, reuse: Reuse) {
   const started = performance.now();
   const final = await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true })).catch((error: unknown) => {
     throw new Error(`${root}: the full scan's final apply failed`, { cause: error });
   });
   addReuse(reuse, applySchema.parse(JSON.parse(final)).evaluation);
   const applied = performance.now();
-  if (store)
-    await workspace.completeStorageRevisionAsync().catch((error: unknown) => {
-      throw new Error(`${root}: recording the scanned revision failed`, { cause: error });
-    });
-  const completed = performance.now();
   const results = await readResults(workspace);
-  return { ...results, timings: { finalApplyMs: applied - started, completionMs: completed - applied, resultPagesMs: performance.now() - completed } };
+  return { ...results, timings: { finalApplyMs: applied - started, resultPagesMs: performance.now() - applied } };
 }
 
 async function measureWorkspace(
@@ -447,17 +412,11 @@ async function measureWorkspace(
   sampler: RssSampler,
 ) {
   const binding = loadNativeBinding();
-  const stores = options.storePath === undefined ? mkdtempSync(join(tmpdir(), "rerail-workspaces-store-")) : undefined;
-  const storePath = options.storePath ?? join(stores!, "content.sqlite");
   const phases: Record<string, number> = {};
   sampler.phase();
   const workspaceStarted = performance.now();
-  const workspace = new binding.CodeRuleDslWorkspace({
-    engine: options.engine,
-    ...(options.sqlBatch === undefined ? {} : { sqlBatchSize: options.sqlBatch }),
-  });
+  const workspace = new binding.CodeRuleDslWorkspace();
   try {
-    // Registration compiles the SQL program on SQL (`workspace/sql.rs` `register`).
     for (const compiled of rules.compiled) workspace.addCodeRule(compiled);
     const registerMs = performance.now() - workspaceStarted;
     phases.register = sampler.phase();
@@ -467,57 +426,23 @@ async function measureWorkspace(
     const files = (await sourceFiles(workspace, root)).filter(file => inSample(file.path, options.sample));
     const scanCpu = process.cpuUsage();
     const scanStarted = performance.now();
-    let revision = 0;
-    let discovered = 0;
-    let read = 0;
-    let restoredFiles = 0;
-    let reusableDirectories = 0;
-    let chunks = 0;
-    let attachMs = 0;
     const reuse = emptyReuse();
     const failureCodes: Record<string, number> = {};
-    if (options.store) {
-      const attachment = await workspace.enableStorageAsync(root, storePath);
-      if (!attachment.attached) throw new Error(`${root}: the content store did not attach: ${attachment.reason ?? "(no reason)"}`);
-      attachMs = attachment.discoveryMilliseconds + attachment.publicationMilliseconds;
-      while (true) {
-        const response = await workspace.indexRepositoryAsync({ ...REPOSITORY_INDEX_OPTIONS, nestedCheckouts: [] }).catch((error: unknown) => {
-          throw new Error(`${root}: repository index chunk ${chunks + 1} (${read} files read before it) failed`, { cause: error });
-        });
-        const chunk = chunkSchema.parse(JSON.parse(response));
-        chunks += 1;
-        revision = chunk.revision;
-        // The index's counts are its totals so far.
-        discovered = chunk.discoveredFiles;
-        read = chunk.readFiles;
-        restoredFiles = chunk.restoredFiles;
-        reusableDirectories = chunk.reusableDirectories;
-        addReuse(reuse, chunk.evaluation);
-        countCodes(chunk.failures, failureCodes);
-        if (chunk.overBudget) throw new Error(`${root}: the repository index went over budget`);
-        if (chunk.done) break;
-      }
-    } else {
-      discovered = files.length;
-      ({ revision, chunks } = await walkApply(workspace, files, revision, reuse));
-      read = files.length;
-    }
+    const { revision: walked, chunks } = await walkApply(workspace, files, 0, reuse);
+    let revision = walked;
     const indexMs = performance.now() - scanStarted;
     revision += 1;
-    const results = await finishScan(workspace, root, revision, options.store, reuse);
+    const results = await finishScan(workspace, root, revision, reuse);
     if (options.findingsOut !== undefined) writeFindings(options.findingsOut, `${name}.scan.json`, results.lines);
     for (const [code, n] of Object.entries(results.failureCodes)) failureCodes[code] = (failureCodes[code] ?? 0) + n;
     const fullScan = {
       wallMs: performance.now() - scanStarted,
       cpuMs: cpuMs(scanCpu),
-      attachMs,
-      // The attach and index (or the walk's applies), then the final apply, the completion record and the result pages.
+      // The walk's applies, then the final apply and the result pages.
       phasesMs: { index: indexMs, ...results.timings },
       chunks,
-      discoveredFiles: discovered,
-      readFiles: read,
-      restoredFiles,
-      reusableDirectories,
+      discoveredFiles: files.length,
+      readFiles: files.length,
       reuse,
       pages: results.pages,
       violations: results.violations,
@@ -527,7 +452,6 @@ async function measureWorkspace(
     };
     phases.scan = sampler.phase();
     const afterScan = memorySnapshot(workspace);
-    const engineReport = JSON.parse(workspace.engineReport()) as unknown;
 
     // The unchanged re-apply: every scanned file again, as it is, to the workspace that holds them.
     let reapply: { wallMs: number; cpuMs: number; chunks: number; reuse: Reuse; violations: number; violationsSha256: string; failuresSha256: string } | undefined;
@@ -537,7 +461,7 @@ async function measureWorkspace(
       const reapplied = emptyReuse();
       const walked = await walkApply(workspace, files, revision, reapplied);
       revision = walked.revision + 1;
-      const again = await finishScan(workspace, root, revision, options.store, reapplied);
+      const again = await finishScan(workspace, root, revision, reapplied);
       reapply = {
         wallMs: performance.now() - reapplyStarted,
         cpuMs: cpuMs(reapplyCpu),
@@ -606,11 +530,9 @@ async function measureWorkspace(
         afterEvictIdle: afterEvictIdle.rss,
       },
       memory: { afterRegister, afterScan, beforeEvict, afterEvictIdle },
-      engineReport,
     };
   } finally {
     workspace.close();
-    if (stores !== undefined) rmSync(stores, { recursive: true, force: true });
   }
 }
 
@@ -667,9 +589,9 @@ function workspaceRoots(directory: string, selected: ReadonlyArray<{ name: strin
 }
 
 async function run(argv: readonly string[]): Promise<void> {
-  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--sql-batch", "--store", "--store-path", "--passes", "--reapply", "--sample", "--edits", "--idle-ms", "--only", "--first", "--findings-out", "--daemon", "--threads", "--cross"]);
+  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--passes", "--reapply", "--sample", "--edits", "--idle-ms", "--only", "--first", "--findings-out"]);
   const engine = option(values, "--engine");
-  if (engine !== "native" && engine !== "sql" && engine !== "facts") throw new UsageError("--engine takes native, sql or facts");
+  if (engine !== "native") throw new UsageError("--engine takes native");
   const ruleDirectories = (values.get("--rules") ?? []).map(directory => resolve(directory));
   if (ruleDirectories.length === 0) throw new UsageError("--rules <dir> is required");
   const workspacesDirectory = option(values, "--workspaces");
@@ -678,41 +600,12 @@ async function run(argv: readonly string[]): Promise<void> {
   if (output === undefined) throw new UsageError("--output <file.json> is required");
   const findingsOut = option(values, "--findings-out");
   if (findingsOut !== undefined) mkdirSync(resolve(findingsOut), { recursive: true });
-  if (engine === "facts") {
-    const daemon = option(values, "--daemon");
-    if (daemon === undefined) throw new UsageError("--engine facts needs --daemon <facts-a binary>");
-    if (ruleDirectories.length !== 1) throw new UsageError("--engine facts takes one --rules directory (the daemon's policies)");
-    await runFacts({
-      daemon: resolve(daemon),
-      policies: ruleDirectories[0]!,
-      store: option(values, "--store-path") ?? join(mkdtempSync(join(tmpdir(), "rerail-facts-daemon-")), "content.sqlite"),
-      threads: option(values, "--threads") === undefined ? undefined : count("--threads", option(values, "--threads"), 1, 1),
-      cross: option(values, "--cross") ?? "none",
-      roots: workspaceRoots(workspacesDirectory, selectedWorkspaces(values)),
-      edits: count("--edits", option(values, "--edits"), 20, 0),
-      reapply: (option(values, "--reapply") ?? "on") === "on",
-      output: resolve(output),
-      findingsOut: findingsOut === undefined ? undefined : resolve(findingsOut),
-    });
-    return;
-  }
-  const sqlBatch = option(values, "--sql-batch");
-  if (sqlBatch !== undefined && engine !== "sql") throw new UsageError("--sql-batch needs --engine sql");
-  const store = option(values, "--store") ?? "on";
-  if (store !== "on" && store !== "off") throw new UsageError("--store takes on or off");
   const sample = count("--sample", option(values, "--sample"), 100, 1);
-  // The stored index reads the whole checkout; only the walk without a store can keep a sample of it.
-  if (sample < 100 && store === "on") throw new UsageError("--sample needs --store off");
-  const storePath = option(values, "--store-path");
-  if (storePath !== undefined && store !== "on") throw new UsageError("--store-path needs --store on");
   const reapply = option(values, "--reapply") ?? "off";
   if (reapply !== "on" && reapply !== "off") throw new UsageError("--reapply takes on or off");
   const passes = count("--passes", option(values, "--passes"), 1, 1);
   const options: RunOptions = {
     engine,
-    sqlBatch: sqlBatch === undefined ? undefined : count("--sql-batch", sqlBatch, 0, 1),
-    store: store === "on",
-    storePath: storePath === undefined ? undefined : resolve(storePath),
     reapply: reapply === "on",
     sample,
     edits: count("--edits", option(values, "--edits"), 20, 0),
@@ -747,7 +640,7 @@ async function run(argv: readonly string[]): Promise<void> {
       const { reuse } = measured.fullScan;
       process.stderr.write(
         `rerail-workspaces: ${name} (pass ${pass}): scan ${Math.round(measured.fullScan.wallMs)} ms, ${measured.fullScan.discoveredFiles} files: ` +
-          `${measured.fullScan.restoredFiles} restored by the index, ${reuse.files} applied, ${reuse.evaluatedFiles} evaluated (${reuse.evaluatedClauses} clauses, ${reuse.restoredLocalResults} results restored); ` +
+          `${reuse.files} applied, ${reuse.evaluatedFiles} evaluated (${reuse.evaluatedClauses} clauses, ${reuse.restoredLocalResults} results restored); ` +
           (measured.reapply === undefined ? "" : `re-apply ${Math.round(measured.reapply.wallMs)} ms, ${measured.reapply.reuse.evaluatedFiles} evaluated; `) +
           `edits p50 ${measured.edits.wallP50Ms.toFixed(1)} / p95 ${measured.edits.wallP95Ms.toFixed(1)} ms, ` +
           `peak ${(measured.rss.peak / MIB).toFixed(0)} MiB, final ${(measured.rss.final / MIB).toFixed(0)} MiB, after evict+idle ${(measured.rss.afterEvictIdle / MIB).toFixed(0)} MiB, ` +
@@ -757,9 +650,6 @@ async function run(argv: readonly string[]): Promise<void> {
   const result = {
     benchmark: "rerail-workspaces/v1",
     engine,
-    sqlBatch: options.sqlBatch,
-    store,
-    storePath: options.storePath,
     passes,
     reapply: options.reapply,
     sample: options.sample,
@@ -823,7 +713,7 @@ type RunResult = {
 /** Prints two runs side by side; returns whether their findings (violations, after the scan and after the edits) are equal. */
 function compare(argv: readonly string[]): boolean {
   const { positional } = parseArguments(argv, []);
-  if (positional.length !== 2) throw new UsageError("compare takes two run outputs: <native.json> <sql.json>");
+  if (positional.length !== 2) throw new UsageError("compare takes two run outputs: <left.json> <right.json>");
   const [left, right] = positional.map(path => JSON.parse(readFileSync(path, "utf8")) as RunResult) as [RunResult, RunResult];
   const mib = (bytes: number) => `${(bytes / MIB).toFixed(0)} MiB`;
   const ms = (value: number) => `${value.toFixed(value < 100 ? 1 : 0)} ms`;
@@ -880,45 +770,13 @@ function compare(argv: readonly string[]): boolean {
   return equal;
 }
 
-/**
- * The production-path loop: `run` on native, then on SQL, each in its own process (each peak is its own), over the
- * fixed production-shape workload (`PROD_PATH`), then `compare`. Fails where the findings differ.
- */
-function prodPath(argv: readonly string[]): void {
-  const { values } = parseArguments(argv, ["--rules", "--workspaces", "--output-dir", "--addon", "--only", "--sample", "--edits"]);
-  const outputDirectory = option(values, "--output-dir");
-  if (outputDirectory === undefined) throw new UsageError("--output-dir <dir> is required");
-  mkdirSync(outputDirectory, { recursive: true });
-  const shared = [
-    ...(values.get("--rules") ?? []).flatMap(directory => ["--rules", directory]),
-    "--workspaces", option(values, "--workspaces") ?? "",
-    ...(option(values, "--addon") === undefined ? [] : ["--addon", option(values, "--addon")!]),
-    "--store", "off",
-    "--only", option(values, "--only") ?? PROD_PATH.only,
-    "--sample", option(values, "--sample") ?? String(PROD_PATH.sample),
-    "--edits", option(values, "--edits") ?? String(PROD_PATH.edits),
-    "--idle-ms", "0",
-  ];
-  const outputs = (["native", "sql"] as const).map(engine => {
-    const output = resolve(outputDirectory, `${engine}.json`);
-    const child = spawnSync(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), "run", "--engine", engine, ...shared, "--output", output], { stdio: "inherit" });
-    if (child.status !== 0) throw new Error(`rerail-workspaces: the ${engine} run failed (${child.status ?? child.signal})`);
-    return output;
-  });
-  if (!compare(outputs)) {
-    process.stderr.write("rerail-workspaces: the engines' findings differ\n");
-    process.exitCode = 1;
-  }
-}
-
 const [command, ...rest] = process.argv.slice(2);
 try {
   if (command === "run") await run(rest);
   else if (command === "setup") setup(rest);
   else if (command === "compare") process.exitCode = compare(rest) ? 0 : 1;
-  else if (command === "prod-path") prodPath(rest);
   else if (command === "compare-findings") process.exitCode = compareFindings(rest[0]!, rest[1]!, rest[2]!) ? 0 : 1;
-  else throw new UsageError(`unknown command ${command ?? "(none)"}: setup | run | compare | prod-path`);
+  else throw new UsageError(`unknown command ${command ?? "(none)"}: setup | run | compare | compare-findings`);
 } catch (error) {
   if (!(error instanceof UsageError)) throw error;
   process.stderr.write(`rerail-workspaces: ${error.message}\n`);
