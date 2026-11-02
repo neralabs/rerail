@@ -24,12 +24,9 @@ import { fixturesPath } from "../support/oracles.js";
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 
 const RULE = "typescript-eslint-consistent-type-definitions";
-const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript"), fixturesPath("packs", "config-regex")], { shipped: () => true });
+const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript"), fixturesPath("packs", "config-regex")]);
 
-/**
- * The API over a machine whose rule catalog is the TypeScript pack and a fixture pack, whose rules declare options;
- * both stand for registry installs, so their rules run as shipped.
- */
+/** The API over a machine whose rule catalog is the TypeScript pack and a fixture pack, whose rules declare options. */
 class TypeScriptPackStores extends DatabaseApiStores {
   override ruleCatalog(): RuleCatalog {
     return typescriptPack;

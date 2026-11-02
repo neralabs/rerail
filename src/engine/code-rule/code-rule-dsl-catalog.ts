@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { loadRuleCatalog } from "../catalog/rule-catalog.js";
+import { worktreeRuleCatalog } from "../catalog/worktree-pack.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { CheckoutOwners, type CheckoutOwner } from "../catalog/checkout-owner.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
@@ -324,7 +325,10 @@ export class CheckoutCatalogs {
   readonly #capabilities: CodeRuleCapabilities;
   readonly #entries = new Map<string, CheckoutEntry>();
 
-  /** `options.ruleCatalog` fixes the catalog; without it each read follows the installed packs (`loadRuleCatalog`). */
+  /**
+   * `options.ruleCatalog` fixes the installed packs; without it each read follows them (`loadRuleCatalog`). Either way a
+   * checkout's own rules are added to its catalog.
+   */
   constructor(databasePath: string = defaultRerailDatabasePath(), options: { capabilities?: CodeRuleCapabilities; ruleCatalog?: RuleCatalog } = {}) {
     this.databasePath = resolve(databasePath);
     this.database = openRerailDatabase(this.databasePath);
@@ -333,11 +337,12 @@ export class CheckoutCatalogs {
   }
 
   /**
-   * The catalog the checkouts' rules come from. A pack installed or removed changes its digest, and with it every
-   * checkout's configuration signature, so the next refresh rebuilds their rules.
+   * The catalog `root`'s rules come from: the installed packs and the checkout's own rules (`worktree-pack.ts`). A pack
+   * installed or removed, or a file in the checkout's `.rerail/rules` changed, changes its digest, and with it the
+   * checkout's configuration signature, so the next refresh rebuilds its rules.
    */
-  get ruleCatalog(): RuleCatalog {
-    return this.#ruleCatalog ?? loadRuleCatalog();
+  #ruleCatalogOf(root: string): RuleCatalog {
+    return worktreeRuleCatalog(this.#ruleCatalog ?? loadRuleCatalog(), root);
   }
 
   /** The checkout at `root` (a physical checkout top level) as last read; refreshed with `refresh`. */
@@ -450,13 +455,13 @@ export class CheckoutCatalogs {
   #signature(entry: CheckoutEntry): string {
     this.#read(entry);
     if (entry.checkout === undefined) return entry.eligibility;
-    const signature = ruleConfigurationSignature(this.database, this.ruleCatalog, entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
+    const signature = ruleConfigurationSignature(this.database, this.#ruleCatalogOf(entry.root), entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
     return `${entry.eligibility}\0${signature}`;
   }
 
   #ruleSet(entry: CheckoutEntry): CheckoutRuleSet | undefined {
     if (entry.checkout === undefined || entry.status === undefined) return undefined;
-    return loadCheckoutRuleSet(this.database, this.ruleCatalog, entry.checkout, entry.status, entry.parents);
+    return loadCheckoutRuleSet(this.database, this.#ruleCatalogOf(entry.root), entry.checkout, entry.status, entry.parents);
   }
 
   #load(entry: CheckoutEntry): LoadedCheckoutRules {

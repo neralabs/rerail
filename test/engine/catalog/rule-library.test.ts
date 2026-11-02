@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { exportRulesDump, importRulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
+import { approve, isApproved, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
 import {
   addAttachment,
   loadCheckoutRuleSet,
@@ -99,27 +100,44 @@ describe("library rules", () => {
 });
 
 describe("copyRerailRuleToLibrary", () => {
-  it("adds the approved copy wherever the original is present and switches the original off there", async () => {
+  it("adds the copy wherever the original is present, and its first approval switches the original off there", async () => {
     const db = await repositoryWithLintPack(["web", "api"]);
     const edited = codeRule("ignored", { message: "No print, ever" });
 
-    const copied = copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", edited, { approve: true });
+    const copied = copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", edited);
     expect(copied.rule).toMatchObject({ copiedFromRuleId: "no-console", document: { rule: { id: "no-console-copy" } } });
     expect(copied.folders).toEqual(["api", "web"]);
-    expect(copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", edited, { approve: true }).rule.document.rule.id).toBe("no-console-copy-2");
+    expect(copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", edited).rule.document.rule.id).toBe("no-console-copy-2");
+    const rulesAt = () => loadCheckoutRuleSet(db, ruleCatalog, checkout(CHECKOUT), RUNNING, []).rulesFor("web/a.ts")
+      .map(rule => [rule.document.rule.id, rule.source.kind, rule.on, rule.mode]);
 
-    const rules = loadCheckoutRuleSet(db, ruleCatalog, checkout(CHECKOUT), RUNNING, []).rulesFor("web/a.ts");
-    expect(rules.map(rule => [rule.document.rule.id, rule.source.kind, rule.on])).toEqual([
-      ["no-console", "pack", false],
-      ["no-console-copy", "library_rule", true],
-      ["no-console-copy-2", "library_rule", true],
-      ["no-var", "pack", false],
+    // Until a person approves a copy, it runs in Log and the original keeps running: writing a copy weakens nothing.
+    expect(rulesAt()).toEqual([
+      ["no-console", "pack", true, "steer"],
+      ["no-console-copy", "library_rule", true, "log"],
+      ["no-console-copy-2", "library_rule", true, "log"],
+      ["no-var", "pack", false, "log"],
     ]);
+
+    approve(db, ruleSubject("no-console-copy", copied.rule.payloadHash));
+    expect(rulesAt()).toEqual([
+      ["no-console", "pack", false, "steer"],
+      ["no-console-copy", "library_rule", true, "block"],
+      ["no-console-copy-2", "library_rule", true, "log"],
+      ["no-var", "pack", false, "log"],
+    ]);
+
+    // Only the first approval switches it off: a person who turns the original back on keeps it on through later ones.
+    setRuleSetting(db, { owner: { kind: "repository", repositoryKey: REPOSITORY }, folder: "web", targetKind: "rule", targetId: "no-console", on: true, mode: null });
+    const edit = upsertLibraryRule(db, ruleCatalog, codeRule("no-console-copy", { message: "No print, at all" }), "code");
+    approve(db, ruleSubject("no-console-copy", edit.payloadHash));
+    expect(rulesAt()[0]).toEqual(["no-console", "pack", true, "steer"]);
   });
 
   it("leaves the original following the rule catalog", async () => {
     const db = await repositoryWithLintPack([""]);
-    copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", codeRule("x", { message: "edited" }), { approve: true });
+    const copied = copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", codeRule("x", { message: "edited" }));
+    approve(db, ruleSubject(copied.rule.document.rule.id, copied.rule.payloadHash));
 
     const updated = testBundle({ noConsoleRevision: 2 });
     const original = loadCheckoutRuleSet(db, updated, checkout(CHECKOUT), RUNNING, []).rulesFor("a.ts")
@@ -129,7 +147,7 @@ describe("copyRerailRuleToLibrary", () => {
 
   it("lets a library rule win over a later bundled rule with its id", async () => {
     const db = await repositoryWithLintPack([]);
-    writeLibraryRule(db, testBundle(), { kind: "code", rule: codeRule("shared", { mode: "log" }) }, { approve: true });
+    writeLibraryRule(db, testBundle(), { kind: "code", rule: codeRule("shared", { mode: "log" }) });
     const later = testBundle();
     const withShared = { ...later, documents: new Map([...later.documents, ["shared", { kind: "code" as const, rule: codeRule("shared") }]]) };
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "", sourceKind: "rerail_rule", sourceId: "shared" });
@@ -155,8 +173,9 @@ describe("rules dump", () => {
     addRepository(target, REPOSITORY);
     target.update(repositories).set({ started: true }).run();
     addAttachment(target, { repositoryKey: REPOSITORY, folder: "", sourceKind: "rerail_rule", sourceId: "loose" });
-    // The builder's rules are on Block unless they name another mode.
-    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 1, repositories: 1, onBlock: ["mine"], approved: [] });
+    // The builder's rules are on Block unless they name another mode. Approvals are this machine's: the imported rule
+    // waits for one here.
+    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 1, repositories: 1, onBlock: ["mine"], approved: [], waiting: ["mine"] });
 
     expect(exportRulesDump(target, new Date(0)).repositories).toEqual(exportRulesDump(source, new Date(0)).repositories);
     expect(getLibraryRule(target, "mine")?.document).toEqual(getLibraryRule(source, "mine")?.document);
@@ -193,10 +212,26 @@ describe("rules dump", () => {
     expect(upsertLibraryRule(source, withShared, codeRule("shared", { mode: "steer" }), "code").document.rule.mode).toBe("steer");
     const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
 
-    expect(importRulesDump(source, withShared, dump)).toEqual({ library: 1, repositories: 0, onBlock: [], approved: [] });
+    expect(importRulesDump(source, withShared, dump)).toEqual({ library: 1, repositories: 0, onBlock: [], approved: [], waiting: ["shared"] });
     const target = await temporaryDatabase();
-    expect(importRulesDump(target, withShared, dump)).toEqual({ library: 1, repositories: 0, onBlock: [], approved: [] });
+    expect(importRulesDump(target, withShared, dump)).toEqual({ library: 1, repositories: 0, onBlock: [], approved: [], waiting: ["shared"] });
     expect(getLibraryRule(target, "shared")?.document.rule.mode).toBe("steer");
+  });
+
+  it("approves each imported rule not approved here with approve, as rerail rules import --approve does", async () => {
+    const source = await repositoryWithLintPack(["web"]);
+    const mine = upsertLibraryRule(source, ruleCatalog, codeRule("mine"), "code");
+    copyRerailRuleToLibrary(source, ruleCatalog, REPOSITORY, "no-console", codeRule("x", { message: "edited" }));
+    const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
+
+    const target = await temporaryDatabase();
+    expect(importRulesDump(target, ruleCatalog, dump, { approve: true })).toMatchObject({ approved: ["mine", "no-console-copy"], waiting: [] });
+    expect(isApproved(target, ruleSubject("mine", mine.payloadHash))).toBe(true);
+    // The copy's first approval switches its original off where the imported configuration adds the copy.
+    const rules = loadCheckoutRuleSet(target, ruleCatalog, checkout(CHECKOUT), RUNNING, []).rulesFor("web/a.ts");
+    expect(rules.map(rule => [rule.document.rule.id, rule.on])).toEqual([["no-console", false], ["no-console-copy", true], ["no-var", false]]);
+    // Content approved already is not approved again.
+    expect(importRulesDump(target, ruleCatalog, dump, { approve: true })).toMatchObject({ approved: [], waiting: [] });
   });
 
   it("imports a repository listed under one of this machine's aliases into the repository that holds the alias", async () => {
@@ -206,7 +241,7 @@ describe("rules dump", () => {
     addRepository(target, "remote:github.com/acme/app-renamed");
     target.update(repositories).set({ aliases: [REPOSITORY] }).run();
 
-    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 0, repositories: 1, onBlock: [], approved: [] });
+    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 0, repositories: 1, onBlock: [], approved: [], waiting: [] });
     expect(target.select({ key: repositories.repositoryKey, aliases: repositories.aliases }).from(repositories).all())
       .toEqual([{ key: "remote:github.com/acme/app-renamed", aliases: [REPOSITORY] }]);
     expect(target.select({ key: ruleAttachments.repositoryKey, folder: ruleAttachments.folder }).from(ruleAttachments).all())
@@ -226,25 +261,6 @@ describe("rules dump", () => {
 
     expect([...report.onBlock].sort()).toEqual(["mine", "pack lint"]);
   });
-
-  it("approves on request after the repositories, so an imported edited copy switches its original off where the dump adds it", async () => {
-    const source = await repositoryWithLintPack(["web"]);
-    copyRerailRuleToLibrary(source, ruleCatalog, REPOSITORY, "no-console", codeRule("x", { message: "edited" }));
-    const dump = JSON.parse(JSON.stringify(exportRulesDump(source))) as unknown;
-
-    const target = await temporaryDatabase();
-    // The builder's rules are on Block unless they name another mode.
-    expect(importRulesDump(target, ruleCatalog, dump, { approve: true })).toEqual({ library: 1, repositories: 1, onBlock: ["no-console-copy"], approved: ["no-console-copy"] });
-    const rules = loadCheckoutRuleSet(target, ruleCatalog, checkout(CHECKOUT), RUNNING, []).rulesFor("web/a.ts");
-    expect(rules.map(rule => [rule.document.rule.id, rule.source.kind, rule.on])).toEqual([
-      ["no-console", "pack", false],
-      ["no-console-copy", "library_rule", true],
-      ["no-var", "pack", false],
-    ]);
-    // Content approved already is not approved again.
-    expect(importRulesDump(target, ruleCatalog, dump, { approve: true }).approved).toEqual([]);
-  });
-
   it("imports nothing when a code rule does not compile", async () => {
     const db = await temporaryDatabase();
     const broken = { ...codeRule("broken"), clauses: [{ ...codeRule("broken").clauses[0], forbid: { regex: { pattern: "(", source: "file.content" } } }] };

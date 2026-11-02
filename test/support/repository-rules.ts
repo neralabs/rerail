@@ -14,12 +14,16 @@ import {
   type RuleDocument,
   ruleDocumentDigest,
   stableJsonText,
+  approve,
+  ruleSubject,
 } from "../../src/engine/index.js";
 import { setRepositoryStarted } from "../../src/runtime/index.js";
 
 export interface TestRepositoryRules {
-  /** Stored in the library, approved, and added to the repository. */
+  /** Stored in the library, approved as a person would (see `approve`), and added to the repository. */
   readonly library?: readonly RuleDocument[];
+  /** Leave the library rules waiting for approval, running in Log, as an agent's rule is until a person approves it. */
+  readonly approve?: boolean;
   /** By Rerail rule ids added to the repository on their own. */
   readonly rerailRules?: readonly string[];
   readonly packs?: readonly string[];
@@ -43,7 +47,10 @@ export function setUpTestRepository(
     const ruleCatalog = loadRuleCatalog();
     const { repositoryKey } = recordCheckout(database, workspace);
     const folder = rules.folder ?? "";
-    for (const document of rules.library ?? []) upsertLibraryRule(database, ruleCatalog, document.rule, document.kind, { approve: true });
+    for (const document of rules.library ?? []) {
+      const stored = upsertLibraryRule(database, ruleCatalog, document.rule, document.kind);
+      if (rules.approve !== false) approve(database, ruleSubject(document.rule.id, stored.payloadHash));
+    }
     setUpRepository(database, repositoryKey, {
       packs: (rules.packs ?? []).map(packId => ({ packId, folder })),
       rules: [
@@ -59,8 +66,8 @@ export function setUpTestRepository(
 }
 
 /**
- * A catalog of `codeRules`, approved and on everywhere at their own mode, for tests that drive one enforcer directly.
- * Pass a function to let the set change between refreshes.
+ * A catalog of `codeRules`, on everywhere at their own mode, for tests that drive one enforcer directly. Pass a
+ * function to let the set change between refreshes.
  */
 export function testCodeRuleCatalog(
   codeRules: readonly CodeRule[] | (() => readonly CodeRule[]),
@@ -81,7 +88,6 @@ export function testCodeRuleCatalog(
       decidedBy: { on: { by: "rule-default" }, mode: { by: "rule-default" }, suppressions: { by: "rule-default" }, config: {} },
       revision: rule.revision,
       payloadHash: ruleDocumentDigest({ kind: "code", rule }),
-      approval: { state: "approved", approvedAt: 0 },
     }));
     const ruleSet: CheckoutRuleSet = {
       checkout,

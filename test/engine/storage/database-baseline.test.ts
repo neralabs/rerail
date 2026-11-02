@@ -20,7 +20,6 @@ import { RERAIL_SCHEMA_STATEMENTS } from "../../../src/engine/storage/schema-sql
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { installPack, uninstallPack } from "../../support/installed-packs.js";
-import { codeRule } from "../../support/rule-configuration-builders.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -467,24 +466,6 @@ describe("the migration path", () => {
     })()));
   });
 
-  // Rule approval: a rule runs only with content a person approved. A file from before approvals keeps every rule it
-  // has running: its library is approved as it stands.
-  it("approves every rule in a baseline file's library as it stands, so each keeps running", async () => {
-    const document = JSON.stringify({ kind: "code", rule: codeRule("legacy-rule", { message: "Keep running" }) });
-    const path = await baselineFile(`
-      INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('repo', 'repo', 0, 0);
-      INSERT INTO library_rules (rule_id, kind, document_json, revision, payload_hash, created_at, updated_at) VALUES ('legacy-rule', 'code', '${document}', 1, 'sha256:stale', 0, 5);
-      INSERT INTO rule_attachments (repository_key, folder, source_kind, source_id, created_at) VALUES ('repo', '', 'library_rule', 'legacy-rule', 0)`);
-    const database = openRerailDatabase(path);
-    try {
-      const view = listRepositoryRules(database, loadRuleCatalog(), "repo");
-      expect(view.rules).toEqual([expect.objectContaining({ approval: { state: "approved", approvedAt: 5 } })]);
-      expect(view.awaitingApproval).toBe(0);
-    } finally {
-      database.$client.close();
-    }
-  });
-
   // Self-review: a reader that cannot write the baseline file used to get it in its old shape, and this build's rules
   // readers then failed on rule_settings columns it lacks. It is refused with the reason instead, and left untouched.
   it("refuses a read-only open of a baseline database this process cannot upgrade, naming the steps and why", async () => {
@@ -505,6 +486,32 @@ describe("the migration path", () => {
       chmodSync(path, 0o600);
     }
     expect(readFileSync(path).equals(before)).toBe(true);
+  });
+
+  it("approves, at the content it has, every library rule a file held before approvals, and nothing added after", async () => {
+    const path = await temporaryDatabase();
+    // A file from before the step: library rules, no rule_approvals, the step not recorded.
+    stampedFile(path, `
+      DROP TABLE rule_approvals;
+      DELETE FROM schema_migrations WHERE id = 'rule-approvals';
+      INSERT INTO library_rules (rule_id, kind, document_json, revision, payload_hash, created_at, updated_at)
+      VALUES ('mine', 'code', '{}', 1, 'sha256:mine', 0, 5);
+    `);
+    openRerailDatabase(path).$client.close();
+    const database = new Database(path);
+    try {
+      database.exec("INSERT INTO library_rules (rule_id, kind, document_json, revision, payload_hash, created_at, updated_at) VALUES ('later', 'code', '{}', 1, 'sha256:later', 6, 6)");
+    } finally {
+      database.close();
+    }
+    openRerailDatabase(path).$client.close();
+    const reader = new Database(path, { readonly: true });
+    try {
+      expect(reader.prepare("SELECT subject_kind, subject_id, digest, approved_at FROM rule_approvals").all())
+        .toEqual([{ subject_kind: "rule", subject_id: "mine", digest: "sha256:mine", approved_at: 5 }]);
+    } finally {
+      reader.close();
+    }
   });
 
   it("runs a step an existing file has not run, keeps its rows, records the step, and runs nothing on reopening", async () => {

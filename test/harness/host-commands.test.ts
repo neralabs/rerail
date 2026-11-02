@@ -103,7 +103,7 @@ describe("/rerail", () => {
     expect(notice?.message).not.toContain("rerail-test");
   });
 
-  it("links rules waiting for approval to the dashboard's Waiting for approval page", async () => {
+  it("counts what runs in Log waiting for approval, linked to the dashboard, whose Overview lists it", async () => {
     mocks.presentation.mockResolvedValue({
       status: "on", text: "", url: null, parts: [],
       presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 0, awaitingApproval: 2 },
@@ -112,7 +112,7 @@ describe("/rerail", () => {
     const { run, notices } = commandHarness();
     await run("rerail");
     expect(notices[0]?.message).toContain(
-      "  2 rules waiting for your approval → http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#approvals\n",
+      "  2 to approve, running in Log → http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#rules\n",
     );
   });
 

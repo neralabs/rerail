@@ -1,6 +1,5 @@
 import { rerailCommandList, type CommandSigil } from "./rerail-commands.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
-import { approvalsPageUrl } from "../engine/code-rule/rerail-steer.js";
 import type { SessionPresentation } from "../presentation/session-presentation.js";
 
 export interface RerailSummaryInput {
@@ -10,7 +9,7 @@ export interface RerailSummaryInput {
   repositoryState: RepositoryStartState | null;
   /** Rules on in this repository, for the no-session form. */
   ruleCount: number | null;
-  /** Rules of this repository whose content waits for the person's approval, for the no-session form. */
+  /** Rules and packs on in this repository that run in Log waiting for the person's approval, for the no-session form. */
   awaitingApproval: number | null;
   /** The dashboard's rules page, when a daemon answers. */
   rulesUrl: string | null;
@@ -30,11 +29,13 @@ const notSetUpLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] 
 
 const onLine = ({ repositoryName }: RerailSummaryInput): string => `● Rerail is on in this repo · ${repositoryName}`;
 
-/** `N rules waiting for your approval`, linked to the dashboard page where the person approves them; nothing when none wait. */
+/**
+ * `N to approve, running in Log`, linked to the dashboard, whose Overview lists them, or to `rerail rules approve`,
+ * which lists them too; nothing when none wait.
+ */
 function awaitingLines(awaiting: number | null, rulesUrl: string | null): string[] {
   if (awaiting === null || awaiting === 0) return [];
-  const where = rulesUrl === null ? "rerail rules list" : approvalsPageUrl(rulesUrl);
-  return [`  ${plural(awaiting, "rule")} waiting for your approval → ${where}`];
+  return [`  ${awaiting} to approve, running in Log → ${rulesUrl ?? "rerail rules approve"}`];
 }
 
 /**

@@ -379,7 +379,7 @@ describe("Rerail daemon", () => {
     const daemon = await start();
     const codeRule = MOCK_CODE_RULES[0]!;
     const conversationRule = MOCK_CONVERSATION_RULES[0]!;
-    expect(await getJson(daemon, "/api/library-rules")).toEqual({ status: 200, body: { rules: [], quarantined: [], awaitingApproval: 0 } });
+    expect(await getJson(daemon, "/api/library-rules")).toEqual({ status: 200, body: { rules: [], quarantined: [] } });
     for (const removed of ["/api/rule-context", "/api/rules"]) expect((await getJson(daemon, removed)).status).toBe(404);
 
     const created = await sendJson(daemon, `/api/library-rules/${codeRule.id}`, "PUT", { kind: "code", rule: codeRule });

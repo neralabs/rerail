@@ -130,8 +130,8 @@ describe("quarantined code rule rows", () => {
       expect(reports()).toHaveLength(1);
       expect(enforcer.snapshotStatus().failures).toEqual([quarantineFailure]);
 
-      // A person fixing a library rule writes a new revision, which the catalog sees as a configuration change.
-      upsertLibraryRule(catalogs.database, loadRuleCatalog(), { ...codeRule("test:broken"), revision: 2 }, "code", { approve: true });
+      // Fixing a library rule writes a new revision, which the catalog sees as a configuration change.
+      upsertLibraryRule(catalogs.database, loadRuleCatalog(), { ...codeRule("test:broken"), revision: 2 }, "code");
       await enforcer.auditGeneratedEdits("session", {
         revision: 3, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE = 3\n" }],
       });

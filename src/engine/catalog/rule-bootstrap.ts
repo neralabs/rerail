@@ -13,7 +13,7 @@ import {
 } from "../storage/schema.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { normalizeFolder, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS, type RuleCatalog } from "./repository-model.js";
-import { approvalKey, approveLibraryContent, readApprovals, storedContentDigest } from "./rule-approval.js";
+import { approve, isApproved, ruleSubject } from "./rule-approval.js";
 import { listLibraryRules, quarantinedLibraryRules, validateLibraryDocument, writeLibraryRule } from "./rule-library.js";
 import { RULE_MODES } from "./rule-mode.js";
 import type { RuleDocument } from "./rule-store.js";
@@ -96,8 +96,9 @@ export type RulesDump = z.infer<typeof rulesDumpSchema>;
 
 export interface RulesDumpImportOptions {
   /**
-   * The dump is the person's own (`rerail rules import --approve`), so each library rule it writes is approved with the
-   * content it writes, as `rerail rules approve` would approve it. Without it they wait for approval.
+   * The dump is the person's own (`rerail rules import --approve`), so each library rule it writes is approved as it is
+   * written, as `rerail rules approve` would approve it. Without it, content not approved on this machine runs in Log
+   * until a person approves it.
    */
   readonly approve?: boolean;
   readonly now?: number;
@@ -111,8 +112,10 @@ export interface RulesDumpImportReport {
    * target (`<rule id>`, or `pack <pack id>`). Block steers until block enforcement lands, so the importer says so.
    */
   readonly onBlock: readonly string[];
-  /** The library rules the import approved: those whose imported content was not approved already. */
+  /** The library rules the import approved (`approve`): those whose imported content was not approved already. */
   readonly approved: readonly string[];
+  /** The library rules whose imported content is not approved here, so they run in Log until a person approves them. */
+  readonly waiting: readonly string[];
 }
 
 /**
@@ -162,7 +165,9 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
  * Import a rules dump, all or nothing: every code rule must compile first. Library rules are upserted, including one
  * that takes a By Rerail rule's id (the library rule wins). Each listed repository's attachments and repository settings
  * are replaced and its set-up time kept, while this machine's start state is left alone; a repository this machine
- * knows under another key or an alias receives them, and keeps every key as an alias.
+ * knows under another key or an alias receives them, and keeps every key as an alias. Approvals are this machine's
+ * (`rule-approval.ts`): an imported rule whose content was not approved here runs in Log until a person approves it, or
+ * is approved by the import itself with `approve`.
  */
 export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, value: unknown, options: RulesDumpImportOptions = {}): RulesDumpImportReport {
   const now = options.now ?? Date.now();
@@ -179,6 +184,7 @@ export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, va
   });
   assertDumpCompiles("rules dump", documents.map(({ document }) => document));
   const approved: string[] = [];
+  const waiting: string[] = [];
   db.transaction(tx => {
     for (const { document, entry } of documents) {
       writeLibraryRule(tx, ruleCatalog, document, {
@@ -221,16 +227,19 @@ export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, va
           .onConflictDoNothing().run();
       }
     }
-    // Approved last, as `rerail rules approve` would right after the import: an edited copy approved the first time
-    // switches its original off where the imported configuration adds it. Content approved already keeps its approval.
-    if (options.approve === true && documents.length > 0) {
-      const ids = documents.map(({ document }) => document.rule.id);
-      const approvals = readApprovals(tx, ids);
-      for (const row of tx.select().from(libraryRules).where(inArray(libraryRules.ruleId, ids)).orderBy(asc(libraryRules.ruleId)).all()) {
-        if (approvals.get(approvalKey("library", row.ruleId))?.contentHash === storedContentDigest(row.kind, row.document)) continue;
-        approveLibraryContent(tx, { document: row.document, revision: row.revision, copiedFromRuleId: row.copiedFromRuleId }, now);
-        approved.push(row.ruleId);
+    // Approved last, as `rerail rules approve` would right after the import: an edited copy of a By Rerail rule approved
+    // the first time switches its original off where the imported configuration adds it.
+    const stored = documents.length === 0 ? [] : tx.select({ ruleId: libraryRules.ruleId, payloadHash: libraryRules.payloadHash }).from(libraryRules)
+      .where(inArray(libraryRules.ruleId, documents.map(({ document }) => document.rule.id))).orderBy(asc(libraryRules.ruleId)).all();
+    for (const { ruleId, payloadHash } of stored) {
+      const subject = ruleSubject(ruleId, payloadHash);
+      if (isApproved(tx, subject)) continue;
+      if (options.approve !== true) {
+        waiting.push(ruleId);
+        continue;
       }
+      approve(tx, subject, now);
+      approved.push(ruleId);
     }
   }, { behavior: "immediate" });
   const onBlock = new Set([
@@ -238,5 +247,5 @@ export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, va
     ...dump.repositories.flatMap(repository => repository.settings.filter(setting => setting.mode === "block")
       .map(setting => (setting.targetKind === "pack" ? `pack ${setting.targetId}` : setting.targetId))),
   ]);
-  return { library: documents.length, repositories: dump.repositories.length, onBlock: [...onBlock], approved };
+  return { library: documents.length, repositories: dump.repositories.length, onBlock: [...onBlock], approved, waiting };
 }

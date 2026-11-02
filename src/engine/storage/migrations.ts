@@ -11,7 +11,6 @@
  * `schema_migrations`; an id this build does not know (a newer build's step) is left alone.
  */
 import { sql } from "drizzle-orm";
-import { ruleContentDigest } from "../stable-json.js";
 import type { RerailDatabase } from "./database.js";
 import { schemaMigrations } from "./schema.js";
 
@@ -99,36 +98,23 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // A rule Nera did not ship runs only with content a person approved (`rule-approval.ts`). Every rule in the
-    // library is approved as it stands, so no rule stops working. No floor, by choice, as for the first step: agent
-    // hosts on an older installed version keep sharing the file. They read no approvals and run each library rule's
-    // latest content until they update; a rule they write waits for approval here.
+    // Rules created by you, and packs Rerail does not publish, run in Log only until a person approves their content
+    // (`rule-approval.ts`). The library rules a file already holds were in force before approvals existed, so each is
+    // recorded approved at the content it has; only new rules and later edits wait. Steps run before the DDL, so the
+    // table is created here as this step introduced it. No floor: an older build never reads the table, and runs
+    // every rule as before.
     id: "rule-approvals",
     up(database) {
       database.run(sql.raw(RULE_APPROVALS_TABLE));
       if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'library_rules'`).length === 0) return;
-      const rows = database.all<{ rule_id: string; kind: string; document_json: string; revision: number; updated_at: number }>(
-        sql`SELECT rule_id, kind, document_json, revision, updated_at FROM library_rules`,
-      );
-      for (const row of rows) {
-        // A row of a kind this build does not know, or one that is not JSON, is quarantined and has nothing to approve.
-        if ((row.kind !== "code" && row.kind !== "conversation") || !(row.revision > 0)) continue;
-        let document: unknown;
-        try {
-          document = JSON.parse(row.document_json);
-        } catch {
-          continue;
-        }
-        const rule = typeof document === "object" && document !== null && "rule" in document ? document.rule : undefined;
-        database.run(sql`INSERT OR IGNORE INTO rule_approvals (owner, rule_id, kind, document_json, revision, content_hash, approved_at)
-          VALUES ('library', ${row.rule_id}, ${row.kind}, ${row.document_json}, ${row.revision}, ${ruleContentDigest(row.kind, rule)}, ${row.updated_at})`);
-      }
+      database.run(sql.raw(`INSERT OR IGNORE INTO rule_approvals (subject_kind, subject_id, digest, approved_at)
+        SELECT 'rule', rule_id, payload_hash, updated_at FROM library_rules`));
     },
   },
 ];
 
 /** `rule_approvals` as `rule-approvals` introduced it. */
-const RULE_APPROVALS_TABLE = "CREATE TABLE IF NOT EXISTS `rule_approvals` (\n\t`owner` text NOT NULL,\n\t`rule_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`document_json` text NOT NULL,\n\t`revision` integer NOT NULL,\n\t`content_hash` text NOT NULL,\n\t`approved_at` integer NOT NULL,\n\tPRIMARY KEY(`owner`, `rule_id`),\n\tCONSTRAINT \"rule_approvals_owner\" CHECK(\"rule_approvals\".\"owner\" IN ('library', 'pack')),\n\tCONSTRAINT \"rule_approvals_kind\" CHECK(\"rule_approvals\".\"kind\" IN ('code', 'conversation')),\n\tCONSTRAINT \"rule_approvals_revision\" CHECK(\"rule_approvals\".\"revision\" > 0)\n)";
+const RULE_APPROVALS_TABLE = "CREATE TABLE IF NOT EXISTS `rule_approvals` (\n\t`subject_kind` text NOT NULL,\n\t`subject_id` text NOT NULL,\n\t`digest` text NOT NULL,\n\t`approved_at` integer NOT NULL,\n\tPRIMARY KEY(`subject_kind`, `subject_id`, `digest`),\n\tCONSTRAINT \"rule_approvals_subject_kind\" CHECK(\"rule_approvals\".\"subject_kind\" IN ('rule', 'pack'))\n)";
 
 /** The derived audit history tables as `audit-history-derived-tables` introduced them. */
 const AUDIT_HISTORY_TABLES: readonly string[] = [
