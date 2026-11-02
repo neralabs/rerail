@@ -33,7 +33,7 @@ test("a rule opens from its pack's page, and a pack rule has no Delete", async (
   await expect(sheet(page)).toContainText(PACK_RULE);
   await expect(sheet(page).locator('[data-act="delask"]')).toHaveCount(0);
   await expect(sheet(page).locator(".pfoot")).toBeHidden();
-  // On Log the agent is told nothing yet; the sheet says so under what it would see.
+  // On Log nothing is sent to the agent; the sheet says so under the text.
   await expect(sheet(page).locator(".sees .note2")).toBeVisible();
 });
 
