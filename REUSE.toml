@@ -551,10 +551,10 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
-# Candidate rule documents: Rerail's re-implementations of @vitest/eslint-plugin 1.6.27's rules (MIT), annotated with
-# the pack's licence expression like the documents above.
+# Rule documents: Rerail's re-implementations of @vitest/eslint-plugin 1.6.27's rules (MIT), annotated with the
+# pack's licence expression like the documents above.
 [[annotations]]
-path = "packs/typescript/candidates/rules/vitest-*.json"
+path = "packs/typescript/rules/vitest-*.json"
 precedence = "override"
 SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"

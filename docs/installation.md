@@ -454,12 +454,13 @@ rerail update check      # is a newer version on the channel?
 rerail update            # install it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
 rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
+rerail support-bundle    # write a file of diagnostics to attach to an issue, to ~/rerail-support-bundle.json
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database, delete the install
 ```
 
 Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
 `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`,
-`/rerail-uninstall`, `/rerail-help` and `/rerail-show-me` (`$rerail`,
+`/rerail-uninstall`, `/rerail-help`, `/rerail-show-me` and `/rerail-support-bundle` (`$rerail`,
 `$rerail-manage`, and so on in Codex). `rerail install` also removes the
 `rerail-ui` and `rerail-rage-quit` files an earlier build wrote. `rerail update`
 then runs `rerail install --refresh` from the version it activated: every coding

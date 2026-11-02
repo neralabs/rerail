@@ -114,7 +114,7 @@ describe("/rerail", () => {
     await run("rerail-help");
     expect(notices).toHaveLength(2);
     expect(notices[1]).toEqual(notices[0]);
-    expect(notices[0]?.message).toContain("/rerail-help        show a list of commands");
+    expect(notices[0]?.message).toContain("/rerail-help             show a list of commands");
   });
 
   it("says Rerail is not on here, and how to start it, where it is stopped", async () => {
@@ -232,6 +232,16 @@ describe("/rerail-show-me", () => {
     expect(sent[0]).toContain(`${cli}' show-me --json`);
     expect(sent[0]).toContain(`${cli}' show-me --cleanup`);
     expect(sent[0]).toContain("with your file edit or write tool");
+  });
+});
+
+describe("/rerail-support-bundle", () => {
+  it("hands the coding agent the steps, through the session's own launcher", async () => {
+    const { run, sent, notices } = commandHarness();
+    await run("rerail-support-bundle");
+    expect(notices).toEqual([]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' support-bundle --json`);
   });
 });
 
