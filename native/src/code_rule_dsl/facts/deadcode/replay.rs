@@ -159,6 +159,7 @@ fn replay(label: &str, default_check_every: usize, default_check_load: bool) -> 
     let load_start = load_average();
     let (cpu0, t_all) = (cols::cpu_seconds(), Instant::now());
     let fp_start = footprint_mb();
+    let store = Arc::new(ContentStore::open(&out.join("store.sqlite")).unwrap());
 
     // Y3's world, as E3 builds it: the base layer (strict-majority membership) and an overlay per
     // cluster (plurality membership).
@@ -189,7 +190,6 @@ fn replay(label: &str, default_check_every: usize, default_check_load: bool) -> 
     let fp_base = footprint_mb();
     eprintln!("deadcode replay: base {base_info}");
 
-    let store = Arc::new(ContentStore::open(&out.join("store.sqlite")).unwrap());
     let overlay = (graph_kind == "overlay").then(|| {
         let limits = Limits { top: 1 << 20, resident: 64 << 20, behind: 8, spill: out.join("overlay-spill"), background: true };
         Overlay::new(Arc::clone(&store), limits).unwrap()
