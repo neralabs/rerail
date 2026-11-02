@@ -1028,7 +1028,8 @@ describe("legacy package-root cutover", () => {
     }
     expect(((await readJson(join(options.home, ".cursor", "hooks.json"))).hooks as Record<string, unknown>).sessionStart)
       .toEqual([{ command: hookLine(options.nodePath, options.root, "hosts/cursor/cursor-hook.js") }]);
-    expect((await readJson(join(options.home, ".pi", "agent", "settings.json"))).packages).toEqual([foreignRoot, options.root]);
+    // The other install's entry gives this install its place.
+    expect((await readJson(join(options.home, ".pi", "agent", "settings.json"))).packages).toEqual([options.root, foreignRoot]);
   });
 
   it("replaces what another install of this package registered: hooks, status line, extension link, MCP entry and Pi package", async () => {
@@ -1335,7 +1336,7 @@ describe("Pi settings.json", () => {
     expect(await readJson(path)).toEqual({ theme: "dark", packages: ["npm:@first/pkg", ...others] });
   });
 
-  it("replaces a versioned npm source, and keeps one Rerail entry beside this install's own", async () => {
+  it("replaces a versioned npm source, and keeps this install's own entry, in its place and with its filters, over it", async () => {
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".pi", "agent", "settings.json");
     await seed(path, { packages: ["npm:@neralabs/rerail@0.1.0", "npm:@other/pkg"] });
@@ -1343,9 +1344,23 @@ describe("Pi settings.json", () => {
     expect(change(report.changes, "pi", "settings.json").detail).toBe(`register ${root} in Pi packages, replacing npm:@neralabs/rerail@0.1.0`);
     expect((await readJson(path)).packages).toEqual([root, "npm:@other/pkg"]);
 
-    await seed(path, { packages: ["npm:@other/pkg", root, "npm:@neralabs/rerail@latest"] });
-    await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
-    expect((await readJson(path)).packages).toEqual(["npm:@other/pkg", root]);
+    const own = { source: root, extensions: [] };
+    await seed(path, { packages: ["npm:@neralabs/rerail", "npm:@other/pkg", own, "npm:@neralabs/rerail@latest", { source: "npm:@neralabs/rerail@0.1.0", skills: [] }] });
+    const again = await registerHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+    expect(change(again.changes, "pi", "settings.json").detail)
+      .toBe(`register ${root} in Pi packages, removing npm:@neralabs/rerail, npm:@neralabs/rerail@latest and npm:@neralabs/rerail@0.1.0`);
+    expect((await readJson(path)).packages).toEqual(["npm:@other/pkg", own]);
+  });
+
+  it("gives this install the place and filters of another install's object entry when it has none of its own", async () => {
+    const options = await fixture();
+    const path = join(options.home, ".pi", "agent", "settings.json");
+    const previous = await packageInstall(options, "previous home");
+    await seed(path, { packages: ["npm:@other/pkg", { source: previous, skills: [] }, "npm:@neralabs/rerail"] });
+    const report = await registerHarnesses({ ...options, harnesses: ["pi"] });
+    expect(change(report.changes, "pi", "settings.json").detail)
+      .toBe(`register ${options.root} in Pi packages, replacing ${previous}, removing npm:@neralabs/rerail`);
+    expect((await readJson(path)).packages).toEqual(["npm:@other/pkg", { source: options.root, skills: [] }]);
   });
 
   it("replaces the source of an object entry for Rerail's npm package and keeps its filters", async () => {
@@ -1365,13 +1380,20 @@ describe("Pi settings.json", () => {
     expect((await readJson(path)).packages).toEqual([other]);
   });
 
-  it("removes Rerail's npm source in every form, and no other npm package, on removal", async () => {
-    const { home, root, nodePath } = await fixture();
-    const path = join(home, ".pi", "agent", "settings.json");
-    await seed(path, {
-      packages: ["npm:@neralabs/rerail", { source: "npm:@neralabs/rerail@0.1.0", extensions: [] }, "npm:@neralabs/rerail-pack-node", "npm:@other/pkg"],
-    });
-    const report = await unregisterHarnesses({ root, home, nodePath, harnesses: ["pi"] });
+  it("removes Rerail's npm source in every form, and no other npm package, when it removes the managed install only", async () => {
+    const options = await fixture();
+    const path = join(options.home, ".pi", "agent", "settings.json");
+    const packages = ["npm:@neralabs/rerail", { source: "npm:@neralabs/rerail@0.1.0", extensions: [] }, "npm:@neralabs/rerail-pack-node", "npm:@other/pkg"];
+    await seed(path, { packages });
+    const managed = await packageInstall(options, "rerail home");
+    vi.stubEnv("RERAIL_HOME", dirname(managed));
+
+    // A checkout registered with `--root` never wrote the npm source, so its removal leaves it.
+    const checkout = await unregisterHarnesses({ ...options, harnesses: ["pi"] });
+    expect(change(checkout.changes, "pi", "settings.json").action).toBe("unchanged");
+    expect((await readJson(path)).packages).toEqual(packages);
+
+    const report = await unregisterHarnesses({ ...options, root: managed, harnesses: ["pi"] });
     expect(change(report.changes, "pi", "settings.json")).toMatchObject({ action: "updated", detail: "remove rerail from Pi packages" });
     expect((await readJson(path)).packages).toEqual(["npm:@neralabs/rerail-pack-node", "npm:@other/pkg"]);
   });
