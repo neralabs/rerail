@@ -291,7 +291,7 @@ describe("installPackVersions", { timeout: INSTALL_TIMEOUT_MS }, () => {
   });
 });
 
-describe("addPackSpecs", () => {
+describe("addPackSpecs", { timeout: INSTALL_TIMEOUT_MS }, () => {
   it("puts back a loaded pack that the install replaced with one its core range leaves out, and says why", async () => {
     const home = temporaryHome();
     // What `rerail packs add typescript` installs once `latest` moves past this core.
@@ -305,7 +305,7 @@ describe("addPackSpecs", () => {
   });
 });
 
-describe("packsLeftOutByCore", () => {
+describe("packsLeftOutByCore", { timeout: INSTALL_TIMEOUT_MS }, () => {
   it("names an installed pack the new core leaves out that the previous one loaded, with why, and nothing else", async () => {
     const home = temporaryHome();
     await installPackVersions([{ id: "typescript", version: "0.1.1" }], copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" }));
