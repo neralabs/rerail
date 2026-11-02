@@ -97,6 +97,26 @@ ids invalidated (maintained) 0 / 9 / 48 / 16,268, (recompute) 440,454 / 451,389 
 451,408; value rounds (maintained) 0 / 6 / 12 / 20, (recompute) 21 / 24 / 24 / 24; reachability
 toggled 0 / 6 / 34 / 128.
 
+### 4.1 Re-measured on a quiet machine (decider, 2026-11-02, `a08a3d296`)
+
+Same workload, each run started at 1-minute load < 3 (`load-start.txt` 2.8–3.0, end 3.0–4.0). ms, p50 / p95 / p99 / max, n = 1,050.
+
+| | maintained, store | maintained, overlay | recompute, store | recompute, overlay |
+|---|---|---|---|---|
+| scope + rows + values (E3's H7 sum) | 0.050 / **0.799** / 1.733 / 4.64 | 0.051 / 0.828 / 1.826 / 4.67 | 3.337 / 4.344 / 5.387 / 8.33 | 3.428 / 4.495 / 5.416 / 9.11 |
+| values | 0.001 / 0.004 / 0.015 / 0.48 | 0.001 / 0.004 / 0.016 / 0.73 | 3.247 / 3.821 / 4.016 / 4.94 | 3.344 / 3.916 / 4.188 / 6.50 |
+| Y1 apply | 0.178 / 1.064 / 1.932 / 6.93 | 0.178 / 1.078 / 2.100 / 6.45 | 0.201 / 1.096 / 2.156 / 6.83 | 0.206 / 1.119 / 2.156 / 7.05 |
+| symbol table | 0.150 / 0.933 / 2.045 / 19.71 | 0.152 / 0.929 / 2.078 / 20.82 | 0.165 / 1.007 / 2.065 / 21.16 | 0.173 / 0.970 / 2.124 / 21.36 |
+| propagate + SQLite + observer | 0.190 / 0.343 / 7.751 / 9.69 | 0.196 / 0.329 / 8.955 / 11.01 | 0.254 / 0.418 / 8.508 / 9.28 | 0.266 / 0.400 / 9.391 / 11.18 |
+| **push total** | **0.665 / 4.308 / 9.218 / 23.6** | **0.686 / 4.155 / 9.907 / 23.55** | **3.994 / 8.302 / 12.869 / 29.14** | **4.146 / 7.974 / 13.763 / 29.10** |
+| footprint end / peak (MB) | 4,043 / 5,264 | 4,004 / 5,261 | 3,991 / 5,239 | 3,959 / 5,249 |
+| run | `runs/20261102-102505-quiet-workload-maintained-store` | `-102831-…-maintained-overlay` | `-102958-…-recompute-store` | `-103047-…-recompute-overlay` |
+
+- Against E3 on facts-engine (0.804 / 0.754 ms p95, load 7–9): maintained 0.799–0.828 ms p95, the same within run-to-run spread. The port costs nothing on the lattice side; the derivation graph adds 0.33–0.42 ms p95 per edit.
+- Recompute (03 §2's rule) against maintained, same events: values 3.8–3.9 vs 0.004 ms p95 (≈ 950×); whole push 8.0–8.3 vs 4.2–4.3 ms p95 (1.9×), because Y1 and the symbol table (≈ 2 ms p95 together) are paid in both modes.
+- Exactness re-run at `a08a3d296` (after the clippy refactor of `reach`): full replay, check every load and event, maintained 1,151 checks / 0 differences, 1,151 binding checks / 0 (`runs/20261102-103159-final-exactness-maintained-store`); recompute the same (`-103721-final-exactness-recompute-store`).
+- His slice is unaffected: S8 on this branch against `fa786cdb6` (both at load 2.6–3.1, passes 1–2): CPU cold 5.46–5.48 vs 5.36–5.40 s CPU, Metal cold 1.69–1.70 vs 1.59–1.61 s wall, edits 0.23–0.25 vs 0.21–0.26 s, keys 546/547 on both, footprints equal (`runs/20261102-102307-s8-a08a3d296`; baseline `~/rerail-bench/final-shape/baseline/20261102T084640-s8-fa786cdb6`). The ~2–5% is within the two runs' load difference [INFERENCE]; the slice path runs no code this branch added.
+
 ## 5. Footprint against the 500 MB budget
 
 `runs/20261102-094712-workload-maintained-store` (`prof::footprint_mb`, MB): start 5; per-content
