@@ -7,6 +7,18 @@ fn programs() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer")
 }
 
+/// The rules with recursion (E0's eight, t17), each with a program `<rule>.rdl` (`_` for `-`).
+const RECURSIVE: [&str; 8] = [
+    "execution_authority_bypass",
+    "internal_dead_code",
+    "legacy_execution_surfaces",
+    "public_api_triples",
+    "serverplan_dispatch_architecture",
+    "serverplan_quality",
+    "serverplan_state_tripwires",
+    "serverplan_steps",
+];
+
 fn error_name(e: &Error) -> &'static str {
     match e {
         Error::Syntax(_) => "Syntax",
@@ -19,7 +31,7 @@ fn error_name(e: &Error) -> &'static str {
 
 /// Each program, after `prelude.rdl`, parses and stratifies; or, if its first line is `// expect: <Error>`, fails with
 /// that named error. Every relation, in rules and facts, is declared with its arity, every matcher atom holds JSON,
-/// and every program's failure is reported.
+/// and every program's failure is reported. Each recursive rule has a program.
 #[test]
 fn data_layer_programs_parse() {
     let prelude = std::fs::read_to_string(programs().join("prelude.rdl")).unwrap();
@@ -53,6 +65,8 @@ fn data_layer_programs_parse() {
         failures.extend(failure.map(|f| format!("{name}: {f}")));
         names.push(name);
     }
-    assert!(!names.is_empty(), "no programs");
+    for rule in RECURSIVE {
+        assert!(names.contains(&format!("{rule}.rdl")), "no program for {rule}");
+    }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
