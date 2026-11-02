@@ -172,6 +172,16 @@ const NO_RAW_FETCH = regexRule(
   "Call the API through the generated client in src/api/generated.",
 );
 
+/** A rule in the storefront checkout's own `.rerail/rules`: the pack `worktree`, there and nowhere else. */
+const NO_LEGACY_CLIENT = regexRule(
+  "storefront-no-legacy-client",
+  "steer",
+  "This worktree moves off the legacy API client.",
+  "from\\s+[\"']\\./legacy-client[\"']",
+  "STOREFRONT-LEGACY",
+  "Import the generated client, not ./legacy-client.",
+);
+
 // ---------------------------------------------------------------------------------------------------------------
 // History: sessions, audits and steer receipts
 
@@ -376,11 +386,14 @@ function setUpAndStart(packIds: readonly string[], settings: readonly [string, b
   };
 }
 
-/** A rule created by you, stored in the library, approved as its author would, and added to the whole repository. */
-function addLibraryRule(rule: CodeRule, catalog: () => RuleCatalog): Change["apply"] {
+/**
+ * A rule created by you, stored in the library and added to the whole repository: approved, as its author would, unless
+ * `approved` is false (a rule a coding agent wrote, which runs in Log until a person approves it).
+ */
+function addLibraryRule(rule: CodeRule, catalog: () => RuleCatalog, approved = true): Change["apply"] {
   return (db, repositoryKey, at) => {
     const stored = upsertLibraryRule(db, catalog(), rule, "code", { now: at, createdAt: at });
-    approve(db, ruleSubject(stored.document.rule.id, stored.payloadHash), at);
+    if (approved) approve(db, ruleSubject(stored.document.rule.id, stored.payloadHash), at);
     addAttachment(db, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: rule.id }, at);
   };
 }
@@ -399,6 +412,17 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
         checkout: STOREFRONT,
         recordedAt: now - 20 * MINUTE,
         changes: [{ at: now - 20 * MINUTE, apply: (db, repositoryKey, at) => setRepositoryStarted(db, repositoryKey, true, at) }],
+        ...noSessions,
+      }];
+    case "awaiting-approval":
+      // A rule a coding agent wrote into the library, and one in the checkout's own .rerail/rules: neither approved.
+      return [{
+        checkout: { ...STOREFRONT, files: { ...STOREFRONT_FILES, ".rerail/rules/no-legacy-client.json": JSON.stringify(NO_LEGACY_CLIENT) } },
+        recordedAt: now - HOUR,
+        changes: [
+          { at: now - HOUR, apply: setUpAndStart(["typescript"]) },
+          { at: now - 30 * MINUTE, apply: addLibraryRule(NO_RAW_FETCH, catalog, false) },
+        ],
         ...noSessions,
       }];
     case "stopped":

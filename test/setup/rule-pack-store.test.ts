@@ -49,6 +49,8 @@ const typescriptAt = (version: string): PackVersion => ({ packageName: "@neralab
 const prefixOf = (args: readonly string[]): string => args[args.indexOf("--prefix") + 1]!;
 /** What follows `--`: the specs npm reads as packages, never as options. */
 const specsOf = (args: readonly string[]): string[] => args.slice(args.indexOf("--") + 1);
+/** Installs here are checked as the catalog checks them, compiling every rule of the TypeScript pack: slow under load. */
+const COMPILING_TIMEOUT_MS = 30_000;
 
 describe("npmPackStore", () => {
   it("fetches each pack under the tag into a staging folder of the run's own, without running install scripts, and removes it on release", async () => {
@@ -195,7 +197,7 @@ function copiesStore(home: string, ranges: Record<string, string>): PackStore & 
 
 const VALID = fixturesPath("packs", "valid");
 
-describe("installPackVersions", () => {
+describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
   it("puts the installed version back as npm recorded it when the one named installs but its core range leaves it out, and says why", async () => {
     const home = temporaryHome();
     const store = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "9.0.0": ">=9.0.0" });
@@ -301,7 +303,7 @@ describe("installPackVersions", () => {
   });
 });
 
-describe("addPackSpecs", () => {
+describe("addPackSpecs", { timeout: COMPILING_TIMEOUT_MS }, () => {
   it("puts back a loaded pack that the install replaced with one its core range leaves out, and says why", async () => {
     const home = temporaryHome();
     // What `rerail packs add typescript` installs once `latest` moves past this core.

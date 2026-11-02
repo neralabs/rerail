@@ -46,16 +46,29 @@ export function packDirectoriesOnDisk(home: string = defaultRerailHome()): strin
   return names.filter(name => RULE_PACK_PACKAGE_NAME.test(name)).sort(compareDeterministicStrings).map(name => join(modules, name));
 }
 
-/** The pack packages the person installed, each with the spec npm recorded: what the prefix's `package.json` lists. */
-function recordedDependencies(home: string): ReadonlyMap<string, string> {
+/** The packs folder's own `package.json`, which npm writes as it installs: the list of what the person installed. */
+const recordFile = (home: string): string => join(installedPacksPrefix(home), "package.json");
+
+/**
+ * The pack packages the person installed, each with the spec npm recorded: what the prefix's `package.json` lists.
+ * `problem` says why that list could not be read, when it could not (lost or broken), and the list is then empty.
+ */
+function readRecorded(home: string): { readonly dependencies: ReadonlyMap<string, string>; readonly problem?: string } {
+  const file = recordFile(home);
+  let manifest: unknown;
   try {
-    const manifest = JSON.parse(readFileSync(join(installedPacksPrefix(home), "package.json"), "utf8")) as unknown;
-    const dependencies = typeof manifest === "object" && manifest !== null && "dependencies" in manifest ? manifest.dependencies : undefined;
-    if (typeof dependencies !== "object" || dependencies === null) return new Map();
-    return new Map(Object.entries(dependencies).flatMap(([name, spec]) => (typeof spec === "string" ? [[name, spec] as const] : [])));
-  } catch {
-    return new Map();
+    manifest = JSON.parse(readFileSync(file, "utf8")) as unknown;
+  } catch (error) {
+    const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
+    return { dependencies: new Map(), problem: missing ? `${file} is missing` : `${file} cannot be read: ${error instanceof Error ? error.message : String(error)}` };
   }
+  const dependencies = typeof manifest === "object" && manifest !== null && "dependencies" in manifest ? manifest.dependencies : undefined;
+  if (typeof dependencies !== "object" || dependencies === null) return { dependencies: new Map() };
+  return { dependencies: new Map(Object.entries(dependencies).flatMap(([name, spec]) => (typeof spec === "string" ? [[name, spec] as const] : []))) };
+}
+
+function recordedDependencies(home: string): ReadonlyMap<string, string> {
+  return readRecorded(home).dependencies;
 }
 
 /**
@@ -66,6 +79,20 @@ function recordedDependencies(home: string): ReadonlyMap<string, string> {
 export function installedPackDirectories(home: string = defaultRerailHome()): string[] {
   const recorded = recordedDependencies(home);
   return packDirectoriesOnDisk(home).filter(directory => recorded.has(installedPackageName(directory)));
+}
+
+/**
+ * The packs on disk that `installedPackDirectories` does not read, each left out with why, so `rerail packs list` tells
+ * a pack npm brought in as another's dependency, or a list of installed packs that was lost, from no packs at all.
+ */
+function unrecordedPacks(home: string): SkippedRulePack[] {
+  const { dependencies, problem } = readRecorded(home);
+  return packDirectoriesOnDisk(home).filter(directory => !dependencies.has(installedPackageName(directory))).map(directory => {
+    const add = `\`rerail packs add ${installedPackageName(directory)}\` installs it as yours`;
+    return skippedPack(directory, problem === undefined
+      ? `it is not in ${recordFile(home)}, the list of packs you installed (npm also puts there a pack another package needs); ${add}`
+      : `${problem}, so Rerail cannot tell which packs you installed; ${add}`);
+  });
 }
 
 /** A tarball npm installs from (`.tgz`, `.tar.gz`, `.tar`), as against a folder. */
@@ -337,14 +364,16 @@ let installed: { readonly stamp: string; readonly catalog: RuleCatalog } | undef
  * The catalog of the packs installed in the Rerail home `home`, checked against its active core and the engine. It is
  * read again whenever the installed packs or the active core change (`rerail packs add`, `remove`, set-up installing
  * them, `rerail update`), so a running daemon and every catalog built on it follow an install without a restart;
- * otherwise each call returns the same one.
+ * otherwise each call returns the same one. A pack on disk the person did not install is left out with why
+ * (`unrecordedPacks`), after those the catalog read.
  */
 export function loadRuleCatalog(home: string = defaultRerailHome()): RuleCatalog {
   const directories = installedPackDirectories(home);
   const coreVersion = activeCoreVersion(home);
-  const stamp = installedStamp(home, directories, coreVersion);
+  const stamp = installedStamp(home, packDirectoriesOnDisk(home), coreVersion);
   if (installed?.stamp !== stamp) {
-    installed = { stamp, catalog: readRuleCatalog(directories, { coreVersion, compile: true, localSources: localSources(home, directories) }) };
+    const catalog = readRuleCatalog(directories, { coreVersion, compile: true, localSources: localSources(home, directories) });
+    installed = { stamp, catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
   }
   return installed.catalog;
 }

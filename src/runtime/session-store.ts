@@ -361,6 +361,11 @@ export class SqliteSessionReader {
   readonly path: string;
   readonly #database: LazyReadonlyRerailDatabase;
   readonly #repositoryIds: string | readonly string[] | undefined;
+  /**
+   * The footer's count of what waits for approval, by repository, owners and configuration signature: the signature
+   * covers every setting, approval and rule document the count reads, so it is counted once per change, not per poll.
+   */
+  readonly #awaitingApproval = new Map<string, number>();
 
   constructor(path: string, { repositoryId }: RepositoryScope = {}) {
     this.path = path;
@@ -413,9 +418,20 @@ export class SqliteSessionReader {
         activeRuleCount: current ? coverage.activeRuleCount : null,
         steeringCount,
         overlays: current && isWorktreePack(catalog.packs.get(WORKTREE_PACK_ID)) ? [WORKTREE_PACK_ID] : [],
-        awaitingApproval: current ? awaitingApprovalIn(database, catalog, coverage.repositoryId!, owners) : null,
+        awaitingApproval: current ? this.#awaitingApprovalIn(database, catalog, coverage.repositoryId!, owners, coverage.ruleSignature!) : null,
       };
     });
+  }
+
+  #awaitingApprovalIn(database: RerailDatabase, catalog: RuleCatalog, repositoryKey: string, owners: readonly string[], signature: string): number {
+    const key = stableJsonText([repositoryKey, owners, signature])!;
+    const known = this.#awaitingApproval.get(key);
+    if (known !== undefined) return known;
+    // Signatures a session no longer has are never asked for again: keep the map to what open sessions use.
+    if (this.#awaitingApproval.size >= 64) this.#awaitingApproval.clear();
+    const count = awaitingApprovalIn(database, catalog, repositoryKey, owners);
+    this.#awaitingApproval.set(key, count);
+    return count;
   }
 
   /**

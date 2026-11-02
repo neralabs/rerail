@@ -136,7 +136,9 @@ function installedLines(home: string): string[] {
   const packs = [...catalog.packs.values()];
   const approvals = approvalsIn(home);
   const lines = packs.length === 0
-    ? ["No rule packs are installed. `rerail packs recommend` lists the ones that fit a repository."]
+    ? [catalog.skipped.length === 0
+      ? "No rule packs are installed. `rerail packs recommend` lists the ones that fit a repository."
+      : "No rule pack loads:"]
     : packs.flatMap(pack => {
       const name = pack.packageName === null ? pack.id : rulePackShortName(pack.packageName);
       const from = pack.localSource === undefined ? "" : `  (from the ${pack.localSource.kind} ${clean(pack.localSource.path)})`;

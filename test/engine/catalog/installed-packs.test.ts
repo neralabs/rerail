@@ -249,7 +249,7 @@ describe("the installed-pack catalog", () => {
       }
     });
 
-    it("never reads a pack the person did not install, nor one whose package.json names another package", async () => {
+    it("never reads a pack the person did not install, nor one whose package.json names another package, and says why of each", async () => {
       const copies = await temporaryDirectory();
       // Hoisted by npm as a dependency of another package: on disk, in no dependency list.
       const hoisted = join(installedPacksPrefix(), "node_modules", "@neralabs", "rerail-pack-sql");
@@ -259,14 +259,30 @@ describe("the installed-pack catalog", () => {
       const spoofed = installPackDirectory(thirdPartyPack(copies, "@neralabs/rerail-pack-foo", "foo"), "rerail-pack-foo");
 
       const catalog = loadRuleCatalog();
+      const record = join(installedPacksPrefix(), "package.json");
 
       expect(installedPackDirectories()).toEqual([spoofed]);
       expect(summary(catalog)).toEqual({
         packs: [],
-        skipped: [{ path: spoofed, reason: "it is installed as rerail-pack-foo, but its package.json names @neralabs/rerail-pack-foo" }],
+        skipped: [
+          { path: spoofed, reason: "it is installed as rerail-pack-foo, but its package.json names @neralabs/rerail-pack-foo" },
+          { path: hoisted, reason: `it is not in ${record}, the list of packs you installed (npm also puts there a pack another package needs); \`rerail packs add @neralabs/rerail-pack-sql\` installs it as yours` },
+        ],
       });
       // Reported under the name it is installed as, not the one it claims.
       expect(catalog.skipped[0]?.packageName).toBe("rerail-pack-foo");
+    });
+
+    it("reports every pack on disk as left out, with why, when the list of installed packs is lost or broken", async () => {
+      const copies = await temporaryDirectory();
+      const sql = installPackDirectory(thirdPartyPack(copies, "@acme/rerail-pack-sql", "sql"), "@acme/rerail-pack-sql");
+      const record = join(installedPacksPrefix(), "package.json");
+      const reasons = () => summary(loadRuleCatalog()).skipped.map(({ path, reason }) => ({ path, reason }));
+
+      rmSync(record);
+      expect(reasons()).toEqual([{ path: sql, reason: `${record} is missing, so Rerail cannot tell which packs you installed; \`rerail packs add @acme/rerail-pack-sql\` installs it as yours` }]);
+      writeFileSync(record, "{ not json");
+      expect(reasons()).toEqual([{ path: sql, reason: expect.stringMatching(/^.* cannot be read: .*, so Rerail cannot tell which packs you installed; /u) as string }]);
     });
 
     it("keeps a pack id for Rerail's own pack while it is installed but left out, so no other pack runs in its place", async () => {

@@ -39,8 +39,10 @@ export function packNeedsApproval(pack: RulePack): boolean {
 const packDigests = new WeakMap<RuleCatalog, Map<string, string>>();
 
 /**
- * The digest of everything `pack` ships, in `catalog`: its package and version, its `pack.json` entries for its rules
- * and their documents. It changes with a new version, or any edit to a pack installed from a folder.
+ * The digest of everything `pack` ships, in `catalog`: its package and version, what it says of itself where a person
+ * reads it (its name in a steer's note and on the dashboard, its category, what it covers and why it fits), its
+ * `pack.json` entries for its rules and their documents. It changes with a new version, or any edit to a pack installed
+ * from a folder.
  */
 export function packApprovalDigest(catalog: RuleCatalog, pack: RulePack): string {
   let byPack = packDigests.get(catalog);
@@ -57,6 +59,10 @@ export function packApprovalDigest(catalog: RuleCatalog, pack: RulePack): string
   const text = stableJsonText({
     packageName: pack.packageName,
     version: pack.version,
+    name: pack.name,
+    category: pack.category,
+    covers: pack.covers,
+    reason: pack.reason,
     honourSuppressionComments: pack.honourSuppressionComments,
     rules: documents,
   }) ?? "";
