@@ -657,21 +657,32 @@ impl Lower {
         }
         let all = self.all();
         let inner = self.plan(inner, all)?;
-        let i = &inner.name;
-        let test = match (direction, recursive) {
-            (Direction::Has, false) => format!("SELECT 1 FROM nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE t.fid=s.fid AND t.node=s.pre AND t.axis=0"),
-            (Direction::Has, true) => format!("SELECT 1 FROM {i} i WHERE i.fid=s.fid AND i.pre>s.pre AND i.pre<s.pre+nera_size(s.fid,s.pre)"),
-            (Direction::Inside, false) => format!("SELECT 1 FROM nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE t.fid=s.fid AND t.node=s.pre AND t.axis=2"),
-            (Direction::Inside, true) => format!("SELECT 1 FROM nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE t.fid=s.fid AND t.node=s.pre AND t.axis=1"),
+        let (i, s) = (&inner.name, &scope.name);
+        // Uncorrelated set operations, not an `EXISTS` per scope row (re-run per row: spike S203,
+        // O32). Each side is read from where the neighbour is one `nera_tree` step away: an inner
+        // node's parent or ancestors, a scope node's parent or siblings. `IN (SELECT fid,pre …)`
+        // is indexed once by SQLite.
+        let parent_of = |x: &str| format!("JOIN nera_tree p ON p.fid={x}.fid AND p.node={x}.pre AND p.axis=2");
+        let next = |x: &str| format!("{x}.pre+nera_size({x}.fid,{x}.pre)");
+        let body = match (direction, recursive) {
+            // A child of the scope node is in inner: the parents of inner's nodes.
+            (Direction::Has, false) => format!("SELECT i.fid,p.pre FROM {i} i {} INTERSECT SELECT fid,pre FROM {s}", parent_of("i")),
+            (Direction::Has, true) => format!("SELECT i.fid,a.pre FROM {i} i JOIN nera_tree a ON a.fid=i.fid AND a.node=i.pre AND a.axis=1 INTERSECT SELECT fid,pre FROM {s}"),
+            (Direction::Inside, false) => format!("SELECT s.fid,s.pre FROM {s} s {} WHERE (s.fid,p.pre) IN (SELECT fid,pre FROM {i})", parent_of("s")),
+            (Direction::Inside, true) => format!("SELECT DISTINCT s.fid,s.pre FROM {s} s JOIN nera_tree a ON a.fid=s.fid AND a.node=s.pre AND a.axis=1 WHERE (s.fid,a.pre) IN (SELECT fid,pre FROM {i})"),
             // The next sibling starts where the node's subtree ends, inside the parent's.
-            (Direction::Precedes, false) => format!("SELECT 1 FROM nera_tree p JOIN {i} i ON i.fid=s.fid AND i.pre=s.pre+nera_size(s.fid,s.pre) WHERE p.fid=s.fid AND p.node=s.pre AND p.axis=2 AND i.pre<p.pre+p.size"),
-            (Direction::Precedes, true) => format!("SELECT 1 FROM nera_tree p, nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE p.fid=s.fid AND p.node=s.pre AND p.axis=2 AND t.fid=s.fid AND t.node=p.pre AND t.axis=0 AND t.pre>s.pre"),
-            // The previous sibling's subtree ends where the node starts.
-            (Direction::Follows, false) => format!("SELECT 1 FROM nera_tree p, nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE p.fid=s.fid AND p.node=s.pre AND p.axis=2 AND t.fid=s.fid AND t.node=p.pre AND t.axis=0 AND t.pre+t.size=s.pre"),
-            (Direction::Follows, true) => format!("SELECT 1 FROM nera_tree p, nera_tree t JOIN {i} i ON i.fid=s.fid AND i.pre=t.pre WHERE p.fid=s.fid AND p.node=s.pre AND p.axis=2 AND t.fid=s.fid AND t.node=p.pre AND t.axis=0 AND t.pre<s.pre"),
+            (Direction::Precedes, false) => format!("SELECT s.fid,s.pre FROM {s} s {} WHERE {n}<p.pre+p.size AND (s.fid,{n}) IN (SELECT fid,pre FROM {i})", parent_of("s"), n = next("s")),
+            (Direction::Follows, false) => format!("SELECT i.fid,{n} FROM {i} i {} WHERE {n}<p.pre+p.size INTERSECT SELECT fid,pre FROM {s}", parent_of("i"), n = next("i")),
+            // A later (earlier) sibling is in inner: the two share a parent.
+            (Direction::Precedes | Direction::Follows, true) => {
+                let order = if matches!(direction, Direction::Precedes) { ">" } else { "<" };
+                format!(
+                    "SELECT DISTINCT s.fid,s.pre FROM {s} s {} JOIN (SELECT i.fid,i.pre,q.pre AS parent FROM {i} i JOIN nera_tree q ON q.fid=i.fid AND q.node=i.pre AND q.axis=2) o ON o.fid=s.fid AND o.parent=p.pre AND o.pre{order}s.pre",
+                    parent_of("s")
+                )
+            }
         };
         let exact = scope.exact && inner.exact;
-        let body = format!("SELECT s.fid,s.pre FROM {} s WHERE s.fid IN (SELECT fid FROM {i}) AND EXISTS({test})", scope.name);
         let selected = self.relation(body, exact)?;
         Ok(self.narrowed(selected, &scope))
     }

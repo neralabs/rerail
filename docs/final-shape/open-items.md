@@ -32,7 +32,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O29 | Phase 4 / 9 | A recursive label through `not has not` settles one level deep: SIM300's `probably` misses `X == 1 + 2 + 3`, `X == [[1]]` (06 S7) | closed (2026-10-31): a sweep with complements sets or clears each roots verdict; S7 equal for every (rule, code) |
 | O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | closed (2026-10-31, decision 0022): S7's engine-only footprint peak is 477 MB on Metal (was 0.99 GB) and 447 MB on the CPU backend (was 575–607), measured as `phys_footprint_peak` after the audit. Freed heap pages are returned at stage ends; SQLite allocates from jemalloc; the GPU's label prefix, scratch and counts are sized by the run; roots stream into rows with digested structure keys. Left: the driver's fixed ~170 MB per GPU execution, and sparse host labels if the corpus grows |
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
-| O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | open: rewrite as joins over materialized, indexed neighbourhoods (spike S203) before the fallback has a driver (list step 20) |
+| O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
 
 ## O1. Stale-fact detection after a crash
 
@@ -878,4 +878,12 @@ scope row over an unindexed materialized set (`related_on_tape`), the shape the 
 re-running its body per row (S203: 296.7 → 31.2 ms once materialized). **Closure:** relations as
 joins over each scope's neighbourhood from `nera_tree`, materialized once and indexed on
 `(fid, pre)`, measured in the lab against P before list step 20 gives the fallback a driver.
+
+**Closed (2026-11-02).** Each relation is an uncorrelated set operation read from the side where
+the neighbour is one `nera_tree` step away: has from inner's parents or ancestors `INTERSECT` the
+scope; inside, precedes and follows from the scope's parent, ancestors or next sibling tested with
+`(fid,pre) IN (SELECT fid,pre FROM inner)`, which SQLite indexes once; recursive sibling relations
+join scope and inner on their shared parent. On the 63 batches: 2.21 G → 0.091 G VM steps (P
+0.285 G), execute CPU 57 s → 2.3 s, rows identical (1,312,845);
+`the_sql_fallback_relates_on_the_tape_exactly` still holds the eleven relation rules to the matcher.
 

@@ -157,7 +157,8 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
   |---|---:|---:|---:|
   | P (`cbee7a03`, its lab build) | 0.285 G | 879,555 | 11.8 s (P's crate unoptimized) |
   | Rerail, production (`lower::batch`) | 0.052 G (0.18×) | 2,116,558 (2.4×) | 1.6 s |
-  | Rerail, SQL fallback (`lower::fallback`) | 2.21 G (7.7×) | 1,312,845 (1.5×) | 57 s |
+  | Rerail, SQL fallback (`lower::fallback`), first form | 2.21 G (7.7×) | 1,312,845 (1.5×) | 57 s |
+  | Rerail, SQL fallback, set operations (O32) | 0.091 G (0.32×) | 1,312,845 (1.5×) | 2.3 s |
 
   The production lowering passes: 5.5× fewer steps than P. Its rows are 2.4× P's, because
   relations, pattern parent hops and uncovered text stay supersets for the transducers (P decoded
