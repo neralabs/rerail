@@ -104,54 +104,6 @@
     "evidence": "Ruff 0.16.9 reports UP006 at 60:19 on `\"List\"` in `TypeVar(\"Z\", \"List\", \"Set\")`. Rerail drops every finding in this file because tree-sitter-python fails on the valid statement `match *0, 1, *2:` at 91:15 (CLI SYNTAX, T1), and the engine returns source-incomplete for it. A probe copy with only line 91 rewritten agrees with live Ruff (ruff 4, rule 4)."
   },
   {
-    "rule": "ruff-f822-undefined-export",
-    "source": "fixtures",
-    "path": "ruff/RUF022.py",
-    "line": 11,
-    "kind": "rerail-unknown",
-    "evidence": "`__all__: list = ['b', \"c\", ((('a')))]`: Ruff's AST has no parentheses, so add_to_names (crates/ruff_python_semantic/src/model/all.rs:79) sees `'a'` as an ExprStringLiteral entry and F822 reports it at 11:31. The engine's Exports::add (native/src/code_rule_dsl/scope/usage.rs:587) reads the element through value::python::string_literal, which returns None for a parenthesized_expression. So no entry is recorded and `resolves.unresolved` cannot match; a probe `__all__ = [\"a\", (\"b\"), \"c\"]` misses `b` the same way."
-  },
-  {
-    "rule": "ruff-f822-undefined-export",
-    "source": "fixtures",
-    "path": "ruff/RUF022.py",
-    "line": 19,
-    "kind": "rerail-unknown",
-    "evidence": "`__all__ += \"foo3\", \"foo2\", \"foo1\"` is an implicit tuple: Ruff reads it as an Expr::Tuple (crates/ruff_python_semantic/src/model/all.rs:155) and reports all three entries. tree-sitter-python gives it as an expression_list, and the engine's extract (native/src/code_rule_dsl/scope/usage.rs, match on node kind) handles only list/tuple/parenthesized/call, so it records no entries. A probe `__all__ += \"d\", \"e\"` confirms the miss (Ruff 2, rule 0)."
-  },
-  {
-    "rule": "ruff-f822-undefined-export",
-    "source": "fixtures",
-    "path": "ruff/RUF022.py",
-    "line": 23,
-    "kind": "rerail-unknown",
-    "evidence": "`__all__ = (\"parenthesized_item\"), \"in\", (\"an_unparenthesized_tuple\")` is a bare tuple, which Ruff reads as Expr::Tuple with three string entries (crates/ruff_python_semantic/src/model/all.rs:155). The engine's extract in native/src/code_rule_dsl/scope/usage.rs has no expression_list arm (and Exports::add does not unwrap the parenthesized elements), so none of the three entries is recorded and the rule misses all three."
-  },
-  {
-    "rule": "ruff-f822-undefined-export",
-    "source": "fixtures",
-    "path": "ruff/RUF022.py",
-    "line": 207,
-    "kind": "rerail-unknown",
-    "evidence": "The tuple element `(\"a_veeeeeeeeeeeeeeeeeeery_long_parenthesized_item\")` (lines 206-208) is a parenthesized string. Ruff's parenthesis-free AST passes it to add_to_names as a string literal and reports it at 207:9. The engine's Exports::add (native/src/code_rule_dsl/scope/usage.rs:587) gets a parenthesized_expression, for which string_literal returns None, so the entry is never recorded."
-  },
-  {
-    "rule": "ruff-f822-undefined-export",
-    "source": "fixtures",
-    "path": "ruff/RUF022.py",
-    "line": 214,
-    "kind": "rerail-unknown",
-    "evidence": "The tuple element `((\"c\"))` (lines 213-215) is a doubly parenthesized string that Ruff reads as a plain string literal entry (crates/ruff_python_semantic/src/model/all.rs:79) and reports at 214:9. The engine's Exports::add does not unwrap parenthesized_expression elements (native/src/code_rule_dsl/scope/usage.rs:587), so no entry exists for `resolves.unresolved` to test."
-  },
-  {
-    "rule": "ruff-f822-undefined-export",
-    "source": "fixtures",
-    "path": "ruff/RUF022.py",
-    "line": 359,
-    "kind": "rerail-unknown",
-    "evidence": "`__all__ = \"foo\", \"an\" \"implicitly_concatenated_second_item\", not_a_string_literal` is a bare tuple. Ruff records the two string entries and only flags the third as INVALID_OBJECT (crates/ruff_python_semantic/src/model/all.rs:84-96), reporting 359:11 and 359:18. The engine's extract (native/src/code_rule_dsl/scope/usage.rs) has no expression_list arm and records no entries for it."
-  },
-  {
     "rule": "ruff-d101-undocumented-public-class",
     "source": "fixtures",
     "path": "pyupgrade/UP045_1.py",

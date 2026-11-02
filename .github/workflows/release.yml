@@ -20,7 +20,8 @@ name: Release
 # package.yml restores the cargo cache and never saves it: release-cache.yml builds and saves it on main.
 #
 # Once the dist-tag check passes, the github-release job makes the tag's GitHub Release, with the version's
-# CHANGELOG.md section as its notes.
+# CHANGELOG.md section as its notes. After a put-back, the same job makes the version put back the repository's
+# latest release.
 
 on:
   workflow_dispatch:
@@ -331,10 +332,14 @@ jobs:
   # The GitHub Release of the tag, once npm has the version under its channel: its notes are the version's section of
   # the tagged CHANGELOG.md (scripts/release/github-release.mjs), so release notes are written once, in the changelog.
   # A `next` or `beta` release is a pre-release; a `latest` one becomes the repository's latest release. Run again, it
-  # rewrites the notes of the Release it made.
+  # rewrites the notes and flags of the Release it made. After a put-back it runs for the version put back, whose
+  # Release exists already: that rewrite makes it the latest release again, with its notes from main's CHANGELOG.md,
+  # which keeps every released version's section. This is the one job that writes to the repository, so it alone
+  # holds `contents: write`.
   github-release:
     name: GitHub Release
-    needs: [metadata, dist-tags]
+    needs: [metadata, dist-tags, put-back]
+    if: ${{ !cancelled() && (needs.dist-tags.result == 'success' || needs.put-back.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -352,5 +357,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASED: "@neralabs/rerail@${{ needs.metadata.outputs.version }}:${{ needs.metadata.outputs.channel }}"
+          RELEASED: ${{ inputs.latest && format('@neralabs/rerail@{0}:latest', inputs.latest) || format('@neralabs/rerail@{0}:{1}', needs.metadata.outputs.version, needs.metadata.outputs.channel) }}
         run: node scripts/release/github-release.mjs
