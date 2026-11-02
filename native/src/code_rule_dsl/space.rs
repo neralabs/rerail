@@ -88,6 +88,7 @@ impl NodeSet {
         self.words[node as usize / 64] |= 1 << (node % 64);
     }
 
+    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn contains(&self, node: u32) -> bool {
         self.words[node as usize / 64] >> (node % 64) & 1 != 0
     }
@@ -156,11 +157,13 @@ impl NodeSet {
         self.difference_with(&mask);
     }
 
+    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.words.iter().map(|word| word.count_ones() as usize).sum()
     }
 
     /// The set's nodes in ascending order.
+    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn iter(&self) -> impl Iterator<Item = u32> + '_ {
         self.words.iter().enumerate().flat_map(|(at, &word)| {
             let mut word = word;

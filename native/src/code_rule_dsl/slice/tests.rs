@@ -595,3 +595,44 @@ fn a_recursive_label_settles_at_every_depth() {
     let difference = Difference::of(&run, &ws, &failed);
     assert!(difference.clauses.is_empty(), "{:?}", difference.clauses);
 }
+
+/// The napi entry point finds what the slice's own `audit` finds, and a run over the same
+/// snapshot afterwards is warm: nothing evaluated, nothing re-run.
+#[test]
+fn the_napi_slice_audits_and_applies_as_the_slice_does() {
+    let dir = temp("napi-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    write(&dir, "a.py", "assert x\nimport os\nos.chmod('f', 0o777)\n");
+    write(&dir, "b.py", "def f():\n    password = 'hunter2'\n    return password\n");
+    let mut documents = Vec::new();
+    files(&pack().join("rules"), "json", &mut documents);
+    files(&pack().join("candidates/rules"), "json", &mut documents);
+    documents.sort();
+    let sources = documents
+        .iter()
+        .map(|path| napi::SlicePolicy {
+            name: path.file_stem().unwrap().to_string_lossy().into_owned(),
+            source: std::fs::read_to_string(path).unwrap(),
+            format: "json".to_owned(),
+        })
+        .filter(|policy| CodeRuleDslRuntime::compile(policy.source.clone(), policy.format.clone(), CAPABILITIES.to_owned()).is_ok())
+        .collect::<Vec<_>>();
+    let store = temp("napi-store").with_extension("sqlite");
+    let mut slice = napi::CodeRuleSlice::new(store.to_string_lossy().into_owned(), sources, CAPABILITIES.to_owned(), "cpu".to_owned()).unwrap();
+    assert!(slice.clauses() > 0);
+    let found = |json: &str| -> (Keys, usize, u64) {
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let keys = value["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| (k["rule"].as_str().unwrap().to_owned(), k["code"].as_str().unwrap().to_owned(), k["path"].as_str().unwrap().to_owned(), k["line"].as_u64().unwrap() as usize))
+            .collect();
+        (keys, value["evaluated"].as_array().unwrap().len(), value["rerun"].as_u64().unwrap())
+    };
+    let (keys, evaluated, _) = found(&slice.audit(WS.to_owned(), dir.to_string_lossy().into_owned()).unwrap());
+    assert_eq!(keys, self::keys(&cold(&dir, &policies())));
+    assert!(!keys.is_empty() && evaluated == 2);
+    let (warm, evaluated, rerun) = found(&slice.apply(WS.to_owned(), dir.to_string_lossy().into_owned()).unwrap());
+    assert_eq!((warm, evaluated, rerun), (keys, 0, 0));
+}

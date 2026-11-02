@@ -244,6 +244,31 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
 }
 
+/** A policy document for the first slice: its name (the file stem), source and format. */
+export interface NativeSlicePolicy {
+  name: string;
+  source: string;
+  format: CodeRuleDslSourceFormat;
+}
+
+/**
+ * The first slice over one content store (docs/final-shape/06-first-slice.md): the pack's lowered Python `ast`
+ * clauses, kept between runs. `audit` and `apply` return JSON: `findings` ({rule, code, path, line}), `coverage`
+ * ({rule, path, coverage, reason?}), `evaluated` paths, `rerun` derivations and the `changed` families.
+ */
+export interface NativeCodeRuleSlice {
+  clauses(): number;
+  /** A cold audit of `scope` at the snapshot of `directory`. */
+  audit(scope: string, directory: string): string;
+  /** `scope` at the snapshot of `directory`, evaluating only the documents that changed since the last run. */
+  apply(scope: string, directory: string): string;
+}
+
+export interface NativeCodeRuleSliceConstructor {
+  /** Opens the store at `storePath` and lowers `policies` for `backend` (`"cpu"` or `"metal"`). */
+  new (storePath: string, policies: NativeSlicePolicy[], capabilitiesJson: string, backend: "cpu" | "metal"): NativeCodeRuleSlice;
+}
+
 /** An OS advisory lock (`flock` / `LockFileEx`) the OS drops when the holding process exits, however it exits. */
 export interface NativeExclusiveFileLock {
   /** Unlocks and closes the file before process exit; later calls do nothing. */
@@ -291,6 +316,7 @@ export interface NativeBinding {
   ConversationEngine: NativeConversationEngineConstructor;
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
   CodeRuleDslWorkspace: NativeCodeRuleDslWorkspaceConstructor;
+  CodeRuleSlice: NativeCodeRuleSliceConstructor;
 }
 
 const require = createRequire(import.meta.url);

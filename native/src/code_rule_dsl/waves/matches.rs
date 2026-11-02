@@ -25,6 +25,7 @@ use crate::code_rule_dsl::language::{GrammarDialect, tape_tag};
 use crate::code_rule_dsl::matcher::AnchorPlan;
 use crate::code_rule_dsl::transducer::packed::{ExecutionBackend, LoweredMatcher, LoweredWave};
 use crate::content_store::{StoreError, StoreResult};
+#[cfg(test)]
 use std::collections::BTreeSet;
 use std::sync::Arc;
 

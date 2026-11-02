@@ -8,8 +8,7 @@
 //! and an edit's unchanged families cut off. The layer then runs over every document: its facts
 //! are the documents' comments and lines, and its families cut off an unchanged finding set.
 //!
-//! Tests and benches only: nothing in production calls the slice until its differential gate
-//! (S7) passes; a napi method follows that.
+//! Hosts call it through `napi::CodeRuleSlice` (S6's napi method, after S7's gate passed).
 
 use crate::code_rule_dsl::prof;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
@@ -245,5 +244,6 @@ fn unqualified(table: &str) -> &str {
     table.strip_prefix("temp.").unwrap_or(table)
 }
 
+mod napi;
 #[cfg(test)]
 mod tests;

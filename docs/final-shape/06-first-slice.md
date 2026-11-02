@@ -407,6 +407,13 @@ Check: an edit to one file re-runs exactly that file's derivations and its claus
 
   - What bounds the warm runs is the layer's facts, rewritten for every document (decision 0014),
     and the documents' facts rebuilt from their tapes. S8 measures them on S7's sample.
+- **The napi method** (2026-11-01, after S7): `CodeRuleSlice` (`slice/napi.rs`; typed in
+  `src/engine/native/native.ts`). It opens a store, lowers a pack's policies once for `"cpu"` or
+  `"metal"`, and has `audit(scope, directory)` and `apply(scope, directory)`. Each returns JSON:
+  the finding keys and coverage by path, the documents evaluated, the derivations re-run, and the
+  families that changed. `slice::tests::the_napi_slice_audits_and_applies_as_the_slice_does` checks
+  that it finds what `audit` finds, and that a second run over the same snapshot evaluates and
+  re-runs nothing.
 
 ### S7. Differential gate against W's engine — done (2026-10-31)
 
