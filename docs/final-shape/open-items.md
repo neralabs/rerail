@@ -36,8 +36,8 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O36 | T12 | Dead code's state is layered twice per worktree (Y3: base, cluster, worktree; E3's lattice: worktree-1 base, worktree), and the replay's footprint is 4.0 GB at the end (peak 5.3 GB) against 500 MB | open (notes/t12-crossfile-port.md §5, §6.4) |
 | O37 | T12 | The reached set's `maintained` mode is a level witness (03 §2 says none); `recompute` costs 3.1–3.7 ms p95 per edit | open, **decision needed** |
 | O38 | T12 | `propagate` has no level order: a derivation that reads both a fact and its descendant runs twice per edit (dead-code findings: 6 re-runs in 4 waves) | open |
-| O39 | T12 | The xref and symbols derivations take the observer's path delta from their producer, so crash recovery (O1) cannot recompute them | open |
-| O40 | T12 | The cross-file families read facts-engine's X6 exports, not this crate's tapes and core facts | open |
+| O39 | T12 | The xref and symbols derivations take the observer's path delta from their producer, so crash recovery (O1) cannot recompute them | open; their inputs can now come from the store (`facts::xinputs::store`, notes/t16-xref-from-tapes.md §4), the delta still comes from `Pending` |
+| O40 | T12 | The cross-file families read facts-engine's X6 exports, not this crate's tapes and core facts | open, producer done: `facts::xinputs` equals the X6 exports on all 19,801 (path, content) pairs of the replay (18.0 M rows, 0 differences); the dead-code replay is not switched to it yet (notes/t16-xref-from-tapes.md §3, §4) |
 
 ## O1. Stale-fact detection after a crash
 
