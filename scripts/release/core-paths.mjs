@@ -4,12 +4,14 @@
 
 /**
  * Paths whose change never changes what core ships, so they alone never release it: the packs (released on their
- * own), documentation, CI, changesets, tests, fixtures, corpora and benchmarks, development and release scripts, and
- * repository files npm does not pack (a generator's output is committed where it ships, so it counts there). Everything
- * else is a core change, `package-lock.json` included unless only its pack workspace entries moved (`lockChangesCore`).
+ * own), documentation, CI, changesets and core's pending changelog entries, tests, fixtures, corpora and benchmarks,
+ * development and release scripts, and repository files npm does not pack (a generator's output is committed where it
+ * ships, so it counts there). Everything else is a core change, `package-lock.json` included unless only its pack
+ * workspace entries moved (`lockChangesCore`).
  * A directory ends in `/`.
  */
 export const NOT_SHIPPED = [
+  ".changelog/",
   ".changeset/",
   ".github/",
   ".rerail/",
