@@ -757,3 +757,39 @@ fn a_run_after_a_crashed_push_recovers_it() {
     assert_ne!(after, before, "the edit adds a finding");
     assert_eq!(after, keys(&cold(&dir, &policies)));
 }
+
+/// The content memo (05 Phase 1's facts memo row): a second scope over the same files, a rename,
+/// and an edit back to content evaluated before take the rows from the memo, evaluate nothing
+/// for those documents, and find what a cold audit of the same snapshot in a fresh store finds.
+#[test]
+fn documents_seen_before_take_their_rows_from_the_content_memo() {
+    let one = temp("memo-one");
+    std::fs::create_dir_all(&one).unwrap();
+    write(&one, "a.py", "import os\nos.chmod('f', 0o777)\n");
+    write(&one, "b.py", "def f():\n    assert x\n    return 1\n");
+    let policies = policies();
+    let store = ContentStore::open(&temp("memo").with_extension("sqlite")).unwrap();
+    let mut rules = Rules::lower(&policies, ExecutionBackend::CpuJit).unwrap();
+    let first = audit(&store, WS, directory_root(&store, &one).unwrap(), &mut rules).unwrap();
+    assert_eq!((first.evaluated.len(), first.reused.len()), (2, 0));
+    // Another scope over the same files: every document from the memo.
+    let other = audit(&store, "/other", directory_root(&store, &one).unwrap(), &mut rules).unwrap();
+    assert_eq!((other.evaluated.len(), other.reused.len()), (0, 2));
+    assert_eq!(keys(&other), keys(&first));
+    // A rename keeps the content: from the memo, found at the new path.
+    let two = temp("memo-two");
+    std::fs::create_dir_all(&two).unwrap();
+    std::fs::copy(one.join("a.py"), two.join("a.py")).unwrap();
+    std::fs::copy(one.join("b.py"), two.join("renamed.py")).unwrap();
+    let renamed = audit(&store, "/two", directory_root(&store, &two).unwrap(), &mut rules).unwrap();
+    assert_eq!((renamed.evaluated.len(), renamed.reused.len()), (0, 2));
+    assert_eq!(keys(&renamed), keys(&cold(&two, &policies)));
+    // An edit, then back: the edit is evaluated, the return to the first content is not.
+    write(&one, "b.py", "def f():\n    return 1\n");
+    let edited = apply(&store, WS, directory_root(&store, &one).unwrap(), &mut rules).unwrap();
+    assert_eq!((edited.evaluated.as_slice(), edited.reused.len()), (&["b.py".to_owned()][..], 0));
+    write(&one, "b.py", "def f():\n    assert x\n    return 1\n");
+    let back = apply(&store, WS, directory_root(&store, &one).unwrap(), &mut rules).unwrap();
+    assert_eq!((back.evaluated.len(), back.reused.as_slice()), (0, &["b.py".to_owned()][..]));
+    assert_eq!(keys(&back), keys(&first));
+}

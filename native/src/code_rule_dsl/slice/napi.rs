@@ -102,8 +102,8 @@ impl CodeRuleSlice {
     }
 }
 
-/// A run as JSON: finding keys and coverage by path, the documents evaluated, the derivations
-/// re-run, and the wave's and layer's families that changed.
+/// A run as JSON: finding keys and coverage by path, the documents evaluated and those whose rows
+/// came from the content memo, the derivations re-run, and the wave's and layer's families that changed.
 pub(super) fn report(run: &Run) -> String {
     let path = |doc: &u32| run.paths.get(doc).cloned().unwrap_or_default();
     let findings = run
@@ -125,6 +125,7 @@ pub(super) fn report(run: &Run) -> String {
         "findings": findings,
         "coverage": coverage,
         "evaluated": run.evaluated,
+        "reused": run.reused,
         "rerun": run.ingested.push.work.rerun,
         "changed": {"matches": run.matches, "findings": run.changed},
     })

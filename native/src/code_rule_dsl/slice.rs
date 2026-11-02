@@ -94,6 +94,8 @@ pub(in crate::code_rule_dsl) struct Run {
     pub ingested: Ingested,
     /// The documents the wave evaluated, by path.
     pub evaluated: Vec<String>,
+    /// The documents whose rows came from the content memo instead (`memo`), by path.
+    pub reused: Vec<String>,
     /// The wave's families whose digest changed, and the layer's.
     pub matches: Vec<String>,
     pub changed: Vec<String>,
@@ -159,21 +161,38 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
         .into_iter()
         .collect::<Vec<_>>();
     let documents = matches::documents(store, scope, &paths)?;
-    let evaluate = documents.iter().filter(|d| kept.get(&d.path).is_none_or(|(_, digest)| *digest != d.digest)).cloned().collect::<Vec<_>>();
+    let changed = documents.iter().filter(|d| kept.get(&d.path).is_none_or(|(_, digest)| *digest != d.digest)).cloned().collect::<Vec<_>>();
+    // Of those, the ones whose blob the content memo knows under these rules take its rows.
+    let mut evaluate = Vec::with_capacity(changed.len());
+    let mut reused = Vec::new();
+    for document in changed {
+        match prof::time("slice.memo_lookup", || memo::lookup(store, scope, &rules.digest, &document))? {
+            Some(rows) => reused.push((document, rows)),
+            None => evaluate.push(document),
+        }
+    }
     // Rows to drop from the kept ones: of documents evaluated again, or gone.
     let current = documents.iter().map(|d| d.path.as_str()).collect::<BTreeSet<_>>();
-    let mut fresh = evaluate.iter().map(|d| i64::from(d.key)).collect::<Vec<_>>();
+    let mut fresh = evaluate.iter().chain(reused.iter().map(|(d, _)| d)).map(|d| i64::from(d.key)).collect::<Vec<_>>();
     fresh.extend(kept.iter().filter(|(path, _)| !current.contains(path.as_str())).map(|(_, (d, _))| *d));
-    prof::time("slice.keep", || keep(&lease, scope, &fresh))?;
+    prof::time("slice.keep", || -> StoreResult<()> {
+        keep(&lease, scope, &fresh)?;
+        for (document, rows) in &reused {
+            memo::keep(&lease, document.key, rows, KEPT_MATCH, KEPT_SPAN)?;
+        }
+        Ok(())
+    })?;
 
     let program = rules.wave.kept_program(store)?;
     let inputs = documents.iter().map(|d| DerivationInput { name: Some(d.core.clone()), digest: d.digest }).collect();
     let limits = Limits { max_waves: 1, ..Limits::default() };
     let wave = &mut rules.wave;
     let evaluated = evaluate.iter().map(|d| d.path.clone()).collect();
+    let memoised = evaluate.clone();
     let outcome = prof::time("slice.wave", || schedule::run_over(&lease, store, &program, scope, evaluate, inputs, &limits, &mut |chunk| wave.demand(store, scope, chunk)))?;
     prof::time("slice.remember", || -> StoreResult<()> {
         wave.statistics(&lease, scope)?;
+        memo::remember(&lease, store, scope, &rules.digest, &memoised)?;
         remember(&lease, scope, &rules.digest, &documents)
     })?;
 
@@ -188,6 +207,7 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
         paths: documents.iter().map(|d| (d.key, d.path.clone())).collect(),
         ingested,
         evaluated,
+        reused: reused.into_iter().map(|(d, _)| d.path).collect(),
         matches: outcome.changed,
         changed: layer.changed,
     })
@@ -250,6 +270,7 @@ fn unqualified(table: &str) -> &str {
     table.strip_prefix("temp.").unwrap_or(table)
 }
 
+mod memo;
 mod napi;
 #[cfg(test)]
 mod tests;

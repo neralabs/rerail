@@ -113,7 +113,7 @@ pub(crate) fn histogram_digest(f: &Facts) -> [u8; 32] {
 }
 
 /// The source a path name's blob (a Git blob id in its first 20 bytes) is stored as.
-fn blob_source_id(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<SourceId>> {
+pub(crate) fn blob_source_id(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<SourceId>> {
     let blob: [u8; 20] = digest[..20].try_into().expect("twenty bytes");
     graph.store().source_by_alias(HashKey::git_sha1(blob))
 }

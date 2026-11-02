@@ -92,6 +92,7 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 
 - Modules: `content_store/{atoms, derivation, facts_memo, tree_diff, tree_pages}.rs` and `code_rule_dsl/facts/{observe, propagate, memo, pages, runs, overlay}.rs`; provenance in `provenance.md`.
 - Open items carried forward: O1–O6 in `open-items.md`. O1 (stale-fact detection after a crash) must be validated before the overlay is used outside tests.
+- 2026-11-01: the facts memo row is on the slice's path (`slice/memo.rs`). A document's wave rows are memoised by its blob's source, with the rules' digest and the dialect as the plan, and each entry holds the core digest it came from. A document seen before (another scope, a rename, an edit back) takes its rows from the memo instead of the wave (`documents_seen_before_take_their_rows_from_the_content_memo`).
 - 2026-10-27: O1 closed. The push marker, `invalid_derivations` and `observe::recover` are in, and crash points through the store and the overlay are validated (`facts/observe/tests/recovery.rs`). O2–O6 remain open.
 
 ### Phase 2: core facts from the tape
