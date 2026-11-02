@@ -461,6 +461,9 @@ fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, 
             }
         }
     }
+    crate::code_rule_dsl::prof::count("set.steps", steps.len());
+    crate::code_rule_dsl::prof::count("set.withins", steps.iter().filter(|step| matches!(step, SetStep::Within { .. })).count());
+    crate::code_rule_dsl::prof::count("set.programs", 1);
     let files = (0..space.files()).map(|file| (space.base(file), space.count(file))).collect::<Vec<_>>();
     let leaves = leaves.iter().map(|(&id, set)| (id, set.words())).collect::<Vec<_>>();
     let words = set_steps::run(&files, space.len(), program.ops.len(), &leaves, &steps, &program.outputs)

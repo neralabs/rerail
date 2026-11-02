@@ -184,9 +184,20 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 
 - Packed runtime (`5bf45ff0` copy, `a36418d0`): in the module tree under `transducer`; W's bench-only JIT and Metal backends and the `bench-backends` feature removed.
 - Verifier proofs and query front end (`98e96170`, `692ff6ba` copies; next commit): Tempo's cycle-progress and greedy-contract proofs replace N's backward-goto heuristic in `validate`; `scm.rs` compiles tree-sitter queries to programs; F1 is a test that the verifier's opcodes are exactly the Metal interpreter's.
-- Metal pieces (`cf19c0d9` copy, and G's grid executor `b90a7b0a`, `e92c5958`, `faf1c92b`, `be5197b5`, `6dd8ae15`): placed (`bb4c9605`). G's grid executor is `ExecutionBackend::Metal` (`metal_grid_backend`) beside N's `MetalInterpreter`/`MetalJit`, which stay; shared files are 3-way merges over N's base Tempo@176ea093d. The adaptations (plan-sized pools within 500 MB for the 2 GB `METAL_BUFFER_LIMIT` and the 600-launch cap, K1, K3) are outstanding.
+- Metal pieces (`cf19c0d9` copy, and G's grid executor `b90a7b0a`, `e92c5958`, `faf1c92b`, `be5197b5`, `6dd8ae15`): placed (`bb4c9605`). G's grid executor is `ExecutionBackend::Metal` (`metal_grid_backend`) beside N's `MetalInterpreter`/`MetalJit`, which stay; shared files are 3-way merges over N's base Tempo@176ea093d. The adaptations (plan-sized pools within 500 MB for the 2 GB `METAL_BUFFER_LIMIT` and the 600-launch cap, K1, K3) are done (list step 13, below).
 - Placement differs from the table: row 3's modules sit flat in `transducer/packed/`, not in `packed/metal/`. G's files are 3-way merges into files N's base already has at flat paths (`metal_backend.rs`, `metal_launch.rs`, `metal_parallel*`), and `#[path]` keeps G's names. Moving only G's new files into `packed/metal/` would split one merged unit across two directories.
 - Row 1's "keep W `persist_search_index_batch`": kept (`transducer.rs:534`), called from `workspace/storage.rs` and the packed tests. `POSITIONAL_INDEX_VERSION` is W's 3 (decided with row 1).
+
+- **Plan-sized pools (list step 13, 2026-11-02).** The guards are plan-time bounds:
+  - **Launches: at most 99 an evaluation** (`metal_launch_budget::KERNEL_LAUNCH_LIMIT`, was 600). The wave's label plan counts its launches before encoding (`label_passes::run`: each level's kernels, a fused group as its one dispatch, rounds from what is left). A plan that cannot fit is refused as `BackendLaunchLimit`, and the wave splits the batch, still on Metal (`waves::matches::labelled_metal`). The ledger stays as the backstop, and every Metal submission is now checked (`production_encoders_cannot_bypass_the_launch_guard` passes; the set steps and the profiling split bypassed it).
+  - **The set program is one dispatch** (`set_steps`): a threadgroup per file runs every step over the file's words, a barrier between steps. On the device each file starts at a word boundary. S7's program was 533 steps, 684 dispatches; it is now 1 (sets 22 → 16 ms).
+  - **Device memory: one 256 MiB pool** (`METAL_BUFFER_LIMIT`, was 2 GB), the device's share of the 500 MB (02 §6). Buffers are sized from the plan, not the worst case. Root records are reserved at one per 16 roots, not 4 per root; a batch that writes more overflows to the CPU, as before. The deep fused groups share one stack buffer. A batch that does not fit is refused as `BackendCapacity` and split.
+  - **Measured** (S7, 250 files, load 35–46):
+    - Metal: 44 launches in one evaluation (plan 50), plus 1 for the sets.
+    - Device buffers: peak 248 MB, was 694 MB (root records 351 MB, group stacks 5 × 33 MB).
+    - Results: 710 keys = W on CPU and Metal; Metal CPU time 2.2 s.
+    - The 15-fixture wave check (`the_wave_is_one_evaluation_on_metal`): 46 launches, was 77.
+  - **Diagnostics:** `RERAIL_LAUNCHES` prints planned against actual launches; `RERAIL_BUFFERS` prints each reservation of 4 MB or more with its call site.
 
 Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base, then differential finding keys for interpreter vs JIT vs Metal on a 100–300-file sample.
 

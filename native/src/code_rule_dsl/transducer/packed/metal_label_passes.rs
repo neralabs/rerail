@@ -569,9 +569,11 @@ const MICRO_STACK_WORDS: usize = 64 * 17;
 const MICRO_DEEP_POOL: usize = 2048;
 /// The deep pool's kernel in `KERNELS`.
 const DEEP_KERNEL: usize = 6;
-/// The launches a clause's encoding aims to stay within, below the evaluation's budget
-/// (`metal_launch_budget`); a recursive group's rounds are encoded from what is left.
-const LAUNCHES: usize = 560;
+/// The launches an evaluation's encoding stays within (`metal_launch_budget`, list step 13): a
+/// recursive group's rounds are encoded from what the plan's fixed launches leave, and a plan
+/// that cannot fit (its fixed launches and two rounds a group, or a rerun) is refused before it
+/// encodes, as `BackendLaunchLimit`.
+const LAUNCHES: usize = super::super::metal_backend::launch::KERNEL_LAUNCH_LIMIT;
 /// At most this many rounds of a recursive group are encoded in one go.
 const MOST_ROUNDS: usize = 64;
 /// Bytes of per-level uploads one command buffer carries before the host waits for it.
@@ -726,6 +728,9 @@ struct Runner<'a> {
     walks: HashMap<usize, Walks>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
+    /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
+    /// another in the command buffer (five of 33 MB each on S7 before, list step 13).
+    group_stacks: Option<MappedBuffer>,
     encoded: bool,
     outcome: Outcome,
     /// The plan's root walks, encoded after its passes (`records`).
@@ -755,7 +760,12 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         .flat_map(|(_, levels)| levels)
         .map(launches)
         .sum::<usize>();
-    // A group of rounds ends with `label_round`; a group of sweeps is checked by the host.
+    // A group of micro walks runs to its fixpoint in one dispatch (`Runner::group`), which needs
+    // no pattern pass; whether its walks fuse is known only once sized, so a plan counts it as
+    // fused, and the evaluation's ledger refuses the submission of one that did not.
+    let fused = |levels: &Vec<Vec<Pass<'_>>>| !levels.iter().flatten().any(|pass| matches!(pass, Pass::Pattern { .. }));
+    // A group of rounds ends with `label_round`; a group of sweeps is checked by the host; a fused
+    // group is its dispatch.
     let groups = plan.steps.iter().filter(|(recursive, levels)| *recursive && !sweeps(levels)).count();
     // A recursive group's label grows (or settles) one node of a chain per round: a node joins
     // in the round after the node its walk reaches. Its nodes have the label's kinds, so the
@@ -804,6 +814,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         .map(|(recursive, levels)| match (*recursive, sweeps(levels)) {
             (false, _) => 0,
             (true, true) => 1,
+            (true, false) if fused(levels) => 0,
             (true, false) => levels.iter().map(launches).sum::<usize>(),
         })
         .collect::<Vec<_>>();
@@ -821,10 +832,19 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         while cap > 2 && cost(&rounds(cap)) > budget {
             cap -= 1;
         }
-        rounds(cap)
+        let rounds = rounds(cap);
+        // The plan-time bound: what this encoding launches, with the runs before it.
+        if used + fixed + groups + cost(&rounds) > LAUNCHES {
+            crate::code_rule_dsl::prof::count("run.launch_limit", 1);
+            if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+                eprintln!("launch limit: used {used} fixed {fixed} groups {groups} rounds {rounds:?} per group {per_group:?} files {}", files.len());
+            }
+            return Err(Error::BackendLaunchLimit);
+        }
+        Ok(rounds)
     };
     let mut wanted = expected.clone();
-    let mut rounds = plan_rounds(0, &wanted);
+    let mut rounds = plan_rounds(0, &wanted)?;
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
     let (mut lanes, mut micro, mut deep) = (NARROW, true, false);
@@ -853,6 +873,10 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         };
         outcome.interpreted = !micro;
         outcome.widened = lanes == WIDE;
+        crate::code_rule_dsl::prof::count("run.launches", outcome.dispatches);
+        if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+            eprintln!("launches: {} (planned {}) files {}", outcome.dispatches, fixed + groups + rounds.iter().zip(&per_group).map(|(r, l)| r * l).sum::<usize>(), files.len());
+        }
         used += outcome.dispatches;
         buffers += outcome.command_buffers;
         if outcome.waits[1] == 0 {
@@ -866,7 +890,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         }
         retries += 1;
         wanted = rounds.iter().map(|rounds| rounds * 2).collect();
-        rounds = plan_rounds(used, &wanted);
+        rounds = plan_rounds(used, &wanted)?;
     }
 }
 
@@ -968,6 +992,7 @@ fn encode(
         deep,
         walks: HashMap::new(),
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
+        group_stacks: None,
         encoded: false,
         outcome: Outcome {
             words,
@@ -1228,8 +1253,10 @@ impl Runner<'_> {
         if !*ON {
             return;
         }
-        self.command.commit();
-        self.command.wait_until_completed();
+        // Refused (the launch ledger is spent): the flush reports it.
+        if commit_checked(&self.command).is_err() || wait_checked(&self.command).is_err() {
+            return;
+        }
         unsafe extern "C" {
             fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
             fn objc_msgSend();
@@ -1862,9 +1889,10 @@ impl Runner<'_> {
         // The deep kernel's stacks in device memory, one per thread launched.
         let mut buffers = buffers.to_vec();
         if deepest > 8 {
-            let stacks = MappedBuffer::untouched::<u32>(self.device, self.files.len().max(1) * GROUP_WIDTH as usize * GROUP_STACK_WORDS)?;
-            buffers.push(stacks.buffer.clone());
-            self.retained.push(stacks);
+            if self.group_stacks.is_none() {
+                self.group_stacks = Some(MappedBuffer::untouched::<u32>(self.device, self.files.len().max(1) * GROUP_WIDTH as usize * GROUP_STACK_WORDS)?);
+            }
+            buffers.push(self.group_stacks.as_ref().expect("group stacks").buffer.clone());
         }
         let state = self.kernels[pipeline].clone();
         let encoder = self.command.new_compute_command_encoder();
@@ -1935,7 +1963,10 @@ impl Runner<'_> {
         }
         let items = tiers.iter().flatten().copied().collect::<Vec<_>>();
         crate::code_rule_dsl::prof::count("gpu.root_items", items.len());
-        let capacity = items.len() * 4 + 4096;
+        // Plan-sized (list step 13): a record per 16 roots, where a root's matches are a few per
+        // thousand (S7: 5,023 of 1,150,210); 4 a root reserved 351 MB. A batch that writes more
+        // overflows, and its roots run on the CPU (`decode_roots`).
+        let capacity = items.len() / 16 + 4096;
         let records = MappedBuffer::untouched::<u32>(self.device, capacity * ROOT_RECORD)?;
         let cursor = MappedBuffer::zeroed::<u32>(self.device, 2)?;
         let failures = MappedBuffer::zeroed::<u32>(self.device, jobs.programs.len().max(1))?;
