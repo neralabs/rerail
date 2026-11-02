@@ -111,7 +111,16 @@ export type Decider =
   | { readonly by: "checkout"; readonly checkoutPath: string; readonly folder: string; readonly target: RuleSettingTargetKind }
   | { readonly by: "repository"; readonly folder: string; readonly target: RuleSettingTargetKind }
   | { readonly by: "pack-start"; readonly packId: string }
-  | { readonly by: "rule-default" };
+  | { readonly by: "rule-default" }
+  /** The rule's content waits for a person's approval, so it runs in Log whatever else would decide its mode. */
+  | { readonly by: "awaiting-approval" };
+
+/** Whether a rule's content needs a person's approval to steer, and whether it has it (`rule-approval.ts`). */
+export interface RuleApproval {
+  /** What is approved: the rule by its id, or its pack by package name, at the digest of the content. */
+  readonly subject: { readonly kind: "rule" | "pack"; readonly id: string; readonly digest: string };
+  readonly approved: boolean;
+}
 
 export interface EffectiveRule {
   readonly document: RuleDocument;
@@ -139,29 +148,19 @@ export interface EffectiveRule {
   };
   readonly revision: number;
   readonly payloadHash: string;
-  /** Whose content runs: Nera's, or the content a person approved (`rule-approval.ts`). */
-  readonly approval: RuleApprovalStatus;
+  /**
+   * Present for a rule whose content needs a person's approval to steer (one created by you, in a worktree's
+   * `.rerail/rules`, or in a pack Rerail does not publish): until it is approved, `mode` is `log`.
+   */
+  readonly approval?: RuleApproval;
 }
 
-/**
- * How a rule's content stands with approval. `shipped`: Nera shipped it, so it needs none (`approvedAt` null).
- * `approved`: a person approved this content. `pending`: newer content waits for approval; the content approved at
- * `approvedAt` runs meanwhile, or, with `approvedAt` null, the rule runs nowhere yet.
- */
-export interface RuleApprovalStatus {
-  readonly state: "shipped" | "approved" | "pending";
-  readonly approvedAt: number | null;
-}
-
-/**
- * An attachment whose target can't be resolved, or whose rule has no approved content yet
- * (`awaiting-approval`); reported, never thrown.
- */
+/** An attachment whose target can't be resolved; reported, never thrown. */
 export interface UnavailableReference {
   readonly sourceKind: RuleSourceKind;
   readonly sourceId: string;
   readonly folder: string;
-  readonly reason: "missing" | "conflicts-with-library" | "awaiting-approval";
+  readonly reason: "missing" | "conflicts-with-library";
 }
 
 /** The effective configuration for one checkout. Empty unless the checkout is started and its repository set up. */
@@ -181,8 +180,6 @@ export interface LibraryRule {
   readonly document: RuleDocument;
   readonly revision: number;
   readonly payloadHash: string;
-  /** The content digest of the stored body (`ruleContentDigest`), which an approval binds to. */
-  readonly contentHash: string;
   /** Set when the rule is an edited copy of a By Rerail rule. */
   readonly copiedFromRuleId: string | null;
   readonly createdAt: number;
@@ -210,12 +207,7 @@ export interface RuleCatalog {
    * resolved). A rule setting's `config` is applied to this one.
    */
   readonly sources: ReadonlyMap<string, unknown>;
-  /**
-   * Ids of the rules Nera shipped: those of packs installed from the npm registry. They run as shipped; any other
-   * rule runs only with content a person approved (`rule-approval.ts`).
-   */
-  readonly shipped: ReadonlySet<string>;
-  /** Changes whenever a pack is added, removed or updated, or comes from another kind of install. */
+  /** Changes whenever a pack is added, removed or updated. */
   readonly digest: string;
   /** Installed packs left out because they failed a check; the others load. */
   readonly skipped: readonly SkippedRulePack[];

@@ -3,7 +3,7 @@
  * `sheet.js`, the frame and each view's own actions) write `ui` and optimistic `data`, and `poll.js` writes fetches.
  * Rules are keyed by id so a poll can patch the row that changed and nothing else.
  */
-import { isByRerail, isRunning, ruleTitle, rulePrefix, scopeText } from "./derive.js";
+import { isFromPack, isRunning, packOriginName, ruleTitle, rulePrefix, scopeText } from "./derive.js";
 import { startOfDay } from "./format.js";
 
 /**
@@ -43,15 +43,6 @@ export const data = {
    * write still waiting for the recommendations has a promise of its folder until they arrive or the poll reads it back.
    */
   attachedPacks: new Map(),
-  /**
-   * The rules the repository holds that run nowhere until a person approves them (`awaitingReferences` in
-   * `approval-model.js`, from the rules read's `unavailable`).
-   */
-  awaiting: [],
-  /** How many of the scoped repository's rules wait for a person's approval (the rules read's `awaitingApproval`). */
-  awaitingApproval: 0,
-  /** Every rule waiting for a person's approval, machine-wide (`GET /api/rule-approvals`); `null` until read. */
-  approvals: null,
   /** id → activity for the selected range, and for all time (`since=0`). */
   activity: {},
   activityAll: {},
@@ -75,8 +66,10 @@ export const data = {
   sessionDetail: new Map(),
   /** sessionId → first useful user prompt (null while unknown). */
   titles: new Map(),
-  /** Every rule pack that comes with Rerail (`GET /api/rule-packs`), languages first, then frameworks. */
+  /** Every rule pack installed on this machine (`GET /api/rule-packs`), languages first, then frameworks, and the scoped checkout's own rules. */
   packs: [],
+  /** The installed packs left out, and the scoped checkout's `.rerail/rules` files left out, with why (`GET /api/rule-packs` `skipped`). */
+  packsSkipped: [],
   /** `/healthz`: version, database path; `null` until the daemon answers once. */
   health: null,
   /** Coding agents found and connected (`GET /api/coding-agents`); loaded for Settings. */
@@ -125,8 +118,6 @@ export const ui = {
   /** Rule packs page: list or cards, and the pack whose Remove waits for its second click. */
   catView: "list",
   removeAsk: null,
-  /** Waiting for approval: the rule (`owner:id`) whose Approve is being sent. */
-  approving: null,
   /** Packs removed from the catalog during this visit: their row reads Removed with Undo until the page is left. */
   removedPacks: new Set(),
   /** Overview's day-one banner, dismissed for this repository. */
@@ -210,7 +201,7 @@ function packs() {
 export const packById = id => packs().byId.get(id);
 /** The pack's own entry for a rule: title, group and its caught and passing examples. */
 export const packRuleOf = id => packs().rules.get(id);
-/** The rule pack a By Rerail rule ships in, whether or not that pack is added here. */
+/** The rule pack a pack's rule ships in, whether or not that pack is added here. */
 export const packOfRule = stored => packRuleOf(stored.rule.id)?.pack;
 /** The added pack a rule is present through; `undefined` for a rule added on its own. */
 export const attachedPackOf = stored => (stored.source?.kind === "pack" ? packById(stored.source.id) : undefined);
@@ -248,16 +239,17 @@ export const filtering = () => ui.filter !== "all" || ui.query !== "";
 
 /**
  * The rule list's sections, in order: Created rules, one per rule pack added here, then every other
- * rule by Rerail (added on its own, not through a pack). Each section holds its groups; a group holds
+ * rule from a pack (added on its own, not through it). Each section holds its groups; a group holds
  * every rule (`all`).
  */
 export function ruleSections() {
   const mine = [], byPack = new Map(), other = new Map();
   for (const r of data.rules.values()) {
-    if (!isByRerail(r)) { mine.push(r); continue; }
+    if (!isFromPack(r)) { mine.push(r); continue; }
     const pack = attachedPackOf(r);
     if (pack === undefined) {
-      const key = packOfRule(r)?.name ?? rulePrefix(r.rule.id);
+      const known = packOfRule(r);
+      const key = known === undefined ? rulePrefix(r.rule.id) : packOriginName(known);
       if (!other.has(key)) other.set(key, []);
       other.get(key).push(r);
       continue;

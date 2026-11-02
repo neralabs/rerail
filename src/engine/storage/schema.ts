@@ -276,31 +276,26 @@ export const libraryRules = sqliteTable(
   ],
 );
 
-export const RULE_APPROVAL_OWNERS = ["library", "pack"] as const;
-export type RuleApprovalOwner = (typeof RULE_APPROVAL_OWNERS)[number];
+/** What a person approves before it steers: one rule's content, or one pack's content at one version. */
+export const RULE_APPROVAL_SUBJECTS = ["rule", "pack"] as const;
 
 /**
- * The content a person last approved for a rule Nera did not ship (`rule-approval.ts`): a rule created by you
- * (`library`) or a rule of a pack added from a folder or tarball (`pack`). Such a rule runs only with approved content.
- * `content_hash` is the content digest of `document_json` (`ruleContentDigest`); a read recomputes it and ignores a row
- * where it does not match.
+ * Content a person approved (`rule-approval.ts`), once per machine: a rule created by you or in a worktree's
+ * `.rerail/rules` by its id, or a pack Rerail does not publish by its package name, each at the digest of the content
+ * approved. Content with no row here runs in Log only. Rows are only added, so going back to approved content needs
+ * no approval again.
  */
 export const ruleApprovals = sqliteTable(
   "rule_approvals",
   {
-    owner: text("owner", { enum: RULE_APPROVAL_OWNERS }).notNull(),
-    ruleId: text("rule_id").notNull(),
-    kind: text("kind", { enum: RULE_KINDS }).notNull(),
-    document: text("document_json", { mode: "json" }).$type<RuleDocument>().notNull(),
-    revision: integer("revision").notNull(),
-    contentHash: text("content_hash").notNull(),
+    subjectKind: text("subject_kind", { enum: RULE_APPROVAL_SUBJECTS }).notNull(),
+    subjectId: text("subject_id").notNull(),
+    digest: text("digest").notNull(),
     approvedAt: integer("approved_at").notNull(),
   },
   table => [
-    primaryKey({ columns: [table.owner, table.ruleId] }),
-    check("rule_approvals_owner", sql`${table.owner} IN (${sql.raw(inList(RULE_APPROVAL_OWNERS))})`),
-    check("rule_approvals_kind", sql`${table.kind} IN (${sql.raw(inList(RULE_KINDS))})`),
-    check("rule_approvals_revision", sql`${table.revision} > 0`),
+    primaryKey({ columns: [table.subjectKind, table.subjectId, table.digest] }),
+    check("rule_approvals_subject_kind", sql`${table.subjectKind} IN (${sql.raw(inList(RULE_APPROVAL_SUBJECTS))})`),
   ],
 );
 

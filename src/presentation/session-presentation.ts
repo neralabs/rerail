@@ -13,7 +13,7 @@ import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { DAEMON_STATE_FILE, daemonAccessHeaders, ownProcessAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/schema.js";
-import { approvalsPageUrl, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -31,7 +31,7 @@ export interface PresentationCounts {
   rules: number | null;
   /** Steers delivered in this session; null when the history cannot establish a total. */
   steered: number | null;
-  /** Rules of the session's repository whose content waits for the person's approval; null when unknown. */
+  /** Rules and packs on in the session's checkout that run in Log waiting for the person's approval; null when unknown. */
   awaitingApproval: number | null;
 }
 
@@ -158,8 +158,9 @@ async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origi
 }
 
 /**
- * `R E R A I L ● 26 rules`, with `N awaiting approval` while rules of the repository wait for the person's approval,
- * and `steered N×` only once Rerail has steered in this session (A1f).
+ * `R E R A I L ● 26 rules · worktree · 2 to approve`, with each rule overlay in force in the checkout after the count
+ * (linked to its pack page), what runs in Log waiting for a person's approval (linked to Overview, which lists it), and
+ * `steered N×` only once Rerail has steered in this session (A1f).
  */
 function onPresentation(
   origin: URL,
@@ -174,8 +175,12 @@ function onPresentation(
   const items: SessionPresentation["parts"] = [
     { text: hud.activeRuleCount === null ? "rules unavailable" : `${hud.activeRuleCount} ${ruleNoun}`, url: rulesDashboardUrl(origin, scope) },
   ];
-  const awaiting = hud.awaitingApproval ?? 0;
-  if (awaiting > 0) items.push({ text: `${awaiting} awaiting approval`, url: approvalsPageUrl(rulesDashboardUrl(origin, scope)) });
+  for (const label of hud.overlays ?? []) {
+    const packPage = new URL(rulesDashboardUrl(origin, scope));
+    packPage.hash = `pack/${encodeURIComponent(label)}`;
+    items.push({ text: label, url: packPage.href });
+  }
+  if ((hud.awaitingApproval ?? 0) > 0) items.push({ text: `${hud.awaitingApproval} to approve`, url: rulesDashboardUrl(origin, scope) });
   if (hud.steeringCount === null) items.push({ text: "steering unavailable", url: sessionUrl });
   else if (hud.steeringCount > 0) items.push({ text: `steered ${hud.steeringCount}×`, url: sessionUrl });
   items.push(...health.map(text => ({ text, url: null })));

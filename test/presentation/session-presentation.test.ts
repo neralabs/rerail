@@ -103,15 +103,6 @@ describe("installed session presentation", () => {
     expect(rendered.split("\u001b]8;;http")).toHaveLength(4);
   });
 
-  it("links rules awaiting approval to the dashboard's Waiting for approval page in the session's repository", async () => {
-    response.context!.session!.hud = { ...response.context!.session!.hud, awaitingApproval: 2 };
-    response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
-    const awaiting = (await read()).parts.find(part => part.text === "2 awaiting approval");
-    const page = new URL(awaiting!.url!);
-    expect(page.hash).toBe("#approvals");
-    expect(Object.fromEntries(page.searchParams)).toEqual({ repository: "remote:github.com/acme/app", checkout: cwd });
-  });
-
   it("shows the steered count only once Rerail has steered, and names Engine and audit trouble", async () => {
     response.context!.session!.hud.steeringCount = 0;
     expect((await read()).text).toBe("R E R A I L ● 3 rules");
@@ -121,6 +112,31 @@ describe("installed session presentation", () => {
     // A completed repository audit that lists files it read only in part is no trouble.
     response.context!.session!.audit = { workspaceRoot: cwd, scope: "repository", mode: "log", status: "completed", violationCount: 4, failureCount: 3, unlistedFailureCount: 0, blindFileCount: 0, gapCount: 0, outOfWorkRuleCount: 0, fileWorkStoppedRuleCount: 0 };
     expect((await read()).text).toBe("R E R A I L ● 3 rules · engine unavailable");
+  });
+
+  it("names each rule overlay in force after the rule count, linked to its pack page in the checkout's repository", async () => {
+    response.context!.session!.hud.overlays = ["worktree"];
+    response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
+    const result = await read();
+
+    expect(result.text).toBe("R E R A I L ● 3 rules · worktree · steered 2×");
+    const pack = new URL(result.parts[2]!.url!);
+    expect(Object.fromEntries(pack.searchParams)).toEqual({ repository: "remote:github.com/acme/app", checkout: cwd });
+    expect(pack.hash).toBe("#pack/worktree");
+    // A daemon from before overlays sends none, and the footer reads as it did.
+    delete response.context!.session!.hud.overlays;
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2×");
+  });
+
+  it("counts what waits for a person's approval after the overlays, linked to the repository's rules", async () => {
+    response.context!.session!.hud.awaitingApproval = 2;
+    response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
+    const result = await read();
+
+    expect(result.text).toBe("R E R A I L ● 3 rules · 2 to approve · steered 2×");
+    expect(result.parts[2]!.url).toBe(result.parts[1]!.url);
+    response.context!.session!.hud.awaitingApproval = 0;
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2×");
   });
 
   it("counts every failure of a failed audit, those its list leaves out included", async () => {

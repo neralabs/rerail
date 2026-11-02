@@ -22,7 +22,7 @@ import {
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "../activation/customer-profile.js";
 import {
-  readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
+  checkoutRuleCounts, readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
@@ -54,6 +54,7 @@ import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./
 import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
+import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
@@ -119,7 +120,7 @@ function printUpdateResult(result: UpdateResult, home: string): void {
   process.stdout.write([
     `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    "Install a version that fits with `rerail packs add <id>`.",
+    "Install a version that fits with `rerail packs add <package>`.",
   ].join("\n") + "\n");
 }
 
@@ -149,16 +150,15 @@ function usage(): string {
     "  rerail seed",
     "  rerail reset",
     "  rerail packs [list]",
-    "  rerail packs add <id[@version] | package | tarball | folder>...",
-    "  rerail packs remove <id>...",
+    "  rerail packs add <id[@version] | package[@version] | tarball | folder>...",
+    "  rerail packs remove <id | package>...",
     "  rerail packs recommend [--repo <dir>]",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json> [--approve]",
-    "  rerail rules list [--json]",
-    "  rerail rules approve <id>",
-    "  rerail rules test <draft.json> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
+    "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
     "  rerail support-bundle [--session <id>] [--repo <dir>] [--output <file>] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
@@ -373,10 +373,10 @@ async function runUpdateCommand(
 }
 
 /**
- * Rules on in `workspace`'s checkout, and rules of its repository waiting for approval, from its repository's
- * configuration, for `/rerail` where the coding agent cannot name its session. A status read: it never writes, and
- * where the configuration cannot be read (busy, or the checkout not recorded) the summary drops the count lines
- * rather than failing.
+ * Rules on in `workspace`'s checkout, and how many of them run in Log waiting for a person's approval, from its
+ * repository's configuration, for `/rerail` where the coding agent cannot name its session. A status read: it never
+ * writes, and where the configuration cannot be read (busy, or the checkout not recorded) the summary drops the count
+ * lines rather than failing.
  */
 function repositoryRuleCounts(workspace: string): { on: number; awaitingApproval: number } | null {
   const databasePath = defaultRerailDatabasePath();
@@ -386,9 +386,7 @@ function repositoryRuleCounts(workspace: string): { on: number; awaitingApproval
     database = openRerailDatabase(databasePath, { readonly: true });
     const checkout = lookupCheckout(database, workspace);
     if (checkout === undefined) return null;
-    const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
-    const view = listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths });
-    return { on: view.rules.filter(rule => rule.on).length, awaitingApproval: view.awaitingApproval };
+    return checkoutRuleCounts(database, checkout);
   } catch (error) {
     process.stderr.write(`rerail: could not count this repo's rules: ${error instanceof Error ? error.message : String(error)}\n`);
     return null;
@@ -678,6 +676,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "seed") return runSeedCommand(args);
   if (command === "rules" && (args[0] === "test" || args[0] === "add")) return await runRuleDraftCommand(args[0], args.slice(1), usage);
   if (command === "rules" && args[0] === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
+  if (command === "rules" && args[0] === "approve") return runRuleApproveCommand(args.slice(1), usage);
   if (command === "rules") return runRulesCommand(args, usage);
   if (command === "show-me") return runShowMeCommand(args, usage);
   if (command === "support-bundle") return await runSupportBundleCommand(args, usage, { packageVersion: context.packageVersion });

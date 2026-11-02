@@ -14,9 +14,9 @@ import {
   type CheckoutRuleSet,
   type Decider,
   type EffectiveRule,
+  type LibraryRule,
   type RepositoryKey,
   type RepositoryStatus,
-  type RuleApprovalStatus,
   type RuleAttachment,
   type RuleConfig,
   type RuleSetting,
@@ -24,22 +24,22 @@ import {
   type RuleSourceKind,
   type UnavailableReference,
 } from "./repository-model.js";
-import { approvalKey, approvedContent, catalogRevision, readApprovalRow, type RuleApproval } from "./rule-approval.js";
 import { readLibraryRow } from "./rule-library.js";
 import type { CodeRuleDslValue } from "../code-rule/code-rule.js";
 import type { RuleMode } from "./rule-mode.js";
 import type { RulePackRule } from "./rule-packs.js";
 import type { RuleDocument } from "./rule-store.js";
-import { libraryRules, repositories, ruleApprovals, ruleAttachments, ruleSettings, type RuleKind } from "../storage/schema.js";
+import { libraryRules, repositories, ruleAttachments, ruleSettings, type RuleKind } from "../storage/schema.js";
 import { clearSetupReview } from "./setup-review.js";
-import { compareDeterministicStrings, ruleContentDigest, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
+import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { configureBundledCodeRule } from "./rule-config.js";
+import { isWorktreePack, WORKTREE_PACK_ID } from "./worktree-pack.js";
+import { approvalKey, packSubject, readApprovals, ruleSubject, type RuleApprovalSubject } from "./rule-approval.js";
 
 type Queries = Pick<RerailDatabase, "insert" | "delete" | "select" | "update">;
 type AttachmentRow = typeof ruleAttachments.$inferSelect;
 type SettingRow = typeof ruleSettings.$inferSelect;
 type LibraryRow = typeof libraryRules.$inferSelect;
-type ApprovalRow = typeof ruleApprovals.$inferSelect;
 
 function ownerColumns(owner: RuleSetting["owner"]): { ownerKind: "repository" | "checkout"; ownerId: string } {
   return owner.kind === "repository"
@@ -133,12 +133,17 @@ interface ConfigurationRows {
   readonly attachments: readonly AttachmentRow[];
   readonly settings: readonly SettingRow[];
   readonly library: readonly LibraryRow[];
-  readonly approvals: readonly ApprovalRow[];
+  /** Every approval recorded (`rule-approval.ts`), by key. */
+  readonly approvals: ReadonlySet<string>;
 }
 
 function readRows(db: RerailDatabase, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey, ownerCheckoutPaths: readonly string[]): ConfigurationRows {
   const repository = db.select({ configuredAt: repositories.configuredAt }).from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
-  const attachments = db.select().from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all();
+  // A checkout's own rules (`worktree-pack.ts`) are in its catalog alone, and present in it for the whole checkout.
+  const worktree: AttachmentRow[] = isWorktreePack(ruleCatalog.packs.get(WORKTREE_PACK_ID))
+    ? [{ repositoryKey, folder: "", sourceKind: "pack", sourceId: WORKTREE_PACK_ID, createdAt: 0 }]
+    : [];
+  const attachments = [...db.select().from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all(), ...worktree];
   const repositoryOwned = and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, repositoryKey));
   const settings = db.select().from(ruleSettings).where(ownerCheckoutPaths.length === 0
     ? repositoryOwned
@@ -148,8 +153,7 @@ function readRows(db: RerailDatabase, ruleCatalog: RuleCatalog, repositoryKey: R
     ? (ruleCatalog.packs.get(row.sourceId)?.rules ?? []).map(rule => rule.id)
     : [row.sourceId]))];
   const library = ids.length === 0 ? [] : db.select().from(libraryRules).where(inArray(libraryRules.ruleId, ids)).all();
-  const approvals = ids.length === 0 ? [] : db.select().from(ruleApprovals).where(inArray(ruleApprovals.ruleId, ids)).all();
-  return { configuredAt: repository?.configuredAt ?? null, attachments, settings, library, approvals };
+  return { configuredAt: repository?.configuredAt ?? null, attachments, settings, library, approvals: readApprovals(db) };
 }
 
 function signatureOf(catalogDigest: string, ownerCheckoutPaths: readonly string[], rows: ConfigurationRows): string {
@@ -167,18 +171,15 @@ function signatureOf(catalogDigest: string, ownerCheckoutPaths: readonly string[
     ...rows.library
       .map(row => `library\0${row.ruleId}\0${row.revision}\0${row.payloadHash}`)
       .sort(compareDeterministicStrings),
-    // The stored content too: a row whose content no longer matches its hash stops approving it.
-    ...rows.approvals
-      .map(row => `approval\0${row.owner}\0${row.ruleId}\0${row.revision}\0${row.contentHash}\0${row.approvedAt}\0${stableJsonText(row.document) ?? ""}`)
-      .sort(compareDeterministicStrings),
+    ...[...rows.approvals].map(key => `approval\0${key}`).sort(compareDeterministicStrings),
   ];
   return `sha256:${createHash("sha256").update(lines.join("\n")).digest("hex")}`;
 }
 
 /**
  * Changes whenever the rule catalog, the repository's set-up, attachments or settings, the settings of the given checkouts
- * (the checkout and its parents), or a library rule that is attached or shadows a present By Rerail rule changes.
- * Not the start state.
+ * (the checkout and its parents), a library rule that is attached or shadows a present By Rerail rule, or an approval
+ * changes. Not the start state.
  */
 export function ruleConfigurationSignature(
   db: RerailDatabase,
@@ -189,19 +190,14 @@ export function ruleConfigurationSignature(
   return signatureOf(ruleCatalog.digest, ownerCheckoutPaths, readRows(db, ruleCatalog, repositoryKey, ownerCheckoutPaths));
 }
 
-/** What a present rule runs, before its settings are applied. */
-interface Content {
-  readonly document: RuleDocument;
-  readonly revision: number;
-  readonly payloadHash: string;
-  readonly approval: RuleApprovalStatus;
-}
-
 /** A rule present at a path, before its settings are applied. */
-interface Presence extends Content {
+interface Presence {
+  readonly document: RuleDocument;
   readonly source: EffectiveRule["source"];
   readonly folder: string;
   readonly packRule: RulePackRule | null;
+  readonly revision: number;
+  readonly payloadHash: string;
 }
 
 type Owner = { readonly kind: "checkout"; readonly id: string } | { readonly kind: "repository"; readonly id: string };
@@ -213,6 +209,10 @@ function compareSettings(left: SettingRow, right: SettingRow): number {
   return left.targetKind === "rule" ? -1 : 1;
 }
 
+function bundledPresenceFields(document: RuleDocument): Pick<Presence, "revision" | "payloadHash"> {
+  return { revision: document.kind === "code" ? document.rule.revision : 1, payloadHash: ruleDocumentDigest(document) };
+}
+
 /** Resolves effective rules at any path from rows read once. */
 class ConfigurationResolver {
   readonly unavailable: readonly UnavailableReference[];
@@ -220,19 +220,16 @@ class ConfigurationResolver {
   readonly #attachments: readonly AttachmentRow[];
   readonly #owners: readonly Owner[];
   readonly #settingsByOwner = new Map<string, SettingRow[]>();
-  readonly #approvals = new Map<string, RuleApproval>();
-  /** Library rules with approved content, as they run. */
-  readonly #library = new Map<string, Content>();
-  /** Readable library rules with no approved content: they run nowhere and shadow nothing. */
-  readonly #awaitingLibrary = new Set<string>();
-  /** Library ids that shadow a By Rerail rule of the same id: every row (readable or not) but one awaiting approval. */
+  readonly #library = new Map<string, LibraryRule>();
+  /** Library ids that exist at all (readable or not); a By Rerail rule with one of these ids is shadowed. */
   readonly #libraryIds: ReadonlySet<string>;
-  /** Catalog rules by id, as they run; null for one that awaits approval. */
-  readonly #bundledContent = new Map<string, Content | null>();
+  readonly #bundledFields = new Map<string, Pick<Presence, "revision" | "payloadHash">>();
+  readonly #approvals: ReadonlySet<string>;
 
   constructor(ruleCatalog: RuleCatalog, rows: ConfigurationRows, owners: readonly Owner[]) {
     this.#ruleCatalog = ruleCatalog;
     this.#owners = owners;
+    this.#approvals = rows.approvals;
     // Deepest attachment first, so a rule present through two folders reports the deepest one.
     this.#attachments = [...rows.attachments].sort((left, right) => right.folder.length - left.folder.length);
     for (const setting of rows.settings) {
@@ -240,41 +237,24 @@ class ConfigurationResolver {
       this.#settingsByOwner.set(key, [...(this.#settingsByOwner.get(key) ?? []), setting]);
     }
     for (const list of this.#settingsByOwner.values()) list.sort(compareSettings);
-    for (const row of rows.approvals) {
-      const approval = readApprovalRow(row);
-      if (approval !== undefined) this.#approvals.set(approvalKey(row.owner, row.ruleId), approval);
-    }
+    this.#libraryIds = new Set(rows.library.map(row => row.ruleId));
     for (const row of rows.library) {
       const read = readLibraryRow(row);
-      if (!read.ok) continue;
-      const running = approvedContent(read.rule, this.#approvals.get(approvalKey("library", row.ruleId)));
-      if (running === undefined) this.#awaitingLibrary.add(row.ruleId);
-      else {
-        const payloadHash = running.approval.state === "approved" ? read.rule.payloadHash : ruleDocumentDigest(running.document);
-        this.#library.set(row.ruleId, { ...running, payloadHash });
-      }
+      if (read.ok) this.#library.set(row.ruleId, read.rule);
     }
-    this.#libraryIds = new Set(rows.library.map(row => row.ruleId).filter(id => !this.#awaitingLibrary.has(id)));
     this.unavailable = rows.attachments.flatMap((row): UnavailableReference[] => {
       const reference = { sourceKind: row.sourceKind, sourceId: row.sourceId, folder: row.folder };
       if (row.sourceKind === "pack") {
         const pack = ruleCatalog.packs.get(row.sourceId);
         if (pack === undefined) return [{ ...reference, reason: "missing" }];
-        // A pack rule a library rule shadows, or one that awaits approval, is reported by its own id, at the pack's folder.
-        return pack.rules.flatMap((rule): UnavailableReference[] => {
-          const own = { sourceKind: "rerail_rule" as const, sourceId: rule.id, folder: row.folder };
-          if (this.#libraryIds.has(rule.id)) return [{ ...own, reason: "conflicts-with-library" }];
-          return this.#bundled(rule.id) === null ? [{ ...own, reason: "awaiting-approval" }] : [];
-        });
+        // A pack rule a library rule shadows is reported by its own id, at the pack's folder.
+        return pack.rules
+          .filter(rule => this.#libraryIds.has(rule.id))
+          .map(rule => ({ sourceKind: "rerail_rule", sourceId: rule.id, folder: row.folder, reason: "conflicts-with-library" }));
       }
-      if (row.sourceKind === "library_rule") {
-        if (this.#library.has(row.sourceId)) return [];
-        return [{ ...reference, reason: this.#awaitingLibrary.has(row.sourceId) ? "awaiting-approval" : "missing" }];
-      }
+      if (row.sourceKind === "library_rule") return this.#library.has(row.sourceId) ? [] : [{ ...reference, reason: "missing" }];
       if (this.#libraryIds.has(row.sourceId)) return [{ ...reference, reason: "conflicts-with-library" }];
-      const bundled = this.#bundled(row.sourceId);
-      if (bundled === undefined) return [{ ...reference, reason: "missing" }];
-      return bundled === null ? [{ ...reference, reason: "awaiting-approval" }] : [];
+      return ruleCatalog.documents.has(row.sourceId) ? [] : [{ ...reference, reason: "missing" }];
     });
   }
 
@@ -286,49 +266,55 @@ class ConfigurationResolver {
       .sort((left, right) => compareDeterministicStrings(left.document.rule.id, right.document.rule.id));
   }
 
-  /**
-   * What catalog rule `id` runs: as shipped for a rule Nera shipped, else its approved content (`rule-approval.ts`);
-   * null when it has none, undefined when the catalog does not hold it or a library rule shadows it.
-   */
-  #bundled(id: string): Content | null | undefined {
+  #bundled(id: string): { document: RuleDocument; fields: Pick<Presence, "revision" | "payloadHash"> } | undefined {
     const document = this.#ruleCatalog.documents.get(id);
     if (document === undefined || this.#libraryIds.has(id)) return undefined;
-    let content = this.#bundledContent.get(id);
-    if (content === undefined) {
-      const revision = catalogRevision(document);
-      if (this.#ruleCatalog.shipped.has(id)) {
-        content = { document, revision, payloadHash: ruleDocumentDigest(document), approval: { state: "shipped", approvedAt: null } };
-      } else {
-        const running = approvedContent(
-          { document, revision, contentHash: ruleContentDigest(document.kind, document.rule) },
-          this.#approvals.get(approvalKey("pack", id)),
-        );
-        content = running === undefined ? null : { ...running, payloadHash: ruleDocumentDigest(running.document) };
-      }
-      this.#bundledContent.set(id, content);
+    let fields = this.#bundledFields.get(id);
+    if (fields === undefined) {
+      fields = bundledPresenceFields(document);
+      this.#bundledFields.set(id, fields);
     }
-    return content;
+    return { document, fields };
   }
 
   #presences(path: string): Map<string, Presence> {
     const present = new Map<string, Presence>();
     const candidates = this.#attachments.filter(row => folderContains(row.folder, path));
     for (const row of candidates.filter(candidate => candidate.sourceKind === "library_rule")) {
-      const content = this.#library.get(row.sourceId);
-      if (content === undefined || present.has(row.sourceId)) continue;
-      present.set(row.sourceId, { ...content, source: { kind: "library_rule", id: row.sourceId, packId: null }, folder: row.folder, packRule: null });
+      const rule = this.#library.get(row.sourceId);
+      if (rule === undefined || present.has(row.sourceId)) continue;
+      present.set(row.sourceId, {
+        document: rule.document,
+        source: { kind: "library_rule", id: row.sourceId, packId: null },
+        folder: row.folder,
+        packRule: null,
+        revision: rule.revision,
+        payloadHash: rule.payloadHash,
+      });
     }
     for (const row of candidates.filter(candidate => candidate.sourceKind === "pack")) {
       for (const packRule of this.#ruleCatalog.packs.get(row.sourceId)?.rules ?? []) {
-        const content = this.#bundled(packRule.id);
-        if (content === undefined || content === null || present.has(packRule.id)) continue;
-        present.set(packRule.id, { ...content, source: { kind: "pack", id: row.sourceId, packId: row.sourceId }, folder: row.folder, packRule });
+        const bundled = this.#bundled(packRule.id);
+        if (bundled === undefined || present.has(packRule.id)) continue;
+        present.set(packRule.id, {
+          document: bundled.document,
+          source: { kind: "pack", id: row.sourceId, packId: row.sourceId },
+          folder: row.folder,
+          packRule,
+          ...bundled.fields,
+        });
       }
     }
     for (const row of candidates.filter(candidate => candidate.sourceKind === "rerail_rule")) {
-      const content = this.#bundled(row.sourceId);
-      if (content === undefined || content === null || present.has(row.sourceId)) continue;
-      present.set(row.sourceId, { ...content, source: { kind: "rerail_rule", id: row.sourceId, packId: null }, folder: row.folder, packRule: null });
+      const bundled = this.#bundled(row.sourceId);
+      if (bundled === undefined || present.has(row.sourceId)) continue;
+      present.set(row.sourceId, {
+        document: bundled.document,
+        source: { kind: "rerail_rule", id: row.sourceId, packId: null },
+        folder: row.folder,
+        packRule: null,
+        ...bundled.fields,
+      });
     }
     return present;
   }
@@ -349,15 +335,12 @@ class ConfigurationResolver {
 
   /**
    * The option values settings give a code rule by Rerail, per option: the nearest owner's setting for the rule over
-   * the whole repository (folder `""`) that sets the option. A library rule takes none, nor does a pack rule running
-   * the content approved before while newer content waits: options apply to the pack's current document.
+   * the whole repository (folder `""`) that sets the option. A library rule takes none.
    */
   #config(presence: Presence): { config: RuleConfig | null; deciders: Record<string, Decider> } {
     const config: Record<string, CodeRuleDslValue> = {};
     const deciders: Record<string, Decider> = {};
-    if (presence.document.kind !== "code" || presence.source.kind === "library_rule" || presence.approval.state === "pending") {
-      return { config: null, deciders };
-    }
+    if (presence.document.kind !== "code" || presence.source.kind === "library_rule") return { config: null, deciders };
     const id = presence.document.rule.id;
     for (const owner of this.#owners) {
       for (const setting of this.#settingsByOwner.get(`${owner.kind}\0${owner.id}`) ?? []) {
@@ -372,6 +355,19 @@ class ConfigurationResolver {
     return { config: Object.keys(config).length === 0 ? null : config, deciders };
   }
 
+  /**
+   * What the rule's content waits for a person to approve before it steers (`rule-approval.ts`): the rule itself when
+   * it is created by you or a worktree's own, its pack when that is not Rerail's own from npm; undefined otherwise.
+   */
+  #approvalSubject(presence: Presence): RuleApprovalSubject | undefined {
+    const id = presence.document.rule.id;
+    if (presence.source.kind === "library_rule") return ruleSubject(id, presence.payloadHash);
+    const packId = presence.source.packId ?? this.#ruleCatalog.packOf.get(id);
+    const pack = packId === undefined ? undefined : this.#ruleCatalog.packs.get(packId);
+    if (pack === undefined) return undefined;
+    return isWorktreePack(pack) ? ruleSubject(id, presence.payloadHash) : packSubject(this.#ruleCatalog, pack);
+  }
+
   #effective(presence: Presence, path: string): EffectiveRule {
     const { packRule } = presence;
     const packId = presence.source.packId;
@@ -379,8 +375,14 @@ class ConfigurationResolver {
     const ruleDefault: Decider = { by: "rule-default" };
     const on = this.#decide<boolean>(presence, path, setting => setting.on)
       ?? (start === undefined ? { value: true, decider: ruleDefault } : { value: start.rule.on, decider: start.decider });
-    const mode = this.#decide<RuleMode>(presence, path, setting => setting.mode)
+    const configuredMode = this.#decide<RuleMode>(presence, path, setting => setting.mode)
       ?? (start === undefined ? { value: presence.document.rule.mode, decider: ruleDefault } : { value: start.rule.mode, decider: start.decider });
+    const subject = this.#approvalSubject(presence);
+    const approval = subject === undefined ? undefined : { subject, approved: this.#approvals.has(approvalKey(subject)) };
+    // Content no one approved is recorded, and never steers.
+    const mode = approval?.approved === false && configuredMode.value !== "log"
+      ? { value: "log" as RuleMode, decider: { by: "awaiting-approval" } as Decider }
+      : configuredMode;
     const pack = packId === null ? undefined : this.#ruleCatalog.packs.get(packId);
     const suppressions = this.#decide<RuleSuppressions>(presence, path, setting => setting.suppressions)
       ?? (start === undefined || pack === undefined
@@ -402,7 +404,7 @@ class ConfigurationResolver {
       decidedBy: { on: on.decider, mode: mode.decider, suppressions: suppressions.decider, config: deciders },
       revision: presence.revision,
       payloadHash: presence.payloadHash,
-      approval: presence.approval,
+      ...(approval === undefined ? {} : { approval }),
     };
   }
 }
@@ -459,11 +461,6 @@ export interface RepositoryRulesView {
   /** Each present rule at its attachment folder, both kinds, with the source of `on` and `mode`. */
   readonly rules: readonly EffectiveRule[];
   readonly unavailable: readonly UnavailableReference[];
-  /**
-   * How many of the repository's rules have content waiting for approval: those that run nowhere yet (unavailable,
-   * `awaiting-approval`) and those that run their approved content while an edit waits.
-   */
-  readonly awaitingApproval: number;
 }
 
 /**
@@ -483,9 +480,5 @@ export function listRepositoryRules(
   const rules = folders.flatMap(folder => (["code", "conversation"] as const)
     .flatMap(kind => resolver.at(folder, kind))
     .filter(rule => rule.attachmentFolder === folder));
-  const awaiting = new Set([
-    ...resolver.unavailable.filter(reference => reference.reason === "awaiting-approval").map(reference => reference.sourceId),
-    ...rules.filter(rule => rule.approval.state === "pending").map(rule => rule.document.rule.id),
-  ]);
-  return { rules, unavailable: resolver.unavailable, awaitingApproval: awaiting.size };
+  return { rules, unavailable: resolver.unavailable };
 }

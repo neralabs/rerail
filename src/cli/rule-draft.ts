@@ -23,14 +23,14 @@ import {
   type NativeGitIgnoreMatcher,
 } from "../engine/native/native.js";
 import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
-import type { CodeRule } from "../engine/code-rule/code-rule-schema.js";
+import { CODE_RULE_FORMAT, type CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
-import { normalizeFolder, type LibraryRule, type RuleApprovalStatus } from "../engine/catalog/repository-model.js";
+import { normalizeFolder } from "../engine/catalog/repository-model.js";
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
-import { approvalKey, approvalStatus, readApprovals } from "../engine/catalog/rule-approval.js";
 import { addAttachment, setUpRepository } from "../engine/catalog/rule-configuration.js";
-import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
+import { getLibraryRule, upsertLibraryRule } from "../engine/catalog/rule-library.js";
+import { isApproved, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "../engine/catalog/rule-schema.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
 import { deniedByPathBoundary } from "../engine/path-boundary.js";
@@ -175,7 +175,17 @@ export function parseRuleDraft(value: unknown): RuleDraft {
   };
 }
 
-export function readRuleDraft(file: string): RuleDraft {
+/**
+ * A rule document on its own, as a worktree keeps one in `.rerail/rules`, as a draft with no cases: a JSON object that
+ * names neither `kind` nor `rule`, a code rule when its `format` is the code rule format and else a conversation rule.
+ */
+function asDraft(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value) || "kind" in value || "rule" in value) return value;
+  return { kind: "format" in value && value.format === CODE_RULE_FORMAT ? "code" : "conversation", rule: value };
+}
+
+/** The draft in `file`; with `bareRule`, a rule document on its own is read as a draft with no cases (`asDraft`). */
+export function readRuleDraft(file: string, options: { readonly bareRule?: boolean } = {}): RuleDraft {
   const text = readFileSync(resolve(file), "utf8");
   let value: unknown;
   try {
@@ -183,7 +193,7 @@ export function readRuleDraft(file: string): RuleDraft {
   } catch (error) {
     throw new RuleDraftError(`${file} is not JSON: ${errorMessage(error)}`);
   }
-  return parseRuleDraft(value);
+  return parseRuleDraft(options.bareRule === true ? asDraft(value) : value);
 }
 
 function errorMessage(error: unknown): string {
@@ -482,10 +492,13 @@ export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<Rul
   return { ok: cases.every(result => result.ok), valid: true, cases, repository };
 }
 
-/** `testRuleDraft` for a draft file; an unreadable or invalid draft is reported, not thrown. */
+/**
+ * `testRuleDraft` for a draft file, or a rule document on its own (a worktree's `.rerail/rules/<name>.json`), which has
+ * no cases; an unreadable or invalid draft is reported, not thrown.
+ */
 export async function testRuleDraftFile(file: string, repo: string): Promise<RuleDraftReport> {
   try {
-    return await testRuleDraft(readRuleDraft(file), repo);
+    return await testRuleDraft(readRuleDraft(file, { bareRule: true }), repo);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
     return { ok: false, valid: false, error: error.message, cases: [], repository: null };
@@ -499,19 +512,14 @@ export interface AddedRule {
   folder: string;
   /** Whether adding the rule set the repository up, with this rule as its only one. */
   setUp: boolean;
-  /**
-   * How the stored content stands: `approved` when it is content the person approved already, else `pending`, with
-   * `approvedAt` set when content approved before runs meanwhile.
-   */
-  approval: RuleApprovalStatus;
+  /** Whether the rule's content is approved, so it steers; otherwise it runs in Log until `rerail rules approve`. */
+  approved: boolean;
 }
 
 /**
  * Store the draft's rule in your library, through the same validation as `library_rules_upsert`, and add it to
  * `repo`'s repository at the draft's folder. A repository that is not set up yet is set up with this rule (an
- * agent creating a rule may add it to the repository). A By Rerail rule is never replaced: its id is refused. The CLI
- * only proposes (`rule-approval.ts`): the rule's content waits for a person's approval, and until then the rule runs
- * the content approved before, or nowhere if it is new.
+ * agent creating a rule may add it to the repository). A By Rerail rule is never replaced: its id is refused.
  */
 export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defaultRerailDatabasePath()): AddedRule {
   const database = openRerailDatabase(databasePath);
@@ -522,9 +530,8 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     if (ruleCatalog.documents.has(draft.rule.id)) {
       throw new RuleDraftError(`${draft.rule.id} is a rule by Rerail, so it was not replaced. Give the new rule another id.`);
     }
-    let stored: LibraryRule;
     try {
-      stored = upsertLibraryRule(database, ruleCatalog, draft.rule, draft.kind);
+      upsertLibraryRule(database, ruleCatalog, draft.rule, draft.kind);
     } catch (error) {
       if (error instanceof EngineUnavailableError) throw new RuleDraftError(`the Engine is unavailable, so rule ${draft.rule.id} cannot be checked`);
       throw new RuleDraftError(errorMessage(error));
@@ -533,8 +540,9 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     const setUp = checkoutStatus(database, checkout).setUp === false;
     if (setUp) setUpRepository(database, checkout.repositoryKey, { packs: [], rules: [attachment] });
     else addAttachment(database, { repositoryKey: checkout.repositoryKey, ...attachment });
-    const approval = approvalStatus(stored.contentHash, readApprovals(database, [draft.rule.id]).get(approvalKey("library", draft.rule.id)));
-    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp, approval };
+    const stored = getLibraryRule(database, draft.rule.id);
+    const approved = stored !== undefined && isApproved(database, ruleSubject(draft.rule.id, stored.payloadHash));
+    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp, approved };
   } finally {
     database.$client.close();
   }
@@ -566,7 +574,11 @@ function repositoryLines(repository: RuleDraftReport["repository"]): string[] {
   return lines;
 }
 
-function verdictLine(cases: readonly RuleDraftCaseResult[]): string {
+function verdictLine(report: RuleDraftReport): string {
+  const { cases } = report;
+  if (cases.length === 0) {
+    return `● No cases to run${report.repository === null ? "" : "; only the repo was checked"}. A draft's caught and passed cases prove the rule.`;
+  }
   const failed = cases.filter(result => !result.ok).length;
   if (failed === 0) return "● Every case matched.";
   return `● ${failed} ${failed === 1 ? "case did" : "cases did"} not match.`;
@@ -578,7 +590,7 @@ export function formatRuleDraftReport(report: RuleDraftReport): string {
     "● The rule is valid.",
     ...report.cases.map(caseLine),
     ...repositoryLines(report.repository),
-    verdictLine(report.cases),
+    verdictLine(report),
   ].join("\n");
 }
 
@@ -598,7 +610,7 @@ function draftArguments(action: "test" | "add", args: readonly string[], usage: 
   return { file, repo: resolve(parsed.options.get("--repo") ?? process.cwd()), json: parsed.flags.has("--json") };
 }
 
-/** `rerail rules test <draft.json>` and `rerail rules add <draft.json>`. */
+/** `rerail rules test <draft.json | rule.json>` and `rerail rules add <draft.json>`. */
 export async function runRuleDraftCommand(
   action: "test" | "add",
   args: readonly string[],
@@ -621,11 +633,9 @@ export async function runRuleDraftCommand(
     return 1;
   }
   const where = added.folder === "" ? added.repositoryName : `${added.repositoryName}/${added.folder}`;
-  if (added.approval.state === "approved") stdout.write(`● Added ${added.ruleId} to ${where}, as you approved it before.\n`);
-  else if (added.approval.approvedAt === null) stdout.write(`● Added ${added.ruleId} to ${where}. It runs once you approve it.\n`);
-  else stdout.write(`● Updated ${added.ruleId} in ${where}. The change runs once you approve it; until then the content you approved before runs.\n`);
+  stdout.write(`● Added ${added.ruleId} to ${where}.\n`);
   if (added.setUp) stdout.write(`  ${added.repositoryName} was not set up, so it is now set up with this rule.\n`);
-  if (added.approval.state === "pending") stdout.write(`  Approve it in the dashboard, or with: rerail rules approve ${added.ruleId}\n`);
+  if (!added.approved) stdout.write(`  It runs in Log until a person approves it: rerail rules approve ${added.ruleId}\n`);
   // The same dashboard the footer and steers link to, scoped to this checkout's repository when the daemon knows it.
   const dashboard = await readRulesDashboard({ cwd: repo });
   if (dashboard.url !== null) {

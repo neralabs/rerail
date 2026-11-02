@@ -10,7 +10,7 @@ import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS,
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { conversationRuleSchema } from "../engine/catalog/rule-schema.js";
 import { engineRegexIssues } from "../engine/catalog/rule-regexes.js";
-import { RULE_APPROVAL_OWNERS, RULE_KINDS } from "../engine/storage/schema.js";
+import { RULE_APPROVAL_SUBJECTS, RULE_KINDS } from "../engine/storage/schema.js";
 
 const START_STATES = ["started", "stopped", "not-set-up"] as const;
 
@@ -68,7 +68,16 @@ export const deciderSchema = z.discriminatedUnion("by", [
   z.object({ by: z.literal("repository"), folder: z.string(), target: z.enum(RULE_SETTING_TARGET_KINDS) }).strict(),
   z.object({ by: z.literal("pack-start"), packId: z.string() }).strict(),
   z.object({ by: z.literal("rule-default") }).strict(),
+  z.object({ by: z.literal("awaiting-approval") }).strict()
+    .describe("The rule's content waits for a person's approval, so it runs in Log whatever its settings say."),
 ]);
+
+/** What a person approves, the rule by its id or its pack by package name, at the digest of its content. */
+export const approvalSubjectSchema = z.object({
+  kind: z.enum(RULE_APPROVAL_SUBJECTS).describe("rule: the rule's own content; pack: everything its pack ships, at its version."),
+  id: z.string().describe("The rule's id, or the pack's package name."),
+  digest: z.string().describe("The digest of the content: approval holds for this content only, and an edit waits again."),
+}).strict();
 
 export const inactiveField = {
   inactive: z
@@ -92,15 +101,6 @@ const ruleSourceSchema = z.object({
 
 const ruleConfigSchema = z.record(z.string(), codeRuleValueSchema);
 
-export const ruleApprovalSchema = z.object({
-  state: z.enum(["shipped", "approved", "pending"])
-    .describe("shipped: Nera shipped the rule (a pack installed from the npm registry), so it needs no approval. approved: a person approved this content. pending: newer content waits for a person's approval; the content approved at approvedAt runs meanwhile, or, with approvedAt null, the rule runs nowhere yet."),
-  approvedAt: z.number().int().nullable().describe("Epoch milliseconds the content that runs was approved; null when none was, or none is needed."),
-}).strict();
-
-const contentHashField = z.string().min(1)
-  .describe("The rule content's digest (sha256 of everything but mode and revision); an approval binds to it.");
-
 const effectiveRuleBase = {
   source: ruleSourceSchema.describe("Where the rule comes from; a rule in an added pack belongs to the pack."),
   folder: z.string().describe("Folder of the attachment that makes the rule present."),
@@ -116,10 +116,11 @@ const effectiveRuleBase = {
   configError: z.string().nullable().describe("Why config does not apply to the rule's document; the rule then runs nowhere."),
   revision: z.number().int().positive(),
   payloadHash: z.string(),
-  approval: ruleApprovalSchema.describe("Whose content runs: Nera's, or what a person approved; pending: an edit waits for approval and the approved content runs meanwhile."),
   addedAt: z.number().int().nullable()
     .describe("Epoch milliseconds the attachment that brings the rule in (its pack, or the rule itself) was added at this folder."),
   updatedAt: z.number().int().nullable().describe("Epoch milliseconds a rule created by you was last edited; null for rules by Rerail."),
+  approval: z.object({ subject: approvalSubjectSchema, approved: z.boolean() }).strict().optional()
+    .describe("Present for a rule Rerail did not publish (created by you, in a worktree's .rerail/rules, or in a third party's or a folder's pack): until a person approves its content it runs in Log."),
 };
 export const effectiveRuleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("code"), rule: codeRuleSchema, ...effectiveRuleBase, ...inactiveField }).strict(),
@@ -130,8 +131,7 @@ export const unavailableReferenceSchema = z.object({
   sourceKind: z.enum(RULE_SOURCE_KINDS),
   sourceId: z.string(),
   folder: z.string(),
-  reason: z.enum(["missing", "conflicts-with-library", "awaiting-approval"])
-    .describe("awaiting-approval: the rule has no approved content yet, so it runs nowhere until a person approves it."),
+  reason: z.enum(["missing", "conflicts-with-library"]),
 }).strict();
 
 export const repositoryRulesSchema = z.object({
@@ -140,8 +140,6 @@ export const repositoryRulesSchema = z.object({
   setUp: z.boolean(),
   rules: z.array(effectiveRuleSchema),
   unavailable: z.array(unavailableReferenceSchema),
-  awaitingApproval: z.number().int().nonnegative()
-    .describe("How many of the repository's rules have content waiting for a person's approval: new ones that run nowhere yet, and edited ones that run their approved content meanwhile."),
 }).strict();
 
 const settingValues = {
@@ -199,26 +197,13 @@ export const attachmentRecordSchema = z.object({
 const libraryRuleBase = {
   revision: z.number().int().positive(),
   payloadHash: z.string(),
-  contentHash: contentHashField,
-  approval: ruleApprovalSchema.describe("approved: this content runs where the rule is added. pending: it waits for a person's approval."),
   copiedFromRuleId: z.string().nullable().describe("The By Rerail rule this rule is an edited copy of."),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 };
 export const libraryRuleRecordSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("code"),
-    rule: codeRuleSchema,
-    approvedRule: codeRuleSchema.nullable().describe("While this content is pending: the approved content, which runs meanwhile; else null."),
-    ...libraryRuleBase,
-    ...inactiveField,
-  }).strict(),
-  z.object({
-    kind: z.literal("conversation"),
-    rule: conversationRuleSchema,
-    approvedRule: conversationRuleSchema.nullable().describe("While this content is pending: the approved content, which runs meanwhile; else null."),
-    ...libraryRuleBase,
-  }).strict(),
+  z.object({ kind: z.literal("code"), rule: codeRuleSchema, ...libraryRuleBase, ...inactiveField }).strict(),
+  z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...libraryRuleBase }).strict(),
 ]);
 
 export const quarantinedRuleSchema = z.object({
@@ -258,38 +243,9 @@ export const libraryUpsertResultSchema = z.object({
 }).strict();
 
 export const rerailRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("code"), rule: codeRuleSchema, packId: z.string().nullable(), approval: ruleApprovalSchema, ...inactiveField }).strict(),
-  z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, packId: z.string().nullable(), approval: ruleApprovalSchema }).strict(),
+  z.object({ kind: z.literal("code"), rule: codeRuleSchema, packId: z.string().nullable(), ...inactiveField }).strict(),
+  z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, packId: z.string().nullable() }).strict(),
 ]);
-
-const approvedContentSchema = <T extends z.ZodType>(rule: T) => z.object({ rule, approvedAt: z.number().int() }).strict().nullable()
-  .describe("The content approved before, which runs meanwhile (show the person the difference); null when the rule runs nowhere yet.");
-const pendingRuleBase = {
-  owner: z.enum(RULE_APPROVAL_OWNERS).describe("library: a rule created by you; pack: a rule of a pack added from a folder or tarball."),
-  id: z.string(),
-  packId: z.string().nullable(),
-  revision: z.number().int().positive(),
-  contentHash: contentHashField,
-  copiedFromRuleId: z.string().nullable().describe("Set for an edited copy of a By Rerail rule: approving it the first time switches the original off where the copy is added."),
-};
-export const pendingRuleSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("code"), rule: codeRuleSchema, approved: approvedContentSchema(codeRuleSchema), ...pendingRuleBase }).strict(),
-  z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, approved: approvedContentSchema(conversationRuleSchema), ...pendingRuleBase }).strict(),
-]);
-
-export const ruleApproveBodySchema = z.object({
-  owner: z.enum(RULE_APPROVAL_OWNERS),
-  id: z.string().min(1),
-  contentHash: contentHashField.describe("The contentHash of the content the person read (rule_approvals_list); a rule that has changed since is refused."),
-}).strict();
-
-export const ruleApproveResultSchema = z.object({
-  owner: z.enum(RULE_APPROVAL_OWNERS),
-  id: z.string(),
-  kind: z.enum(RULE_KINDS),
-  contentHash: z.string(),
-  approvedAt: z.number().int(),
-}).strict();
 
 export const startBodySchema = z.object({
   ...targetShape,

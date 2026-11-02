@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
-import type { CheckoutContext, RepositoryKey, RepositoryStartState, RepositoryStatus } from "../engine/catalog/repository-model.js";
+import type { CheckoutContext, EffectiveRule, RepositoryKey, RepositoryStartState, RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import {
   checkoutStatus,
@@ -13,7 +13,9 @@ import {
   recordCheckout,
 } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
+import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { checkouts, events, repositories, sessions } from "../engine/storage/schema.js";
 import { clearSetupReview } from "../engine/catalog/setup-review.js";
 import type { RerailHost } from "../engine/adapter-contract.js";
@@ -192,11 +194,22 @@ export interface RepositoryStopOptions {
   session?: { host: RerailHost; sessionId?: string };
 }
 
+/** Every rule present in `checkout`, at any folder of its repository, as its own and its parents' settings leave them. */
+function checkoutRules(database: RerailDatabase, checkout: CheckoutContext): readonly EffectiveRule[] {
+  const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
+  return listRepositoryRules(database, worktreeRuleCatalog(loadRuleCatalog(), checkout.checkoutPath), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
+    .rules;
+}
+
 /** The rules that are on in `checkout`, at any folder of its repository, as its own and its parents' settings leave them. */
 export function onRuleCount(database: RerailDatabase, checkout: CheckoutContext): number {
-  const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
-  return listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
-    .rules.filter(rule => rule.on).length;
+  return checkoutRules(database, checkout).filter(rule => rule.on).length;
+}
+
+/** {@link onRuleCount}, and how many rules and packs that are on there run in Log waiting for a person's approval. */
+export function checkoutRuleCounts(database: RerailDatabase, checkout: CheckoutContext): { on: number; awaitingApproval: number } {
+  const rules = checkoutRules(database, checkout);
+  return { on: rules.filter(rule => rule.on).length, awaitingApproval: awaitingApprovalOf(rules) };
 }
 
 /** Start or stop a repository as a whole: its own value, with every checkout's own setting cleared. */
