@@ -123,3 +123,13 @@ TypeScript 0.78×, JavaScript 0.72×); the code table is 0.17–0.53 B/node.
 - **Agrees with** 0003's direction to adopt v9np. Anchor indexing needs its random access.
 - The measurements follow the ledger's spike 2.18: measured at deployment size, on Rerail's
   grammars, not by proxy.
+
+## Amendment (2026-11-02): no parent column
+
+Decided after list step 12's lab, with ast-index-spike's design and history indexes (rec6 stores
+`par`, a parent delta, because its SQL climbs read the blob in place: D S047; HI L240, L271).
+Rerail's tapes are zstd frames decoded whole before any read, so parents are rebuilt by one stack
+pass at decode: `TapeDoc::restore` and the SQL fallback's `prefilter::tapes`. On the lab's
+captures, that halves the fallback's execute CPU against descent from the root (1.55–1.63 s vs
+3.53–3.63 s, same VM steps). A stored delta would add bytes to every tape for nothing a decoded
+reader lacks. Details: decision 0026, "Parent lookups".

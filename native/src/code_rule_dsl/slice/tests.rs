@@ -466,6 +466,13 @@ fn the_slice_finds_ws_findings_on_real_files() {
             }
         }
         crate::code_rule_dsl::prof::report(name);
+        // Decision 0026: no stored relation holds a row per node (at most 0.25 a node each).
+        let nodes = store.query_rows("SELECT sum(nodes) FROM prefilter_sets", [], |r| r.get::<_, i64>(0)).unwrap()[0];
+        let tables = store.query_rows("SELECT name FROM sqlite_schema WHERE type='table' AND sql NOT LIKE 'CREATE VIRTUAL%'", [], |r| r.get::<_, String>(0)).unwrap();
+        for table in &tables {
+            let rows = store.query_rows(&format!("SELECT count(*) FROM \"{table}\""), [], |r| r.get::<_, i64>(0)).unwrap()[0];
+            assert!(rows as f64 <= 0.25 * nodes as f64, "{table}: {rows} rows for {nodes} nodes");
+        }
         let (ws, failed, w_time) = w_run.get_or_insert_with(|| {
             let (cpu0, wall0) = (cpu(), std::time::Instant::now());
             let (ws, failed) = ws_keys(&policies, &names, &sources);

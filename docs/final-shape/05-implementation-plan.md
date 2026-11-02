@@ -101,13 +101,13 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 
 | Copy | From | To | Adaptations |
 |---|---|---|---|
-| `Facts::build` | M `spikes/facts-a/src/facts.rs` (+ tests) | `facts/core.rs` | Change the visibility of W `tape::TapeDoc`/`Grammar`/`LineTable`, since it lives inside `native/`. Remove the hard-coded `"python"`. Outputs become tape sidecars (`par`, `cidx`, line starts, `tid`) and narrow fact families with derivation rows. No per-node SQL rows. |
+| `Facts::build` | M `spikes/facts-a/src/facts.rs` (+ tests) | `facts/core.rs` | Change the visibility of W `tape::TapeDoc`/`Grammar`/`LineTable`, since it lives inside `native/`. Remove the hard-coded `"python"`. Outputs are read from the tape (decision 0026) and narrow fact families with derivation rows. No per-node SQL rows. |
 | Supertypes | N `cr/tape.rs` TMPTAPE5 delta (da080ae1, cd981e90) | W `cr/tape.rs` | Port the delta onto W's v7 as a new format version with abstract node classes. Lock v9np later (G8, X) using P `experiments/tape-v8/src/{main.rs, sql.rs}` (copy into `cr/tape/v9np.rs` when its 4 measurements pass). |
 
 **Status (2026-10-28): done; v9np placed as `tape::v9np` (`03a7b0d9`), locking it as the format still waits on O8.**
 
 - Tape v8 (`c3dd82e4`): N's TMPTAPE5 supertypes delta ported onto W's v7.
-- Core facts (`f5ccdfd8` copy, `0417cd7e`, `baff0c35`): facts-a's `Facts::build` reads any dialect's tape; kinds are atoms `tag·1024 + code`; supertype postings; sidecars `par`, `cidx`, `cidx_named`, line starts; a content digest.
+- Core facts (`f5ccdfd8` copy, `0417cd7e`, `baff0c35`): facts-a's `Facts::build` reads any dialect's tape; kinds are atoms `tag·1024 + code`; supertype postings; a content digest. (Its per-node arrays `par`, `cidx`, `cidx_named` and line starts were removed 2026-11-02, decision 0026.)
 - Families (`3295791f`, `2ce1fbe2`): `#core:` and `#kinds:` derivations. A rename re-runs core and cuts off at kinds; a new kind reaches its reader. Same results over the overlay.
 - Gate: full `cargo test --lib`, run once: 1512 passed, 12 failed, 22 ignored; 143 s user + 9 s sys CPU. The 12 failures are the same environmental ones as Phase 1 (3 pack fixtures not in git, 9 `git_workspace` temp repos blocked by the agent git hook).
 - Open items: O2 update, O7–O10 in `open-items.md`.
@@ -135,6 +135,7 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 - Anchor store (`8165bd54` copy, `d24a2231`, `21028281`): rows in the content store keyed by `tape_id` (`prefilter_sets`, `tape_kind_counts`, `kind_freq`, `term_postings`, `term_freq`, `term_coverage`), cascading from `tape_objects`; `nera_postings` on every store connection; `ftsk` folded into `search_kind_fts` with kind-atom tokens (`POSITIONAL_INDEX_VERSION` 3). Five store tests ported. Nothing publishes the rows from the scan yet (with O2). `reader.rs`, `session.rs`, `preparation_tests.rs` and the lowering tests were dropped here and return with the lowering row.
 - Lowering + vocabulary (`0afc80d4`, `45fa3c1f` copies; next commit): `prefilter::select(store, lang, plans, tapes)` lowers a batch of plans to one scheduled SQL program over the store's tape-keyed rows. Decoded steps (relations, pattern parent hops, uncovered-text confirmation) became inexact supersets narrowed per tape; transducers confirm (§7). Vocabulary tables in the store schema, regex functions on every connection. Deferred: `nera_tree` for the §17 SQL fallback, atom-keyed vocabulary, `R[tid]` (Phase 4 (g)), `plan_feedback` (row 8). Nothing calls `select` yet (O2).
 - `nera_tree` (`fca88c9f` copy, with `reader.rs`, its closure): placed as `prefilter::{tree, reader}` (`f1595c57`) with P's `tape/{index,wire}.rs`; the §17 SQL fallback that calls it is not built.
+  2026-11-02 (list step 11): built. `nera_tree` reads through `tree::Structure`: P's `file` table (parent deltas, its test unchanged) or the store's v9np tapes (`prefilter/tapes.rs`: an image decoded from its `tape_objects` frame, the last 8 held; ancestors by descent from the root, decision 0026). Rows carry `size`; axes children, ancestors, parent; `nera_size(tape, pre)`. `prefilter::fallback` lowers plans with `lower::fallback`: has, inside, precedes and follows, with and without `stopBy: end`, read the tape at each scope node and are exact when both sides are; `Statement::exact` names the exact plans. Pattern parent hops and uncovered text stay supersets. `the_sql_fallback_relates_on_the_tape_exactly`: every rule's rows contain its matches, eleven relation rules are exact and equal the matcher's matches. Its driver is list step 20 (`logic::sql`).
 - Lab audit (`prefilter/lower/audit.rs`): placed (`4357b74d`) with its napi method and host script.
 - Probes (`daebe5db`): `matcher/anchors/text.rs` → `prefilter/probes.rs`, with suffixes, required literals and prefix ranges; the vocabulary fill seeks anchored predicates by range and probes before every regex.
 - Kind vocabulary (`19980059`): N's `search_kind_vocab` and frequency-ordered kind probes, as is.
@@ -146,6 +147,26 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 - Statistics loop on the path (2026-11-01, list step 9): the slice's set prefilter (`prefilter::sets::select`) now reads the plan inputs (`Statistics::read`: `kind_size`, `term_node_freq`, `term_kind_freq`) once per batch and compiles each plan's **file gate** (`prefilter/gates.rs`): a pattern's rarest requirement by estimate, if a terminal, limits the plan to the files holding that term or uncovered text, combined by `All`/`Any`. Gates are compiled plans (`compiled_plans`, `compiled_plan_reads`) under a structural plan identity and reused while every statistic stays in its log2 bucket. Each batch folds each plan's selectivity (candidates over the batch's nodes) and ns per root into `plan_feedback`. A file no gate holds has no postings read. The slice's kept rows (`slice_match`, `slice_span`) are fact relations held as SQL tables: `remember` merges `fact_stats` by the changed documents only (T's signed merge) and writes `sqlite_stat1` for their keys. `edge_freq` still has no reader (transducer plans, Phase 4). Checks: `the_statistics_loop_runs_on_the_slices_path` (tables filled; `fact_stats` equals the kept rows after an edit; gates reused); S7 710 keys = W on CPU and Metal. Cold CPU time read 6.4 s (CPU) and 3.0 s (Metal) against S8's 5.7 s and 1.6–1.7 s, at load average 30, so not attributed.
 - Atom-keyed vocabulary (2026-11-02, list step 10): every `term` column (`term_postings`, `term_freq`, `term_node_freq`, `vocabulary_term`, `vocabulary_pending`) holds the term's atom; publication interns new texts in its own transaction (`INSERT INTO atoms(value) ... ON CONFLICT DO NOTHING`, dense). `atoms_by_value` serves text lookups and the anchored fill's prefix seeks. Literal sets stay text (a literal need not be a term). Store floor 2 (`content-v2.sqlite`), `PREFILTER_VERSION` 5. S7's store: vocabulary and atoms 4,168 → 2,964 KB, the store 10.1 → 8.9 MB; 710 keys = W on CPU and Metal.
 - Probes and `tid` (2026-11-02, list step 10): first/last byte sets are the probe's 1-character prefixes and suffixes (`daebe5db`). S199's word-boundary rule is for a word index: on the production path terms are whole leaf texts, and the only word index (`search_text_fts`, G's positional search) is `#[cfg(test)]` (`content_store/mod.rs:19`), so no code changes. `tid` is derived from the term postings, not stored (O7).
+
+- Check (2026-11-02, list step 12): `anchor_lab` against P on the same batches
+  (`scripts/profiling/lab-vs-p/`): 174 Python files, every pack policy (306 clauses, three merged
+  documents), P's own batching (one file each; P's run stopped at its 15-minute cap after 63
+  batches, 69 files), both labs in `RERAIL_LAB_BATCH` mode over those 63.
+
+  | Lowering | VM steps | Candidate rows | Execute CPU |
+  |---|---:|---:|---:|
+  | P (`cbee7a03`, its lab build) | 0.285 G | 879,555 | 11.8 s (P's crate unoptimized) |
+  | Rerail, production (`lower::batch`) | 0.052 G (0.18×) | 2,116,558 (2.4×) | 1.6 s |
+  | Rerail, SQL fallback (`lower::fallback`), first form | 2.21 G (7.7×) | 1,312,845 (1.5×) | 57 s |
+  | Rerail, SQL fallback, set operations (O32) | 0.091 G (0.32×) | 1,312,845 (1.5×) | 2.3 s |
+
+  The production lowering passes: 5.5× fewer steps than P. Its rows are 2.4× P's, because
+  relations, pattern parent hops and uncovered text stay supersets for the transducers (P decoded
+  them in SQL). The fallback fails the bar: its relations are correlated `EXISTS` per scope row
+  over unindexed materialized sets, which the spike measured re-running per row (S203, 296.7 →
+  31.2 ms by materializing); open item O32. Parents: on 20 of the captures the fallback's execute
+  CPU is 1.55–1.63 s with parents rebuilt at decode against 3.53–3.63 s by descent (same 0.143 G
+  steps; load 27), so the store reader rebuilds them (decision 0025 amended).
 
 ### Phase 4: transducer runtime (§3, §5, §7; D2, D3, D9, E5–E9, F1, F2)
 
@@ -230,7 +251,7 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 |---|---|---|---|
 | No-copy buffers | G `T/metal_backend.rs` (`MappedRegion`, `MappedBuffer`, `new_buffer_with_bytes_no_copy`, `StorageModeShared`, guard, pipeline cache) | `residency/metal.rs` | One retained buffer per 64 MiB slab. Remove `PrivateInputUpload` unless Q-R1 (F8) shows private storage wins. |
 | Batch admission | P `cr/relational/batch.rs` (resident capacity), `workspace/memory/census.rs`, `profile/memory.rs` | `residency/admission.rs` | Byte budget of 500 MB in total, split into pools. |
-| Write new | — | `residency/slabs.rs` | zstd frames decompressed straight into anonymous-mmap slabs, a document table per batch (no copies), sidecars, a pipeline/program cache keyed by plan identity, wave preparation, a drop timer 2 min after each full execution. No source implements this; reference P `spec.md` §20. |
+| Write new | — | `residency/slabs.rs` | zstd frames decompressed straight into anonymous-mmap slabs, a document table per batch (no copies; tape columns only, decision 0026), a pipeline/program cache keyed by plan identity, wave preparation, a drop timer 2 min after each full execution. No source implements this; reference P `spec.md` §20. |
 
 **Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding. Placed: `residency::admission::memory` (`602c2ef6`). `residency::admission::census` (`2d41e7d2`), over W's JSON projections. `batch.rs` placed test-only with P's relational stage as `residency::admission::relational` (O18). 2026-10-29: the stage's closure into production code is ported (rule 4): P's `calls` delta (the reference graph, `Mode`) and P's `ast.syntax` gate, so the stage reads `reference_edges` and its test policies carry `syntax: valid` as P wrote them. 2026-10-29: P's workspace path for relational clauses is ported test-only (O18) with its closure, P's census restored verbatim (O19), and P's anchor-corpus swap compiled behind the `p-anchor-corpus` feature (O20).**
 

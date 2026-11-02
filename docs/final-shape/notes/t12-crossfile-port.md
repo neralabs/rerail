@@ -131,19 +131,19 @@ the content store should serve); the layered Y3 state and the lattice layers are
 
 1. **03 §2, "No DRed and no level witness"**: `maintained` is E3's `min_level`, a level witness.
    It is the fast mode (values p95 0.004 ms). `recompute` follows 03 §2 and costs 3.1–3.7 ms p95
-   per edit (440K ids, 21–24 rounds). Decision needed (O32).
+   per edit (440K ids, 21–24 rounds). Decision needed (O37).
 2. **03 §2 with §14's waves, no level order**: the findings derivation reads both Y2's inputs and
    the reached set, so an edit that changes reachability runs it twice (re-runs 6 for 4 waves).
-   Each run is correct for the bindings it read; the second is the counted spurious work (O33).
+   Each run is correct for the bindings it read; the second is the counted spurious work (O38).
 3. **Y2's scope without the reached set**: M's `prepare` added the reached dispatch states of a
    dirty node and whole nodes for the reached states of a changed definition's layer; here a
    dirty node stands for all its states and the layer for all its states. Exact (1,151 checks)
    and the reason the max is 4.5, not 20.5 ms.
 4. **LATTICE.md L10** (two levels, base and worktree): unchanged from E3; Y3's state is layered
    three deep (base, cluster, worktree) and the lattice two (worktree-1 base, worktree): two
-   layerings of one worktree (O31).
+   layerings of one worktree (O36).
 5. **xref/symbols read the tree name, not each path**: the producers take the observer's path
-   delta (`Pending`), so `observe::recover` cannot recompute them after a crash (O34).
+   delta (`Pending`), so `observe::recover` cannot recompute them after a crash (O39).
 
 ## 7. Not done
 
@@ -151,5 +151,5 @@ the content store should serve); the layered Y3 state and the lattice layers are
   for exactness in the fast test.
 - Cluster overlays for the CSR, dispatch keyed by class, dense ids at the source (E3 §8).
 - Feeding the families from this crate's own producers (tapes, `facts::core`): they read M's X6
-  exports (O35).
+  exports (O40).
 - The facts daemon, M2, `exported-families`, Metal, the logic surface (non-goals).

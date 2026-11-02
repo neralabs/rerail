@@ -28,8 +28,6 @@ use std::collections::{BTreeMap, BTreeSet};
 /// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
 /// edges (`kind_size`, `edge_freq`). 5: terms are atoms.
 pub(crate) const PREFILTER_VERSION: i64 = 5;
-/// `term_ids`' entry for a node no term covers.
-pub(crate) const NO_TERM: u32 = u32::MAX;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub(crate) const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -175,10 +173,21 @@ impl ContentStore {
             )?;
             insert(&connection, "INSERT OR IGNORE INTO temp.capture_tapes(tape_id)", "", tapes.iter().map(|&tape| [Value::Integer(tape)]))?;
             // `term_freq` before the vocabulary, so its insert trigger finds no predicate to mark.
+            // `RERAIL_CAPTURE_TAPES=1` keeps the tapes' frames, for the SQL fallback's lab
+            // (`RERAIL_LAB_FALLBACK`), whose relations read them through `nera_tree`.
+            if std::env::var_os("RERAIL_CAPTURE_TAPES").is_some() {
+                connection.execute_batch(
+                    "INSERT INTO capture.tape_objects SELECT t.* FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
+                )?;
+            } else {
+                connection.execute_batch(
+                    "INSERT INTO capture.tape_objects SELECT t.tape_id, t.source_id, t.canonical_hash_id, t.grammar_id, \
+                       t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation \
+                       FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
+                )?;
+            }
             connection.execute_batch(
-                "INSERT INTO capture.tape_objects SELECT t.tape_id, t.source_id, t.canonical_hash_id, t.grammar_id, \
-                   t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation \
-                   FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);
+                "
                  INSERT INTO capture.prefilter_sets SELECT s.* FROM temp.capture_tapes c JOIN main.prefilter_sets s USING(tape_id);
                  INSERT INTO capture.tape_kind_counts SELECT k.* FROM temp.capture_tapes c JOIN main.tape_kind_counts k USING(tape_id);
                  INSERT INTO capture.term_postings SELECT p.* FROM temp.capture_tapes c JOIN main.term_postings p USING(tape_id);
@@ -204,30 +213,6 @@ impl ContentStore {
         connection.execute_batch("PRAGMA foreign_keys = ON")?;
         connection.execute_batch("DETACH DATABASE capture")?;
         Ok(copied?)
-    }
-
-    /// Each node's term (`tid`, 03 §16): the atom of its leaf text where the tape's term postings
-    /// cover it, `NO_TERM` elsewhere, indexed by preorder. Derived from the postings, which already
-    /// map each term to its nodes, not stored: a stored column would be 4 bytes a node, about half
-    /// a tape (open item O7).
-    #[allow(dead_code, reason = "read by the transducer's R[tid] (05 Phase 4 (g), list step 17)")]
-    pub(crate) fn term_ids(&self, tape: TapeId) -> StoreResult<Vec<u32>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let nodes: i64 = connection
-            .prepare_cached("SELECT nodes FROM prefilter_sets WHERE tape_id=?1")?
-            .query_row([tape.row()], |row| row.get(0))?;
-        let mut ids = vec![NO_TERM; usize::try_from(nodes).map_err(|_| StoreError::Invalid("negative node count".to_owned()))?];
-        let mut rows = connection.prepare_cached("SELECT p.pre, v.term FROM term_postings v, nera_postings(v.postings) p WHERE v.tape_id=?1")?;
-        let mut rows = rows.query([tape.row()])?;
-        while let Some(row) = rows.next()? {
-            let pre = usize::try_from(row.get::<_, i64>(0)?).ok().filter(|&pre| pre < ids.len());
-            let slot = pre.and_then(|pre| ids.get_mut(pre)).ok_or_else(|| StoreError::Corrupt("a term posting outside its tape".to_owned()))?;
-            if *slot != NO_TERM {
-                return Err(StoreError::Corrupt("a node with two terms".to_owned()));
-            }
-            *slot = u32::try_from(row.get::<_, i64>(1)?).map_err(|_| StoreError::Corrupt("a term atom out of range".to_owned()))?;
-        }
-        Ok(ids)
     }
 
     /// Deletes a tape, as collection does, for tests of the cascade.
