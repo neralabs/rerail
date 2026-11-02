@@ -59,11 +59,13 @@ const MAX_LOG_LINES = 200;
 const MAX_LOG_LINE_CHARACTERS = 2000;
 const MAX_LOG_BYTES = 1024 * 1024;
 
-export interface SupportBundleLiteral {
+export interface KnownValue {
   value: string;
   label: string;
   /** Replace it only as a whole word: a user name like `dan` is not in `redundant`. */
   word?: boolean;
+  /** Replace it only right after a path separator: a user name like `dev` is also a word in a log line. */
+  pathOnly?: boolean;
 }
 
 export interface SupportBundleTimelineEntry {
@@ -84,7 +86,7 @@ export interface SupportBundleSteer {
   text: string;
 }
 
-export interface SupportBundleFinding {
+export interface SupportBundleViolation {
   ruleId: string;
   clauseId: string;
   code: string;
@@ -109,13 +111,13 @@ export interface SupportBundleAudit {
   status: string;
   startedAt: number;
   finishedAt: number | null;
-  /** How many files and rules the audit covered; the files themselves are named only where a finding is. */
-  paths: number;
-  rules: number;
-  violations: SupportBundleFinding[];
+  /** How many files and rules the audit covered; the files themselves are named only where a violation is. */
+  pathCount: number;
+  ruleCount: number;
+  violations: SupportBundleViolation[];
   violationsOmitted: number;
   failures: SupportBundleFailure[];
-  failureCount: number;
+  failuresOmitted: number;
   blindFileCount: number;
 }
 
@@ -172,7 +174,7 @@ export interface SupportBundleSummary {
   session: { host: string; startedAt: number } | null;
   events: number;
   steers: number;
-  findings: number;
+  violations: number;
   /** Rule ids the person's team chose, which can name a project or a client. */
   ownRules: string[];
   logLines: number;
@@ -181,44 +183,61 @@ export interface SupportBundleSummary {
 
 export class SupportBundleError extends Error {}
 
-const LEFT_OUT = "Prompts, replies, tool input and output, source code, rule text and absolute paths are not in this file.";
+const LEFT_OUT = "Prompts, replies, tool input and output, source code and rule text are not in this file; paths under your home folder and in your Rerail checkouts are replaced, and other paths may remain.";
 
 /** Replaced whoever's they are, in this order: a value can sit inside a longer one (a URL's password inside a line that also holds an email). */
 const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, REDACTED],
-  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|sk-[\w-]{16,}|AKIA[0-9A-Z]{16}|xox[abeoprs]-[A-Za-z0-9-]{10,}|npm_[A-Za-z0-9]{20,}|eyJ[\w-]+\.[\w-]+\.[\w-]+)/gu, REDACTED],
-  [/:\/\/[^\s/:@]+:[^\s/@]+@/gu, `://${REDACTED}@`],
-  [/\bBearer\s+[\w.~+/=-]+/giu, `Bearer ${REDACTED}`],
-  [new RegExp(`\\b([\\w-]*(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|access[_-]?key|credential|authorization|${DAEMON_ACCESS_PARAM})[\\w-]*["']?\\s*[:=]\\s*)(?:"[^"]*"|'[^']*'|[^\\s"',;&]+)`, "giu"), `$1${REDACTED}`],
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|sk-[\w-]{16,}|sk_(?:live|test)_[A-Za-z0-9]{8,}|AIza[\w-]{35}|AKIA[0-9A-Z]{16}|xox[abeoprs]-[A-Za-z0-9-]{10,}|npm_[A-Za-z0-9]{20,}|eyJ[\w-]+\.[\w-]+\.[\w-]+)/gu, REDACTED],
+  // `user:password@host`, or `:password@host` with no user.
+  [/:\/\/[^\s/:@]*:[^\s/@]+@/gu, `://${REDACTED}@`],
+  // An auth header's credential, whatever its scheme; the `key: value` pattern below then folds `Authorization: Basic <redacted>` into one.
+  // Case matters and the credential has a floor, so "a token was expected" and "Basic settings" stay.
+  [/\b((?:Bearer|Basic|Digest|Token)\s+)[\w.~+/=-]{8,}/gu, `$1${REDACTED}`],
+  [new RegExp(`\\b([\\w-]*(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|access[_-]?key|credential|authorization|${DAEMON_ACCESS_PARAM})[\\w-]*["']?\\s*[:=]\\s*)(?:"[^"]*"|'[^']*'|(?:Bearer|Basic|Digest|Token)\\s+[^\\s"',;&]+|[^\\s"',;&]+)`, "giu"), `$1${REDACTED}`],
   [/[\w.%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/gu, REDACTED],
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/giu, "<id>"],
-  [/\/(?:Users|home)\/[^/\s"':]+/gu, "~"],
-  [/\b[A-Za-z]:\\Users\\[^\\\s"':]+/gu, "~"],
+  // Home directories, whoever's: Windows first (`C:\Users\x`, `C:/Users/x`, JSON-escaped `C:\\Users\\x`), then POSIX
+  // and WSL's mount of a Windows home (`/mnt/c/Users/x`), plain or JSON-escaped (`\/home\/x`).
+  [/\b[A-Za-z]:(?:\\\\|\\|\/)+Users(?:\\\\|\\|\/)+[^\\/\s"':]+/gu, "~"],
+  [/(?:(?:\\\/|\/)mnt(?:\\\/|\/)[a-z])?(?:\\\/|\/)(?:Users|home)(?:\\\/|\/)[^\\/\s"':]+/gu, "~"],
 ];
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
+/**
+ * A path as a log or an error can also write it: with the other separator (Git and URLs write `C:/Users/x`), and
+ * JSON-escaped inside a logged JSON string (`C:\\Users\\x`, `\/home\/x`).
+ */
+function pathForms(value: string): string[] {
+  if (!/[\\/]/u.test(value)) return [value];
+  const forward = value.replaceAll("\\", "/");
+  const backward = value.replaceAll("/", "\\");
+  return [...new Set([value, forward, backward, backward.replaceAll("\\", "\\\\"), forward.replaceAll("/", "\\/")])];
+}
+
 /** Takes what this computer knows out of `text`, longest value first so a path goes before a folder inside it, then what looks like a secret. */
-export function scrubText(text: string, { literals }: { literals: readonly SupportBundleLiteral[] }): string {
+export function scrubText(text: string, { knownValues }: { knownValues: readonly KnownValue[] }): string {
   let scrubbed = text;
-  for (const { value, label, word } of [...literals].sort((left, right) => right.value.length - left.value.length)) {
+  const forms = knownValues.flatMap(literal => pathForms(literal.value).map(value => ({ ...literal, value })));
+  for (const { value, label, word, pathOnly } of forms.sort((left, right) => right.value.length - left.value.length)) {
     // A home or checkout of `/`, as a container can have, would take every slash with it.
     if (value.length < 2) continue;
-    scrubbed = word === true
-      ? scrubbed.replace(new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, "gu"), () => label)
-      : scrubbed.replaceAll(value, () => label);
+    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, "gu"), () => label);
+    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, "gu"), () => label);
+    else scrubbed = scrubbed.replaceAll(value, () => label);
   }
   for (const [pattern, replacement] of SECRET_PATTERNS) scrubbed = scrubbed.replace(pattern, replacement);
   return scrubbed;
 }
 
-function scrubValue<T>(value: T, literals: readonly SupportBundleLiteral[]): T {
-  if (typeof value === "string") return scrubText(value, { literals }) as T;
-  if (Array.isArray(value)) return value.map(item => scrubValue(item as unknown, literals)) as T;
+function scrubValue<T>(value: T, knownValues: readonly KnownValue[]): T {
+  if (typeof value === "string") return scrubText(value, { knownValues }) as T;
+  if (Array.isArray(value)) return value.map(item => scrubValue(item as unknown, knownValues)) as T;
   if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [scrubText(key, { literals }), scrubValue(item as unknown, literals)])) as T;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [scrubText(key, { knownValues }), scrubValue(item as unknown, knownValues)])) as T;
 }
 
 function readQuietly(path: string): string | undefined {
@@ -248,7 +267,7 @@ function repositoryAddresses(key: string): string[] {
   return segments.length >= 2 ? [key, address, segments.slice(-2).join("/")] : [key];
 }
 
-function repositoryLiterals(repository: RepositoryListing): SupportBundleLiteral[] {
+function repositoryLiterals(repository: RepositoryListing): KnownValue[] {
   return [
     ...[repository.repositoryKey, ...repository.aliases].flatMap(key => repositoryAddresses(key).map(value => ({ value, label: "<repository>" }))),
     ...repository.checkouts.map(row => ({ value: row.checkoutPath, label: "<checkout>" })),
@@ -256,17 +275,21 @@ function repositoryLiterals(repository: RepositoryListing): SupportBundleLiteral
   ];
 }
 
-/** Whole-word names of this person and this computer, where long enough not to read as an ordinary word. */
-function machineLiterals(home: string): SupportBundleLiteral[] {
-  const names: SupportBundleLiteral[] = [];
+/**
+ * Names of this person and this computer, as whole words where long enough not to be an ordinary one (`tim`, `dev`
+ * and `bob` are replaced inside paths only). The computer's name goes by its first label too: macOS reports
+ * `Name.local` and logs `Name`.
+ */
+function machineLiterals(home: string): KnownValue[] {
+  const names: KnownValue[] = [];
   try {
     const { username } = userInfo();
-    if (username.length >= 4) names.push({ value: username, label: "<user>", word: true });
+    if (username !== "") names.push({ value: username, label: "<user>", word: true, ...(username.length < 4 ? { pathOnly: true } : {}) });
   } catch {
     // Some containers run as a user with no name.
   }
   const host = hostname();
-  if (host.length >= 4) names.push({ value: host, label: "<host>", word: true });
+  for (const name of new Set([host, host.split(".")[0] ?? host])) if (name.length >= 4) names.push({ value: name, label: "<host>", word: true });
   return [
     ...names,
     ...homeSecrets(home).map(value => ({ value, label: REDACTED })),
@@ -345,7 +368,7 @@ function reportedPath(path: string | undefined): string | null {
   return sensitiveByName(path) ? WITHHELD_PATH : path;
 }
 
-/** An audit by rule and place. A finding's message, captures and fix can quote the file, so none of them leave. */
+/** An audit by rule and place. A violation's message, captures and fix can quote the file, so none of them leave. */
 function reportedAudit(audit: AuditRecord): SupportBundleAudit {
   return {
     scope: audit.scope,
@@ -353,8 +376,8 @@ function reportedAudit(audit: AuditRecord): SupportBundleAudit {
     status: audit.status,
     startedAt: audit.startedAt,
     finishedAt: audit.finishedAt,
-    paths: audit.paths.length,
-    rules: audit.ruleRevisions.length,
+    pathCount: audit.paths.length,
+    ruleCount: audit.ruleRevisions.length,
     violations: audit.violations.slice(0, MAX_AUDIT_ENTRIES).map(violation => ({
       ruleId: violation.ruleId,
       clauseId: violation.clauseId,
@@ -374,7 +397,8 @@ function reportedAudit(audit: AuditRecord): SupportBundleAudit {
       // An engine error is worth keeping; about a file named like a secret, its place is all that leaves.
       message: failure.path !== undefined && sensitiveByName(failure.path) ? null : failure.message,
     })),
-    failureCount: audit.failureCount,
+    // The record lists at most 20 failures and counts the rest; the cap here cuts no further.
+    failuresOmitted: audit.failureCount - Math.min(audit.failures.length, MAX_AUDIT_ENTRIES),
     blindFileCount: audit.blindFileCount,
   };
 }
@@ -480,11 +504,11 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
 
   const location = attempt("repository", () => repositoryIdentityLocation(repo), undefined);
   const workspaceRoot = location?.workspaceRoot ?? repo;
-  const state = attempt("repository", () => workspaceStartState(repo, databasePath) as string, "unknown");
+  const state = attempt("start state", () => workspaceStartState(repo, databasePath) as string, "unknown");
   let repository = emptyRepository(state, location?.git ?? false);
   let session: SupportBundleSession | null = null;
   const ownRules: string[] = [];
-  const literals: SupportBundleLiteral[] = [...machineLiterals(home), { value: workspaceRoot, label: "<checkout>" }];
+  const knownValues: KnownValue[] = [...machineLiterals(home), { value: workspaceRoot, label: "<checkout>" }];
   const catalog = attempt("packs", () => loadRuleCatalog(home), undefined);
 
   if (existsSync(databasePath)) {
@@ -492,8 +516,8 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
     if (database !== undefined) {
       try {
         const repositories = attempt("repositories", () => listRepositories(database), []);
-        literals.push(...repositories.flatMap(repositoryLiterals));
-        literals.push(...attempt("session owners", () => database.select({ token: policySessionOwners.token }).from(policySessionOwners).all(), [])
+        knownValues.push(...repositories.flatMap(repositoryLiterals));
+        knownValues.push(...attempt("session owners", () => database.select({ token: policySessionOwners.token }).from(policySessionOwners).all(), [])
           .map(row => ({ value: row.token, label: REDACTED })));
         const checkout = attempt("checkout", () => lookupCheckout(database, repo), undefined);
         const listing = checkout === undefined ? undefined : repositories.find(candidate => candidate.repositoryKey === checkout.repositoryKey);
@@ -515,7 +539,7 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
         const historyIds = listing === undefined ? [] : repositoryHistoryIds(listing);
         const selected = attempt("session", () => selectSession(database, historyIds, sessionId), undefined);
         if (selected !== undefined) {
-          literals.push({ value: selected.sessionId, label: "<session>" }, { value: selected.cwd, label: "<checkout>" });
+          knownValues.push({ value: selected.sessionId, label: "<session>" }, { value: selected.cwd, label: "<checkout>" });
           session = attempt("session", () => readSession(database, databasePath, selected, workspaceRoot, problems), null);
         }
       } finally {
@@ -551,7 +575,7 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
     daemonLogOmittedLines: omitted,
     problems,
   };
-  return { bundle: scrubValue(bundle, literals), ownRules: scrubValue(ownRules, literals) };
+  return { bundle: scrubValue(bundle, knownValues), ownRules: scrubValue(ownRules, knownValues) };
 }
 
 function summaryOf(path: string, bundle: SupportBundle, ownRules: readonly string[]): SupportBundleSummary {
@@ -561,7 +585,7 @@ function summaryOf(path: string, bundle: SupportBundle, ownRules: readonly strin
     session: session === null ? null : { host: session.host, startedAt: session.startedAt },
     events: session === null ? 0 : session.timeline.length + session.timelineOmitted,
     steers: session?.steers.length ?? 0,
-    findings: session?.audits.reduce((total, audit) => total + audit.violations.length, 0) ?? 0,
+    violations: session?.audits.reduce((total, audit) => total + audit.violations.length, 0) ?? 0,
     ownRules: [...ownRules],
     logLines: bundle.daemonLog.length,
     problems: bundle.problems,
@@ -573,7 +597,7 @@ function summaryText(summary: SupportBundleSummary): string {
     `● Wrote a support bundle to ${summary.path}`,
     summary.session === null
       ? "  It holds this computer's versions and Rerail's state, with no session: none was recorded for this repository."
-      : `  It holds versions, Rerail's state and a ${summary.session.host} session: ${summary.events} events by kind and tool name, ${summary.steers} steers, ${summary.findings} findings by rule and line.`,
+      : `  It holds versions, Rerail's state and a ${summary.session.host} session: ${summary.events} events by kind and tool name, ${summary.steers} steers, ${summary.violations} violations by rule and line.`,
     `  Also the last ${summary.logLines} lines of the daemon's log. ${LEFT_OUT}`,
     "",
     "  Nothing has been sent anywhere. Read the file before you attach it: secrets and names are taken out by value and",

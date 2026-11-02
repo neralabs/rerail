@@ -272,7 +272,7 @@ export function supportBundleInstructions(cli: string): string {
     "```text",
     "● Support bundle ready. Nothing has been sent anywhere.",
     "  File      <path>",
-    "  Holds     versions, Rerail's state, <events> session events, <steers> steers, <findings> findings, <logLines> log lines",
+    "  Holds     versions, Rerail's state, <events> session events, <steers> steers, <violations> violations, <logLines> log lines",
     "  Read it   before you attach it; issues are public",
     "  Attach    drag it into your issue: https://github.com/neralabs/rerail/issues/new/choose",
     "```",

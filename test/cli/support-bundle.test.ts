@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { homedir, tmpdir, userInfo } from "node:os";
+import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultRerailDatabasePath, events, openRerailDatabase, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
@@ -137,7 +137,7 @@ describe("rerail support-bundle", () => {
     }
   });
 
-  it("keeps what a maintainer diagnoses from: the timeline, the gaps, the steers and the findings' places", async () => {
+  it("keeps what a maintainer diagnoses from: the timeline, the gaps, the steers and the violations' places", async () => {
     const { bundle } = await run(await reportedWorld());
     expect(bundle.rerail.version).toBe("9.9.9");
     expect(bundle.session?.host).toBe("claude-code");
@@ -147,7 +147,7 @@ describe("rerail support-bundle", () => {
     expect(bundle.session?.timeline).toContainEqual(expect.objectContaining({ kind: "steering-delivered", ruleIds: ["eslint-eqeqeq"] }));
     expect(bundle.session?.steers).toEqual([{ mechanism: "message", requested: "steer", ruleIds: ["eslint-eqeqeq"], text: STEER }]);
     const audit = bundle.session?.audits[0];
-    expect(audit).toMatchObject({ scope: "ai-output", mode: "steer", status: "completed", paths: 2, rules: 1 });
+    expect(audit).toMatchObject({ scope: "ai-output", mode: "steer", status: "completed", pathCount: 2, ruleCount: 1, failuresOmitted: 0 });
     expect(audit?.violations[0]).toEqual({ ruleId: "eslint-eqeqeq", clauseId: "eqeqeq", code: "eqeqeq", mode: "steer", path: "src/app.ts", line: 3, column: 5 });
     expect(audit?.failures[0]).toMatchObject({ code: "adapter-error", stage: "parse", path: "src/app.ts" });
   });
@@ -177,6 +177,15 @@ describe("rerail support-bundle", () => {
       expect(text).not.toContain(secret);
     }
     expect(bundle.daemonLog).toContain("error reading <checkout>/src/app.ts in <repository>");
+  });
+
+  it("takes the computer's name out of the log by its first label too, as macOS logs it without .local", async () => {
+    const world = await reportedWorld();
+    const label = hostname().split(".")[0]!;
+    if (label.length < 4) return;
+    writeFileSync(join(world.home, "daemon.log"), `listening on ${label} and on ${hostname()}\n`);
+    const { bundle } = await run(world);
+    expect(bundle.daemonLog[0]).toBe("listening on <host> and on <host>");
   });
 
   it("scrubs the session's own text the same way as the log", async () => {
@@ -304,8 +313,8 @@ describe("rerail support-bundle", () => {
   it("--json names the file and what to check in it, and carries none of the bundle's text", async () => {
     const world = await reportedWorld();
     const { stdout } = await run(world, "--json");
-    const summary = JSON.parse(stdout) as { path: string; steers: number; findings: number; logLines: number };
-    expect(summary).toMatchObject({ path: world.output, steers: 1, findings: 2 });
+    const summary = JSON.parse(stdout) as { path: string; steers: number; violations: number; logLines: number };
+    expect(summary).toMatchObject({ path: world.output, steers: 1, violations: 2 });
     expect(stdout).not.toContain(STEER);
   });
 
@@ -315,7 +324,7 @@ describe("rerail support-bundle", () => {
 });
 
 describe("scrubText", () => {
-  const scrub = (text: string): string => scrubText(text, { literals: [] });
+  const scrub = (text: string): string => scrubText(text, { knownValues: [] });
 
   it.each([
     ["a GitHub token", "ghp_abcdefghijklmnopqrstuvwxyz0123456789"],
@@ -341,6 +350,24 @@ describe("scrubText", () => {
     expect(scrub(line)).not.toContain(value);
   });
 
+  it.each([
+    // Built at run time: GitHub's push protection reads a key-shaped literal as a key.
+    ["a Stripe key", `sk_live_${"51H".padEnd(24, "x")}`],
+    ["a Stripe test key", `sk_test_${"51H".padEnd(24, "x")}`],
+    ["a Google API key", "AIzaSyA-abcdefghijklmnopqrstuvwxyz01234"],
+  ])("takes out %s", (_name, secret) => {
+    expect(scrub(`before ${secret} after`)).toBe("before <redacted> after");
+  });
+
+  it.each([
+    ["a basic auth header", "Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"],
+    ["a digest auth header", "authorization: Digest abc.def", "abc.def"],
+    ["a token auth header", "Authorization: Token abc123def", "abc123def"],
+    ["a URL password with no user", "postgres://:hunter2@db:5432/app", "hunter2"],
+  ])("takes the credential out of %s", (_name, line, value) => {
+    expect(scrub(line)).not.toContain(value);
+  });
+
   it("takes out a private key across lines", () => {
     const key = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\ndef\n-----END OPENSSH PRIVATE KEY-----";
     expect(scrub(`before ${key} after`)).toBe("before <redacted> after");
@@ -354,18 +381,48 @@ describe("scrubText", () => {
     expect(scrub(path)).toBe(expected);
   });
 
+  it.each([
+    ["forward slashes", "C:/Users/somebody/work/app.ts", "~/work/app.ts"],
+    ["JSON-escaped backslashes", String.raw`{"cwd":"C:\\Users\\somebody\\work\\app.ts"}`, String.raw`{"cwd":"~\\work\\app.ts"}`],
+    ["WSL's mount of a Windows home", "/mnt/c/Users/somebody/work/app.ts", "~/work/app.ts"],
+  ])("shortens a Windows home directory written with %s", (_name, path, expected) => {
+    expect(scrub(path)).toBe(expected);
+  });
+
+  it.each([
+    ["as recorded", String.raw`C:\Users\somebody\src\acme-app\x.ts`],
+    ["with forward slashes", "C:/Users/somebody/src/acme-app/x.ts"],
+    ["JSON-escaped", String.raw`C:\\Users\\somebody\\src\\acme-app\\x.ts`],
+  ])("replaces a Windows checkout path written %s", (_name, text) => {
+    const knownValues = [{ value: String.raw`C:\Users\somebody\src\acme-app`, label: "<checkout>" }];
+    expect(scrubText(text, { knownValues })).not.toContain("acme-app");
+    expect(scrubText(text, { knownValues })).toContain("<checkout>");
+  });
+
+  it("replaces a POSIX checkout path written JSON-escaped, as a logged JSON string holds it", () => {
+    const knownValues = [{ value: "/home/somebody/src/acme-app", label: "<checkout>" }];
+    expect(scrubText(String.raw`{"cwd":"\/home\/somebody\/src\/acme-app"}`, { knownValues })).toBe(String.raw`{"cwd":"<checkout>"}`);
+  });
+
   it("takes out this computer's user name wherever it appears", () => {
     const { username } = userInfo();
-    expect(scrubText(`owned by ${username}.`, { literals: [{ value: username, label: "<user>" }] })).toBe("owned by <user>.");
+    expect(scrubText(`owned by ${username}.`, { knownValues: [{ value: username, label: "<user>" }] })).toBe("owned by <user>.");
+  });
+
+  it("takes a short user name out of a path only, where it would otherwise eat a common word", () => {
+    const knownValues = [{ value: "dev", label: "<user>", word: true, pathOnly: true }];
+    expect(scrubText("/Volumes/data/dev/app.ts on the dev build", { knownValues })).toBe("/Volumes/data/<user>/app.ts on the dev build");
+    expect(scrubText(String.raw`D:\dev\app.ts`, { knownValues })).toBe(String.raw`D:\<user>\app.ts`);
+    expect(scrubText("/srv/devices/x", { knownValues })).toBe("/srv/devices/x");
   });
 
   it("replaces a longer literal before a shorter one inside it", () => {
-    const literals = [{ value: "/work", label: "<short>" }, { value: "/work/app", label: "<checkout>" }];
-    expect(scrubText("/work/app/src", { literals })).toBe("<checkout>/src");
+    const knownValues = [{ value: "/work", label: "<short>" }, { value: "/work/app", label: "<checkout>" }];
+    expect(scrubText("/work/app/src", { knownValues })).toBe("<checkout>/src");
   });
 
   it("ignores a home or checkout of /, as a container can have, which would eat every path", () => {
-    expect(scrubText("src/app.ts", { literals: [{ value: "/", label: "~" }] })).toBe("src/app.ts");
+    expect(scrubText("src/app.ts", { knownValues: [{ value: "/", label: "~" }] })).toBe("src/app.ts");
   });
 
   it("leaves rule ids, versions, digests and ordinary words alone", () => {
