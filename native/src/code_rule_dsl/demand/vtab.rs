@@ -7,7 +7,7 @@
 use super::super::language::adapter::{Adapter, ValueRules, with_adapter};
 use super::super::language::Family;
 use super::super::transducer::packed::{
-    Error as PackedError, ExecutionBackend, Program, execute_with_backend_packed_result_limits,
+    Error as PackedError, ExecutionBackend, PlanId, Program, execute_planned,
     packed_program_counts, packed_workspace_fits, packed_workspace_size,
 };
 use super::super::tape::TapeDoc;
@@ -177,6 +177,9 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     /// Per program, per file: its roots' match records walked on the device with the labels
     /// (`with_records`), or `None` where the host walks them.
     records: Vec<Option<Vec<Vec<(u32, super::super::transducer::packed::RootRecord)>>>>,
+    /// The plan the programs are (a wave's, `with_plan`): a batch of a range of them runs as its
+    /// part (`PlanId::part`), so its two bindings share one identity; else the programs' own.
+    plan: Option<PlanId>,
 }
 
 /// A range's roots: the backend's execution, or the micro walks' records (decision 0024 §3).
@@ -327,6 +330,7 @@ impl PackedDemand {
             result_limits,
             failure_injections: HashMap::new(),
             records: Vec::new(),
+            plan: None,
         })
     }
 
@@ -635,6 +639,20 @@ impl PackedDemand {
     }
 
     /// The roots' match records walked elsewhere (per program, per file, `None` where not).
+    /// The demand as plan `plan`'s (the wave's identity, `LoweredWave::identity`).
+    pub(in crate::code_rule_dsl) fn with_plan(mut self, plan: PlanId) -> Self {
+        self.plan = Some(plan);
+        self
+    }
+
+    /// The plan of a batch of `programs`.
+    fn plan_of(&self, programs: Range<usize>) -> PlanId {
+        match self.plan {
+            Some(plan) => plan.part(programs.start, programs.end),
+            None => PlanId::of_programs(&self.programs[programs]),
+        }
+    }
+
     pub(in crate::code_rule_dsl) fn with_records(
         mut self,
         records: Vec<Option<Vec<Vec<(u32, super::super::transducer::packed::RootRecord)>>>>,
@@ -880,8 +898,9 @@ impl PackedDemand {
             if (!metal || !self.records.is_empty()) && std::env::var_os("RERAIL_ROOTS_JIT").is_none() {
                 if let Some(walked) = self.walked(range.clone(), programs.clone()) {
                     if std::env::var_os("RERAIL_ROOTS_CHECK").is_some() {
-                        let packed = execute_with_backend_packed_result_limits(
+                        let packed = execute_planned(
                             self.backend,
+                            self.plan_of(programs.clone()),
                             &self.programs[programs.clone()],
                             &self.files[range.clone()],
                             &anchors,
@@ -892,8 +911,9 @@ impl PackedDemand {
                     return Ok((range.start, programs.start, walked));
                 }
             }
-            execute_with_backend_packed_result_limits(
+            execute_planned(
                 self.backend,
+                self.plan_of(programs.clone()),
                 &self.programs[programs.clone()],
                 &self.files[range.clone()],
                 &anchors,

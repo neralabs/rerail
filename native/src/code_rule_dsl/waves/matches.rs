@@ -23,7 +23,7 @@ use crate::code_rule_dsl::facts::observe::path_name;
 use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::language::{GrammarDialect, tape_tag};
 use crate::code_rule_dsl::matcher::AnchorPlan;
-use crate::code_rule_dsl::transducer::packed::{ExecutionBackend, LoweredMatcher, LoweredWave};
+use crate::code_rule_dsl::transducer::packed::{ExecutionBackend, LoweredMatcher, LoweredWave, PlanId};
 use crate::content_store::{StoreError, StoreResult};
 #[cfg(test)]
 use std::collections::BTreeSet;
@@ -82,6 +82,8 @@ pub(in crate::code_rule_dsl) struct Wave {
     names: Vec<String>,
     plans: Vec<Arc<AnchorPlan>>,
     lowered: LoweredWave,
+    /// The lowered wave's plan identity (`LoweredWave::identity`): its roots' batches are its parts.
+    plan: PlanId,
     lang: u32,
     /// Each chunk's candidates, in order.
     pub chunks: Vec<Chunk>,
@@ -98,11 +100,13 @@ impl Wave {
             LoweredWave::warm_metal();
         }
         let matchers = clauses.iter().map(|clause| &clause.matcher).collect::<Vec<_>>();
+        let lowered = LoweredWave::new(&matchers).map_err(invalid)?;
         Ok(Self {
             backend,
             names: clauses.iter().map(|clause| clause.name.clone()).collect(),
             plans: clauses.iter().map(|clause| Arc::clone(&clause.plan)).collect(),
-            lowered: LoweredWave::new(&matchers).map_err(invalid)?,
+            plan: lowered.identity(),
+            lowered,
             lang: u32::from(tape_tag(GrammarDialect::Python).expect("Python has a tape")),
             chunks: Vec::new(),
         })
@@ -215,11 +219,14 @@ impl Wave {
         // The roots run on the CPU whatever labelled the tapes: they start only at the prefilter's
         // candidates, few and scattered, and carry captures and outputs, where the labels are a pass
         // over every node (decision 0017; 06 S7: 1.2 s on the CPU's JIT, 4.3 s on Metal's).
+        // Bound as the wave's: compiled now, or interpreted until the background binding of the
+        // wave's plan is ready (list step 16).
         let roots = match self.backend {
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit => ExecutionBackend::CpuJit,
+            ExecutionBackend::MetalBackground => ExecutionBackend::CpuBackground,
             backend => backend,
         };
-        let mut demand = PackedDemand::new(roots, programs, views, anchors, grid, limits).map_err(invalid)?;
+        let mut demand = PackedDemand::new(roots, programs, views, anchors, grid, limits).map_err(invalid)?.with_plan(self.plan);
         if let Some(found) = found {
             demand = demand.with_records(found).map_err(invalid)?;
         }

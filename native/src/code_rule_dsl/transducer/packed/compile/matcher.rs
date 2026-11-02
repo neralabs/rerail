@@ -711,6 +711,29 @@ impl LoweredWave {
         Ok(Self { clauses: combined, labels: next, feeds, packs: Packs::default() })
     }
 
+    /// The wave's plan identity (list step 16; t1 spec-fusion §4.9, the fused plan's cache key):
+    /// its labels by id (each `Label::key`, which names what it reads), the evaluation steps and
+    /// each clause's root program and domain. The interpreter and the compiled programs bind this
+    /// one plan (`compilation::resolve_plan`); equal waves have equal identities, however lowered.
+    pub(in crate::code_rule_dsl) fn identity(&self) -> super::compilation::PlanId {
+        use sha2::{Digest as _, Sha256};
+        let mut digest = Sha256::new();
+        digest.update(b"rerail-wave-plan-v1\0");
+        digest.update((self.labels as u64).to_le_bytes());
+        for clause in &self.clauses {
+            let labels = &clause.labels;
+            digest.update(b"clause\0");
+            digest.update(clause.program.plain_digest().as_bytes());
+            digest.update(format!("|{:?}|{}|", clause.domain, labels.offset).as_bytes());
+            for def in &labels.defs {
+                digest.update(def.key().as_bytes());
+                digest.update(b"\0");
+            }
+            digest.update(format!("{:?}|{:?}|{:?}", labels.steps, labels.recursive, labels.borrowed.keys().collect::<Vec<_>>()).as_bytes());
+        }
+        super::compilation::PlanId(digest.finalize().into())
+    }
+
     /// `active` (per clause, per tape) with each clause's labels also where a clause reading them
     /// is active.
     fn spread(&self, active: &[Vec<bool>]) -> Vec<Vec<bool>> {

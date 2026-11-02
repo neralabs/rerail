@@ -221,6 +221,7 @@ mod metal_typed_output;
 #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_unique_child_tests;
 mod compilation;
+pub(in crate::code_rule_dsl) use compilation::PlanId;
 mod native_cpu;
 mod native_cpu_capture;
 mod native_cpu_capture_pair;
@@ -3840,10 +3841,24 @@ pub(in crate::code_rule_dsl) fn execute_with_backend_packed_result_limits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<packed_batch::PackedExecution, Error> {
+    execute_planned(backend, PlanId::of_programs(programs), programs, files, anchors, result_limits)
+}
+
+/// `execute_with_backend_packed_result_limits` for a batch of plan `plan` (a wave's programs or a
+/// part of them, `PlanId::part`): a background backend binds the plan's interpreter until its
+/// compiled binding is ready (`compilation::resolve_plan`).
+pub(in crate::code_rule_dsl) fn execute_planned(
+    backend: ExecutionBackend,
+    plan: PlanId,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+) -> Result<packed_batch::PackedExecution, Error> {
     if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
         return Err(Error::InvalidAnchor);
     }
-    match compilation::resolve(backend, programs)? {
+    match compilation::resolve_plan(backend, plan, programs)? {
         ExecutionBackend::CpuInterpreter => {
             let limits = result_limits.map_or_else(|| vec![u32::MAX; programs.len()], <[u32]>::to_vec);
             packed_batch::PackedExecution::interpret(programs, files, anchors, &limits)

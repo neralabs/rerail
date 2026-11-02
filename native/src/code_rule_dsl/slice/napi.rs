@@ -47,9 +47,10 @@ impl CodeRuleSlice {
     #[napi(constructor)]
     pub fn new(store_path: String, policies: Vec<SlicePolicy>, capabilities_json: String, backend: String) -> Result<Self> {
         let backend = match backend.as_str() {
-            "cpu" => ExecutionBackend::CpuJit,
+            // Interpreted first, the compiled binding swapped in once built (list step 16).
+            "cpu" => ExecutionBackend::CpuBackground,
             #[cfg(target_os = "macos")]
-            "metal" => ExecutionBackend::MetalJit,
+            "metal" => ExecutionBackend::MetalBackground,
             other => return Err(Error::from_reason(format!("unknown slice backend `{other}`"))),
         };
         let compiled = policies

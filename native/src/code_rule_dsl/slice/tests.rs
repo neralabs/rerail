@@ -422,12 +422,13 @@ fn the_slice_finds_ws_findings_on_real_files() {
     // keeps the gate within a minute (Metal adds 15 s and agrees; decision 0017).
     let wanted = std::env::var("RERAIL_S7_BACKENDS").unwrap_or_else(|_| "cpu".to_owned());
     let mut backends = Vec::new();
+    // The production bindings: interpreted until the wave's plan is compiled (list step 16).
     if wanted.contains("cpu") {
-        backends.push(("cpu", ExecutionBackend::CpuJit));
+        backends.push(("cpu", ExecutionBackend::CpuBackground));
     }
     #[cfg(target_os = "macos")]
     if wanted.contains("metal") {
-        backends.push(("metal", ExecutionBackend::MetalJit));
+        backends.push(("metal", ExecutionBackend::MetalBackground));
     }
     let mut cpu_store = None;
     for (name, backend) in backends {

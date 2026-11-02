@@ -162,6 +162,20 @@ fn the_wave_runs_while_its_programs_compile() {
     gate(4, Limits { chunk_bytes: 1, ..Limits::default() }, ExecutionBackend::CpuBackground);
 }
 
+/// One plan for every binding (list step 16): a wave's identity is its lowered plan's, the same
+/// whichever backend binds it and however often its clauses are lowered.
+#[test]
+fn the_wave_has_one_plan_identity_for_every_binding() {
+    let (clauses, _) = clauses();
+    let plans = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit, ExecutionBackend::CpuBackground]
+        .into_iter()
+        .map(|backend| Wave::new(&clauses, backend).unwrap().plan)
+        .collect::<Vec<_>>();
+    assert!(plans.windows(2).all(|pair| pair[0] == pair[1]), "{plans:?}");
+    let fewer = Wave::new(&clauses[..clauses.len() - 1], ExecutionBackend::CpuBackground).unwrap().plan;
+    assert_ne!(fewer, plans[0], "a different wave is a different plan");
+}
+
 /// Chunks of one document each: a chunk's batch maps its files to its own documents.
 #[test]
 fn the_wave_runs_chunk_by_chunk() {
