@@ -55,6 +55,7 @@ import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runShowMeCommand } from "./show-me.js";
+import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
 import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
@@ -157,6 +158,7 @@ function usage(): string {
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
+    "  rerail support-bundle [--session <id>] [--repo <dir>] [--output <file>] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
     "  rerail update",
     "  rerail update check [--channel <tag>]",
@@ -570,7 +572,8 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
   // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
+  // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "support-bundle"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && commandArgs[1] === "status";
 }
@@ -672,6 +675,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "rules" && args[0] === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
   if (command === "rules") return runRulesCommand(args, usage);
   if (command === "show-me") return runShowMeCommand(args, usage);
+  if (command === "support-bundle") return await runSupportBundleCommand(args, usage, { packageVersion: context.packageVersion });
   if (command === "packs") return await runPacksCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
