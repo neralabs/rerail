@@ -20,12 +20,12 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import type { CodeRuleDslOptionDeclaration, CodeRuleDslValue } from "../code-rule/code-rule.js";
-import { stableJsonText } from "../stable-json.js";
+import type { CodeRuleDslOptionDeclaration, CodeRuleDslValue } from "../../code-rule/code-rule.js";
+import { stableJsonText } from "../../stable-json.js";
 import { folderOfGlob, readEslintFlatConfig, type FlatConfigRead } from "./eslint-flat-config.js";
 import { LintConfigFormatError, parseJsonc, readTomlStringLists } from "./lint-config-formats.js";
-import type { RuleCatalog, RuleConfig } from "./repository-model.js";
-import { configureBundledCodeRule } from "./rule-config.js";
+import type { RuleCatalog, RuleConfig } from "../repository-model.js";
+import { configureBundledCodeRule } from "../rule-config.js";
 
 /** A config file larger than this is not one a person wrote; it is reported as not read. As `package.json` in `rule-pack-matcher.ts`. */
 const MAX_CONFIG_BYTES = 1024 * 1024;

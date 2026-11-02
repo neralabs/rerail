@@ -61,9 +61,13 @@ for that kind. The person decides; nothing leaves their computer until they say 
 
    **A rule**, when it fired wrongly or should have fired. Find it in `repository.rules`:
 
-   - `pack` is set: a **shipped rule bug**. Do not try to split the pack's rule from the engine behind it; the Rule misfire
-     form reaches the same maintainers. If the person built that pack themselves (`rerail packs add <folder>`), it is theirs:
-     help them fix it in the pack's source instead.
+   - `pack` is `worktree`: the rule is in this worktree's `.rerail/rules/`, so it is the person's: an **own rule bug**.
+   - `pack` is a pack Rerail did not publish (`rerail packs list` names a third party's pack by its package name, outside
+     `@neralabs/`, and one from a folder with `(from the folder <path>)`): not Rerail's to fix. If the person built it, it is
+     theirs: help them fix it in the pack's source. Otherwise offer Log or off from the dashboard, and point them to its
+     publisher; never report it on neralabs/rerail.
+   - Any other `pack`: a **shipped rule bug**. Do not try to split the pack's rule from the engine behind it; the Rule misfire
+     form reaches the same maintainers.
    - `pack` is null: an **own rule bug**. Its id is also in the output's `ownRules`.
 
 5. **Say what you found**, then take that path:
