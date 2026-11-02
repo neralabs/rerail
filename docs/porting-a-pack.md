@@ -143,8 +143,9 @@ flowchart LR
 1. **Point the generator at the rule's tests.** The generator (`upstream/<tool>/generate.*`, with its recipe under
    `scripts/pack-data/recipes/`) copies the tool's tests, runs the pinned tool on them, writes `fixtures.expected.json`
    with each unit's upstream origin, then the provenance
-   ([What the generators write](upstream.md#what-the-generators-write)). Which tests it reads per rule is what `gates.yaml` `watch.tests` names: a path convention (`test/{rule}.js`), or a
-   hand-kept list beside the generator (`fixtures.json`: `{ "rules": { "<rule>": ["<upstream path>", …] } }`).
+   ([What the generators write](upstream.md#what-the-generators-write)). Which tests it reads per rule is what
+   `gates.yaml` `watch.tests` names: a path convention (`test/{rule}.js`), or a hand-kept list beside the generator
+   (`fixtures.json`: `{ "rules": { "<rule>": ["<upstream path>", …] } }`).
 
 2. **Derive.** The derive runs upstream's code, so run it in a sandbox with no AWS or GitHub credentials, on the
    pinned runtime ([Derive in a sandbox](upstream.md#derive-in-a-sandbox)).
