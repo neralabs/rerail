@@ -72,11 +72,23 @@ environment, and each run then checks that `latest` is the version it published 
 [pack-format.md](pack-format.md#release)). `next` and `beta` stay available for a preview: a `v<version>-next.N` or
 `-beta.N` tag pushed by hand publishes under that channel.
 
+`next` never trails `latest`: whoever follows `next` gets every stable release too. Each version published or
+promoted under `latest`, core's and each pack's, moves that package's `next` up to it as well, unless `next` is
+already at a newer preview (`scripts/release/raise-next.mjs`, and `releasePacks` and `promotePacks` for the packs), and
+each run's dist-tag check fails if a package it released under `latest` or `next` has a `next` unset or older than its
+`latest`. A core `next` or `beta` preview older than `latest` is refused before it is built. A preview leaves `latest`
+alone, and putting a version back to an older one leaves `next` where it is.
+
 Putting a version back moves only its dist-tag, never the bytes: `release.yml`'s `workflow_dispatch` with `latest`
 set points core's `latest` at an earlier released version, and `release-packs.yml`'s does the same for a pack, and
 holds it there. Both use npm trusted publishing, so no one needs an npm login. The bytes must not be rebuilt between
 channels. Every publish from CI carries an npm provenance attestation: both workflows pass `--provenance`, so a publish
 npm cannot attest fails instead of going out without one.
+
+Every released version, core's and each pack's, also gets a GitHub Release on its tag, whose notes are that version's
+section of its `CHANGELOG.md`: release notes are written once, in the changelog, in words for the people who upgrade.
+Core's `latest` release is the repository's latest; its `next` and `beta` releases are pre-releases
+([release](release.md#release)).
 
 ## npm-backed explicit updates
 

@@ -1,0 +1,465 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-fast002-fast-api-non-annotated-dependency",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Declare FastAPI route dependencies and parameter markers inside Annotated type hints instead of as default values, so the function keeps ordinary defaults when called directly.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "route-ctor": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "fastapi.FastAPI",
+                    "fastapi.APIRouter"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "route-ctor"
+                }
+              }
+            ]
+          },
+          "route-ann": {
+            "any": [
+              {
+                "matches": "route-ctor"
+              },
+              {
+                "kind": "type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "route-ann"
+                }
+              }
+            ]
+          },
+          "route-init": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "route-ctor"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "route-init"
+                }
+              }
+            ]
+          },
+          "plain-target": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-target"
+                }
+              }
+            ]
+          },
+          "route-name": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "binding": {
+                    "value": {
+                      "matches": "route-init"
+                    },
+                    "site": {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "as_pattern",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "with_item"
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "route-init",
+                            "precedes": {
+                              "stopBy": "end",
+                              "regex": "^as$"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "as_pattern_target",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "plain-target"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "annotation": {
+                      "matches": "route-ann"
+                    },
+                    "site": {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "list_splat_pattern"
+                            },
+                            {
+                              "kind": "dictionary_splat_pattern"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "function_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "return_type",
+                        "matches": "route-ann"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "route-receiver": {
+            "any": [
+              {
+                "matches": "route-name"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "route-receiver"
+                }
+              }
+            ]
+          },
+          "route-attr": {
+            "any": [
+              {
+                "kind": "attribute",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "object",
+                  "matches": "route-receiver"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "regex": "^(get|post|put|delete|patch|options|head|trace)$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "route-attr"
+                }
+              }
+            ]
+          },
+          "route-call": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "function",
+              "matches": "route-attr"
+            }
+          },
+          "route-decorator": {
+            "kind": "decorator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "route-call-expr"
+            }
+          },
+          "route-call-expr": {
+            "any": [
+              {
+                "matches": "route-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "route-call-expr"
+                }
+              }
+            ]
+          },
+          "route-param": {
+            "kind": "typed_default_parameter",
+            "not": {
+              "precedes": {
+                "stopBy": "end",
+                "kind": "positional_separator"
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "parameters",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "function_definition",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-decorator"
+                  }
+                }
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "pattern": "$TYPE"
+                }
+              }
+            ]
+          },
+          "param-marker-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "fastapi.Query",
+                    "fastapi.Path",
+                    "fastapi.Body",
+                    "fastapi.Cookie",
+                    "fastapi.Header",
+                    "fastapi.File",
+                    "fastapi.Form"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "param-marker-ref"
+                }
+              }
+            ]
+          },
+          "param-marker": {
+            "any": [
+              {
+                "matches": "param-marker-ref"
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "param-marker-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "param-marker"
+                }
+              }
+            ]
+          },
+          "depends-marker-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "fastapi.Depends",
+                    "fastapi.Security"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "depends-marker-ref"
+                }
+              }
+            ]
+          },
+          "depends-marker": {
+            "any": [
+              {
+                "matches": "depends-marker-ref"
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "depends-marker-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "depends-marker"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "param-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "route-param",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "value",
+              "pattern": "$DEFAULT",
+              "matches": "param-marker"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "FAST002",
+        "anchor": "witness.span",
+        "message": "Move `$DEFAULT` into `$NAME: Annotated[$TYPE, ...]`; if the call has a default argument, take it out of the call and keep it as the plain `= default`, dropping it when it is `...`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "FAST002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "dependency-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "route-param",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "value",
+              "pattern": "$DEFAULT",
+              "matches": "depends-marker"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "FAST002",
+        "anchor": "witness.span",
+        "message": "Declare `$NAME: Annotated[$TYPE, $DEFAULT]` instead of passing the dependency as the default; move the parameter before any with defaults, or make it keyword-only, if needed.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "FAST002"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

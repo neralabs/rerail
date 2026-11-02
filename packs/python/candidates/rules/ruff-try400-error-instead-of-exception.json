@@ -1,0 +1,268 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-try400-error-instead-of-exception",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the exception logging method instead of error when logging inside an exception handler; it records the traceback.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "error-instead-of-exception",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "logger-object": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "resolves": {
+                      "import": [
+                        "logging.getLogger",
+                        "logging.Logger"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logger-object"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "logging",
+                      "flask.current_app.logger"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$"
+                    },
+                    {
+                      "kind": "attribute",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "attribute",
+                            "regex": "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "object",
+                            "matches": "name-chain"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "not": {
+                    "resolves": {
+                      "import": true
+                    }
+                  }
+                }
+              ]
+            },
+            "name-chain": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "matches": "name-chain"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain"
+                  }
+                }
+              ]
+            },
+            "exc-info-set": {
+              "any": [
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "resolves": {
+                      "import": [
+                        "sys.exc_info"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exc-info-set"
+                  }
+                }
+              ]
+            },
+            "exc-info-kwarg": {
+              "kind": "keyword_argument",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^exc_info$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "exc-info-set"
+                  }
+                }
+              ]
+            },
+            "level-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^error$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "matches": "logger-object"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "logging.error"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "level-callee"
+                  }
+                }
+              ]
+            },
+            "handler-type": {
+              "not": {
+                "kind": "block"
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "except_clause"
+              }
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "inside": {
+              "stopBy": "end",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "except_clause"
+              }
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "field": "function",
+              "matches": "level-callee"
+            },
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "exc-info-kwarg"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "matches": "handler-type"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "matches": "handler-type"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TRY400",
+        "message": "Call `exception(...)` instead of `error(...)` so the traceback of the handled exception is logged. Leave it if this object is not a logger or the traceback is intentionally omitted.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TRY400"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

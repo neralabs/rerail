@@ -1,0 +1,94 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi009-pass-statement-stub-body",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use an ellipsis instead of pass as the whole body of a function or class in stub files; stubs only declare types and are never executed.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "pass-statement-stub-body",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "filler": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^;$"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "pass_statement",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "body",
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ]
+              }
+            },
+            "not": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "not": {
+                      "matches": "filler"
+                    }
+                  }
+                },
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "not": {
+                      "matches": "filler"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI009",
+        "message": "Replace this `pass` with `...`; stub bodies are never executed, so the empty body is written as an ellipsis.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI009"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

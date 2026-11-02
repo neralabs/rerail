@@ -1,0 +1,64 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up010-unnecessary-future-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove __future__ imports of features that Python 3 always enables; they have no effect on current Python versions.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-future-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "future_import_statement"
+              },
+              {
+                "kind": "import_from_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "module_name",
+                  "kind": "relative_import",
+                  "regex": "^[.\\s]+__future__$"
+                }
+              }
+            ],
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "dotted_name",
+              "regex": "^(?:nested_scopes|generators|with_statement|division|absolute_import|print_function|unicode_literals|generator_stop)$",
+              "binds": {
+                "form": "import",
+                "scope": [
+                  "module",
+                  "function"
+                ],
+                "used": false
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP010",
+        "message": "Remove the unused obsolete names from this `__future__` import, and the whole statement if none remain; Python 3.7 and later always enable them.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP010"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

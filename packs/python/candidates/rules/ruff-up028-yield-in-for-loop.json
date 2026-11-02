@@ -1,0 +1,516 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up028-yield-in-for-loop",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use yield from to delegate to an iterable instead of looping over it and yielding each item.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "yield-in-for-loop",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "read-elsewhere": {
+              "kind": "identifier",
+              "pattern": "$N",
+              "inside": {
+                "stopBy": {
+                  "matches": "scope"
+                },
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  },
+                  {
+                    "kind": "module"
+                  }
+                ],
+                "pattern": "$G",
+                "has": {
+                  "stopBy": "end",
+                  "matches": "other-read"
+                }
+              }
+            },
+            "yielded": {
+              "any": [
+                {
+                  "kind": "yield",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^from$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "pattern": "$V",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^yield$"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "yielded"
+                  }
+                }
+              ]
+            },
+            "other-read": {
+              "kind": "identifier",
+              "pattern": "$J",
+              "compare": {
+                "left": "J",
+                "op": "eq",
+                "right": "N"
+              },
+              "not": {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "expression_statement",
+                  "pattern": "$S2",
+                  "compare": {
+                    "left": "S2",
+                    "op": "eq",
+                    "right": "S",
+                    "text": "node"
+                  }
+                }
+              },
+              "resolves": {
+                "binding": {
+                  "scope": [
+                    "function",
+                    "class",
+                    "module"
+                  ],
+                  "site": {
+                    "inside": {
+                      "stopBy": {
+                        "matches": "scope"
+                      },
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "kind": "module"
+                        }
+                      ],
+                      "pattern": "$G2",
+                      "compare": {
+                        "left": "G",
+                        "op": "eq",
+                        "right": "G2",
+                        "text": "node"
+                      }
+                    }
+                  }
+                }
+              },
+              "all": [
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": {
+                        "matches": "scope"
+                      },
+                      "not": {
+                        "matches": "scope"
+                      },
+                      "any": [
+                        {
+                          "matches": "restarting-del"
+                        },
+                        {
+                          "precedes": {
+                            "stopBy": "end",
+                            "any": [
+                              {
+                                "matches": "restarting-del"
+                              },
+                              {
+                                "has": {
+                                  "stopBy": {
+                                    "matches": "nested-scope"
+                                  },
+                                  "matches": "restarting-del"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "bind-x": {
+              "kind": "identifier",
+              "pattern": "$B",
+              "compare": {
+                "left": "B",
+                "op": "eq",
+                "right": "N"
+              },
+              "binds": {},
+              "not": {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "expression_list"
+                        },
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "tuple"
+                        },
+                        {
+                          "kind": "list"
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "delete_statement"
+                }
+              }
+            },
+            "restarting-del": {
+              "kind": "delete_statement",
+              "has": {
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "expression_list"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "list"
+                      }
+                    ]
+                  }
+                },
+                "kind": "identifier",
+                "pattern": "$D",
+                "compare": {
+                  "left": "D",
+                  "op": "eq",
+                  "right": "N"
+                }
+              },
+              "not": {
+                "inside": {
+                  "stopBy": {
+                    "matches": "scope"
+                  },
+                  "any": [
+                    {
+                      "kind": "if_statement"
+                    },
+                    {
+                      "kind": "while_statement"
+                    },
+                    {
+                      "kind": "match_statement"
+                    },
+                    {
+                      "kind": "except_clause"
+                    },
+                    {
+                      "kind": "else_clause"
+                    },
+                    {
+                      "kind": "conditional_expression"
+                    }
+                  ]
+                }
+              },
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "bind-x"
+                      },
+                      {
+                        "has": {
+                          "stopBy": {
+                            "matches": "nested-scope"
+                          },
+                          "matches": "bind-x"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "scope"
+                    },
+                    "not": {
+                      "matches": "scope"
+                    },
+                    "precedes": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "bind-x"
+                        },
+                        {
+                          "has": {
+                            "stopBy": {
+                              "matches": "nested-scope"
+                            },
+                            "matches": "bind-x"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "scope": {
+              "any": [
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "class_definition"
+                },
+                {
+                  "kind": "module"
+                }
+              ]
+            },
+            "nested-scope": {
+              "any": [
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "class_definition"
+                },
+                {
+                  "kind": "lambda"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "for_statement",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "alternative",
+                    "kind": "else_clause"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "nested-scope"
+                    },
+                    "kind": "function_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^async$"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "kind": "subscript"
+                        },
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "list_pattern"
+                        }
+                      ]
+                    }
+                  },
+                  "any": [
+                    {
+                      "pattern": "$T",
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "pattern_list"
+                        }
+                      ]
+                    },
+                    {
+                      "pattern": "$T",
+                      "kind": "tuple_pattern",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    },
+                    {
+                      "kind": "tuple_pattern",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "pattern": "$T"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "body",
+                  "kind": "block",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "expression_statement"
+                    },
+                    "min": 1,
+                    "max": 1
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "expression_statement"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "expression_statement",
+                    "pattern": "$S",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "yielded"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "pattern": "$IT"
+                }
+              },
+              {
+                "compare": {
+                  "left": "T",
+                  "op": "eq",
+                  "right": "V",
+                  "text": "structure"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "any": [
+                      {
+                        "matches": "read-elsewhere"
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "read-elsewhere"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "regex": "^(?P<LOOP>(?:[^\"'#]|#[^\\n]*|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*')*?(?:[^\\s\"'#;]|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*'))(?:\\s|;|#[^\\n]*)*$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LOOP",
+        "code": "UP028",
+        "message": "Replace this loop with `yield from $IT` (parenthesize a bare tuple). Keep the loop if its target is declared global or nonlocal, or if callers send values the iterable cannot accept.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP028"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

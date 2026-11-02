@@ -137,14 +137,29 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   `rules` the run reported, the `files` (units: a path, or a list of paths for a multi-file unit), and `units`, each
   unit's upstream origin by its key (its path, or its first path): `rules`, the upstream rules whose tests the unit was
   written from. A unit without an entry (Rerail's probes, or one whose origin is unknown) is scored but is no rule's
-  own evidence for `stays-silent`.
+  own evidence for `stays-silent`. An ECMA unit's entry may also carry `languageOptions`, the language upstream linted
+  it under where its test case set one beyond ESLint's flat-config defaults for its extension: `ecmaVersion` (left out
+  when `"latest"`), `sourceType` (left out when it is the extension's: `commonjs` for `.cjs` and `.cts`, `module`
+  otherwise) and `parserOptions` (without `ecmaFeatures.jsx`, which the extension gives), never `globals`
+  (`unitLanguage` in `scripts/pack-data/eslint-expected.mjs`). A rename variant carries its original's. The
+  conformance runner evaluates the unit under them: it merges them into the `languageOptions` of each AST clause of
+  the port (its `ecmaVersion` and `sourceType`, `parserOptions.ecmaFeatures`' `globalReturn` and `impliedStrict`, and
+  typescript-eslint's `jsxPragma`, `jsxFragmentName` and `lib`, which a code rule spells at the top of
+  `languageOptions`; a query that had none keeps reading its listed `global` names as unbound, `declared: false`), so
+  the port judges the file as the linter did; a unit without them gets the port's own
+  `languageOptions` (ESLint's defaults unless the port sets others). Today the javascript pack's two tools and
+  eslint-plugin-vitest record them; the other ECMA generators lint every case under one configuration of ESLint's
+  defaults (vue's, next's, react's, typescript-eslint's) or convey the source type through the unit's `package.json`
+  (eslint-plugin-n's), so their units carry none.
 - Rename variants (the ECMA tool-packs): the generator writes a renamed copy of every upstream unit under
-  `fixtures/renamed/<the original's path>`, its identifiers and string and number literal contents renamed by
-  `scripts/pack-data/rename/ecmascript.ts` (same length and shape, one bijective map per file, keywords, the standard
-  library and common host names protected), and lints it with upstream like any unit. Its `source.units` entry adds
+  `fixtures/renamed/<the original's path>`, its identifiers renamed by `scripts/pack-data/rename/ecmascript.ts` (same
+  length and shape, one order-preserving bijective map per file; literals, comments other than `/* global */`-style
+  name lists, keywords, the standard library, common host, framework and test-runner API names, hook-shaped and
+  `…Sync` names, and what a package exports kept), and
+  lints it with upstream like any unit. Its `source.units` entry adds
   `renamedFrom`, the key of the original unit, which must be an original with an origin. The conformance check scores
-  variants apart from the originals (`holds-under-rename`), so a port that matches the tests' names or literals rather
-  than the construct fails. A family without variants takes its overfit evidence from its samples alone.
+  variants apart from the originals (`holds-under-rename`), so a port that matches the tests' names rather than the
+  construct fails. A family without variants takes its overfit evidence from its samples alone.
 - `upstream/<tool>/gates.yaml` (a gated tool-pack): the upstream manifest the conformance check reads: the pins, the
   file types upstream lints, and per upstream rule its declared deprecation and recommended configuration
   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
@@ -200,7 +215,10 @@ judged, and [CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data) who does what.
   `upstream/<tool>/UPSTREAM.md` lists ([UPSTREAM.md](#upstreammd)), and everything under `upstream/<tool>/authored/`, a
   contributor's code corpus with its ground truth where the corpus is no public repository a pin can name;
 - **derived**: everything else, upstream's tests copied or derived and the tool's expected findings, which the
-  generators make from the pins.
+  generators make from the pins. The expected findings' `source.units` say per unit where it came from, whether it is
+  a rename variant (`renamedFrom`) and, for an ECMA unit its test case linted under its own language, that language
+  (`languageOptions`), which the conformance runner evaluates the unit under
+  ([above](#conformancejson-divergencesjson-upstream)).
 
 **Samples** are the tool-pack's labelled real files ([docs/upstream.md, "Samples"](upstream.md#samples)). The
 archive's layout is `scripts/samples/format.ts`: each sample is `<sample-id>/<source path>` beside its
@@ -478,23 +496,38 @@ them; core's `v*` release (`release.yml`) is separate.
    - `npm pack`, then a check that the tarball holds only `package.json` and what `files` publishes, and no
      validation material whatever `files` says (`packedFileFailures` in `conformance/pack-validation.ts`);
    - `npm publish --access public --tag latest` with npm trusted publishing (the `release` environment, so a
-     reviewer approves the run), a check that an anonymous reader gets the version, and the tag.
-     Set-up and `rerail packs add <id>` fetch under `latest` (on the default update channel), so the version is used
-     from then on. A pack held at an older `latest` (step 3) is published under `next` instead, and its hold stays.
+     reviewer approves the run), a check that an anonymous reader gets the version, `next` moved up to it, and the
+     tag. Set-up and `rerail packs add <id>` fetch under `latest` (on the default update channel), so the version is
+     used from then on. `next` never trails `latest`: it is pointed at the version too, unless it is already at a
+     newer one, so the `next` update channel gets the release as well. A pack held at an older `latest` (step 3) is
+     published under `next` instead, and its hold stays.
 
    Packs are published one by one, and any failed run can be run again: a version already tagged is skipped, and
-   one the registry already has without its tag (a run that failed after publishing) is checked and tagged, not
-   published again. The run's **Published dist-tags** job then lists each published pack's dist-tags in the run
-   summary and fails if one's `latest` (`next` for a held pack) is not the version just published. A pull request
-   that touches packs runs the gate and the packing as a dry run.
+   one the registry already has without its tag (a run that failed after publishing) is checked, has its `next`
+   moved up and is tagged, not published again. The run's **Published dist-tags** job then lists each published
+   pack's dist-tags in the run summary and fails if one's `latest` (`next` for a held pack) is not the version just
+   published, or its `next` is older than its `latest`. A pull request that touches packs runs the gate and the
+   packing as a dry run.
 3. **Put back.** To put an older released version back, run the workflow from `main` (Actions → Release packs → Run
    workflow) with the pack's id and that version. Its first job lists, in the run summary, what it will move, and its
    promote job, once a reviewer approves the `release` environment, points the pack's `latest` at that version and
    tags it `held` there. Publishes and runs with no inputs leave a held pack's `latest` alone (the summary names it)
    until the pack is promoted by id again, at its `package.json` version, which releases the hold. Run with no inputs,
-   the workflow points `latest` at every pack's released version that is not `latest` yet, less any held. A pack that
-   fails to move, or whose dist-tags cannot be read, does not stop the others; the run fails naming it and can be run
-   again. A version that was never released fails the run. These runs go one at a time.
+   the workflow points `latest` at every pack's released version that is not `latest` yet, less any held. Each
+   promotion moves the pack's `next` up to the version too, unless `next` is already at a newer one (a put-back leaves
+   it where it is), and the promote job then lists each promoted pack's dist-tags and fails if one's `latest` is not
+   the version or its `next` is older than its `latest`. A pack that fails to move, or whose dist-tags cannot be read,
+   does not stop the others; the run fails naming it and can be run again. A version that was never released fails
+   the run. These runs go one at a time.
+
+Every released pack version gets a GitHub Release on its tag `@neralabs/rerail-pack-<id>@<version>`, whose notes are
+that version's section of the pack's `CHANGELOG.md`, so a pack's release notes are written once, in its changeset's
+summary, in words for the people who upgrade. After the **Published dist-tags** job passes, the run's **GitHub
+Releases** job makes one for each version it published (`scripts/release/github-release.mjs`). A pack's Release is
+never the repository's latest release, which is core's, and is a pre-release only for a held pack published under
+`next`. Run again, the job rewrites the notes of a Release that exists. Releases missing for tags released before
+this, or by a run that failed before its Release, are made by hand with the script's backfill
+([release.md](release.md#release)).
 
 The scripts are in `scripts/release/`. To check a pack's tarball locally:
 `node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>`.

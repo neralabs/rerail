@@ -6,6 +6,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { NEXT_TAG, raiseNext } from "./dist-tags.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const PACKS = join(ROOT, "packs");
@@ -13,7 +14,7 @@ export const REGISTRY = "https://registry.npmjs.org";
 /** Every pack version is published under `latest`, where set-up and `rerail packs add` fetch it. */
 export const PUBLISH_TAG = "latest";
 /** Where a pack held at an older `latest` (put back on purpose) is published instead, so the hold stays. */
-export const HELD_PUBLISH_TAG = "next";
+export const HELD_PUBLISH_TAG = NEXT_TAG;
 
 /** The git tag that marks `name`'s `version` as published. */
 export const releaseTag = (name, version) => `${name}@${version}`;
@@ -46,10 +47,13 @@ export const alreadyOnRegistry = (output) => /cannot publish over the previously
 /**
  * Releases each `{ name, version, file }` of a packs-pack.ts manifest, so that any failed run can be run again:
  * a version whose tag exists is skipped; one the registry already has without its tag (a run that failed after
- * publishing) is not published again, only checked and tagged. A pack named in `held` (held at an older `latest`) is
- * published under `next`, every other under `latest`. `steps` does the I/O: `publish(file, distTag)` returns
- * `{ ok, output }`, `assertPublic(name, version)` and `tag(tag)` throw on failure. Returns each `{ name, version, distTag }`
- * this run released.
+ * publishing) is not published again, only taken through the steps after the publish. A pack named in `held` (held
+ * at an older `latest`) is published under `next`, every other under `latest`, and then `next` is pointed at it too
+ * unless `next` is already at a newer version (raiseNext in dist-tags.mjs), so `next` never trails `latest`. `steps`
+ * does the I/O: `publish(file, distTag)` returns `{ ok, output }`, `readNext(name)` resolves to `next` or null, and
+ * `assertPublic(name, version)`, `distTag(name, version, tag)` and `tag(tag)` throw on failure. The release tag comes
+ * last, so a run that fails before it takes that version through every step again. Returns each
+ * `{ name, version, distTag }` this run released.
  */
 export async function releasePacks(manifest, tags, steps, held = []) {
   const existing = new Set(tags);
@@ -66,6 +70,7 @@ export async function releasePacks(manifest, tags, steps, held = []) {
     if (!published.ok && !alreadyOnRegistry(published.output)) throw new Error(`npm publish ${tag} failed`);
     if (!published.ok) steps.log(`${tag} is already on the registry without its tag; checking and tagging it`);
     await steps.assertPublic(name, version);
+    if (distTag === PUBLISH_TAG) steps.log(await raiseNext(name, version, steps));
     steps.tag(tag);
     steps.log(`released ${tag} under ${distTag}${holding.has(name) ? ` (held at an older ${PUBLISH_TAG})` : ""}`);
     released.push({ name, version, distTag });
@@ -240,12 +245,16 @@ export function planPromotions(packs, tags, distTagsOf, { named = false } = {}) 
 
 /**
  * Points `latest` at each `{ name, version }` in `promotions`, refusing a version this repository never released (no
- * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. One failure does not stop the
- * others; returns each failure, so the run reports them all and can be run again. `steps.promote(name, version)`,
- * `steps.hold(name, version)` and `steps.release(name)` throw on failure.
+ * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. Then `next` is pointed at the version
+ * too unless it is already at a newer one (raiseNext in dist-tags.mjs), so `next` never trails `latest`; a put-back to
+ * an older version leaves it where it is. One failure does not stop the others. Returns each pack fully promoted, and
+ * each failure, so the run reports them all and can be run again. `steps.promote(name, version)`,
+ * `steps.hold(name, version)`, `steps.release(name)` and `steps.distTag(name, version, tag)` throw on failure, and
+ * `steps.readNext(name)` resolves to `next` or null.
  */
-export function promotePacks(promotions, tags, steps) {
+export async function promotePacks(promotions, tags, steps) {
   const existing = new Set(tags);
+  const promoted = [];
   const failures = [];
   for (const { name, version, hold = false, release = false } of promotions) {
     const tag = releaseTag(name, version);
@@ -255,11 +264,13 @@ export function promotePacks(promotions, tags, steps) {
       if (hold) steps.hold(name, version);
       if (release) steps.release(name);
       steps.log(`promoted ${tag} to latest${hold ? `, held there (${HOLD_TAG})` : ""}${release ? `, ${HOLD_TAG} released` : ""}`);
+      steps.log(await raiseNext(name, version, steps));
+      promoted.push({ name, version });
     } catch (error) {
       failures.push(`${tag}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return failures;
+  return { promoted, failures };
 }
 
 /**

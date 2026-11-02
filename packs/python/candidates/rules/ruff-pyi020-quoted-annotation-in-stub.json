@@ -1,0 +1,70 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi020-quoted-annotation-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write type annotations in stub files without quotes; stubs resolve forward references natively, so quotes are never needed.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "quoted-annotation-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"parse": {"grammar": "annotation", "kind": "expression_statement"}}]
+          },
+          "file": {"path": {"regex": "\\.pyi$"}}
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI020",
+        "message": "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing.",
+        "suppress": {"noqa": {"codes": ["PYI020"]}}
+      }
+    },
+    {
+      "id": "nested-quoted-annotation-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "quoted-within": {
+              "any": [
+                {
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {
+                      "stopBy": "end",
+                      "all": [
+                        {"any": [{"kind": "string"}, {"kind": "concatenated_string"}]},
+                        {"parse": {"grammar": "annotation", "kind": "expression_statement"}}
+                      ],
+                      "capture": "Q"
+                    }
+                  }
+                },
+                {
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {"stopBy": "end", "all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"matches": "quoted-within"}]}
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"matches": "quoted-within"}]},
+          "file": {"path": {"regex": "\\.pyi$"}}
+        }
+      },
+      "violation": {
+        "anchor": "capture.Q",
+        "code": "PYI020",
+        "message": "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing.",
+        "suppress": {"noqa": {"codes": ["PYI020"]}},
+        "each": "Q"
+      }
+    }
+  ]
+}
