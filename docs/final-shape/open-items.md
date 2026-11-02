@@ -36,6 +36,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
 | O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
+| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -914,3 +915,11 @@ route under (length, text). The native lattices are `i64`-valued, and `Min`'s wi
 route. Without `widen` the declaration fails `UnboundedLattice` (`internal_dead_code.hierarchy_unwidened.rdl`).
 **Closure:** a catalogue lattice bounded by its edge relation, or the length as a `min` lattice with the route in
 the findings layer (t17 § 6).
+
+## O63. Tree built-ins beyond `nearest`
+
+28 recursions in the data-layer rules are tree walks that `nearest` alone does not express: subtrees, the
+outermost function, depth (t17 § 3). The programs write them as `@within($x, $r) = 1` and `@depth($x)`, since a
+new literal would change `logic/plan`'s exhaustive matches. Two walks through chosen kinds (dispatch `annotations`,
+steps `payload_values`) remain Datalog recursion over tree edges, against §7. **Closure:** `within` and a
+kind-filtered climb/descent (the matcher's `inside`/`has` with `stopBy`) as tree built-ins.
