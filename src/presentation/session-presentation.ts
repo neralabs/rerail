@@ -155,7 +155,11 @@ async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origi
   return schema.parse(JSON.parse(Buffer.concat(chunks, size).toString("utf8")));
 }
 
-/** `R E R A I L ● 26 rules`, with `steered N×` only once Rerail has steered in this session (A1f). */
+/**
+ * `R E R A I L ● 26 rules · worktree · 2 to approve`, with each rule overlay in force in the checkout after the count
+ * (linked to its pack page), what runs in Log waiting for a person's approval (linked to Overview, which lists it), and
+ * `steered N×` only once Rerail has steered in this session (A1f).
+ */
 function onPresentation(
   origin: URL,
   { session, hud }: z.infer<typeof sessionResponseSchema>,
@@ -169,6 +173,12 @@ function onPresentation(
   const items: SessionPresentation["parts"] = [
     { text: hud.activeRuleCount === null ? "rules unavailable" : `${hud.activeRuleCount} ${ruleNoun}`, url: rulesDashboardUrl(origin, scope) },
   ];
+  for (const label of hud.overlays ?? []) {
+    const packPage = new URL(rulesDashboardUrl(origin, scope));
+    packPage.hash = `pack/${encodeURIComponent(label)}`;
+    items.push({ text: label, url: packPage.href });
+  }
+  if ((hud.awaitingApproval ?? 0) > 0) items.push({ text: `${hud.awaitingApproval} to approve`, url: rulesDashboardUrl(origin, scope) });
   if (hud.steeringCount === null) items.push({ text: "steering unavailable", url: sessionUrl });
   else if (hud.steeringCount > 0) items.push({ text: `steered ${hud.steeringCount}×`, url: sessionUrl });
   items.push(...health.map(text => ({ text, url: null })));

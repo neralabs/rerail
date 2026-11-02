@@ -48,7 +48,9 @@ packs/<id>/
 ```
 
 `<id>` is lowercase letters, digits and dashes. It is the directory name, the `id` in `pack.json`, and the npm name
-`@neralabs/rerail-pack-<id>`.
+`@neralabs/rerail-pack-<id>`. That scope is Rerail's: a pack published outside this repository is named
+`rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, and core loads it if it passes the checks the catalog runs
+([third parties' packs](rule-packs.md#third-parties-packs)).
 
 ### package.json
 

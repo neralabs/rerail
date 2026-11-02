@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
-import { LintConfigFormatError, parseJsonc, readTomlStringLists } from "../../../src/engine/catalog/lint-config-formats.js";
+import { LintConfigFormatError, parseJsonc, readTomlStringLists } from "../../../src/engine/catalog/lint-config/lint-config-formats.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import {
   proposeLintConfigSettings,
   readLintConfigFiles,
   readRepositoryLintConfig,
   ruffSelects,
-} from "../../../src/engine/catalog/repository-lint-config.js";
+} from "../../../src/engine/catalog/lint-config/repository-lint-config.js";
 
 const TYPE_DEFINITIONS = "typescript-eslint-consistent-type-definitions";
 const TSLINT_COMMENT = "typescript-eslint-ban-tslint-comment";
