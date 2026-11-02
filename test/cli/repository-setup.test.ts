@@ -524,6 +524,8 @@ function rulesOf(fixture: Fixture, ruleIds: readonly string[]): Record<string, {
 
 const TYPE_DEFINITIONS = "typescript-eslint-consistent-type-definitions";
 const TSLINT_COMMENT = "typescript-eslint-ban-tslint-comment";
+/** A rule the TypeScript pack starts on, among the first the confirm screen lists (it shows six, then "…and N more"). */
+const TS_COMMENT = "typescript-eslint-ban-ts-comment";
 
 describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT_MS }, () => {
   it("names the settings it takes from .eslintrc.json on the confirm screen, and writes them on start", async () => {
@@ -554,12 +556,12 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     const review = agentIo();
     await runSetup(review, request(setup, environment, { answer: "yes", repo: setup.repo }));
     expect(review.text()).toContain("eslint.config.ts is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.");
-    expect(review.text()).toContain(`${TYPE_DEFINITIONS} starts off  eslint.config.ts is not statically readable`);
+    expect(review.text()).toContain(`${TS_COMMENT} starts off  eslint.config.ts is not statically readable`);
     expect(review.text()).toContain(`${TSLINT_COMMENT} starts off  eslint.config.ts is not statically readable; .oxlintrc.json: "typescript/ban-tslint-comment": "off"`);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(selected(setup)).toEqual(["typescript"]);
-    expect(rulesOf(setup, [TSLINT_COMMENT])).toEqual({ [TSLINT_COMMENT]: { on: false, config: null } });
+    expect(rulesOf(setup, [TS_COMMENT, TSLINT_COMMENT])).toEqual({ [TS_COMMENT]: { on: false, config: null }, [TSLINT_COMMENT]: { on: false, config: null } });
   });
 
   // dolanmiu/docx (PR 3716) sets consistent-type-definitions to "type" in its eslint.config.ts, for its
