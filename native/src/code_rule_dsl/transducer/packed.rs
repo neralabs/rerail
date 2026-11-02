@@ -243,6 +243,7 @@ mod metal_value_prefix_tests;
 mod packed_workspace;
 mod scheduler;
 pub(in crate::code_rule_dsl) mod set_mode;
+pub(in crate::code_rule_dsl) mod fusion;
 mod value;
 mod value_packing;
 mod value_prefix;

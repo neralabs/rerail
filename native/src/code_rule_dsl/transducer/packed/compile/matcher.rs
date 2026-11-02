@@ -75,6 +75,18 @@ impl Label {
         }
     }
 
+    /// The program a roots, targets, count or pattern label walks.
+    fn program(&self) -> Option<&Program> {
+        match self {
+            Label::Pattern(program, _)
+            | Label::Constrained(program, ..)
+            | Label::Roots(program, _)
+            | Label::Targets(program, _)
+            | Label::Count { program, .. } => Some(program),
+            Label::Complement(_) | Label::Empty => None,
+        }
+    }
+
     /// The label's structural identity, the labels it reads named in the wave: equal for labels
     /// that mark the same nodes of every tape (the combined graph's hash-consing key).
     fn key(&self) -> String {
@@ -553,13 +565,16 @@ pub(in crate::code_rule_dsl) struct LoweredWave {
     /// Per clause, the earlier clauses whose labels it reads (the combined graph), transitively:
     /// their passes run wherever it is active (`spread`).
     feeds: Vec<BTreeSet<usize>>,
+    /// The level passes fused into one walk, built at their first batch (`Packs`).
+    packs: Packs,
 }
 
 impl LoweredWave {
     /// The clauses as one combined graph (list step 14 → 15; t1 spec-fusion §4.1, §4.7, the
     /// fusion model's first priority): a label equal to an earlier one, every label it reads named
     /// in the wave (`Label::key`), is that label, so a sub-rule shared by clauses is one pass. A
-    /// recursive group's labels are each clause's own. Each clause's kept labels take the next
+    /// recursive group equal to an earlier one (its members' keys, members named by position) is
+    /// that group, so a recursive utility shared by clauses runs its rounds once. Each clause's kept labels take the next
     /// ids, so its labels stay one range and the wave's bitsets hold each distinct label once.
     pub(in crate::code_rule_dsl) fn new(clauses: &[&LoweredMatcher]) -> Result<Self, Error> {
         let limit = usize::from(u16::MAX - LABEL_BASE);
@@ -568,7 +583,7 @@ impl LoweredWave {
         let mut owner = HashMap::<u16, usize>::new();
         let mut combined: Vec<LoweredMatcher> = Vec::with_capacity(clauses.len());
         let mut feeds: Vec<BTreeSet<usize>> = Vec::with_capacity(clauses.len());
-        let (mut distinct, mut total) = (0_usize, 0_usize);
+        let (mut distinct, mut total, mut shared_groups) = (0_usize, 0_usize, 0_usize);
         for (at, clause) in clauses.iter().enumerate() {
             let labels = &clause.labels;
             let offset = u16::try_from(next).map_err(|_| Error::InvalidOperand(0))?;
@@ -583,9 +598,30 @@ impl LoweredWave {
                 total += step.len();
                 let recursive = step.len() > 1 || labels.recursive.values().any(|id| step.contains(id));
                 if recursive {
-                    // A group's members read each other: each its own label.
+                    // A group's members read each other: the group's key is its members' in
+                    // order, each member named by its position (`u16::MAX - position`, past every
+                    // wave id while the wave's ids stay below them) and every other label in the
+                    // wave. An equal group is the earlier one, member by member.
+                    let placeholder = |position: usize| u16::MAX - position as u16;
+                    let key = (next + usize::from(LABEL_BASE) + 2 * step.len() < usize::from(u16::MAX)).then(|| {
+                        let inside = |label: u16| step.iter().position(|&id| id == label).map(placeholder);
+                        let name = |label: u16| inside(label).or_else(|| map.get(&label).copied()).unwrap_or(label);
+                        let members = step.iter().map(|&id| labels.def(id).relabelled(&name).key()).collect::<Vec<_>>();
+                        format!("group|{}|{}", step.len(), members.join("\u{1f}"))
+                    });
+                    if let Some(shared) = key.as_ref().and_then(|key| seen.get(key)) {
+                        let first = *shared;
+                        for (position, &id) in step.iter().enumerate() {
+                            map.insert(id, first + position as u16);
+                        }
+                        shared_groups += 1;
+                        continue;
+                    }
                     let ids = step.iter().map(|&id| fresh(&mut next).map(|new| (id, new))).collect::<Result<Vec<_>, _>>()?;
                     map.extend(ids.iter().copied());
+                    if let (Some(key), Some(&(_, first))) = (key, ids.first()) {
+                        seen.insert(key, first);
+                    }
                     steps.push(ids.iter().map(|&(_, new)| new).collect());
                     continue;
                 }
@@ -671,7 +707,8 @@ impl LoweredWave {
         }
         crate::code_rule_dsl::prof::count("wave.labels", total);
         crate::code_rule_dsl::prof::count("wave.distinct_labels", distinct);
-        Ok(Self { clauses: combined, labels: next, feeds })
+        crate::code_rule_dsl::prof::count("wave.shared_groups", shared_groups);
+        Ok(Self { clauses: combined, labels: next, feeds, packs: Packs::default() })
     }
 
     /// `active` (per clause, per tape) with each clause's labels also where a clause reading them
@@ -750,7 +787,7 @@ impl LoweredWave {
         for (recursive, levels) in &steps {
             if !recursive {
                 for level in levels {
-                    label_level(level, tapes, &mut sets, active)?;
+                    label_level(level, tapes, &mut sets, active, &self.packs)?;
                 }
                 continue;
             }
@@ -770,7 +807,7 @@ impl LoweredWave {
             for _round in 0..=most + 1 {
                 let mut changed = false;
                 for level in levels {
-                    changed |= label_level(level, tapes, &mut sets, active)?;
+                    changed |= label_level(level, tapes, &mut sets, active, &self.packs)?;
                 }
                 if !changed {
                     settled = true;
@@ -1554,16 +1591,130 @@ fn levels<'a, T>(
 
 /// One level of a wave's label passes over the batch, each as `evaluate` has it (they read only
 /// levels before), each on the tapes where its clause is `active`. Whether a set changed.
+/// A level's roots and targets passes over one domain, fused into one walk (t1 spec-fusion §2.6
+/// multi-target packing, §4.3, §4.4: `fusion::Fused`), by the labels they mark: built once a wave
+/// and shared by its batches. A start's walk answers every member; a member's emits mark its
+/// label. Metal packs the same passes (`label_passes::Runner::size`).
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct Packs(std::sync::Mutex<HashMap<Vec<u16>, Option<Arc<(Program, Micro, Vec<Entry>, Vec<usize>)>>>>);
+
+impl Packs {
+    /// A level's passes grouped to fuse: by pass kind (roots or targets) and domain, micro walks
+    /// only, at most `fusion::MEMBERS` a group, two or more.
+    fn groups(level: &[(&LoweredMatcher, u16)]) -> Vec<(bool, Vec<usize>)> {
+        let mut by = BTreeMap::<(bool, String), Vec<usize>>::new();
+        for (at, &(clause, id)) in level.iter().enumerate() {
+            let (targets, program, domain) = match clause.labels.def(id) {
+                Label::Roots(program, domain) => (false, program, domain),
+                Label::Targets(program, domain) => (true, program, domain),
+                _ => continue,
+            };
+            if Micro::of(program).is_some() {
+                by.entry((targets, format!("{domain:?}"))).or_default().push(at);
+            }
+        }
+        by.into_iter()
+            .flat_map(|((targets, _), members)| {
+                members.chunks(super::fusion::MEMBERS).map(|chunk| (targets, chunk.to_vec())).collect::<Vec<_>>()
+            })
+            .filter(|(_, members)| members.len() > 1)
+            .collect()
+    }
+
+    /// Per pass of the level, its (tape, bits) where it ran fused; None where it runs alone (not
+    /// grouped, or its group's walk failed on a tape).
+    #[allow(clippy::type_complexity)]
+    fn walk(
+        &self,
+        level: &[(&LoweredMatcher, u16)],
+        views: &[TapeDoc],
+        sets: &[Arc<Vec<Vec<u64>>>],
+        active: &dyn Fn(&LoweredMatcher, usize) -> bool,
+    ) -> Vec<Option<Vec<(usize, Vec<u64>)>>> {
+        use rayon::prelude::*;
+        let mut out = vec![None; level.len()];
+        for (targets, members) in Self::groups(level) {
+            let key = members.iter().map(|&at| level[at].1).collect::<Vec<_>>();
+            let fused = {
+                let mut cache = self.0.lock().expect("packs");
+                cache
+                    .entry(key)
+                    .or_insert_with(|| {
+                        let programs = members.iter().map(|&at| level[at].0.labels.def(level[at].1).program()).collect::<Option<Vec<_>>>()?;
+                        let fused = super::fusion::Fused::of(&programs)?;
+                        let walk = Micro::of(&fused.program)?;
+                        let members = fused.emits.iter().map(|&(member, _)| member).collect();
+                        Some(Arc::new((fused.program, walk, programs.iter().map(|program| Entry::of(program)).collect(), members)))
+                    })
+                    .clone()
+            };
+            let Some(fused) = fused else { continue };
+            let (program, walk, entries, member_of) = &*fused;
+            let domain = match level[members[0]].0.labels.def(level[members[0]].1) {
+                Label::Roots(_, domain) | Label::Targets(_, domain) => domain.clone(),
+                _ => unreachable!("a grouped pass is a roots or targets label"),
+            };
+            let emit = if targets { Emit::Captures } else { Emit::Start };
+            let on = (0..views.len()).filter(|&tape| members.iter().any(|&at| active(level[at].0, tape))).collect::<Vec<_>>();
+            let found = on
+                .par_iter()
+                .map(|&tape| {
+                    let (view, sets) = (&views[tape], &sets[tape]);
+                    let texts = walk.texts(program, view)?;
+                    let mut bits = vec![vec![0_u64; view.transducer_len().div_ceil(64)]; members.len()];
+                    let mut frames = Frames::default();
+                    for start in self::domain(&domain, view, sets) {
+                        if !entries.iter().any(|entry| entry.admits(view, start)) {
+                            continue;
+                        }
+                        walk.run_labelled(view, sets, &texts, start, emit, &mut frames, &mut |label, node| {
+                            bits[member_of[usize::from(label)]][node as usize / 64] |= 1 << (node % 64);
+                        })
+                        .ok()?;
+                    }
+                    Some((tape, bits))
+                })
+                .collect::<Vec<_>>();
+            // A failed tape (text slots, an overflow): the group runs alone.
+            let Some(found) = found.into_iter().collect::<Option<Vec<_>>>() else {
+                crate::code_rule_dsl::prof::count("labels.pack_failed", members.len());
+                continue;
+            };
+            crate::code_rule_dsl::prof::count("labels.packed", members.len());
+            crate::code_rule_dsl::prof::count("labels.packs", 1);
+            let mut per = vec![Vec::new(); members.len()];
+            for (tape, bits) in found {
+                for (k, bits) in bits.into_iter().enumerate() {
+                    if active(level[members[k]].0, tape) {
+                        per[k].push((tape, bits));
+                    }
+                }
+            }
+            for (k, found) in per.into_iter().enumerate() {
+                out[members[k]] = Some(found);
+            }
+        }
+        out
+    }
+}
+
 fn label_level(
     level: &[(&LoweredMatcher, u16)],
     tapes: &[TapeDoc],
     sets: &mut [Arc<Vec<Vec<u64>>>],
     active: &dyn Fn(&LoweredMatcher, usize) -> bool,
+    packs: &Packs,
 ) -> Result<bool, Error> {
     let views = tapes.iter().zip(sets.iter()).map(|(tape, sets)| tape.with_labels(Arc::clone(sets))).collect::<Vec<_>>();
+    // Passes walked from the same starts, as one walk (multi-target packing, `Packs`).
+    let mut packed = packs.walk(level, &views, sets, active);
     let found = level
         .iter()
-        .map(|&(clause, id)| {
+        .enumerate()
+        .map(|(at, &(clause, id))| {
+            if let Some(found) = packed[at].take() {
+                return Ok(found);
+            }
             let on = (0..tapes.len()).filter(|&at| active(clause, at)).collect::<Vec<_>>();
             let (views, read) = (on.iter().map(|&at| views[at].clone()).collect::<Vec<_>>(), on.iter().map(|&at| Arc::clone(&sets[at])).collect::<Vec<_>>());
             Ok::<_, Error>(on.into_iter().zip(clause.evaluate(clause.labels.def(id), &views, &read)?).collect::<Vec<_>>())

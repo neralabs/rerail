@@ -211,7 +211,7 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
   - **Hash-consed labels** (`LoweredWave::new`). A clause's sub-rules are its labels. A label equal to an earlier one becomes that label: equal means the same `Label::key` (kind, program digest, domain, constraints, count bounds), with every label it reads already renamed in the wave. Steps are in evaluation order, so a label's reads are named before it.
     - Each clause's kept labels take the next ids, so its labels stay one range. A duplicate's slot and pass are gone, so the wave's bitsets hold each distinct label once.
     - A clause keeps copies of the definitions it borrows (`Labels::borrowed`), for their domains.
-    - Recursive groups stay each clause's own.
+    - A recursive group equal to an earlier one is that group, member by member. Its key is its members' keys in order, each member named by its position in the group and every other label by its wave name (S7: 16 groups shared, 496 → 470 labels).
   - **Scheduling.** `levels` tracks when each label is final across the whole wave, so a borrowed label's level is its owner's. A clause's labels also run where a clause that reads them is active (`LoweredWave::spread`, through `feeds`, transitive).
   - **Measured** (S7, 87 clauses, load 55):
     - Labels: 833 separately, 496 combined (40% shared).
@@ -219,11 +219,18 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
     - The CPU backend's audit: CPU time 5.3 s, from 6.3–6.6 s at step 14.
     - The device's buffer peak: 211 MB, from 248.
     - `the_combined_graph_shares_labels_and_keeps_each_clauses_roots`: on the pack's fixtures, each clause's roots from the combined wave equal its roots alone, with clauses active on half the tapes.
-  - **Not in this step:**
-    - spec-fusion's prefix tries (§4.3), and Boolean fusion of root programs into FORK chains (§4.4);
-    - multi-target packing of same-type passes (§2.6);
-    - recursive groups shared by digest;
-    - the fused plan's cache key (§4.9; the wave is lowered per audit).
+  - **Program fusion** (`packed::fusion::Fused`), t1 spec-fusion §2.6, §4.3, §4.4. Micro-walk programs walked from the same starts become one program:
+    - their common leading words once (the trie's shared path), stopping before any word a member jumps back into;
+    - then a `FORK` chain with one branch per member, so a member's paths finish before the next member's branch runs;
+    - each member's emits renumbered through an emit table, (member, its own label), at most 32. Its tables (strings, text predicates, capture names) are concatenated and their operands offset. In set mode where every member is.
+    - The same transform is used in four places, each routing an emit back to its member:
+      - host label passes (`matcher::Packs`): a level's roots or targets passes over one domain; `Micro::run_labelled` marks each member's label;
+      - device label passes (`Runner::size`): passes over one shared root list, marking roots or captures. The kernel's route bit 2 reads the emit's scratch row from a table after the words, and a roots pack ends once every emit fired. A pack counts its members for a recursive group's one-dispatch fusion, and stays in its members' stack tier;
+      - host root walks (`PackedDemand::packs`): terminal root programs with the same entry test, walked over the union of their anchors. Records are routed to the member's tasks, labels and capture names, then ordered per member by (task, walk order) and cut at its result limit;
+      - device root walks (`Runner::records`): the same packs, as passes after the programs' passes. `RootPass.pad` = 1 + emit count drops an emit whose label fired and ends the walk once all have; `decode_roots` routes the records.
+    - **Measured** (S7, load 54): 710 keys = W on CPU and Metal; Metal 44 launches (planned 50), buffer peak 209 MB, audit CPU 2.3 s; the CPU backend's audit 6.1 s. Packed: 151 host label passes in 28 packs, 116 device label passes in 39, 1,828 host root walks in 493, 32 device root programs. `RERAIL_ROOTS_CHECK`: the fused host root walks equal the backend's on every (file, program), 0 differ. `fusion::tests`: the prefix, fork chain and emit table; a jump into the prefix stops it there.
+    - No speedup measured: CPU time is flat within the load's noise (architecture first; the walks it saves are measured above).
+  - **The fused plan's cache key** (§4.9) is list step 16's plan identity and step 20's `stats::identity`; the wave is still lowered per audit.
 
 Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base, then differential finding keys for interpreter vs JIT vs Metal on a 100–300-file sample.
 

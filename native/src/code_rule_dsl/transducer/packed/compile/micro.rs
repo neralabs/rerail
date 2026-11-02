@@ -338,6 +338,29 @@ impl Micro {
         })
     }
 
+    /// A fused program's walk (`fusion::Fused`) from `start`: `mark` called with each emit's label
+    /// (its member) and node, as `run` marks them. A start's walk does not end at its first emit,
+    /// which answers one member: in set mode each member's later emits are skipped instead.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn run_labelled(
+        &self,
+        tape: &TapeDoc,
+        labels: &[Vec<u64>],
+        texts: &[Vec<u64>],
+        start: u32,
+        emit: Emit,
+        frames: &mut Frames,
+        mark: &mut impl FnMut(u16, u32),
+    ) -> Result<(), Overflow> {
+        self.walk(tape, labels, texts, start, CAPTURES, frames, &mut |state: &State, label| {
+            match emit {
+                Emit::Start | Emit::EveryStart => mark(label, start),
+                Emit::Captures => state.captures[..usize::from(state.captured)].iter().for_each(|&node| mark(label, node)),
+            }
+            false
+        })
+    }
+
     /// A root program's walk from `start` on `tape` (labelled: `transducer_labels`), every path
     /// that emits appended to `out` as a record, in the walk's order.
     pub(in crate::code_rule_dsl) fn records(

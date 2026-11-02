@@ -418,6 +418,7 @@ impl PackedDemand {
                 _ => Some(None),
             })
             .collect::<Option<Vec<_>>>()?;
+        let packs = self.packs(programs.clone(), &walks);
         let matches = range
             .clone()
             .into_par_iter()
@@ -425,10 +426,21 @@ impl PackedDemand {
                 let tape = &self.files[file];
                 let mut frames = Frames::default();
                 let mut records = Vec::new();
+                // The packed programs' matches on this file, by program; a pack whose walk fails
+                // here runs its members alone.
+                let mut packed = std::collections::HashMap::<usize, Vec<RootMatch>>::new();
+                for pack in &packs {
+                    if let Some(found) = self.walk_pack(pack, file, &mut frames, &mut records) {
+                        packed.extend(found);
+                    }
+                }
                 programs
                     .clone()
                     .zip(&walks)
                     .map(|(program, walk)| {
+                        if let Some(found) = packed.remove(&program) {
+                            return Some(found);
+                        }
                         let mut found = Vec::new();
                         // Records the device walked: as the host's walk lists them.
                         if let (Some(given), true) = (given(program), self.task_grid[file][program]) {
@@ -486,6 +498,100 @@ impl PackedDemand {
             .collect::<Option<Vec<_>>>()?;
         crate::code_rule_dsl::prof::count("demand.walked", matches.iter().flatten().map(Vec::len).sum());
         Some(RootsExecution::Walked { files: range.len(), programs: programs.len(), matches })
+    }
+
+    /// The batch's terminal root programs walked on the host, fused by their entry test (their
+    /// first word, a kind or supertype test): one walk per start answers every member (t1
+    /// spec-fusion §4.3, §4.4; `fusion::Fused`, as the label passes' `matcher::Packs`).
+    fn packs(&self, programs: Range<usize>, walks: &[Option<super::super::transducer::packed::Micro>]) -> Vec<RootPack> {
+        use super::super::transducer::packed::{fusion, Micro};
+        let mut by = std::collections::BTreeMap::<u32, Vec<usize>>::new();
+        for (program, walk) in programs.zip(walks) {
+            if let Some(first) = walk.as_ref().and_then(|_| fusion::entry_key(&self.programs[program])) {
+                by.entry(first).or_default().push(program);
+            }
+        }
+        let mut packs = Vec::new();
+        for members in by.into_values() {
+            for chunk in members.chunks(fusion::MEMBERS).filter(|chunk| chunk.len() > 1) {
+                let programs = chunk.iter().map(|&program| &self.programs[program]).collect::<Vec<_>>();
+                let Some(fused) = fusion::Fused::of(&programs) else { continue };
+                let Some(walk) = Micro::of(&fused.program) else { continue };
+                crate::code_rule_dsl::prof::count("demand.packed", chunk.len());
+                crate::code_rule_dsl::prof::count("demand.packs", 1);
+                packs.push(RootPack { members: chunk.to_vec(), fused, walk });
+            }
+        }
+        packs
+    }
+
+    /// A pack's matches on `file`, by member program, as each member's own walk lists them: per
+    /// task in anchor order, each task's records in walk order (a member's paths run before the
+    /// next member's: the fork chain's next branch waits under them), up to its result limit.
+    fn walk_pack(
+        &self,
+        pack: &RootPack,
+        file: usize,
+        frames: &mut super::super::transducer::packed::Frames,
+        records: &mut Vec<super::super::transducer::packed::RootRecord>,
+    ) -> Option<Vec<(usize, Vec<RootMatch>)>> {
+        let tape = &self.files[file];
+        let on = pack.members.iter().map(|&program| self.task_grid[file][program]).collect::<Vec<_>>();
+        // Per member, its task by start.
+        let tasks = pack
+            .members
+            .iter()
+            .zip(&on)
+            .map(|(&program, &on)| {
+                let anchors = if on { &self.anchors[file][program][..] } else { &[] };
+                anchors.iter().enumerate().map(|(task, &start)| (start, task as u32)).collect::<std::collections::HashMap<_, _>>()
+            })
+            .collect::<Vec<_>>();
+        let mut starts = tasks.iter().flat_map(|tasks| tasks.keys().copied()).collect::<Vec<_>>();
+        starts.sort_unstable();
+        starts.dedup();
+        let mut found = (0..pack.members.len()).map(|_| Vec::<(u32, u32, RootMatch)>::new()).collect::<Vec<_>>();
+        if !starts.is_empty() {
+            let texts = pack.walk.texts(&pack.fused.program, tape)?;
+            let mut locals = vec![0_u32; pack.members.len()];
+            for &start in &starts {
+                records.clear();
+                pack.walk.records(tape, &texts, start, frames, records).ok()?;
+                locals.iter_mut().for_each(|local| *local = 0);
+                for record in records.iter() {
+                    let (member, label) = pack.fused.emits[usize::from(record.label)];
+                    let Some(&task) = tasks[member].get(&start) else { continue };
+                    let base = pack.fused.captures[member];
+                    found[member].push((
+                        task,
+                        locals[member],
+                        RootMatch {
+                            task_ordinal: task,
+                            local_ordinal: locals[member],
+                            start: record.start,
+                            label,
+                            captures: record
+                                .captures()
+                                .iter()
+                                .map(|&(label, node)| RootCapture { label: label - base, node, span: tape.transducer_span(node), text: None })
+                                .collect(),
+                        },
+                    ));
+                    locals[member] += 1;
+                }
+            }
+        }
+        Some(
+            pack.members
+                .iter()
+                .zip(found)
+                .map(|(&program, mut found)| {
+                    found.sort_by_key(|&(task, local, _)| (task, local));
+                    let limit = self.result_limits[program] as usize;
+                    (program, found.into_iter().take(limit).map(|(_, _, found)| found).collect())
+                })
+                .collect(),
+        )
     }
 
     /// `RERAIL_ROOTS_CHECK`: the walked roots against the backend's, as sets of (start, output
@@ -2444,4 +2550,11 @@ mod tests {
         assert_eq!(repeated, 1);
         assert_eq!(registry.query_execution_counters(token), Some((1, 2)));
     }
+}
+
+/// Root programs fused into one walk (`PackedDemand::packs`).
+struct RootPack {
+    members: Vec<usize>,
+    fused: super::super::transducer::packed::fusion::Fused,
+    walk: super::super::transducer::packed::Micro,
 }
