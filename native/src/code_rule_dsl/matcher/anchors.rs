@@ -169,20 +169,57 @@ const MAX_INLINED_UTILS: usize = 4096;
 struct Inlining {
     /// Utilities whose plan is being compiled: a reference back into one plans as unrestricted,
     /// a sound superset. Completed plans are reused by every diamond path; a parameterized call
-    /// has the same anchor plan as its utility.
+    /// has the same anchor plan as its utility. A plan is completed per context: under a root
+    /// gate (`root_gate`) it keeps its relations, elsewhere it is reduced.
     visiting: BTreeSet<usize>,
-    completed: BTreeMap<usize, AnchorPlan>,
+    completed: BTreeMap<(usize, bool), AnchorPlan>,
     budget: usize,
+    /// The kind of the grammar's root node (`GrammarDialect::root_kind`), which a root gate names.
+    root_kind: Option<u16>,
+    /// How many root gates the rule being compiled sits inside.
+    under_root_gate: usize,
+}
+
+/// Whether `rule` is a root gate: `inside`, to the end, a rule anchored on the grammar's root node
+/// (`anchored_at_root`), such as a file-level import gate (`inside module has dotted_name
+/// ^airflow`). `compile_util` keeps a gate's relations through a utility.
+fn root_gate(rule: &AstMatcher, root_kind: Option<u16>) -> bool {
+    match rule {
+        AstMatcher::Inside(inner, StopBy::End) => anchored_at_root(inner, root_kind),
+        _ => false,
+    }
+}
+
+/// Whether `rule` names the grammar's root kind among its same-node terms, so that it matches at
+/// most one node of a file.
+fn anchored_at_root(rule: &AstMatcher, root_kind: Option<u16>) -> bool {
+    let Some(root_kind) = root_kind else {
+        return false;
+    };
+    match rule {
+        AstMatcher::Kind(kind) => kind
+            .potential_kinds()
+            .is_some_and(|kinds| kinds.iter().eq([usize::from(root_kind)])),
+        AstMatcher::All(items) => items
+            .iter()
+            .any(|item| anchored_at_root(item, Some(root_kind))),
+        _ => false,
+    }
 }
 
 impl AnchorPlan {
-    pub(in crate::code_rule_dsl) fn compile(matcher: &AstMatcher) -> Self {
+    pub(in crate::code_rule_dsl) fn compile(
+        matcher: &AstMatcher,
+        language: GrammarDialect,
+    ) -> Self {
         Self::compile_in(
             matcher,
             &mut Inlining {
                 visiting: BTreeSet::new(),
                 completed: BTreeMap::new(),
                 budget: MAX_INLINED_UTILS,
+                root_kind: language.root_kind(),
+                under_root_gate: 0,
             },
         )
     }
@@ -197,7 +234,8 @@ impl AnchorPlan {
     }
 
     fn compile_util(util: &UtilRef, inlining: &mut Inlining) -> Self {
-        if let Some(plan) = inlining.completed.get(&util.index) {
+        let under_root_gate = inlining.under_root_gate > 0;
+        if let Some(plan) = inlining.completed.get(&(util.index, under_root_gate)) {
             return plan.clone();
         }
         if inlining.budget == 0 || !inlining.visiting.insert(util.index) {
@@ -206,6 +244,9 @@ impl AnchorPlan {
         inlining.budget -= 1;
         #[cfg(test)]
         record_walk(Walk::AnchorInlining);
+        let root_gate = util
+            .with_target(|rule| root_gate(rule, inlining.root_kind))
+            .unwrap_or(false);
         let plan = util
             .with_target(|rule| Self::compile_in(rule, inlining))
             .unwrap_or_else(Self::unrestricted);
@@ -213,9 +254,16 @@ impl AnchorPlan {
         // scan whole-file postings, and on utilities written to walk a relation (tail positions,
         // enclosing scopes) they cost more than matching the roots the kinds already select.
         // Dropping a condition only widens the plan. Any other condition is kept whole and shared.
+        //
+        // A root gate (`inside` the grammar's root node, to the end: `seen-airflow`'s `inside
+        // module has dotted_name ^airflow`) is exempt, as is any utility reached under one: the
+        // gate's relation is evaluated against the file's one root node, so everything beneath it
+        // runs once per file, not once per candidate root, and a file the gate rejects selects no
+        // root at all, which is the point of writing one. Reduced, the gate would read `inside
+        // module`, and select every root.
         let plan = if matches!(plan.condition, Condition::Always) {
             plan
-        } else if plan.projects_relations() {
+        } else if plan.projects_relations() && !root_gate && !under_root_gate {
             Self {
                 root_kinds: plan.root_kinds,
                 condition: Condition::Always,
@@ -229,12 +277,14 @@ impl AnchorPlan {
             }
         };
         inlining.visiting.remove(&util.index);
-        inlining.completed.insert(util.index, plan.clone());
+        inlining
+            .completed
+            .insert((util.index, under_root_gate), plan.clone());
         plan
     }
 
-    /// Whether selecting with this plan walks a relation. A shared utility plan never does: one
-    /// that would is reduced to its root kinds instead.
+    /// Whether selecting with this plan walks a relation. A shared utility plan does only under a
+    /// root gate (`root_gate`): any other that would is reduced to its root kinds instead.
     fn projects_relations(&self) -> bool {
         match &self.condition {
             Condition::Relation { .. } => true,
@@ -347,7 +397,11 @@ impl AnchorPlan {
                     AstMatcher::Precedes(..) => Direction::Precedes,
                     _ => Direction::Follows,
                 };
+                // Utilities under a root gate keep their relations (`compile_util`).
+                let gate = root_gate(matcher, inlining.root_kind);
+                inlining.under_root_gate += usize::from(gate);
                 let inner = Self::compile_in(inner, inlining);
+                inlining.under_root_gate -= usize::from(gate);
                 // A stop rule only shortens the walk, so the unbounded relation is a superset:
                 // sound to select with, but not exact (a `not` over it must not subtract).
                 let bounded = matches!(stop, StopBy::Rule(_));

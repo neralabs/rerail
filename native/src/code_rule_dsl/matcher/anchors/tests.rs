@@ -150,7 +150,7 @@ fn compare_matchers(
     let tape = AstGrep::doc(tape);
     assert_eq!(native.root().dfs().count(), image.primary.node_count());
     for &(rule, matcher) in matchers {
-        let plan = AnchorPlan::compile(matcher);
+        let plan = AnchorPlan::compile(matcher, language);
         let expected = actual(&native, matcher);
         let (native_found, _, native_visited, native_complete, _) =
             selected(&native, matcher, &plan, usize::MAX, || false);
@@ -277,7 +277,7 @@ fn ordered_alternatives_conjunction_pattern_captures_and_unrestricted_branches()
         let matcher =
             compile_rule(rule, GrammarDialect::Python, "test/rule", &mut Vec::new()).unwrap();
         assert_eq!(actual(&native, &matcher), expected);
-        let plan = AnchorPlan::compile(&matcher);
+        let plan = AnchorPlan::compile(&matcher, GrammarDialect::Python);
         let (found, roots, visited, complete, all) =
             selected(&native, &matcher, &plan, usize::MAX, || false);
         assert_eq!(found, expected);
@@ -419,7 +419,7 @@ fn string_comments_unicode_prefixes_long_residue_and_python_variadics() {
         &mut Vec::new(),
     )
     .unwrap();
-    let plan = AnchorPlan::compile(&matcher);
+    let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
     let (found, roots, visited, complete, all) =
         selected(&root, &matcher, &plan, usize::MAX, || false);
     assert_eq!(found.len(), 1);
@@ -626,7 +626,7 @@ fn incomplete_index_is_not_a_clean_absence() {
         &mut Vec::new(),
     )
     .unwrap();
-    let plan = AnchorPlan::compile(&matcher);
+    let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
     assert!(image.primary.node_count() > 2);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
@@ -663,7 +663,7 @@ fn traversal_polls_closing_nodes_before_another_preorder_batch() {
         &mut Vec::new(),
     )
     .unwrap();
-    let plan = AnchorPlan::compile(&matcher);
+    let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
     for visited in [
@@ -709,7 +709,7 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
         &mut Vec::new(),
     )
     .unwrap();
-    let plan = AnchorPlan::compile(&matcher);
+    let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
     assert!(image.primary.node_count() > 1024);
@@ -772,7 +772,7 @@ where
                 rule.clone()
             };
             let matcher = sibling_matcher(rule.clone(), *root.root().get_doc().get_lang());
-            let plan = AnchorPlan::compile(&matcher);
+            let plan = AnchorPlan::compile(&matcher, *root.root().get_doc().get_lang());
             assert!(plan.exact, "{rule}");
             let index = FileAnchorIndex::build(root, &[&plan], usize::MAX, || false);
             let selection = index.select(&plan);
@@ -920,7 +920,7 @@ fn zero_width_end_sibling_selection_is_linear_in_the_run() {
     }
     for rule in &rules {
         let matcher = sibling_matcher(rule.clone(), GrammarDialect::TypeScript);
-        let plan = AnchorPlan::compile(&matcher);
+        let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
         let index = FileAnchorIndex::build(&native, &[&plan], usize::MAX, || false);
         assert!(index.walked_siblings, "the MISSING `}}` is zero-width");
         reset_walks();
@@ -948,7 +948,7 @@ fn assert_stop_rule_supersets<D: Doc<Source = String, Lang = GrammarDialect>>(
 {
     for rule in rules {
         let matcher = sibling_matcher(rule.clone(), *root.root().get_doc().get_lang());
-        let plan = AnchorPlan::compile(&matcher);
+        let plan = AnchorPlan::compile(&matcher, *root.root().get_doc().get_lang());
         assert!(!plan.exact, "{rule}");
         let index = FileAnchorIndex::build(root, &[&plan], usize::MAX, || false);
         let selection = index.select(&plan);
@@ -1086,6 +1086,101 @@ fn utility_plans_select_as_precisely_as_the_rule_written_inline() {
     }
 }
 
+/// A root gate (`inside` the grammar's root node, to the end, as the Airflow ports' `seen-airflow`
+/// gates a file on an `airflow` import) written through a utility selects the roots the gate
+/// written inline selects: `compile_util` keeps its relations, and those of the utilities under
+/// it, where it reduces any other relation utility to its root kinds (`relation` here, which adds
+/// nothing to the identifier roots it is written over).
+#[test]
+fn utility_root_gates_select_as_the_gate_written_inline() {
+    let calls: String = (0..200)
+        .map(|n| format!("bar{n}(baz{n});\nfoo(x{n});\n"))
+        .collect();
+    let imports = format!("import lib from \"lib\";\n{calls}");
+    let selection = |ast: Value, source: &str| {
+        let native = AstGrep::doc(StrDoc::new(source, GrammarDialect::TypeScript));
+        let compiled = compiled(ast);
+        let grammar = &grammar_matchers(&compiled)[0];
+        let (found, roots, _, complete, all) = selected(
+            &native,
+            &grammar.matcher,
+            &grammar.anchors,
+            usize::MAX,
+            || false,
+        );
+        assert!(complete && !all, "the index decides the file");
+        assert_eq!(found, actual(&native, &grammar.matcher), "sound selection");
+        (found.len(), roots)
+    };
+    let foo = json!({ "kind": "identifier", "regex": "^foo$" });
+    let leaf = json!({ "kind": "string_fragment", "regex": "^lib$" });
+    let inline = json!({
+        "kind": "identifier", "regex": "^foo$",
+        "inside": { "stopBy": "end", "kind": "program", "has": { "stopBy": "end", "matches": "leaf" } },
+    });
+    let inline_utils = json!({ "leaf": leaf });
+    // The gate's `has` sits in a utility of its own, as `seen-airflow` reaches `imports-airflow`.
+    let utility = json!({ "kind": "identifier", "regex": "^foo$", "matches": "gate" });
+    let utils = json!({
+        "gate": { "inside": { "stopBy": "end", "kind": "program", "matches": "imports" } },
+        "imports": { "has": { "stopBy": "end", "matches": "leaf", "inside": { "stopBy": "neighbor", "kind": "string" } } },
+        "leaf": leaf,
+    });
+    for (source, expected) in [(calls.as_str(), (0, 0)), (imports.as_str(), (200, 200))] {
+        assert_eq!(
+            selection(json!({ "rule": inline, "utils": inline_utils }), source),
+            expected,
+            "inline"
+        );
+        assert_eq!(
+            selection(json!({ "rule": utility, "utils": utils }), source),
+            expected,
+            "utility"
+        );
+    }
+    // `foo` alone selects the 200 roots `foo` names; the reduced relation utility leaves them.
+    let relation = json!({ "kind": "identifier", "regex": "^foo$", "matches": "relation" });
+    let relation_utils =
+        json!({ "relation": { "inside": { "stopBy": "neighbor", "kind": "call_expression" } } });
+    assert_eq!(selection(json!({ "rule": foo }), &calls), (200, 200));
+    assert_eq!(
+        selection(json!({ "rule": relation, "utils": relation_utils }), &calls),
+        (200, 200)
+    );
+    let utilities = |ast: Value| {
+        fn collect<'plan>(plan: &'plan AnchorPlan, found: &mut Vec<&'plan AnchorPlan>) {
+            match &plan.condition {
+                Condition::Utility(inner) => found.push(inner),
+                Condition::All(plans) | Condition::Any(plans) => {
+                    for plan in plans {
+                        collect(plan, found);
+                    }
+                }
+                Condition::Not(plan) | Condition::Relation { inner: plan, .. } => {
+                    collect(plan, found);
+                }
+                Condition::Always | Condition::Pattern(_) | Condition::Text { .. } => {}
+            }
+        }
+        let compiled = compiled(ast);
+        let mut found = Vec::new();
+        collect(&grammar_matchers(&compiled)[0].anchors, &mut found);
+        found
+            .iter()
+            .map(|plan| matches!(plan.condition, Condition::Relation { .. }))
+            .collect::<Vec<_>>()
+    };
+    // The gate's plan is its relation; the reduced utility's is dropped (`Always`, not shared).
+    assert_eq!(
+        utilities(json!({ "rule": utility, "utils": utils })),
+        vec![true]
+    );
+    assert_eq!(
+        utilities(json!({ "rule": relation, "utils": relation_utils })),
+        Vec::<bool>::new()
+    );
+}
+
 /// A utility's plan is inlined once per plan and reused by every diamond path that reaches it.
 #[test]
 fn utility_diamonds_inline_anchor_plans_in_linear_visits() {
@@ -1099,7 +1194,10 @@ fn utility_diamonds_inline_anchor_plans_in_linear_visits() {
         compiled_parameterized_utility_diamonds(DIAMOND_DEPTH),
     ] {
         reset_walks();
-        AnchorPlan::compile(&grammar_matchers(&compiled)[0].matcher);
+        AnchorPlan::compile(
+            &grammar_matchers(&compiled)[0].matcher,
+            GrammarDialect::TypeScript,
+        );
         assert!(
             walks(Walk::AnchorInlining) <= bound,
             "anchor planning inlined {} utilities (bound {bound})",
@@ -1248,7 +1346,7 @@ fn relation_selections_spend_units_on_the_related_nodes_only() {
             &mut Vec::new(),
         )
         .unwrap();
-        let plan = AnchorPlan::compile(&matcher);
+        let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
         let units = |filler: usize| {
             let source = source(filler);
             let native = AstGrep::doc(StrDoc::new(&source, GrammarDialect::TypeScript));
@@ -1294,7 +1392,7 @@ fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
         &mut Vec::new(),
     )
     .unwrap();
-    let plan = AnchorPlan::compile(&matcher);
+    let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
     let roots = 8_000;
     let source = (0..roots)
         .map(|n| format!("send(a{n}, {});\n", n % 3))
@@ -1320,11 +1418,11 @@ fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
     );
 }
 
-/// The Airflow ports (AIR302, AIR311, AIR312) write Ruff's `seen_module(AIRFLOW)` gate inline in
-/// every clause, as `inside module has dotted_name ^airflow`, so the anchor index selects no root
-/// in a file without an `airflow` import. A utility cannot do that: `compile_util` reduces a plan
-/// that projects relations to its root kinds, so folding the gate into the shared `seen-airflow`
-/// keeps every finding and makes AIR302 about a hundred times slower on such files (#375).
+/// The Airflow ports (AIR302, AIR311, AIR312) gate every clause on Ruff's `seen_module(AIRFLOW)`
+/// check through their shared `seen-airflow` utility (`inside module has dotted_name ^airflow`),
+/// a root gate `compile_util` keeps, so the anchor index selects no root in a file without an
+/// `airflow` import. Reduced to its root kinds, as any other relation utility is, the gate would
+/// keep every finding and make AIR302 about a hundred times slower on such files (#375).
 #[test]
 fn airflow_ports_select_no_root_in_a_file_without_an_airflow_import() {
     let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
