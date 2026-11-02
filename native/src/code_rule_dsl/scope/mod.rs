@@ -439,11 +439,24 @@ pub(crate) struct Reading {
     pub(crate) stub: bool,
     /// Python: the target version's minor, which a stub's typing-aware reading needs (the builtins
     /// a generic subscript may name, TypedDict's keyword fields before 3.13). 0 outside stubs,
-    /// so their tables are shared across versions.
+    /// so their tables are shared across versions: typing-aware reading then takes the default
+    /// target (`target_minor`), and the semantic checks on parsed annotations the latest version,
+    /// as Ruff's `parser_version` does where none is set.
     pub(crate) python_minor: u8,
     /// Python: Ruff's typing settings, which change what is `typing`'s and so which strings are
     /// type definitions and what a stub reads after the module.
     pub(crate) typing: Option<&'static options::PythonTyping>,
+}
+
+impl Reading {
+    /// The target minor a typing-aware reading uses: a stub's own, and the default target outside
+    /// stubs, whose tables are shared across versions.
+    pub(crate) fn target_minor(&self) -> u8 {
+        match self.python_minor {
+            0 => options::DEFAULT_PYTHON_MINOR,
+            minor => minor,
+        }
+    }
 }
 
 impl Default for Reading {

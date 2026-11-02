@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
 import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { PLUGIN_PINS, changelogSection, coreTagRefusal, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
+import { NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, newChangelogEntries, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
+import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -98,6 +99,85 @@ describe("releaseChangelog and changelogSection", () => {
     expect(changelogSection(text, "0.1.4")).toBe("### Patch Changes\n\n- b");
     expect(changelogSection(text, "0.1.3")).toBe("- a");
     expect(changelogSection(text, "0.1.2")).toBe("");
+  });
+});
+
+describe("release notes: the lead, the entries, and what a note may say", () => {
+  const released = ["# Changelog", "", "## 0.1.1 (2026-11-02)", "", "Rerail now reads Vue components.", "The daemon needs no login.", "", "### Rules", "", "- Vue is a code-rule language.", "  Its scripts are ECMAScript.", "- A `using` declaration binds.", "", "## 0.1.0 (2026-10-27)", "", "First release.", ""].join("\n");
+  const unreleased = "# Changelog\n\n## Unreleased\n\n- A new entry.\n- An old entry.\n\n## 0.1.0 (2026-10-27)\n\n- An old entry.\n";
+
+  it("reads the first section, whether released or not", () => {
+    expect(firstChangelogSection(released)).toEqual({ heading: "0.1.1 (2026-11-02)", released: true, body: "Rerail now reads Vue components.\nThe daemon needs no login.\n\n### Rules\n\n- Vue is a code-rule language.\n  Its scripts are ECMAScript.\n- A `using` declaration binds." });
+    expect(firstChangelogSection(unreleased)).toMatchObject({ heading: "Unreleased", released: false });
+    expect(firstChangelogSection("# Changelog\n\n## 0.2.0 (unreleased)\n\n- a\n")).toMatchObject({ released: false });
+    expect(firstChangelogSection("# Changelog\n")).toBeNull();
+  });
+
+  it("reads the lead as the prose before the first entry or heading, and none when the section opens with one", () => {
+    expect(changelogLead(firstChangelogSection(released).body)).toBe("Rerail now reads Vue components.\nThe daemon needs no login.");
+    expect(changelogLead("- An entry.")).toBe("");
+    expect(changelogLead("### Rules\n\n- An entry.")).toBe("");
+    expect(changelogLead("Only a lead.")).toBe("Only a lead.");
+  });
+
+  it("reads each entry with the lines indented under it, under any heading", () => {
+    expect(changelogEntries(firstChangelogSection(released).body)).toEqual(["- Vue is a code-rule language.\n  Its scripts are ECMAScript.", "- A `using` declaration binds."]);
+    expect(changelogEntries("No entries.")).toEqual([]);
+  });
+
+  it("keeps the blank lines between an entry's paragraphs, as changesets writes them, so the entry is found again as written", () => {
+    const section = "A lead.\n\n- A first paragraph.\n\n  A second paragraph.\n\n\n  A third.\n\n- Another entry.\n\nTrailing prose.\n";
+    const entries = changelogEntries(section);
+    expect(entries).toEqual(["- A first paragraph.\n\n  A second paragraph.\n\n\n  A third.", "- Another entry."]);
+    const before = `# Changelog\n\n## Unreleased\n\n${section}`;
+    expect(newChangelogEntries(before, before)).toEqual([]);
+  });
+
+  it("asks a released section that opens with an entry for a lead, and nothing else", () => {
+    expect(changelogLeadRefusal(firstChangelogSection("# C\n\n## 0.1.1 (2026-11-02)\n\n- An entry.\n"))).toContain("0.1.1 (2026-11-02) section opens with an entry");
+    expect(changelogLeadRefusal(firstChangelogSection("# C\n\n## 0.1.1 (2026-11-02)\n\n### Rules\n\n- An entry.\n"))).toContain("opens with an entry");
+    expect(changelogLeadRefusal(firstChangelogSection("# C\n\n## Unreleased\n\n- An entry.\n"))).toBeNull();
+    expect(changelogLeadRefusal(firstChangelogSection("# C\n\n## 0.2.0 (unreleased)\n\n- An entry.\n"))).toBeNull();
+    expect(changelogLeadRefusal(firstChangelogSection(released))).toBeNull();
+    expect(changelogLeadRefusal(firstChangelogSection(`# C\n\n## 0.1.1 (2026-11-02)\n\n${NO_CHANGELOG_ENTRIES}\n`))).toBeNull();
+  });
+
+  it("tells the entries a pull request adds from the ones its base already had", () => {
+    expect(newChangelogEntries("# Changelog\n\n## Unreleased\n\n- An old entry.\n", unreleased)).toEqual(["- A new entry."]);
+    expect(newChangelogEntries(null, unreleased)).toEqual(["- A new entry.", "- An old entry."]);
+    expect(newChangelogEntries("", "# Changelog\n")).toEqual([]);
+  });
+
+  // The ticket id is spelled in pieces: check-internal-refs.mjs refuses it written out in any tracked file.
+  const ticket = ["NER", "2217"].join("-");
+
+  it("refuses a note that runs long or names a ticket, a pull request or a commit, and takes one written for the person upgrading", () => {
+    expect(releaseNoteRefusal("- Rerail reads Vue components: a rule names tree-sitter-vue's kinds.")).toBeNull();
+    expect(releaseNoteRefusal(`- ${"word ".repeat(RELEASE_NOTE_WORDS)}`)).toBeNull();
+    expect(releaseNoteRefusal(`- ${"word ".repeat(RELEASE_NOTE_WORDS + 1)}`)).toBe(`runs to ${RELEASE_NOTE_WORDS + 1} words; a release note says what changed in a sentence or two (at most ${RELEASE_NOTE_WORDS} words)`);
+    expect(releaseNoteRefusal(`- ${ticket}: licences are checked at the commit.`)).toBe(`names the ticket ${ticket}, which says nothing to the person upgrading`);
+    expect(releaseNoteRefusal(`- Licences (${ticket.toLowerCase()}) are checked.`)).toContain("names the ticket");
+    expect(releaseNoteRefusal("- The renamer (#360) keeps literals.")).toBe("names pull request #360, which says nothing to the person upgrading");
+    expect(releaseNoteRefusal("- e06db22: Messages.")).toBe("names the commit e06db22, which says nothing to the person upgrading");
+    expect(releaseNoteRefusal("- Rerail 0.1.0 reads `#!/usr/bin/env node` and `#[derive]`, and sha256 digests of 1.2.3.")).toBeNull();
+  });
+
+  it("takes a number that is no hash, and a # that is no pull request", () => {
+    expect(releaseNoteRefusal("- Files over 10485760 bytes are skipped.")).toBeNull();
+    expect(releaseNoteRefusal("- CVE-2024-1234567 is fixed.")).toBeNull();
+    expect(releaseNoteRefusal("- Fixes the #1 complaint: slow start.")).toBeNull();
+    expect(releaseNoteRefusal("- The brand colour is #4b3fa6; the digest `#1a2b3c` is not a pull request.")).toBeNull();
+    expect(releaseNoteRefusal("- See #360, then #361.")).toBe("names pull request #360, which says nothing to the person upgrading");
+    expect(releaseNoteRefusal("- Landed in abcdef0.")).toBe("names the commit abcdef0, which says nothing to the person upgrading");
+  });
+
+  it("takes a standard's or licence's name, and a CVE id, for what they are, not a ticket", () => {
+    expect(releaseNoteRefusal("- Digests use SHA-256; files are read as UTF-8; LGPL-2.1 and BSD-3-Clause packs are refused; CVE-2026-1234 is fixed.")).toBeNull();
+  });
+
+  it("caps no words on a lead, only what it names", () => {
+    expect(releaseNoteRefusal("word ".repeat(RELEASE_NOTE_WORDS + 10), null)).toBeNull();
+    expect(releaseNoteRefusal(`See ${ticket}.`, null)).toContain(ticket);
   });
 });
 
