@@ -1,0 +1,114 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth117-os-path-isabs",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Path.is_absolute() instead of os.path.isabs(); path objects read better than string-based os.path calls.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "os-path-isabs",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "os.path.isabs"
+                ]
+              }
+            },
+            "callee": {
+              "any": [
+                {
+                  "matches": "target",
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "s"
+              ],
+              "bind": {
+                "S": "s"
+              },
+              "mode": "syntactic"
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),\\[\\]{}]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "generator_expression"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH117",
+        "message": "Use `Path($S).is_absolute()` from pathlib instead of `os.path.isabs($S)`; leave it where the argument is a bytes path.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH117"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

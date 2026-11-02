@@ -1,0 +1,109 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz004-call-datetime-utcfromtimestamp",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use datetime.fromtimestamp with a timezone instead of utcfromtimestamp; utcfromtimestamp returns a naive datetime with no zone information.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "call-datetime-utcfromtimestamp",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      }
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "datetime.datetime.utcfromtimestamp"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "astz-safe": {
+       "inside": {
+        "stopBy": {
+         "not": {
+          "kind": "parenthesized_expression"
+         }
+        },
+        "kind": "attribute",
+        "any": [
+         {
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^astimezone$"
+          }
+         },
+         {
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^replace$"
+          },
+          "inside": {
+           "stopBy": {
+            "not": {
+             "kind": "parenthesized_expression"
+            }
+           },
+           "kind": "call",
+           "matches": "astz-safe"
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ004",
+    "message": "Replace `utcfromtimestamp(ts)` with `fromtimestamp(ts, tz=datetime.timezone.utc)` for an aware UTC datetime. Keep it only where the value is mixed with naive datetimes that cannot change too.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ004"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

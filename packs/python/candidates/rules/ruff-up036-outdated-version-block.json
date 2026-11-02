@@ -1,0 +1,876 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up036-outdated-version-block",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove version checks on sys.version_info that are always true or false for the minimum supported Python version; keep only the branch that runs.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "options": {
+          "python-minor-version": {
+            "type": "integer",
+            "default": 10,
+            "description": "Minor version of the minimum supported Python 3 release (10 for Python 3.10)."
+          }
+        },
+        "utils": {
+          "test-value": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "if_statement",
+                  "field": "condition"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "elif_clause",
+                  "field": "condition"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "test-value"
+                }
+              }
+            ]
+          },
+          "comparator": {
+            "follows": {
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "line_continuation"
+                    }
+                  ]
+                }
+              },
+              "regex": "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$"
+            }
+          },
+          "version-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "sys.version_info"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "version-ref"
+                }
+              }
+            ]
+          },
+          "version-left": {
+            "any": [
+              {
+                "matches": "version-ref"
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "version-ref"
+                }
+              },
+              {
+                "kind": "attribute",
+                "resolves": {
+                  "import": [
+                    "sys.version_info.major"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "version-left"
+                }
+              }
+            ]
+          },
+          "version-compare": {
+            "kind": "comparison_operator",
+            "matches": "test-value",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$"
+              },
+              "min": 1,
+              "max": 1
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "nthChild": 1,
+              "matches": "version-left"
+            }
+          },
+          "int-elem": {
+            "any": [
+              {
+                "kind": "integer",
+                "value": {
+                  "type": "int"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-elem"
+                }
+              }
+            ]
+          },
+          "first": {
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "matches": "int-elem"
+          },
+          "second": {
+            "nthChild": {
+              "position": 2,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "matches": "int-elem"
+          },
+          "third": {
+            "nthChild": {
+              "position": 3,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "matches": "int-elem"
+          },
+          "int-tuple": {
+            "any": [
+              {
+                "kind": "tuple",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),]$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "matches": "int-elem"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-tuple"
+                }
+              }
+            ]
+          },
+          "int23": {
+            "any": [
+              {
+                "kind": "integer",
+                "value": {
+                  "type": "int",
+                  "ge": 2,
+                  "le": 3
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int23"
+                }
+              }
+            ]
+          },
+          "int-big": {
+            "any": [
+              {
+                "kind": "integer",
+                "value": {
+                  "type": "int",
+                  "gt": 255
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-big"
+                }
+              }
+            ]
+          },
+          "tuple-major": {
+            "any": [
+              {
+                "kind": "tuple",
+                "matches": "int-tuple",
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "first",
+                      "value": {
+                        "lt": 3
+                      }
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "first",
+                          "value": {
+                            "eq": 3
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "second"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-major"
+                }
+              }
+            ]
+          },
+          "tuple-invalid": {
+            "any": [
+              {
+                "kind": "tuple",
+                "matches": "int-tuple",
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "first",
+                      "value": {
+                        "gt": 255
+                      }
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "first",
+                          "value": {
+                            "eq": 3
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "second",
+                          "value": {
+                            "gt": 255
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "first",
+                          "value": {
+                            "eq": 3
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "second",
+                          "value": {
+                            "le": 255
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "third",
+                          "value": {
+                            "gt": 255
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-invalid"
+                }
+              }
+            ]
+          },
+          "tuple-3": {
+            "any": [
+              {
+                "kind": "tuple",
+                "matches": "int-tuple",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "first",
+                      "value": {
+                        "eq": 3
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "second",
+                      "value": {
+                        "le": 255
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "third",
+                        "value": {
+                          "gt": 255
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-3"
+                }
+              }
+            ]
+          },
+          "minor-below": {
+            "any": [
+              {
+                "matches": "tuple-3",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "second",
+                      "value": {
+                        "lt": {
+                          "$option": "python-minor-version"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "minor-below"
+                }
+              }
+            ]
+          },
+          "minor-at": {
+            "any": [
+              {
+                "matches": "tuple-3",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "second",
+                      "value": {
+                        "le": {
+                          "$option": "python-minor-version"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "second",
+                          "value": {
+                            "lt": {
+                              "$option": "python-minor-version"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "third",
+                            "value": {
+                              "gt": 0
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "minor-at"
+                }
+              }
+            ]
+          },
+          "int-other-than-23": {
+            "any": [
+              {
+                "kind": "integer",
+                "value": {
+                  "type": "int",
+                  "le": 255
+                },
+                "not": {
+                  "matches": "int23"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-other-than-23"
+                }
+              }
+            ]
+          },
+          "tuple-mixed": {
+            "any": [
+              {
+                "kind": "tuple",
+                "not": {
+                  "matches": "int-tuple"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-mixed"
+                }
+              }
+            ]
+          },
+          "stops-chain": {
+            "matches": "version-compare",
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "comparator"
+                    },
+                    {
+                      "matches": "int-other-than-23"
+                    }
+                  ]
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(is|in|is\\s+not|not\\s+in)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "matches": "comparator"
+                        },
+                        {
+                          "matches": "int23"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(<|<=|>|>=)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "matches": "comparator"
+                        },
+                        {
+                          "matches": "tuple-mixed"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "stops-chain-test": {
+            "any": [
+              {
+                "matches": "stops-chain"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "stops-chain-test"
+                }
+              }
+            ]
+          },
+          "after-stop": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "elif_clause",
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "if_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "condition",
+                      "matches": "stops-chain-test"
+                    }
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "elif_clause",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "condition",
+                      "matches": "stops-chain-test"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "outdated-version-block",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "version-compare",
+            "not": {
+              "matches": "after-stop"
+            },
+            "any": [
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(==|!=|<|<=|>|>=)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "matches": "comparator"
+                        },
+                        {
+                          "matches": "int23"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(<|<=|>|>=)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "matches": "comparator"
+                        },
+                        {
+                          "matches": "tuple-major"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(<=|>)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "matches": "comparator"
+                        },
+                        {
+                          "matches": "minor-below"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(<|>=)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "matches": "comparator"
+                        },
+                        {
+                          "matches": "minor-at"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP036",
+        "message": "Remove this `sys.version_info` check: for the minimum supported Python version it is always true or always false, so keep only the branch that runs and delete the other.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP036"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-version-specifier",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "version-compare",
+            "not": {
+              "matches": "after-stop"
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "comparator"
+                    },
+                    {
+                      "matches": "int-big"
+                    }
+                  ],
+                  "any": [
+                    {
+                      "kind": "integer",
+                      "pattern": "$V"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "integer",
+                        "pattern": "$V"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(<|<=|>|>=)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "matches": "comparator"
+                        },
+                        {
+                          "matches": "tuple-invalid"
+                        }
+                      ],
+                      "any": [
+                        {
+                          "kind": "tuple",
+                          "pattern": "$V"
+                        },
+                        {
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "tuple",
+                            "pattern": "$V"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.V",
+        "code": "UP036",
+        "message": "Fix this version in the `sys.version_info` comparison: no Python version component exceeds 255, so this specifier is invalid; write the version you meant.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP036"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up019-typing-text-str-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use str instead of typing.Text; Text is an alias of str that only exists for Python 2 compatibility and is deprecated.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "typing-text",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "text-ref": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "import": ["typing.Text", "typing_extensions.Text"] }
+                },
+                {
+                  "kind": "dotted_name",
+                  "inside": { "stopBy": "end", "kind": "case_pattern" },
+                  "regex": "^[^.\\s]+\\s*\\.\\s*Text$",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "nthChild": 1,
+                    "resolves": { "import": ["typing", "typing_extensions"] }
+                  }
+                }
+              ]
+            },
+            "text-in-string": {
+              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    { "matches": "text-ref", "capture": "T" },
+                    { "matches": "text-in-string" }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              { "matches": "text-ref", "pattern": "$T" },
+              { "matches": "text-in-string" }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.T",
+        "each": "T",
+        "code": "UP019",
+        "message": "Replace this `Text` alias with the builtin `str` (the same type) and drop the import if nothing else uses it; if `str` is rebound in this scope, use `builtins.str`.",
+        "suppress": { "noqa": { "codes": ["UP019"] } }
+      }
+    }
+  ]
+}

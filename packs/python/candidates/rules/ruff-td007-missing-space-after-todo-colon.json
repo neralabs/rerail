@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-td007-missing-space-after-todo-colon",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Put a space after the colon that follows a TODO, FIXME or XXX tag, so the tag and its description stay readable.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing-space-after-todo-colon",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comment",
+            "regex": "^(?:#[#\\s]*(?:(?:[[\\p{Alphabetic}\\p{N}]--[FHTXfhtx]][\\p{Alphabetic}\\p{N}]*|[tT](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO](?:[[\\p{Alphabetic}\\p{N}]--[dD]][\\p{Alphabetic}\\p{N}]*|[dD](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO][\\p{Alphabetic}\\p{N}]+)?)?)?|[fF](?:[[\\p{Alphabetic}\\p{N}]--[iI]][\\p{Alphabetic}\\p{N}]*|[iI](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[mM]][\\p{Alphabetic}\\p{N}]*|[mM](?:[[\\p{Alphabetic}\\p{N}]--[eE]][\\p{Alphabetic}\\p{N}]*|[eE][\\p{Alphabetic}\\p{N}]+)?)?)?)?|[hH](?:[[\\p{Alphabetic}\\p{N}]--[aA]][\\p{Alphabetic}\\p{N}]*|[aA](?:[[\\p{Alphabetic}\\p{N}]--[cC]][\\p{Alphabetic}\\p{N}]*|[cC](?:[[\\p{Alphabetic}\\p{N}]--[kK]][\\p{Alphabetic}\\p{N}]*|[kK][\\p{Alphabetic}\\p{N}]+)?)?)?|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX][\\p{Alphabetic}\\p{N}]+)?)?)(?:[^\\p{Alphabetic}\\p{N}#][^#]*)?|[^\\p{Alphabetic}\\p{N}#\\s][^#]*))*#[#\\s]*(?<D>[tT][oO][dD][oO]|[fF][iI][xX][mM][eE]|[xX][xX][xX])\\s*(?:\\([^\\)]*\\)|@[^\\s:]*)?:\\S"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "TD007",
+        "message": "Put a space between the colon after `$D` (and its author, if any) and the description.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TD007"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 /**
- * Three Python ports (B406 and B610 on by default, F722 off) must not steer an agent into rewriting idiomatic code. Each reports what
+ * Three Python ports (B406 and B610 on by default, F722 a candidate) must not steer an agent into rewriting idiomatic code. Each reports what
  * its upstream reports, but on these idioms the finding is wrong and the steer harmful:
  *
  * - bandit-b406-import-xml-sax: Bandit reports any import under xml.sax, including the xml.sax.saxutils writing and
@@ -32,8 +32,8 @@ const evaluationSchema = z.object({
 
 function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadPackRuleDocuments([repositoryPath("packs", "python")]).find(candidate => candidate.rule.id === ruleId);
-  if (document === undefined) throw new Error(`${ruleId} is not in packs/python`);
+  const document = loadPackRuleDocuments([repositoryPath("packs", "python"), repositoryPath("packs", "python", "candidates")]).find(candidate => candidate.rule.id === ruleId);
+  if (document === undefined) throw new Error(`${ruleId} is not in packs/python or its candidates`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 

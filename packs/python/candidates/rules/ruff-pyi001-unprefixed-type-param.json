@@ -1,0 +1,262 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi001-unprefixed-type-param",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Start the names of TypeVar, ParamSpec and TypeVarTuple variables in stub files with an underscore, so the stub does not export them.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "type-param-callee": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.TypeVar",
+                    "typing.ParamSpec",
+                    "typing.TypeVarTuple",
+                    "typing_extensions.TypeVar",
+                    "typing_extensions.ParamSpec",
+                    "typing_extensions.TypeVarTuple",
+                    "_typeshed.TypeVar",
+                    "_typeshed.ParamSpec",
+                    "_typeshed.TypeVarTuple"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "type-param-callee"
+                }
+              }
+            ]
+          },
+          "type-param-call": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "function",
+              "matches": "type-param-callee"
+            }
+          },
+          "private-target": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^_"
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "private-target"
+                }
+              }
+            ]
+          },
+          "assigned-value": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "assignment",
+                  "field": "right",
+                  "not": {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "type",
+                          "kind": "type"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "assignment",
+                          "field": "right"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "left",
+                          "matches": "private-target"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "assigned-value"
+                }
+              }
+            ]
+          },
+          "name-target": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-target"
+                }
+              }
+            ]
+          },
+          "assigned-to-name": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "assignment",
+                  "field": "right",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "name-target"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "assigned-to-name"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unprefixed-type-param",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "matches": "type-param-call",
+            "all": [
+              {
+                "matches": "assigned-value"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "function_definition"
+                  }
+                }
+              },
+              {
+                "matches": "assigned-to-name"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI001",
+        "message": "Rename this type variable to start with an underscore (`T` becomes `_T`) and update its uses here and in any module importing it; stubs should not export type variables.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI001"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unprefixed-type-param-target",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "matches": "type-param-call",
+            "all": [
+              {
+                "matches": "assigned-value"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "function_definition"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "assigned-to-name"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI001",
+        "message": "Assign this type variable to a single plain name starting with an underscore, as in `_T = TypeVar(\"_T\")`; stubs should not export type variables.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI001"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

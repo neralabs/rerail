@@ -1,0 +1,442 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-air312-airflow3-suggested-to-move-to-provider",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Import Airflow operators, sensors, hooks and triggers from the standard provider package instead of their deprecated core modules; the core paths are due for removal after Airflow 3.0.",
+ "scope": {"include": ["**/*"], "exclude": []},
+ "clauses": [
+  {
+   "id": "airflow3-suggested-to-move-to-provider",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "deprecated": {
+       "resolves": {
+        "import": ["airflow.hooks.filesystem.FSHook", "airflow.hooks.package_index.PackageIndexHook", "airflow.hooks.subprocess.SubprocessHook", "airflow.operators.bash.BashOperator", "airflow.operators.datetime.BranchDateTimeOperator", "airflow.operators.trigger_dagrun.TriggerDagRunOperator", "airflow.operators.empty.EmptyOperator", "airflow.operators.latest_only.LatestOnlyOperator", "airflow.operators.python.BranchPythonOperator", "airflow.operators.python.PythonOperator", "airflow.operators.python.PythonVirtualenvOperator", "airflow.operators.python.ShortCircuitOperator", "airflow.operators.weekday.BranchDayOfWeekOperator", "airflow.sensors.bash.BashSensor", "airflow.sensors.date_time.DateTimeSensor", "airflow.sensors.date_time.DateTimeSensorAsync", "airflow.sensors.external_task.ExternalTaskMarker", "airflow.sensors.external_task.ExternalTaskSensor", "airflow.sensors.external_task.ExternalTaskSensorLink", "airflow.sensors.filesystem.FileSensor", "airflow.sensors.python.PythonSensor", "airflow.sensors.time_sensor.TimeSensor", "airflow.sensors.time_sensor.TimeSensorAsync", "airflow.sensors.time_delta.TimeDeltaSensor", "airflow.sensors.time_delta.TimeDeltaSensorAsync", "airflow.sensors.weekday.DayOfWeekSensor", "airflow.triggers.external_task.DagStateTrigger", "airflow.triggers.external_task.WorkflowTrigger", "airflow.triggers.file.FileTrigger", "airflow.triggers.temporal.DateTimeTrigger", "airflow.triggers.temporal.TimeDeltaTrigger"]
+       }
+      },
+      "aug-target": {
+       "any": [
+        {"inside": {"stopBy": "neighbor", "field": "left", "kind": "augmented_assignment"}},
+        {
+         "inside": {"stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "aug-target"}
+        }
+       ]
+      },
+      "del-target": {
+       "any": [
+        {"inside": {"stopBy": "neighbor", "kind": "delete_statement"}},
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "any": [
+           {"kind": "parenthesized_expression"},
+           {"kind": "expression_list"},
+           {"kind": "tuple"},
+           {"kind": "list"}
+          ],
+          "matches": "del-target"
+         }
+        }
+       ]
+      },
+      "import-error": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {
+          "global": ["ImportError", "ModuleNotFoundError"],
+          "import": ["builtins.ImportError", "builtins.ModuleNotFoundError"]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {"stopBy": "neighbor", "matches": "import-error"}
+        }
+       ]
+      },
+      "import-error-type": {
+       "any": [
+        {"matches": "import-error"},
+        {"kind": "tuple", "has": {"stopBy": "neighbor", "matches": "import-error"}},
+        {
+         "kind": "parenthesized_expression",
+         "has": {"stopBy": "neighbor", "matches": "import-error-type"}
+        }
+       ]
+      },
+      "attribute-error": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {"global": ["AttributeError"], "import": ["builtins.AttributeError"]}
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {"stopBy": "neighbor", "matches": "attribute-error"}
+        }
+       ]
+      },
+      "attribute-error-type": {
+       "any": [
+        {"matches": "attribute-error"},
+        {"kind": "tuple", "has": {"stopBy": "neighbor", "matches": "attribute-error"}},
+        {
+         "kind": "parenthesized_expression",
+         "has": {"stopBy": "neighbor", "matches": "attribute-error-type"}
+        }
+       ]
+      },
+      "guarded-import": {
+       "all": [
+        {
+         "any": [
+          {"kind": "dotted_name", "pattern": "$REAL"},
+          {
+           "kind": "aliased_import",
+           "has": {
+            "field": "name",
+            "has": {
+             "kind": "identifier",
+             "pattern": "$REAL",
+             "not": {"precedes": {"stopBy": "neighbor", "regex": "(?s)."}}
+            }
+           }
+          }
+         ]
+        },
+        {
+         "inside": {
+          "stopBy": {
+           "any": [
+            {"kind": "except_clause"},
+            {
+             "kind": "block",
+             "inside": {
+              "stopBy": "neighbor",
+              "any": [{"kind": "function_definition"}, {"kind": "class_definition"}]
+             }
+            }
+           ]
+          },
+          "kind": "except_clause"
+         }
+        },
+        {
+         "inside": {
+          "stopBy": {"kind": "try_statement"},
+          "kind": "try_statement",
+          "all": [
+           {
+            "has": {
+             "stopBy": "neighbor",
+             "kind": "except_clause",
+             "has": {
+              "field": "value",
+              "any": [
+               {"matches": "import-error-type"},
+               {"kind": "as_pattern", "has": {"stopBy": "neighbor", "matches": "import-error-type"}}
+              ]
+             }
+            }
+           },
+           {
+            "has": {
+             "field": "body",
+             "stopBy": "end",
+             "kind": "dotted_name",
+             "pattern": "$REAL",
+             "resolves": {
+              "imported": ["airflow.providers.standard.hooks.filesystem.FSHook", "airflow.providers.standard.hooks.package_index.PackageIndexHook", "airflow.providers.standard.hooks.subprocess.SubprocessHook", "airflow.providers.standard.operators.bash.BashOperator", "airflow.providers.standard.operators.datetime.BranchDateTimeOperator", "airflow.providers.standard.operators.trigger_dagrun.TriggerDagRunOperator", "airflow.providers.standard.operators.empty.EmptyOperator", "airflow.providers.standard.operators.latest_only.LatestOnlyOperator", "airflow.providers.standard.operators.python.BranchPythonOperator", "airflow.providers.standard.operators.python.PythonOperator", "airflow.providers.standard.operators.python.PythonVirtualenvOperator", "airflow.providers.standard.operators.python.ShortCircuitOperator", "airflow.providers.standard.operators.weekday.BranchDayOfWeekOperator", "airflow.providers.standard.sensor.bash.BashSensor", "airflow.providers.standard.sensors.date_time.DateTimeSensor", "airflow.providers.standard.sensors.date_time.DateTimeSensorAsync", "airflow.providers.standard.sensors.external_task.ExternalTaskMarker", "airflow.providers.standard.sensors.external_task.ExternalTaskSensor", "airflow.providers.standard.sensors.external_task.ExternalTaskSensorLink", "airflow.providers.standard.sensors.filesystem.FileSensor", "airflow.providers.standard.sensors.python.PythonSensor", "airflow.providers.standard.sensors.time.TimeSensor", "airflow.providers.standard.sensors.time.TimeSensorAsync", "airflow.providers.standard.sensors.time_delta.TimeDeltaSensor", "airflow.providers.standard.sensors.time_delta.TimeDeltaSensorAsync", "airflow.providers.standard.sensors.weekday.DayOfWeekSensor", "airflow.providers.standard.triggers.external_task.DagStateTrigger", "airflow.providers.standard.triggers.external_task.WorkflowTrigger", "airflow.providers.standard.triggers.file.FileTrigger", "airflow.providers.standard.triggers.temporal.DateTimeTrigger", "airflow.providers.standard.triggers.temporal.TimeDeltaTrigger"],
+              "relative": "text"
+             }
+            }
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "guarded-attribute": {
+       "all": [
+        {
+         "inside": {
+          "stopBy": {
+           "any": [
+            {"kind": "except_clause"},
+            {
+             "kind": "block",
+             "inside": {
+              "stopBy": "neighbor",
+              "any": [{"kind": "function_definition"}, {"kind": "class_definition"}]
+             }
+            }
+           ]
+          },
+          "kind": "except_clause"
+         }
+        },
+        {
+         "inside": {
+          "stopBy": {"kind": "try_statement"},
+          "kind": "try_statement",
+          "all": [
+           {
+            "has": {
+             "stopBy": "neighbor",
+             "kind": "except_clause",
+             "has": {
+              "field": "value",
+              "any": [
+               {"matches": "attribute-error-type"},
+               {
+                "kind": "as_pattern",
+                "has": {"stopBy": "neighbor", "matches": "attribute-error-type"}
+               }
+              ]
+             }
+            }
+           },
+           {
+            "has": {
+             "field": "body",
+             "stopBy": "end",
+             "kind": "attribute",
+             "has": {"field": "attribute", "pattern": "$PATTR"},
+             "resolves": {
+              "import": ["airflow.providers.standard.hooks.filesystem.FSHook", "airflow.providers.standard.hooks.package_index.PackageIndexHook", "airflow.providers.standard.hooks.subprocess.SubprocessHook", "airflow.providers.standard.operators.bash.BashOperator", "airflow.providers.standard.operators.datetime.BranchDateTimeOperator", "airflow.providers.standard.operators.trigger_dagrun.TriggerDagRunOperator", "airflow.providers.standard.operators.empty.EmptyOperator", "airflow.providers.standard.operators.latest_only.LatestOnlyOperator", "airflow.providers.standard.operators.python.BranchPythonOperator", "airflow.providers.standard.operators.python.PythonOperator", "airflow.providers.standard.operators.python.PythonVirtualenvOperator", "airflow.providers.standard.operators.python.ShortCircuitOperator", "airflow.providers.standard.operators.weekday.BranchDayOfWeekOperator", "airflow.providers.standard.sensor.bash.BashSensor", "airflow.providers.standard.sensors.date_time.DateTimeSensor", "airflow.providers.standard.sensors.date_time.DateTimeSensorAsync", "airflow.providers.standard.sensors.external_task.ExternalTaskMarker", "airflow.providers.standard.sensors.external_task.ExternalTaskSensor", "airflow.providers.standard.sensors.external_task.ExternalTaskSensorLink", "airflow.providers.standard.sensors.filesystem.FileSensor", "airflow.providers.standard.sensors.python.PythonSensor", "airflow.providers.standard.sensors.time.TimeSensor", "airflow.providers.standard.sensors.time.TimeSensorAsync", "airflow.providers.standard.sensors.time_delta.TimeDeltaSensor", "airflow.providers.standard.sensors.time_delta.TimeDeltaSensorAsync", "airflow.providers.standard.sensors.weekday.DayOfWeekSensor", "airflow.providers.standard.triggers.external_task.DagStateTrigger", "airflow.providers.standard.triggers.external_task.WorkflowTrigger", "airflow.providers.standard.triggers.file.FileTrigger", "airflow.providers.standard.triggers.temporal.DateTimeTrigger", "airflow.providers.standard.triggers.temporal.TimeDeltaTrigger"]
+             },
+             "compare": {"left": "PATTR", "op": "eq", "right": "ATTR"}
+            }
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "guarded-local": {
+       "any": [
+        {
+         "kind": "dotted_name",
+         "matches": "guarded-import",
+         "pattern": "$LOCAL",
+         "binds": {"latest": true},
+         "not": {"inside": {"stopBy": "neighbor", "kind": "aliased_import"}}
+        },
+        {
+         "kind": "aliased_import",
+         "matches": "guarded-import",
+         "has": {"field": "alias", "pattern": "$LOCAL", "binds": {"latest": true}}
+        }
+       ],
+       "compare": {"left": "LOCAL", "op": "eq", "right": "ATTR"}
+      },
+      "guarded-forward": {
+       "any": [
+        {
+         "inside": {
+          "stopBy": "end",
+          "kind": "module",
+          "has": {
+           "stopBy": "end",
+           "kind": "except_clause",
+           "has": {
+            "stopBy": "end",
+            "matches": "guarded-local",
+            "not": {
+             "inside": {
+              "stopBy": "end",
+              "any": [{"kind": "function_definition"}, {"kind": "class_definition"}]
+             }
+            }
+           }
+          }
+         }
+        },
+        {
+         "all": [
+          {
+           "any": [
+            {
+             "inside": {
+              "stopBy": "end",
+              "kind": "block",
+              "inside": {
+               "stopBy": "neighbor",
+               "kind": "function_definition",
+               "has": {
+                "stopBy": "end",
+                "kind": "except_clause",
+                "has": {
+                 "stopBy": "end",
+                 "matches": "guarded-local",
+                 "inside": {
+                  "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                  "kind": "function_definition"
+                 }
+                }
+               }
+              }
+             }
+            },
+            {
+             "inside": {
+              "stopBy": {
+               "kind": "block",
+               "inside": {
+                "stopBy": "neighbor",
+                "any": [{"kind": "function_definition"}, {"kind": "class_definition"}]
+               }
+              },
+              "kind": "block",
+              "inside": {
+               "stopBy": "neighbor",
+               "kind": "class_definition",
+               "has": {
+                "stopBy": "end",
+                "kind": "except_clause",
+                "has": {
+                 "stopBy": "end",
+                 "matches": "guarded-local",
+                 "inside": {
+                  "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                  "kind": "class_definition"
+                 }
+                }
+               }
+              }
+             }
+            }
+           ]
+          },
+          {
+           "not": {
+            "inside": {
+             "stopBy": "end",
+             "kind": "module",
+             "has": {
+              "stopBy": "end",
+              "any": [{"kind": "import_from_statement"}, {"kind": "import_statement"}],
+              "has": {
+               "stopBy": "end",
+               "any": [{"kind": "identifier"}, {"kind": "dotted_name"}],
+               "pattern": "$MOD",
+               "binds": {"scope": ["module"]},
+               "compare": {"left": "MOD", "op": "eq", "right": "ATTR"}
+              }
+             }
+            }
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "string-name": {
+       "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "kind": "identifier",
+           "capture": "ATTR",
+           "matches": "deprecated",
+           "not": {
+            "all": [
+             {"inside": {"stopBy": "neighbor", "kind": "attribute"}},
+             {"not": {"precedes": {"stopBy": "neighbor", "regex": "(?s)."}}}
+            ]
+           }
+          },
+          {"matches": "string-name"}
+         ]
+        }
+       }
+      },
+      "string-attribute": {
+       "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "kind": "identifier",
+           "capture": "ATTR",
+           "inside": {"stopBy": "neighbor", "kind": "attribute", "matches": "deprecated"},
+           "not": {"precedes": {"stopBy": "neighbor", "regex": "(?s)."}}
+          },
+          {"matches": "string-attribute"}
+         ]
+        }
+       }
+      },
+      "seen-airflow": {"inside": {"stopBy": "end", "kind": "module", "matches": "imports-airflow"}},
+      "imports-airflow": {
+       "has": {
+        "stopBy": "end",
+        "kind": "dotted_name",
+        "regex": "^airflow([^0-9A-Za-z_]|$)",
+        "any": [
+         {"inside": {"stopBy": "neighbor", "kind": "import_statement"}},
+         {
+          "inside": {
+           "stopBy": "neighbor",
+           "kind": "aliased_import",
+           "inside": {"stopBy": "neighbor", "kind": "import_statement"}
+          }
+         },
+         {"inside": {"stopBy": "neighbor", "field": "module_name", "kind": "import_from_statement"}}
+        ]
+       }
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "any": [
+         {
+          "kind": "identifier",
+          "pattern": "$ATTR",
+          "matches": "deprecated",
+          "not": {
+           "any": [
+            {"matches": "aug-target"},
+            {"matches": "del-target"},
+            {"resolves": {"binding": {"site": {"matches": "guarded-import"}}}}
+           ]
+          }
+         },
+         {
+          "kind": "identifier",
+          "pattern": "$ATTR",
+          "inside": {
+           "field": "attribute",
+           "kind": "attribute",
+           "matches": "deprecated",
+           "not": {"matches": "guarded-attribute"}
+          }
+         },
+         {"matches": "string-name", "not": {"matches": "guarded-forward"}},
+         {"matches": "string-attribute", "not": {"matches": "guarded-attribute"}}
+        ]
+       },
+       {"matches": "seen-airflow"}
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.ATTR",
+    "each": "ATTR",
+    "code": "AIR312",
+    "message": "`$ATTR` moved to apache-airflow-providers-standard in Airflow 3.0; import it from its `airflow.providers.standard` module, keeping the old import only as an `except ImportError` fallback.",
+    "suppress": {"noqa": {"codes": ["AIR312"]}}
+   }
+  }
+ ]
+}

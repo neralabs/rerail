@@ -1,0 +1,1176 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf046-unnecessary-cast-to-int",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove int() around a value that is already an integer, such as a length, an integer literal or arithmetic on integers.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "tb": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  },
+                  {
+                    "kind": "not_operator"
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tb"
+                }
+              },
+              {
+                "kind": "named_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "tb"
+                }
+              },
+              {
+                "kind": "boolean_operator",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "left",
+                      "matches": "tb"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "right",
+                      "matches": "tb"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "conditional_expression",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tb",
+                      "precedes": {
+                        "stopBy": "end",
+                        "regex": "^if$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tb",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^else$"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "ti": {
+            "any": [
+              {
+                "kind": "integer",
+                "not": {
+                  "regex": "[jJ]$"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ti"
+                }
+              },
+              {
+                "kind": "named_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "ti"
+                }
+              },
+              {
+                "kind": "unary_operator",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "operator",
+                      "regex": "^[-+~]$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "argument",
+                      "matches": "ib"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "binary_operator",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "operator",
+                      "regex": "^(\\+|-|%|\\*|//|\\*\\*|&|\\||\\^|<<|>>)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "left",
+                      "matches": "ib"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "right",
+                      "matches": "ib"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "boolean_operator",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "left",
+                      "matches": "ib"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "right",
+                      "matches": "ib"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "left",
+                          "matches": "ti"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "right",
+                          "matches": "ti"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "conditional_expression",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "ib",
+                      "precedes": {
+                        "stopBy": "end",
+                        "regex": "^if$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "ib",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^else$"
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "ti",
+                          "precedes": {
+                            "stopBy": "end",
+                            "regex": "^if$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "ti",
+                          "follows": {
+                            "stopBy": "end",
+                            "regex": "^else$"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "ib": {
+            "any": [
+              {
+                "matches": "ti"
+              },
+              {
+                "matches": "tb"
+              }
+            ]
+          },
+          "none-p": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "none-p"
+                }
+              }
+            ]
+          },
+          "int-callee": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "int"
+                  ],
+                  "import": [
+                    "builtins.int"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-callee"
+                }
+              }
+            ]
+          },
+          "round-callee": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "round"
+                  ],
+                  "import": [
+                    "builtins.round"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "round-callee"
+                }
+              }
+            ]
+          },
+          "always-int-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "len",
+                    "id",
+                    "hash",
+                    "ord",
+                    "int"
+                  ],
+                  "import": [
+                    "builtins.len",
+                    "builtins.id",
+                    "builtins.hash",
+                    "builtins.ord",
+                    "builtins.int",
+                    "math.comb",
+                    "math.factorial",
+                    "math.gcd",
+                    "math.lcm",
+                    "math.isqrt",
+                    "math.perm"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "always-int-fn"
+                }
+              }
+            ]
+          },
+          "rounding-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "math.ceil",
+                    "math.floor",
+                    "math.trunc"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "rounding-fn"
+                }
+              }
+            ]
+          },
+          "positional": {
+            "not": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "kind": "list_splat"
+                },
+                {
+                  "any": [
+                    {
+                      "regex": "^[(),]$"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "line_continuation"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "pos0": {
+            "matches": "positional",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "matches": "positional"
+              }
+            }
+          },
+          "pos1": {
+            "matches": "positional",
+            "nthChild": {
+              "position": 2,
+              "ofRule": {
+                "matches": "positional"
+              }
+            }
+          },
+          "kw-number": {
+            "kind": "keyword_argument",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "regex": "^number$"
+            }
+          },
+          "kw-ndigits": {
+            "kind": "keyword_argument",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "regex": "^ndigits$"
+            }
+          },
+          "int-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "int"
+                  ],
+                  "import": [
+                    "builtins.int"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-ref"
+                }
+              }
+            ]
+          },
+          "int-ann": {
+            "any": [
+              {
+                "kind": "type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-ann"
+                }
+              },
+              {
+                "matches": "int-ref"
+              },
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "matches": "int-ref"
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "int-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-ann"
+                }
+              }
+            ]
+          },
+          "int-init": {
+            "any": [
+              {
+                "matches": "ti"
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "int-callee"
+                }
+              }
+            ]
+          },
+          "int-name": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "only": true,
+                    "site": {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "list_splat_pattern"
+                            },
+                            {
+                              "kind": "dictionary_splat_pattern"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "annotation": {
+                      "matches": "int-ann"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "only": true,
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "assignment",
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "type",
+                              "kind": "type"
+                            }
+                          }
+                        },
+                        {
+                          "kind": "named_expression"
+                        }
+                      ]
+                    },
+                    "value": {
+                      "matches": "int-init"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "only": true,
+                    "site": {
+                      "kind": "as_pattern",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "int-init",
+                            "precedes": {
+                              "stopBy": "end",
+                              "regex": "^as$"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "alias",
+                            "kind": "as_pattern_target",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "identifier"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "only": true,
+                    "site": {
+                      "kind": "function_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "return_type",
+                        "matches": "int-ann"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-name"
+                }
+              }
+            ]
+          },
+          "int-like": {
+            "any": [
+              {
+                "matches": "ti"
+              },
+              {
+                "matches": "int-name"
+              }
+            ]
+          },
+          "round-args": {
+            "kind": "argument_list",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "list_splat"
+                      },
+                      {
+                        "kind": "dictionary_splat"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),]$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "max": 2
+                }
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "pos0"
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "kw-number"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "not": {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "pos1"
+                                  }
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "kw-ndigits"
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "pos1",
+                              "all": [
+                                {
+                                  "matches": "none-p"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "kw-ndigits",
+                              "all": [
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "value",
+                                    "matches": "none-p"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "pos0",
+                              "all": [
+                                {
+                                  "matches": "int-like"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "kw-number",
+                              "all": [
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "value",
+                                    "matches": "int-like"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "pos1",
+                              "all": [
+                                {
+                                  "matches": "ti"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "kw-ndigits",
+                              "all": [
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "value",
+                                    "matches": "ti"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "round-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "round-callee"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "matches": "round-args"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "kind": "generator_expression"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "rounding-call": {
+            "kind": "call",
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "rounding-fn"
+                }
+              },
+              {
+                "matches": "round-call"
+              }
+            ]
+          },
+          "int-fn-call": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "function",
+              "matches": "always-int-fn"
+            }
+          },
+          "arg-int": {
+            "any": [
+              {
+                "matches": "ti"
+              },
+              {
+                "matches": "int-fn-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "arg-int"
+                }
+              }
+            ]
+          },
+          "arg-rounded": {
+            "any": [
+              {
+                "matches": "rounding-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "arg-rounded"
+                }
+              }
+            ]
+          },
+          "arg-trivia": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              },
+              {
+                "regex": "^[(),]$"
+              }
+            ]
+          },
+          "cast-of-int": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "int-callee"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "matches": "arg-trivia"
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "arg-int"
+                  }
+                }
+              }
+            ]
+          },
+          "cast-of-int-in-type": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "cast-of-int",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "cast-of-int-in-type"
+                  }
+                ]
+              }
+            }
+          },
+          "cast-of-rounded": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "int-callee"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "matches": "arg-trivia"
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "arg-rounded"
+                  }
+                }
+              }
+            ]
+          },
+          "cast-of-rounded-in-type": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "cast-of-rounded",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "cast-of-rounded-in-type"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "int-of-integer",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "pattern": "$F($A)"
+          },
+          "constraints": {
+            "F": {
+              "matches": "int-callee"
+            },
+            "A": {
+              "matches": "arg-int"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF046",
+        "anchor": "witness.span",
+        "message": "Drop the `int(...)` wrapper and use its argument directly; the argument is already an integer.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF046"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "int-of-integer-in-string-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "cast-of-int-in-type"
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF046",
+        "anchor": "capture.C",
+        "message": "Drop the `int(...)` wrapper and use its argument directly; the argument is already an integer.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF046"
+            ]
+          }
+        },
+        "each": "C"
+      }
+    },
+    {
+      "id": "int-of-rounding",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "pattern": "$F($A)"
+          },
+          "constraints": {
+            "F": {
+              "matches": "int-callee"
+            },
+            "A": {
+              "matches": "arg-rounded"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF046",
+        "anchor": "witness.span",
+        "message": "Drop the `int(...)` wrapper; this call already returns an int. Keep it if the operand's type overrides `__round__`, `__ceil__`, `__floor__` or `__trunc__` to return a non-int.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF046"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "int-of-rounding-in-string-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "cast-of-rounded-in-type"
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF046",
+        "anchor": "capture.C",
+        "message": "Drop the `int(...)` wrapper; this call already returns an int. Keep it if the operand's type overrides `__round__`, `__ceil__`, `__floor__` or `__trunc__` to return a non-int.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF046"
+            ]
+          }
+        },
+        "each": "C"
+      }
+    }
+  ]
+}
