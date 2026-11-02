@@ -353,3 +353,9 @@ impl StoreSource {
         Ok(read)
     }
 }
+
+/// A `StoreSource` read by the cross-file steps (`y3::wire::Source`), counting what it did.
+pub(crate) struct Reading {
+    pub source: StoreSource,
+    pub read: std::rc::Rc<std::cell::Cell<Read>>,
+}

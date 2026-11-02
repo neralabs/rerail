@@ -376,3 +376,12 @@ impl Layer {
         b
     }
 }
+
+impl Source for crate::code_rule_dsl::facts::xinputs::store::Reading {
+    fn exports(&mut self, path: &str, content: &str) -> Option<(bool, crate::code_rule_dsl::facts::xinputs::exports::Exports)> {
+        let mut read = self.read.get();
+        let got = self.source.exports(path, content, &mut read).unwrap_or_else(|e| panic!("{path} @ {content}: the store's inputs: {e}"));
+        self.read.set(read);
+        got
+    }
+}
