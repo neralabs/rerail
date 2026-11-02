@@ -107,7 +107,7 @@ matcher rule ──► datalog rules (relations to other facts)
 
 ## 5. GPU memory: pinned programs and tapes, prepared per wave
 
-- The GPU cache holds pinned compiled programs (pipelines, interpreted and JIT) and decompressed tapes with their sidecars (`par`, `cidx`, line starts, `tid`).
+- The GPU cache holds pinned compiled programs (pipelines, interpreted and JIT) and decompressed tapes, as their columns (decision 0026: nothing per node beside a tape; parents, child positions, lines and terms are read as 0026's table says).
 - **Wave preparation** computes the batch's needs from SQL (documents × groups), loads what is missing, and only then dispatches.
 - **All pinned GPU memory is dropped two minutes after each full execution.**
 - **Research basis.**
@@ -367,7 +367,7 @@ Guided by ast-index-spike (`notes/t4` §4–5; PIAT `research/regex.md`, `spec-i
    - There is one vocabulary per language, persisted.
 2. **Probes derived from the pattern** prune before the regex: required literals with non-word boundaries, anchored literals turned into `=`/LIKE, first/last byte sets, length bounds. The spike measured 3.5× for these.
 3. **The vocabulary path must never under-produce.** Kinds the vocabulary does not cover fall back to scope-limited probes (`b839fa05`).
-4. **Inside the transducer**, the same per-term results are read through the `tid` sidecar, as `R[tid]` cached by (pattern-set digest, vocabulary length).
+4. **Inside the transducer**, the same per-term results are node sets: the union of the matched terms' postings plus the uncovered nodes, confirmed on their text (decision 0026), cached by (pattern-set digest, vocabulary length).
    - Text that is not a token (strings, comments) uses a DFA on the node's bytes, or probes on spans.
    - Whole-file text is used only for genuinely textual clauses. There are 0 of 113 on the data-layer rules (M).
    - Expected cost: 0.1–0.3 s cold against 9–17 s today (D).

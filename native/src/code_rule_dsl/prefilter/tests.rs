@@ -160,41 +160,6 @@ fn term_postings_and_uncovered_ordinals_partition_every_tape_exactly() {
     }
 }
 
-/// `tid`: each node's term id, from the postings, is the atom of the node's own text where a term
-/// covers it, and no term exactly where `term_coverage` lists the node as uncovered.
-#[test]
-fn term_ids_are_each_covered_nodes_text_atom() {
-    let store = open(&temp());
-    let long_comment = format!("// {}\n", "large free text ".repeat(40000));
-    for (name, source, lang) in [
-        ("a.ts", "const café = \"two words\"; target(café); target(1);", GrammarDialect::TypeScript),
-        ("b.py", "def target(value):\n    return value + 42\n", GrammarDialect::Python),
-        ("broken.ts", "function f( {\n debugger;\n", GrammarDialect::TypeScript),
-        ("long.ts", long_comment.as_str(), GrammarDialect::TypeScript),
-    ] {
-        let (tape, doc) = put(&store, source, lang);
-        let ids = store.term_ids(tape).unwrap();
-        assert_eq!(ids.len(), doc.transducer_len(), "{name}");
-        let uncovered = store
-            .query_rows("SELECT p.pre FROM term_coverage c,nera_postings(c.missing) p WHERE c.tape_id=?1", [tape.row()], |r| r.get::<_, u32>(0))
-            .unwrap()
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>();
-        let mut covered = 0;
-        for (node, &id) in ids.iter().enumerate() {
-            if id == crate::content_store::prefilter::NO_TERM {
-                assert!(uncovered.contains(&(node as u32)), "{name}: node {node} has neither a term nor coverage");
-                continue;
-            }
-            assert!(!uncovered.contains(&(node as u32)), "{name}: node {node} both covered and uncovered");
-            assert_eq!(store.atom_value(id).unwrap().as_deref(), Some(doc.transducer_text_str(node as u32)), "{name}: node {node}");
-            covered += 1;
-        }
-        // The long comment is too long to be a term: its file has no covered node.
-        assert_eq!(covered == 0, name == "long.ts", "{name}");
-    }
-}
-
 #[test]
 fn kind_positions_are_every_preorder_of_the_kind_and_feed_kind_frequencies() {
     assert_eq!([0, 35, 36, 1024, 65535].map(kind_token), ["k0", "kz", "k10", "ksg", "k1ekf"]);
@@ -218,4 +183,34 @@ fn kind_positions_are_every_preorder_of_the_kind_and_feed_kind_frequencies() {
     }
     let stored = store.query_rows("SELECT kind,n FROM kind_size ORDER BY kind", [], |r| Ok((r.get::<_, u32>(0)?, r.get::<_, i64>(1)?))).unwrap();
     assert_eq!(stored, totals.into_iter().filter(|(_, n)| *n > 0).collect::<Vec<_>>());
+}
+
+/// Decision 0026 (ast-index-spike Representation rule 1): no relation stores a row per node. Every
+/// table of a store holding real tapes, with their prefilter rows, has at most 0.25 rows per node.
+#[test]
+fn no_relation_stores_a_row_per_node() {
+    let store = open(&temp());
+    let mut nodes = 0_usize;
+    let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/prefilter");
+    let mut files = std::fs::read_dir(&here).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|e| e == "rs")).collect::<Vec<_>>();
+    files.sort();
+    for path in &files {
+        let (_, doc) = put(&store, &std::fs::read_to_string(path).unwrap(), GrammarDialect::Rust);
+        nodes += doc.transducer_len();
+    }
+    for source in ["import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n"] {
+        nodes += put(&store, &source.repeat(50), GrammarDialect::Python).1.transducer_len();
+    }
+    assert!(nodes > 50_000, "{nodes}");
+    let tables = store
+        .query_rows("SELECT name FROM sqlite_schema WHERE type='table' AND sql NOT LIKE 'CREATE VIRTUAL%' ORDER BY name", [], |r| r.get::<_, String>(0))
+        .unwrap();
+    let mut over = Vec::new();
+    for table in &tables {
+        let rows = count(&store, &format!("SELECT count(*) FROM \"{table}\""));
+        if rows as f64 > 0.25 * nodes as f64 {
+            over.push(format!("{table}: {rows} rows for {nodes} nodes"));
+        }
+    }
+    assert!(over.is_empty(), "relations with a row per node: {over:?}");
 }

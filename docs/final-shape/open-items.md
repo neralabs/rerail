@@ -12,8 +12,8 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
 | O6 | Phase 1 | Overlay byte accounting is an estimate; single pushing thread | open |
-| O7 | Phase 2 | `tid` and text-hash sidecars wait for the vocabulary | `tid` done (2026-11-02): derived from each tape's term postings (`ContentStore::term_ids`), not stored; text hashes open (no consumer before step 17's `R[tid]`) |
-| O8 | Phase 2 | Tape format: v9np (structure-only, regular) is not decided or built; W runs v8 | closed (2026-11-01): decision 0025, v9np (user decision; measured on Rerail's grammars); `tape.rs` stores v9np (format 10), supertype memberships folded into the codes (0025 amended 2026-11-02: no sidecar); 0.72–0.92× v8's stored size |
+| O7 | Phase 2 | `tid` and text hashes | closed (2026-11-02): decision 0026, read from postings and the tape; nothing per node |
+| O8 | Phase 2 | Tape format: v9np (structure-only, regular) is not decided or built; W runs v8 | closed (2026-11-01): decision 0025, v9np (user decision; measured on Rerail's grammars); `tape.rs` stores v9np (format 10), supertype memberships folded into the codes (0025 amended 2026-11-02: no table beside the tape); 0.72–0.92× v8's stored size |
 | O9 | Phase 2 | Kind histograms are digests only; their rows are not stored | open (Phase 3) |
 | O10 | Phase 2 | Core facts of a non-UTF-8 blob, an unknown language or a parse stopped at a limit are `ABSENT` | open |
 | O11 | Phase 6 | §12's "unbounded value cycle" has no definition of a bound; T's programs recurse through `@cat` | open, **decision needed** |
@@ -31,6 +31,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O28 | Phase 4 / 9 | The wave's labels on Metal no faster than on the CPU: 64 interpreter lanes, unoptimized measurements, per-task host planning (06 S4) | open, narrowed (2026-10-31): S7 4.7 s wall / 10.8 s CPU on Metal against 19.7 s / 20.7 s (0015, 0017–0021); GPU labels 0.7–0.9 s; host: prefilter SQL 1.3 s (anchor index, `lab.rs` loop), CPU roots 0.75–0.9 s, sweeps 0.5 s, push 0.5 s; 2026-10-31: walks carry 8 cursors (was 4), so no label program falls back to the interpreter in the sweeps (498k calls), and sweep entries are 8 bytes (node, pass); labels.sweep 650 → 234 ms |
 | O29 | Phase 4 / 9 | A recursive label through `not has not` settles one level deep: SIM300's `probably` misses `X == 1 + 2 + 3`, `X == [[1]]` (06 S7) | closed (2026-10-31): a sweep with complements sets or clears each roots verdict; S7 equal for every (rule, code) |
 | O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | closed (2026-10-31, decision 0022): S7's engine-only footprint peak is 477 MB on Metal (was 0.99 GB) and 447 MB on the CPU backend (was 575–607), measured as `phys_footprint_peak` after the audit. Freed heap pages are returned at stage ends; SQLite allocates from jemalloc; the GPU's label prefix, scratch and counts are sized by the run; roots stream into rows with digested structure keys. Left: the driver's fixed ~170 MB per GPU execution, and sparse host labels if the corpus grows |
+| O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026): `TapeDoc`'s records, `Facts`, the facts vtab's projection, `MetalNode`, Forte's and literal sub-grammars' trees | open: listed in `scripts/check/node-structures-baseline.json`, the list only shrinks |
 
 ## O1. Stale-fact detection after a crash
 
@@ -172,20 +173,13 @@ The overlay counts bytes by an estimate per entry and assumes a single pushing t
 be concurrent). Closure: measure real resident bytes against the estimate under the 500 MB budget;
 a second pusher needs per-scope ordering of layers.
 
-## O7. `tid` and text-hash sidecars
+## O7. `tid` and text hashes
 
-`core::Sidecars` holds `par`, `cidx`, `cidx_named` and line starts. `tid` (each token's id in the
-language vocabulary) and text hashes need Phase 3's vocabulary. Closure: Phase 3 adds them to
-`Sidecars`, keyed by (tape digest, vocabulary length) as 03 §16 says.
-
-**`tid` (2026-11-02, list step 10).** Terms are atoms (store floor 2), which are append-only, so a
-node's `tid` never changes with the vocabulary's length: it is keyed by the tape alone. It is not
-stored: a column would be 4 bytes a node, about half a tape (8.4–9.1 B/node), and the tape's term
-postings already map each term to its nodes. `ContentStore::term_ids(tape)` reads them into a
-vector by preorder (`NO_TERM` where `term_coverage` lists the node as uncovered);
-`term_ids_are_each_covered_nodes_text_atom` checks each id is the atom of the node's own text. Its
-reader is the transducer's `R[tid]` (Phase 4 (g), list step 17). Text hashes stay open: nothing
-reads them before then.
+Closed by decision 0026 (2026-11-02, user decision): nodes live in tapes. There is no `tid` column
+or array and no text hashes. A text predicate's nodes are the union of its terms' postings plus the
+uncovered nodes, confirmed on their text; parents, child positions and lines are read as 0026's
+table says. The per-node arrays `core` held were removed, and so was the `tid` vector step 10
+added.
 
 ## O8. Tape format
 
@@ -211,13 +205,13 @@ pending pre-lock measurements**, never accepted.
 - ast-index-spike experimented with multiple trees for different ranges within a file. That has to
   be taken into account (embedded documents, Blade, Vue).
 - Don't overload the tape with things only associated with the source structure. Per-file alias
-  string tables, the digest and length header, and Blade's omissions go to sidecars keyed by the
-  content digest, or are recomputed. Derived-document maps and host errors already live in
+  string tables, the digest and length header, and Blade's omissions are kept off the tape: in
+  `file_documents`, or recomputed (decision 0026 rules out structures keyed by the digest). Derived-document maps and host errors already live in
   `file_documents`.
 - Blade stores nothing more or less than the tree-sitter-php tape it replaced. Today its
   compiled-view tape drops nodes over synthetic placeholder segments, so a directive call has no
   `function` child. Proposed fix: the plain tree-sitter-php tape, with omission through the segment
-  map sidecar. Error spans stay in the tape as tree-sitter emits them, as ast-index-spike does. It
+  map in `file_documents`. Error spans stay in the tape as tree-sitter emits them, as ast-index-spike does. It
   is fine for Blade to store something compatible with the generic structure, in a generic way.
 - Tapes must stay processable in SQL with ast-index-spike techniques. A format change has to show
   clear benefits; a size increase (8 → 11 B/node, about 30%) was not acceptable, hence v9np.
@@ -232,8 +226,7 @@ crates.io grammars, not Rerail's vendored and patched ones, so each must be reru
 4. GPU: column upload against `MetalNode` expansion, end to end on the per-edit gate.
 5. Width distribution: documents above 65,536 nodes or 64 KiB of source (spike: 24 of 6,251).
 
-**Not yet decided:** where W's supertype memberships go in v9np (a column, or a sidecar keyed by
-the tape digest, since they are a grammar property of the structure); whether the parent column is
+**Not yet decided:** where W's supertype memberships go in v9np (resolved by 0025's amendment: in the codes); whether the parent column is
 kept (only if SQL parent climbs prove hot: a climb was 1.6–3× faster than interval containment).
 
 **Closure.** Run the five measurements on Rerail's grammars; record an accepted decision (cite
@@ -866,3 +859,20 @@ did the wave with its sweep replaced by rounds. So the sweep was at fault.
   in parallel) for the same 710 keys.
 
 S8 measures these with interleaved arms. Where the memory goes is the first question.
+
+## O31. Per-node structures beside the tape
+
+Decision 0026: the tape is the only per-node structure. The copies brought in-memory expansions of
+it, each a second form of the same nodes. `check-node-structures.mjs` lists them in
+`node-structures-baseline.json` with the step that removes each, and fails on any new one:
+- `tape.rs` `Rec` (TapeDoc's records, built at restore) and `node_extents`' arrays: `TapeDoc`
+  reads the tape's columns.
+- `Facts` (`facts/core.rs`, `facts_a`, `typing/rounds.rs`) and the facts vtab's `Projected`: read
+  the tape (list steps 20–21, typing at 29).
+- `MetalNode`: Metal uploads the tape's columns (list step 28; 0025's measurement 4 compares the
+  two).
+- Forte's `FlatNode` and `Rec`, and the literal sub-grammars' `PNode` and `Rec`: write tape columns
+  as tree-sitter's walk does.
+
+**Closure:** the baseline's `structures` list is empty.
+

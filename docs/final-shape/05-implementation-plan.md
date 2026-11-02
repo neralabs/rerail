@@ -101,13 +101,13 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 
 | Copy | From | To | Adaptations |
 |---|---|---|---|
-| `Facts::build` | M `spikes/facts-a/src/facts.rs` (+ tests) | `facts/core.rs` | Change the visibility of W `tape::TapeDoc`/`Grammar`/`LineTable`, since it lives inside `native/`. Remove the hard-coded `"python"`. Outputs become tape sidecars (`par`, `cidx`, line starts, `tid`) and narrow fact families with derivation rows. No per-node SQL rows. |
+| `Facts::build` | M `spikes/facts-a/src/facts.rs` (+ tests) | `facts/core.rs` | Change the visibility of W `tape::TapeDoc`/`Grammar`/`LineTable`, since it lives inside `native/`. Remove the hard-coded `"python"`. Outputs are read from the tape (decision 0026) and narrow fact families with derivation rows. No per-node SQL rows. |
 | Supertypes | N `cr/tape.rs` TMPTAPE5 delta (da080ae1, cd981e90) | W `cr/tape.rs` | Port the delta onto W's v7 as a new format version with abstract node classes. Lock v9np later (G8, X) using P `experiments/tape-v8/src/{main.rs, sql.rs}` (copy into `cr/tape/v9np.rs` when its 4 measurements pass). |
 
 **Status (2026-10-28): done; v9np placed as `tape::v9np` (`03a7b0d9`), locking it as the format still waits on O8.**
 
 - Tape v8 (`c3dd82e4`): N's TMPTAPE5 supertypes delta ported onto W's v7.
-- Core facts (`f5ccdfd8` copy, `0417cd7e`, `baff0c35`): facts-a's `Facts::build` reads any dialect's tape; kinds are atoms `tag·1024 + code`; supertype postings; sidecars `par`, `cidx`, `cidx_named`, line starts; a content digest.
+- Core facts (`f5ccdfd8` copy, `0417cd7e`, `baff0c35`): facts-a's `Facts::build` reads any dialect's tape; kinds are atoms `tag·1024 + code`; supertype postings; a content digest. (Its per-node arrays `par`, `cidx`, `cidx_named` and line starts were removed 2026-11-02, decision 0026.)
 - Families (`3295791f`, `2ce1fbe2`): `#core:` and `#kinds:` derivations. A rename re-runs core and cuts off at kinds; a new kind reaches its reader. Same results over the overlay.
 - Gate: full `cargo test --lib`, run once: 1512 passed, 12 failed, 22 ignored; 143 s user + 9 s sys CPU. The 12 failures are the same environmental ones as Phase 1 (3 pack fixtures not in git, 9 `git_workspace` temp repos blocked by the agent git hook).
 - Open items: O2 update, O7–O10 in `open-items.md`.
@@ -230,7 +230,7 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 |---|---|---|---|
 | No-copy buffers | G `T/metal_backend.rs` (`MappedRegion`, `MappedBuffer`, `new_buffer_with_bytes_no_copy`, `StorageModeShared`, guard, pipeline cache) | `residency/metal.rs` | One retained buffer per 64 MiB slab. Remove `PrivateInputUpload` unless Q-R1 (F8) shows private storage wins. |
 | Batch admission | P `cr/relational/batch.rs` (resident capacity), `workspace/memory/census.rs`, `profile/memory.rs` | `residency/admission.rs` | Byte budget of 500 MB in total, split into pools. |
-| Write new | — | `residency/slabs.rs` | zstd frames decompressed straight into anonymous-mmap slabs, a document table per batch (no copies), sidecars, a pipeline/program cache keyed by plan identity, wave preparation, a drop timer 2 min after each full execution. No source implements this; reference P `spec.md` §20. |
+| Write new | — | `residency/slabs.rs` | zstd frames decompressed straight into anonymous-mmap slabs, a document table per batch (no copies; tape columns only, decision 0026), a pipeline/program cache keyed by plan identity, wave preparation, a drop timer 2 min after each full execution. No source implements this; reference P `spec.md` §20. |
 
 **Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding. Placed: `residency::admission::memory` (`602c2ef6`). `residency::admission::census` (`2d41e7d2`), over W's JSON projections. `batch.rs` placed test-only with P's relational stage as `residency::admission::relational` (O18). 2026-10-29: the stage's closure into production code is ported (rule 4): P's `calls` delta (the reference graph, `Mode`) and P's `ast.syntax` gate, so the stage reads `reference_edges` and its test policies carry `syntax: valid` as P wrote them. 2026-10-29: P's workspace path for relational clauses is ported test-only (O18) with its closure, P's census restored verbatim (O19), and P's anchor-corpus swap compiled behind the `p-anchor-corpus` feature (O20).**
 
