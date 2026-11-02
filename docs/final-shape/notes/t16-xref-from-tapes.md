@@ -74,13 +74,22 @@ half of `push`. `bindings_differ` also checks that both states hold the bound me
 The exactness run agrees (3,346 / 3,379 MB). The peak falls because nothing parses the 3.5 GB
 export file; inputs are read per (path, content) as steps first touch them (8,149 sets read).
 
-**Per-edit latency: not measured.** The workload ran at 1-minute load 8.8 → 5.7 (per event 6.8–7.1),
-above the < 3 the comparison with T12 §4.1 needs; its latency numbers are in the run's
-`results.json` but are not a measurement.
+**Per-edit latency, quiet machine (decider, same binary `e5ac5e2ea`, maintained mode, store graph, n = 1,050, ms p50 / p95 / p99 / max):**
+
+| | store inputs (`runs/20261102-173644-quiet-workload-store-inputs-maintained`, load 1.7 → 2.3) | JSONL inputs (`runs/20261102-173908-quiet-workload-jsonl-inputs-maintained`, load 2.7 → 2.4) |
+|---|---|---|
+| dead-code steps (Y1, symbols, CSR rows, values, findings, digests) | 0.389 / 2.66 / — / 19.7 | 0.381 / 2.63 / 5.76 / 19.5 |
+| push outside the steps (observer, propagate, SQLite, the edited content's inputs) | **0.868 / 5.15 / 11.9 / 26.0** | 0.161 / 0.253 / 8.22 / 9.9 |
+| **push total** | **1.29 / 7.81 / 16.2 / 44.5** | 0.553 / 3.46 / 9.66 / 19.7 |
+| footprint end / peak (MB) | 3,324 / 3,344 | 3,939 / 5,227 |
+
+- The dead-code steps cost the same on both inputs (2.6 ms p95); maintained values 0.003 ms p95.
+- Store inputs add about 4.9 ms p95 per edit outside the steps. The JSONL carries every content's inputs precomputed, the edited versions included; with store inputs an edit encodes the new content's tape and runs the 13-input pack over it before the steps read it, and writes the rows. That is the honest per-edit cost of producing cross-file inputs; which part dominates (tape, pack, store writes) is not profiled [INFERENCE].
+- They save 615 MB at the end and 1.88 GB at the peak.
 
 ## 6. Not done
 
-- Per-edit latency on a quiet machine (load < 3), store inputs against `jsonl`.
+- A profile of the 4.9 ms p95 the store inputs add per edit (tape encode, pack, store writes).
 - The overlay graph with store inputs, and `recompute` mode, on the full replay (only maintained /
   store graph ran); the fast test covers both modes on the store.
 - The fallback delta reads SQLite only: an overlay that still holds bindings must be flushed
