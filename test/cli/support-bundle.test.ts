@@ -244,6 +244,60 @@ describe("rerail support-bundle", () => {
     expect(bundle.platform.os).toBe(process.platform);
   });
 
+  describe("where set-up never finished: a database, and this checkout not recorded in it", () => {
+    async function unrecordedWorld(): Promise<Fixture> {
+      const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-support-bundle-")));
+      directories.push(root);
+      execFileSync("git", ["init", "-q", "-b", "main", "repo"], { cwd: root });
+      const home = join(root, "home");
+      mkdirSync(home);
+      process.env.RERAIL_HOME = home;
+      openRerailDatabase(defaultRerailDatabasePath()).$client.close();
+      return { root, repo: join(root, "repo"), home, repositoryKey: "", output: join(root, "bundle.json") };
+    }
+
+    it("writes the bundle with no session, and calls that no problem", async () => {
+      const { exit, bundle } = await run(await unrecordedWorld());
+      expect(exit).toBe(0);
+      expect(bundle.session).toBeNull();
+      expect(bundle.problems).toEqual([]);
+    });
+
+    it("refuses a session it was asked for", async () => {
+      const { exit, stderr } = await run(await unrecordedWorld(), "--session", "nope");
+      expect(exit).toBe(1);
+      expect(stderr).toContain("No session nope in this repository");
+    });
+  });
+
+  it("names an installed pack that failed to load, with the reason and no path of this computer", async () => {
+    const world = await fixture();
+    const pack = join(world.home, "packs", "node_modules", "@neralabs", "rerail-pack-broken");
+    mkdirSync(pack, { recursive: true });
+    writeFileSync(join(pack, "package.json"), JSON.stringify({ name: "@neralabs/rerail-pack-broken", version: "1.2.3" }));
+    const { bundle, text } = await run(world);
+    expect(bundle.rerail.skippedPacks).toEqual([expect.objectContaining({ package: "@neralabs/rerail-pack-broken", version: "1.2.3", reason: expect.any(String) })]);
+    expect(text).not.toContain(world.home);
+  });
+
+  it("finds the steers from the checkout's root when the session ran in a folder inside it", async () => {
+    const world = await fixture();
+    recordSession(world, SESSION, 1_000);
+    writeLedger(world, SESSION);
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    database.update(sessions).set({ cwd: join(world.repo, "packages", "web") }).run();
+    database.$client.close();
+    expect((await run(world)).bundle.session?.steers).toHaveLength(1);
+  });
+
+  it("says so when the session steered and the steers' ledger is gone", async () => {
+    const world = await fixture();
+    recordSession(world, SESSION, 1_000);
+    const { bundle } = await run(world);
+    expect(bundle.session?.steers).toEqual([]);
+    expect(bundle.problems).toEqual([expect.stringContaining("steered 1 time")]);
+  });
+
   it("writes the file for the person's user only", async () => {
     const world = await reportedWorld();
     await run(world);

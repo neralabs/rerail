@@ -352,7 +352,7 @@ address. It works where Rerail won't start or set-up never finished, and says wh
 | In the file | Left out |
 | --- | --- |
 | Rerail, Node and OS versions; whether the daemon and engine are healthy; the coding agents connected | Your prompts and the agent's replies |
-| The repository's state, packs, and rule ids with their modes | Tool input and output, and source code |
+| The packs installed, and any that failed to load; the repository's state and its rule ids with their modes | Tool input and output, and source code |
 | The session's timeline: event kinds, tool names, times, what it dropped or could not check | Rule text and a finding's message, captures and fix |
 | Steers as the agent got them, and findings by rule, file and line | Absolute paths, repository names and session ids, which are replaced |
 | The last 200 lines of `daemon.log`, scrubbed | Capabilities, tokens, and paths named like secrets |

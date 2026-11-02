@@ -137,7 +137,14 @@ export interface SupportBundle {
   format: typeof SUPPORT_BUNDLE_FORMAT;
   createdAt: number;
   leftOut: string;
-  rerail: { version: string; activeVersion: string | null; managedInstall: boolean };
+  rerail: {
+    version: string;
+    activeVersion: string | null;
+    managedInstall: boolean;
+    /** Every pack installed on this computer, whichever repositories use it. */
+    installedPacks: Array<{ id: string; version: string | null }>;
+    skippedPacks: Array<{ package: string | null; version: string | null; reason: string }>;
+  };
   platform: { os: string; arch: string; release: string; node: string };
   daemon: {
     status: string;
@@ -150,7 +157,6 @@ export interface SupportBundle {
   repository: {
     state: string;
     git: boolean;
-    packs: Array<{ id: string; version: string | null }>;
     rules: Array<{ id: string; kind: string; mode: string; on: boolean; pack: string | null }>;
     unavailableRules: number;
   };
@@ -314,9 +320,10 @@ function readTimeline(database: RerailDatabase, sessionId: string): SupportBundl
 }
 
 /** The steers as delivered, from the session's ledger: the one thing in it that leaves. Its samples and preimages hold the person's files. */
-function readSteers(cwd: string, sessionId: string): { steers: SupportBundleSteer[]; total: number } {
-  const ledger = readQuietly(join(cwd, ".rerail", "sessions", createHash("sha256").update(sessionId).digest("hex"), "events.jsonl"));
-  if (ledger === undefined) return { steers: [], total: 0 };
+function readSteers(roots: readonly string[], sessionId: string): { steers: SupportBundleSteer[]; total: number; found: boolean } {
+  const directory = createHash("sha256").update(sessionId).digest("hex");
+  const ledger = roots.map(root => readQuietly(join(root, ".rerail", "sessions", directory, "events.jsonl"))).find(text => text !== undefined);
+  if (ledger === undefined) return { steers: [], total: 0, found: false };
   const steers: SupportBundleSteer[] = [];
   for (const line of ledger.split("\n")) {
     if (line === "") continue;
@@ -330,7 +337,7 @@ function readSteers(cwd: string, sessionId: string): { steers: SupportBundleStee
     const { mechanism, requested, ruleIds, content } = entry.delivery;
     steers.push({ mechanism, requested, ruleIds, text: content.length > MAX_STEER_CHARACTERS ? `${content.slice(0, MAX_STEER_CHARACTERS)}…` : content });
   }
-  return { steers: steers.slice(-MAX_STEERS), total: steers.length };
+  return { steers: steers.slice(-MAX_STEERS), total: steers.length, found: true };
 }
 
 function reportedPath(path: string | undefined): string | null {
@@ -372,12 +379,15 @@ function reportedAudit(audit: AuditRecord): SupportBundleAudit {
   };
 }
 
-function readSession(database: RerailDatabase, databasePath: string, session: typeof sessions.$inferSelect): SupportBundleSession {
+function readSession(database: RerailDatabase, databasePath: string, session: typeof sessions.$inferSelect, workspaceRoot: string, problems: string[]): SupportBundleSession {
   const eventCounts = Object.fromEntries(database.select({ kind: events.kind, total: count() }).from(events)
     .where(eq(events.sessionId, session.sessionId)).groupBy(events.kind).orderBy(asc(events.kind)).all().map(row => [row.kind, row.total]));
   const eventTotal = Object.values(eventCounts).reduce((sum, total) => sum + total, 0);
   const timeline = readTimeline(database, session.sessionId);
-  const { steers, total: steerTotal } = readSteers(session.cwd, session.sessionId);
+  // The ledger is where the session's hooks ran, which is the checkout's root or a folder the agent started in.
+  const { steers, total: steerTotal, found } = readSteers([session.cwd, workspaceRoot], session.sessionId);
+  const steered = eventCounts["steering-delivered"] ?? 0;
+  if (!found && steered > 0) problems.push(`steers: the session steered ${steered} time${steered === 1 ? "" : "s"} and its ledger was not found, so their text is missing.`);
   const sessionReader = new SqliteSessionReader(databasePath);
   const auditReader = new SqliteAuditReader(databasePath);
   try {
@@ -441,7 +451,7 @@ async function readDaemon(home: string): Promise<SupportBundle["daemon"]> {
 }
 
 function emptyRepository(state: string, git: boolean): SupportBundle["repository"] {
-  return { state, git, packs: [], rules: [], unavailableRules: 0 };
+  return { state, git, rules: [], unavailableRules: 0 };
 }
 
 interface CollectInput {
@@ -475,6 +485,7 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
   let session: SupportBundleSession | null = null;
   const ownRules: string[] = [];
   const literals: SupportBundleLiteral[] = [...machineLiterals(home), { value: workspaceRoot, label: "<checkout>" }];
+  const catalog = attempt("packs", () => loadRuleCatalog(home), undefined);
 
   if (existsSync(databasePath)) {
     const database = attempt("database", () => openRerailDatabase(databasePath, { readonly: true }), undefined);
@@ -488,7 +499,7 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
         const listing = checkout === undefined ? undefined : repositories.find(candidate => candidate.repositoryKey === checkout.repositoryKey);
         if (checkout !== undefined) {
           repository = attempt("rules", () => {
-            const catalog = loadRuleCatalog(home);
+            if (catalog === undefined) return repository;
             const view = listRepositoryRules(database, catalog, checkout.repositoryKey, {
               checkoutPath: checkout.checkoutPath,
               parentCheckoutPaths: parentCheckouts(database, checkout).map(row => row.checkoutPath),
@@ -496,7 +507,6 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
             ownRules.push(...view.rules.filter(rule => rule.source.packId === null).map(rule => rule.document.rule.id));
             return {
               ...repository,
-              packs: [...catalog.packs.values()].map(pack => ({ id: pack.id, version: pack.version })),
               rules: view.rules.map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, mode: rule.mode, on: rule.on, pack: rule.source.packId })),
               unavailableRules: view.unavailable.length,
             };
@@ -506,7 +516,7 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
         const selected = attempt("session", () => selectSession(database, historyIds, sessionId), undefined);
         if (selected !== undefined) {
           literals.push({ value: selected.sessionId, label: "<session>" }, { value: selected.cwd, label: "<checkout>" });
-          session = attempt("session", () => readSession(database, databasePath, selected), null);
+          session = attempt("session", () => readSession(database, databasePath, selected, workspaceRoot, problems), null);
         }
       } finally {
         database.$client.close();
@@ -529,6 +539,8 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
       version: packageVersion,
       activeVersion: attempt("active version", () => activeCoreVersion(home), null),
       managedInstall: existsSync(join(home, "current")),
+      installedPacks: [...(catalog?.packs.values() ?? [])].map(pack => ({ id: pack.id, version: pack.version })),
+      skippedPacks: (catalog?.skipped ?? []).map(pack => ({ package: pack.packageName, version: pack.version, reason: pack.reason })),
     },
     platform: { os: platform(), arch: arch(), release: release(), node: process.versions.node },
     daemon,
