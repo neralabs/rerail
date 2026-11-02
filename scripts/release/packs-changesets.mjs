@@ -9,8 +9,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { releaseNoteRefusal } from "./core.mjs";
 import { changesetSummary, listPacks, manifestChanged, missingChangesets, ROOT } from "./packs.mjs";
+import { releaseNoteRefusal } from "./release-notes.mjs";
 
 const base = process.argv[2];
 if (base === undefined) throw new Error("usage: packs-changesets.mjs BASE");

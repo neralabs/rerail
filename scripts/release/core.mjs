@@ -105,29 +105,6 @@ export function newChangelogEntries(before, after) {
   return changelogEntries(section.body).filter((entry) => before === null || !before.includes(entry));
 }
 
-/** The most words a release note (a changelog entry, a changeset summary) may run to. */
-export const RELEASE_NOTE_WORDS = 60;
-
-const wordCount = (text) => text.split(/\s+/u).filter((word) => word !== "").length;
-
-/**
- * Why `note`, a release note (a changelog entry or a changeset summary, `- ` and all), is not written for the person
- * upgrading, or null: it runs past `words` words (RELEASE_NOTE_WORDS; null for no limit, a lead paragraph's), or
- * names a ticket, a pull request or a commit, which say nothing to them (docs/release.md, "Release notes").
- */
-export function releaseNoteRefusal(note, words = RELEASE_NOTE_WORDS) {
-  const text = note.replace(/^- /u, "");
-  const count = wordCount(text);
-  if (words !== null && count > words) return `runs to ${count} words; a release note says what changed in a sentence or two (at most ${words} words)`;
-  const ticket = /\b[A-Z][A-Z0-9]+-\d+\b/u.exec(text);
-  if (ticket !== null) return `names the ticket ${ticket[0]}, which says nothing to the person upgrading`;
-  const pullRequest = /(?:^|[\s(])#(\d+)\b/u.exec(text);
-  if (pullRequest !== null) return `names pull request #${pullRequest[1]}, which says nothing to the person upgrading`;
-  const commit = /\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/u.exec(text);
-  if (commit !== null) return `names the commit ${commit[0]}, which says nothing to the person upgrading`;
-  return null;
-}
-
 /** `package.json`'s text with its own `version` set to `version`, and nothing else changed. */
 export function setPackageVersion(text, version) {
   const updated = text.replace(/^( {2}"version": ")[^"]*(")/mu, `$1${version}$2`);

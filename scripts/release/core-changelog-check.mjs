@@ -8,7 +8,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { changelogEntries, changelogLead, firstChangelogSection, newChangelogEntries, NO_CHANGELOG_ENTRIES, releaseNoteRefusal } from "./core.mjs";
+import { changelogEntries, changelogLead, firstChangelogSection, newChangelogEntries, NO_CHANGELOG_ENTRIES } from "./core.mjs";
+import { releaseNoteRefusal } from "./release-notes.mjs";
 import { ROOT } from "./packs.mjs";
 
 const base = process.argv[2];

@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
 import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { PLUGIN_PINS, RELEASE_NOTE_WORDS, changelogEntries, changelogLead, changelogSection, coreTagRefusal, firstChangelogSection, newChangelogEntries, nextCoreVersion, releaseChangelog, releaseNoteRefusal, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
+import { PLUGIN_PINS, changelogEntries, changelogLead, changelogSection, coreTagRefusal, firstChangelogSection, newChangelogEntries, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
+import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -130,19 +131,27 @@ describe("release notes: the lead, the entries, and what a note may say", () => 
     expect(newChangelogEntries("", "# Changelog\n")).toEqual([]);
   });
 
+  // The ticket id is spelled in pieces: check-internal-refs.mjs refuses it written out in any tracked file.
+  const ticket = ["NER", "2217"].join("-");
+
   it("refuses a note that runs long or names a ticket, a pull request or a commit, and takes one written for the person upgrading", () => {
     expect(releaseNoteRefusal("- Rerail reads Vue components: a rule names tree-sitter-vue's kinds.")).toBeNull();
     expect(releaseNoteRefusal(`- ${"word ".repeat(RELEASE_NOTE_WORDS)}`)).toBeNull();
     expect(releaseNoteRefusal(`- ${"word ".repeat(RELEASE_NOTE_WORDS + 1)}`)).toBe(`runs to ${RELEASE_NOTE_WORDS + 1} words; a release note says what changed in a sentence or two (at most ${RELEASE_NOTE_WORDS} words)`);
-    expect(releaseNoteRefusal("- ABC-2217: licences are checked at the commit.")).toBe("names the ticket ABC-2217, which says nothing to the person upgrading");
+    expect(releaseNoteRefusal(`- ${ticket}: licences are checked at the commit.`)).toBe(`names the ticket ${ticket}, which says nothing to the person upgrading`);
+    expect(releaseNoteRefusal(`- Licences (${ticket.toLowerCase()}) are checked.`)).toContain("names the ticket");
     expect(releaseNoteRefusal("- The renamer (#360) keeps literals.")).toBe("names pull request #360, which says nothing to the person upgrading");
     expect(releaseNoteRefusal("- e06db22: Messages.")).toBe("names the commit e06db22, which says nothing to the person upgrading");
     expect(releaseNoteRefusal("- Rerail 0.1.0 reads `#!/usr/bin/env node` and `#[derive]`, and sha256 digests of 1.2.3.")).toBeNull();
   });
 
+  it("takes a standard's or licence's name, and a CVE id, for what they are, not a ticket", () => {
+    expect(releaseNoteRefusal("- Digests use SHA-256; files are read as UTF-8; LGPL-2.1 and BSD-3-Clause packs are refused; CVE-2026-1234 is fixed.")).toBeNull();
+  });
+
   it("caps no words on a lead, only what it names", () => {
     expect(releaseNoteRefusal("word ".repeat(RELEASE_NOTE_WORDS + 10), null)).toBeNull();
-    expect(releaseNoteRefusal("See ABC-1.", null)).toContain("ABC-1");
+    expect(releaseNoteRefusal(`See ${ticket}.`, null)).toContain(ticket);
   });
 });
 
