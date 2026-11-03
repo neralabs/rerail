@@ -35,7 +35,7 @@ const RUNNER_NAMES: Record<JudgeRunnerId, string> = { claude: "Claude Code", cod
 const HOST_RUNNERS: Partial<Record<RerailHost, JudgeRunnerId>> = { "claude-code": "claude", codex: "codex" };
 
 export interface JudgeTask<T> {
-  readonly kind: "capture" | "compare";
+  readonly kind: "capture" | "compare" | "signals";
   readonly repositoryKey: string;
   /** The complete prompt, untrusted data already fenced. */
   readonly prompt: string;

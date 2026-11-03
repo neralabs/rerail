@@ -1,11 +1,13 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { lookupCheckout, mergeAssistItems, newCandidateId } from "../../../src/engine/index.js";
 import type { SessionEventRecord } from "../../../src/runtime/session-store.js";
 import { ownRuleId } from "../../../src/runtime/merge-assist/activation.js";
-import { captureCorrections, type SessionEventSource } from "../../../src/runtime/merge-assist/capture.js";
-import type { CaptureVerdict, CheckRule } from "../../../src/runtime/merge-assist/judge-prompts.js";
+import { captureCorrections, deriveSignals, draftDecision, validateSignals, type CaptureContext, type SessionEventSource } from "../../../src/runtime/merge-assist/capture.js";
+import type { CaptureInput, CaptureVerdict, CheckRule } from "../../../src/runtime/merge-assist/judge-prompts.js";
 import {
   candidate,
   candidateFiles,
@@ -134,6 +136,48 @@ describe("Merge Assist capture", { timeout: 30_000 }, () => {
     ]);
     expect(takeNotes(service, "session-1", ws.repo)).toEqual([]);
     expect(takeNotes(service, "session-2", ws.repo)).toEqual([]);
+  });
+
+  it("stores the most general signal forms that hold against the correction on the candidate", async () => {
+    const ws = await workspace();
+    // "client.get(" is in the corrected code; " retry( " trims to the first one, and both widen to "retry".
+    const judge = new FakeJudge(() => captureVerdict({ signals: ["retry(", "client.get(", " retry( "] }));
+    const service = ws.service({ judge });
+    await service.setEnabled(ws.repo, true);
+
+    const [saved] = (await service.captureSession({ sessionId: "s", host: "codex", checkoutPath: ws.repo, events: correctedSession(ws.repo, "s") })).saved;
+
+    expect(saved!.signals).toEqual(["retry"]);
+    const file = JSON.parse(readFileSync(join(ws.repo, ".rerail/candidates", `${saved!.id.slice("candidate:".length)}.json`), "utf8")) as { signals: unknown };
+    expect(file.signals).toEqual(["retry"]);
+  });
+
+  it("drafts the decision capture would save without writing anything", async () => {
+    const ws = await workspace();
+    const judge = new FakeJudge(() => captureVerdict({ signals: ["retry("] }));
+    const context: CaptureContext = {
+      database: ws.database,
+      checkout: lookupCheckout(ws.database, ws.repo)!,
+      judge,
+      author: async () => "tbelanger",
+      now: () => Date.parse("2026-11-03T14:00:00Z"),
+    };
+    const input: CaptureInput = {
+      correction: CORRECTION,
+      priorCalls: [],
+      edits: [{ path: "src/api/orders.ts", before: ORDERS_RETRY, after: ORDERS_CLEAN }],
+      ownDecisions: [],
+    };
+
+    const drafted = await draftDecision(context, input);
+
+    expect(drafted).toMatchObject({ candidate: { decision: captureVerdict().decision, signals: ["retry"], rule: { mode: "steer" } }, dropped: null });
+    expect(existsSync(join(ws.repo, ".rerail/candidates"))).toBe(false);
+    expect(ws.database.select().from(mergeAssistItems).all()).toEqual([]);
+    expect(await draftDecision({ ...context, judge: new FakeJudge(() => captureVerdict({ generality: "one-off" })) }, input)).toEqual({ oneOff: true });
+    expect(await draftDecision({ ...context, judge: new FakeJudge(() => captureVerdict({ duplicateOf: "candidate:retries-3f9a1c" })) }, input)).toEqual({ duplicateOf: "candidate:retries-3f9a1c" });
+    expect(await draftDecision({ ...context, judge: new FakeJudge(() => ({ ok: false, reason: "budget", detail: "the hourly budget is spent" })) }, input))
+      .toEqual({ unjudged: "the hourly budget is spent" });
   });
 
   it("never writes a new decision over another candidate's file when the random id repeats", async () => {
@@ -285,5 +329,110 @@ describe("Merge Assist capture", { timeout: 30_000 }, () => {
     expect(status.readiness.rulesActive).toBe(false);
     expect(status.own).toMatchObject([{ id: saved!.id, level: "code" }]);
     expect(ws.database.$client.prepare("SELECT count(*) AS n FROM rule_settings WHERE target_id GLOB 'candidate:*'").get()).toEqual({ n: 0 });
+  });
+});
+
+describe("validateSignals", () => {
+  const roots: string[] = [];
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  });
+
+  async function repository(files: Record<string, string>): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "rerail-signals-"));
+    roots.push(root);
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
+    return root;
+  }
+
+  const quietRepository = (): Promise<string> => repository({
+    "src/a.ts": "export const a = 1;\n",
+    "src/b.ts": "logger.info(\"b\");\n",
+    "src/c.ts": "export const c = 3;\n",
+  });
+
+  it("keeps the most general form that holds, and a more specific one when the general form is in the corrected code", async () => {
+    const root = await quietRepository();
+
+    expect(validateSignals(["console.log"], { before: "console.log(user);", after: "logger.info(user);" }, { root, scope: ["src/**"] })).toEqual(["console."]);
+    expect(validateSignals(["console.log"], { before: "console.log(user);", after: "console.info(user);" }, { root, scope: ["src/**"] })).toEqual(["console.log"]);
+  });
+
+  it("falls back to a more specific form when the general one is noisy in the repository", async () => {
+    const root = await repository({
+      "src/a.ts": "console.warn(\"a\");\n",
+      "src/b.ts": "console.warn(\"b\");\n",
+      "src/c.ts": "export const c = 3;\n",
+      "src/d.ts": "export const d = 4;\n",
+      "src/e.ts": "export const e = 5;\n",
+    });
+
+    expect(validateSignals(["console.log("], { before: "console.log(user);", after: "logger.info(user);" }, { root, scope: ["src/**"] })).toEqual(["console.log"]);
+  });
+
+  it("drops a form that is in the corrected code or missing from the code before, and adds what the correction removed", () => {
+    const example = { before: "console.log(user);\nexport default handler;", after: "logger.info(user);\nexport { handler };" };
+
+    // user) is in the corrected code and process.env never in the code before; console.log( and export default are mined.
+    expect(validateSignals(["user)", "process.env"], example)).toEqual(["console.", "export default"]);
+    // throw new and new ApiError( are mined; new ApiError contains ApiError, so only the more general one stays.
+    expect(validateSignals([], { before: "throw new ApiError(res);", after: "return err(res);" })).toEqual(["throw", "ApiError"]);
+  });
+
+  it("generalizes only the judge's signals without an example", () => {
+    expect(validateSignals(["console.log(", "process.env.API_URL"], null)).toEqual(["console.", "process.env"]);
+  });
+
+  it("drops a form found in more than a fifth of the files in scope, counting only files in scope", async () => {
+    const files: Record<string, string> = {
+      "src/a.ts": "export const a = fetch(\"/a\");\n",
+      "src/b.ts": "export const b = 1;\n",
+      "src/c.ts": "export const c = 2;\n",
+      "src/d.ts": "export const d = 3;\n",
+      "src/e.ts": "export const e = process.env.E;\n",
+      "src/f.ts": "export const f = process.env.F;\n",
+      "docs/console.md": "console. console. console.\n",
+      "node_modules/x/index.ts": "console.log(1);\n",
+    };
+    const root = await repository(files);
+
+    // fetch is in 1 of 6 files in scope, process. and process.env in 2 of 6 (more than a fifth); docs/ and node_modules/ do not count.
+    expect(validateSignals(["fetch(", "process.env", "console."], null, { root, scope: ["src/**"] })).toEqual(["fetch", "console."]);
+    expect(validateSignals(["process.env"], null, { root, scope: ["lib/**"] })).toEqual(["process."]);
+  });
+
+  it("ranks the most general first and keeps at most eight", () => {
+    const names = [..."abcdefghij"].map((letter, index) => letter.repeat(13 - index));
+    const kept = validateSignals(names.map(name => `${name}(`), null);
+
+    expect(kept).toEqual([...names].reverse().slice(0, 8));
+  });
+});
+
+describe("deriveSignals", () => {
+  it("asks the judge for a decision's signals and validates the answer", async () => {
+    const judge = new FakeJudge(() => ({ signals: ["console.", "logger.", " console. "] }));
+
+    const signals = await deriveSignals(judge, {
+      repositoryKey: "remote:github.com/acme/app",
+      decision: "Log through logger, not console.",
+      scope: ["src/**"],
+      example: { before: "console.log(user);", after: "logger.info(user);" },
+    });
+
+    expect(signals).toEqual(["console."]);
+    expect(judge.tasks).toHaveLength(1);
+    expect(judge.tasks[0]).toMatchObject({ kind: "signals", repositoryKey: "remote:github.com/acme/app" });
+    expect(judge.tasks[0]!.prompt).toContain("Log through logger, not console.");
+    expect(judge.tasks[0]!.prompt).not.toContain("remote:github.com/acme/app");
+  });
+
+  it("throws when the judge cannot answer, so a failure never reads as no signals", async () => {
+    const judge = new FakeJudge(() => ({ ok: false, reason: "unavailable", detail: "no agent CLI is signed in" }));
+    await expect(deriveSignals(judge, { repositoryKey: "local:app", decision: "Log through logger.", scope: ["src/**"], example: null }))
+      .rejects.toThrow("no agent CLI is signed in");
   });
 });

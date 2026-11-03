@@ -97,7 +97,7 @@ export {
   nativePlatformSuffix,
   resolveNativeBindingPath,
 } from "./native/native.js";
-export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
+export { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
 export { type GlobMatcher, globPattern } from "./glob-pattern.js";
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
@@ -157,3 +157,4 @@ export * from "./merge-assist/candidate.js";
 export { type CandidateSet } from "./merge-assist/candidate-files.js";
 export { correctionFamilies } from "./merge-assist/corrections.js";
 export * from "./merge-assist/model.js";
+export * from "./merge-assist/signals.js";

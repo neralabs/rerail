@@ -6,6 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { CANDIDATE_ID_PATTERN, MAX_DECISION_LENGTH, cleanDecision, scopePatternSchema } from "../../engine/merge-assist/candidate.js";
+import { MAX_SIGNAL_LENGTH, MAX_SIGNALS, signalSchema } from "../../engine/merge-assist/signals.js";
 
 /** The most scope globs a captured decision names. */
 export const MAX_VERDICT_SCOPE = 8;
@@ -141,7 +142,11 @@ export interface CaptureVerdict {
   /** At most 200 characters: what the steer says when the check fires. */
   message: string;
   cases: { caught: Array<{ path: string; content: string }>; passed: Array<{ path: string; content: string }> };
+  /** 0 to 8 code fragments whose presence in new code means the decision is at stake. */
+  signals: string[];
 }
+
+const signalsSchema = z.array(signalSchema).max(MAX_SIGNALS);
 
 export const captureVerdictSchema: z.ZodType<CaptureVerdict> = z.object({
   generality: z.enum(["one-off", "branch", "repository"]),
@@ -154,6 +159,7 @@ export const captureVerdictSchema: z.ZodType<CaptureVerdict> = z.object({
     caught: z.array(caseSchema).max(MAX_VERDICT_CASES),
     passed: z.array(caseSchema).max(MAX_VERDICT_CASES),
   }).strict(),
+  signals: signalsSchema,
 }).strict();
 
 const caseJsonSchema = {
@@ -175,6 +181,8 @@ const checkNodeJsonSchema = {
   ],
 };
 
+const signalListJsonSchema = { type: "array", maxItems: MAX_SIGNALS, items: { type: "string", maxLength: MAX_SIGNAL_LENGTH } };
+
 /**
  * The capture answer as a JSON schema for the agent CLI. Every property is required and objects are closed, as Codex's
  * `--output-schema` requires; `captureVerdictSchema` remains the check that counts.
@@ -182,7 +190,7 @@ const checkNodeJsonSchema = {
 export const captureJsonSchema: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
-  required: ["generality", "duplicateOf", "decision", "scope", "check", "message", "cases"],
+  required: ["generality", "duplicateOf", "decision", "scope", "check", "message", "cases", "signals"],
   properties: {
     generality: { type: "string", enum: ["one-off", "branch", "repository"] },
     duplicateOf: { type: ["string", "null"] },
@@ -224,8 +232,16 @@ export const captureJsonSchema: Record<string, unknown> = {
         passed: { type: "array", maxItems: MAX_VERDICT_CASES, items: caseJsonSchema },
       },
     },
+    signals: signalListJsonSchema,
   },
 };
+
+/** How a judge writes a decision's signals; the capture and signals tasks share it. */
+const SIGNAL_GUIDANCE = `signals: 0 to ${MAX_SIGNALS} short literal code fragments, each 2 to ${MAX_SIGNAL_LENGTH} characters on one line, whose presence in new code means the decision is at stake. Rerail matches each as plain text, case-sensitively, against the lines an agent adds; they are not regexes.
+- Cover every form the construct can take, not just the one in the example: for a ban on console logging "console." rather than "console.log"; for "no default exports" both "export default" and "as default".
+- A signal must not occur in correct code that follows the decision, and must be specific enough not to appear in most files: "(" or "import" signal nothing.
+- Prefer fewer, broader fragments.
+- Give your best fragments even when they are partial: Rerail generalizes each to shorter forms at syntax boundaries ("console.log(" to "console."), keeps the most general form that holds against the code and the repository, and drops what is noisy. Answer [] only for a decision no code can show, such as a pure architecture or layering decision.`;
 
 const CAPTURE_INSTRUCTIONS = `A developer corrected their coding agent. Decide whether the correction records a lasting decision about this codebase and, if it does, state it so Rerail can steer the agent by it.
 
@@ -246,7 +262,9 @@ check: a check Rerail runs on code text. Draft one whenever the decision forbids
 message: at most ${MAX_CHECK_MESSAGE} characters, what the agent should do instead when the check fires. Without a check, the decision's gist.
 cases: when there is a check, at most ${MAX_VERDICT_CASES} "caught" and ${MAX_VERDICT_CASES} "passed" cases taken from the edits, each a complete file that parses on its own (with its imports and an enclosing function) and its path: the code before the correction is a caught case, the code after it a passed case. Empty when check is null.
 Rerail keeps the check only when it compiles, catches every caught case, passes every passed case, and matches nothing in the repository as it is after the correction: neither the corrected code in the files the correction touched nor legitimate code elsewhere, such as the place the decision says the code belongs. Otherwise it saves the decision without a check.
-For one-off: duplicateOf null, check null, empty cases, and the simplest valid decision, scope and message.`;
+${SIGNAL_GUIDANCE}
+Rerail adds the fragments the correction removed, and keeps a form of a signal only when it occurs in the code before the correction and not in the code after it.
+For one-off: duplicateOf null, check null, empty cases, empty signals, and the simplest valid decision, scope and message.`;
 
 /** The capture prompt for one correction, with every input fenced as data. */
 export function capturePrompt(input: CaptureInput, nonce: string): string {
@@ -272,7 +290,7 @@ export function capturePrompt(input: CaptureInput, nonce: string): string {
   return parts.join("\n");
 }
 
-const REPAIR_INSTRUCTIONS = `Your earlier answer to this capture task is below, with why Rerail could not keep its check. Answer again with the same generality, duplicateOf, decision and scope, and a corrected check, message and cases that fix the failure. If no check can express the decision without matching correct code, answer check null and empty cases.`;
+const REPAIR_INSTRUCTIONS = `Your earlier answer to this capture task is below, with why Rerail could not keep its check. Answer again with the same generality, duplicateOf, decision, scope and signals, and a corrected check, message and cases that fix the failure. If no check can express the decision without matching correct code, answer check null and empty cases.`;
 
 /**
  * The capture prompt asked again after the drafted check failed Rerail's validation: the same task, with the earlier
@@ -286,6 +304,45 @@ export function captureRepairPrompt(input: CaptureInput, previous: CaptureVerdic
     fenceData("your earlier answer", JSON.stringify(previous, null, 2), nonce),
     fenceData("why rerail could not keep its check", cut(failure, MAX_REPAIR_FAILURE_CHARS), nonce),
   ].join("\n");
+}
+
+/** A decision to write signals for: one without them, such as a hand-written, older or teammate's decision. */
+export interface SignalsInput {
+  decision: string;
+  scope: string[];
+  /** Code before and after a correction that follows the decision, when there is one. */
+  example: { before: string; after: string } | null;
+}
+
+export interface SignalsVerdict {
+  /** 0 to 8 code fragments whose presence in new code means the decision is at stake. */
+  signals: string[];
+}
+
+export const signalsVerdictSchema: z.ZodType<SignalsVerdict> = z.object({ signals: signalsSchema }).strict();
+
+/** The signals answer as a JSON schema for the agent CLI, closed as Codex's `--output-schema` requires. */
+export const signalsJsonSchema: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["signals"],
+  properties: { signals: signalListJsonSchema },
+};
+
+const SIGNALS_INSTRUCTIONS = `A decision about this codebase is below, with the files it covers. Write the code fragments whose presence in new code means the decision is at stake, so Rerail can show the decision to a coding agent that is about to write such code.
+
+${SIGNAL_GUIDANCE}`;
+
+/** The signals prompt for one decision, with every input fenced as data. */
+export function signalsPrompt(input: SignalsInput, nonce: string): string {
+  const parts = [framing(nonce, "When unsure, give your best fragments: Rerail drops the ones that do not hold."), "", SIGNALS_INSTRUCTIONS, ""];
+  parts.push(fenceData("the decision", cut(input.decision, MAX_CORRECTION_CHARS), nonce));
+  parts.push(fenceData("the files it covers", input.scope.slice(0, MAX_TOUCHED_PATHS).join("\n"), nonce));
+  if (input.example !== null) {
+    parts.push(fenceData("code that breaks the decision", cut(input.example.before, MAX_EDIT_SIDE_CHARS), nonce));
+    parts.push(fenceData("the same code following the decision", cut(input.example.after, MAX_EDIT_SIDE_CHARS), nonce));
+  }
+  return parts.join("\n");
 }
 
 export interface CompareInput {

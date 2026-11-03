@@ -124,7 +124,7 @@ export class FakeJudge implements AgentJudge {
     return { ok: true, value: task.parse(answer), runner: "claude", cached: false };
   }
 
-  count(kind: "capture" | "compare"): number {
+  count(kind: JudgeTask<unknown>["kind"]): number {
     return this.tasks.filter(task => task.kind === kind).length;
   }
 }
@@ -141,6 +141,7 @@ export function captureVerdict(overrides: Partial<CaptureVerdict> = {}): Capture
       caught: [{ path: "src/api/orders.ts", content: "export const orders = () => retry(() => client.get(\"/orders\"));\n" }],
       passed: [{ path: "src/api/orders.ts", content: "export const orders = () => client.get(\"/orders\");\n" }],
     },
+    signals: [],
     ...overrides,
   };
 }

@@ -187,16 +187,26 @@ hold for the MCP tools and the HTTP API; the CLI runs as the person (§7).
   "createdAt": "2026-11-03T14:02:11Z",
   "state": "active",
   "rule": { "format": "rerail.policy/v1", "id": "candidate:retries-in-transport-3f9a1c", "...": "..." },
+  "signals": ["retry(", "for (let attempt"],
   "supersedes": null
 }
 ```
 
 - `rule` is present only when the decision is a validated code rule; the rule's `id` equals the candidate's `id`, and
   its mode is always `steer`.
+- `signals` are at most 8 literal code fragments of 2 to 40 characters, one line each, whose presence in new code means
+  the decision is at stake; they are matched case-sensitively as plain substrings, never as patterns. Capture takes the
+  judge's signals and the fragments the correction removed (call heads, member-access chains, tagged-template heads and
+  keyword phrases such as `throw new`, read by syntax, leaving out names the edited code declares). It tries each in
+  shorter forms cut at syntax boundaries (`console.log(` → `console.log` → `console.`) and keeps the most general form
+  that occurs in the code before the correction, not in the code after it, and in at most a fifth of the files in
+  scope. A kept form that contains another is dropped; the rest are ranked shortest first. The field is optional; a
+  decision without it can have signals derived by the judge from its text.
 - `state` is `active` or `rejected`. A rejected file stays so that a teammate who already absorbed it sees the
   withdrawal on their next scan.
-- The file never holds the correction text, code, paths outside `scope`, session ids or anything else from the
-  transcript. The link from a candidate to the session and correction it came from stays in the local database.
+- The file never holds the correction text, code beyond its signals, paths outside `scope`, session ids or anything
+  else from the transcript. The link from a candidate to the session and correction it came from stays in the local
+  database.
 
 ## 7. Security
 

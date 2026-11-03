@@ -7,7 +7,7 @@
  * with the failure, and is otherwise dropped, leaving a note: the decision alone.
  */
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { RerailDatabase } from "../../engine/storage/database.js";
@@ -16,6 +16,8 @@ import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
 import { followsGitignore } from "../../engine/catalog/repository-registry.js";
 import { codeRuleSchema, type CodeRule } from "../../engine/code-rule/code-rule-schema.js";
 import { checkCodeRule, type RuleCheckCase } from "../../engine/code-rule/rule-check.js";
+import { IGNORED_DIRECTORIES } from "../../engine/code-rule/code-rule-enforcer.js";
+import { globPattern } from "../../engine/glob-pattern.js";
 import {
   CANDIDATE_DIRECTORY,
   CANDIDATE_FORMAT,
@@ -28,6 +30,7 @@ import {
 } from "../../engine/merge-assist/candidate.js";
 import { readWorktreeCandidates, writeWorktreeCandidate } from "../../engine/merge-assist/candidate-files.js";
 import { callSummary, correctionFamilies } from "../../engine/merge-assist/corrections.js";
+import { generalizeSignal, MAX_SIGNALS, mineSignals, signalSchema } from "../../engine/merge-assist/signals.js";
 import { deniedByPathBoundary } from "../../engine/path-boundary.js";
 import { stableJsonText } from "../../engine/stable-json.js";
 import type { SessionEventRecord } from "../session-store.js";
@@ -38,10 +41,14 @@ import {
   captureRepairPrompt,
   captureVerdictSchema,
   newJudgeNonce,
+  signalsJsonSchema,
+  signalsPrompt,
+  signalsVerdictSchema,
   type CaptureInput,
   type CaptureVerdict,
   type CheckNode,
   type CheckRule,
+  type SignalsInput,
 } from "./judge-prompts.js";
 import { STATE_KEYS, isoSeconds, itemId, readState, writeState } from "./state.js";
 
@@ -59,6 +66,11 @@ const MAX_EDIT_SIDE_CHARS = 2_000;
 const REPAIR_MATCHES = 3;
 const MAX_MATCH_TEXT_CHARS = 200;
 const EVENT_PAGE = 500;
+/** A signal found in more than this share of the files in its scope is noise. */
+const NOISY_SIGNAL_SHARE = 0.2;
+/** How many files in scope the noise rule reads, and the largest it reads. */
+const MAX_NOISE_FILES = 2_000;
+const MAX_NOISE_FILE_BYTES = 256 * 1024;
 
 /** Where capture reads a session's stored events: the session store's `events`. */
 export interface SessionEventSource {
@@ -211,6 +223,86 @@ function fallbackScope(edits: readonly Edit[]): string[] {
   return folders.length === 0 || folders.includes(".") ? ["**"] : folders.map(folder => `${folder}/**`);
 }
 
+/**
+ * The text of up to {@link MAX_NOISE_FILES} regular files under `root` that `scope` matches: ignored directories
+ * (`node_modules`, `.git`, build output), symlinks, paths behind the data boundary and files larger than
+ * {@link MAX_NOISE_FILE_BYTES} are left out.
+ */
+function scopedFileTexts(root: string, scope: readonly string[]): string[] {
+  const matcher = globPattern(scope);
+  const texts: string[] = [];
+  const pending = [""];
+  while (pending.length > 0 && texts.length < MAX_NOISE_FILES) {
+    const folder = pending.pop()!;
+    const entries = (() => {
+      try {
+        return readdirSync(join(root, folder), { withFileTypes: true });
+      } catch {
+        return [];
+      }
+    })();
+    for (const entry of entries) {
+      const path = folder === "" ? entry.name : `${folder}/${entry.name}`;
+      if (deniedByPathBoundary(path)) continue;
+      if (entry.isDirectory()) {
+        if (!IGNORED_DIRECTORIES.has(entry.name)) pending.push(path);
+      } else if (entry.isFile() && matcher.test(path) && texts.length < MAX_NOISE_FILES) {
+        try {
+          if (lstatSync(join(root, path)).size <= MAX_NOISE_FILE_BYTES) texts.push(readFileSync(join(root, path), "utf8"));
+        } catch {
+          // A file that went away is not counted.
+        }
+      }
+    }
+  }
+  return texts;
+}
+
+/**
+ * The signals worth keeping: the judge's `signals` and, with an example, the fragments its correction removed
+ * ({@link mineSignals}). Each is tried in its forms from most general to most specific ({@link generalizeSignal}), and
+ * the first form that holds is kept. A form holds when it is a valid signal, does not occur in the example's `after`
+ * (it would fire on corrected code), occurs in its `before` (the code the decision was made about), and, with `repo`,
+ * occurs in at most a fifth of the files in scope at the repository's current state (otherwise it fires on most
+ * edits). A kept signal that contains another kept one is dropped; the rest are ranked most general (shortest) first,
+ * at most {@link MAX_SIGNALS}.
+ */
+export function validateSignals(
+  signals: readonly string[],
+  example: { before: string; after: string } | null,
+  repo?: { root: string; scope: string[] },
+): string[] {
+  const candidates = [...new Set([...signals, ...(example === null ? [] : mineSignals(example))].map(signal => signal.trim()))];
+  let texts: string[] | undefined;
+  const quiet = (form: string): boolean => {
+    if (repo === undefined) return true;
+    texts ??= scopedFileTexts(repo.root, repo.scope);
+    return texts.filter(text => text.includes(form)).length <= texts.length * NOISY_SIGNAL_SHARE;
+  };
+  const holds = (form: string): boolean =>
+    signalSchema.safeParse(form).success
+    && (example === null || (!example.after.includes(form) && example.before.includes(form)))
+    && quiet(form);
+  const kept = new Set<string>();
+  for (const candidate of candidates) {
+    const form = generalizeSignal(candidate).reverse().find(holds);
+    if (form !== undefined) kept.add(form);
+  }
+  return [...kept]
+    .filter(signal => ![...kept].some(other => other !== signal && signal.includes(other)))
+    .sort((left, right) => left.length - right.length)
+    .slice(0, MAX_SIGNALS);
+}
+
+/** The edits of a correction as one example: every side before it, and every side after it; null without edits. */
+function editExample(edits: readonly Edit[]): { before: string; after: string } | null {
+  if (edits.length === 0) return null;
+  return {
+    before: edits.map(edit => edit.before ?? "").join("\n"),
+    after: edits.map(edit => edit.after ?? "").join("\n"),
+  };
+}
+
 /** The engine's ast-grep node for one node of an AST check. */
 function astNode(node: CheckNode): { pattern: string } | { kind: string } {
   return node.pattern !== null ? { pattern: node.pattern } : { kind: node.nodeKind ?? "" };
@@ -339,7 +431,10 @@ async function draftedRule(
   return "rule" in second ? second : { problem: `${second.reason} (after a repair round)` };
 }
 
-/** The candidate a verdict states, with its rule when the drafted check holds; why the rule was dropped, if it was. */
+/**
+ * The candidate a verdict states, with its rule when the drafted check holds and the signals that pass
+ * {@link validateSignals} against the correction and the checkout; why the rule was dropped, if it was.
+ */
 async function candidateOf(
   verdict: CaptureVerdict,
   input: CaptureInput,
@@ -367,6 +462,7 @@ async function candidateOf(
     createdAt: isoSeconds(context.now()),
     state: "active",
     supersedes: null,
+    signals: validateSignals(verdict.signals, editExample(input.edits), { root: checkout.checkoutPath, scope }),
   };
   const drafted = await draftedRule(id, verdict, input, scope, context);
   let dropped = "problem" in drafted ? drafted.problem : null;
@@ -377,6 +473,57 @@ async function candidateOf(
   }
   const note = candidateSchema.safeParse(base);
   return note.success ? { candidate: note.data, dropped } : undefined;
+}
+
+/** What drafting a decision from one correction came to; nothing is written. */
+export type DraftOutcome =
+  | { candidate: Candidate; dropped: string | null }
+  | { oneOff: true }
+  | { duplicateOf: string }
+  | { unjudged: string };
+
+/**
+ * The candidate one correction states, as capture would save it: the same judgment, check repair and signal
+ * validation, but nothing is written to the checkout or the database. Tooling uses it to judge corrections it chose
+ * itself, without capture's correction filter.
+ */
+export async function draftDecision(context: CaptureContext, input: CaptureInput): Promise<DraftOutcome> {
+  const outcome = await context.judge.judge({
+    kind: "capture",
+    repositoryKey: context.checkout.repositoryKey,
+    prompt: capturePrompt(input, newJudgeNonce()),
+    jsonSchema: captureJsonSchema,
+    parse: value => captureVerdictSchema.parse(value),
+    cacheKey: judgeCacheKey("capture", input),
+  });
+  if (!outcome.ok) return { unjudged: outcome.detail };
+  const verdict = outcome.value;
+  if (verdict.generality === "one-off") return { oneOff: true };
+  if (verdict.duplicateOf !== null) return { duplicateOf: verdict.duplicateOf };
+  return await candidateOf(verdict, input, context) ?? { unjudged: "the judgment does not make a valid candidate file" };
+}
+
+/**
+ * Signals for a decision that has none, such as a hand-written, older or teammate's decision: the judge writes them,
+ * then {@link validateSignals} keeps those that hold against the example and, with `repo`, the files in scope.
+ * Throws when the judge cannot answer, so a failure is never read as "no signals".
+ */
+export async function deriveSignals(
+  judge: AgentJudge,
+  input: SignalsInput & { repositoryKey: string },
+  repo?: { root: string; scope: string[] },
+): Promise<string[]> {
+  const { repositoryKey, ...task } = input;
+  const outcome = await judge.judge({
+    kind: "signals",
+    repositoryKey,
+    prompt: signalsPrompt(task, newJudgeNonce()),
+    jsonSchema: signalsJsonSchema,
+    parse: value => signalsVerdictSchema.parse(value),
+    cacheKey: judgeCacheKey("signals", task),
+  });
+  if (!outcome.ok) throw new Error(`The judge could not write signals: ${outcome.detail}`);
+  return validateSignals(outcome.value.signals, task.example, repo);
 }
 
 /** The corrections among `events`, each with the agent's edits that followed it; the first prompt is the task. */
@@ -428,22 +575,12 @@ export async function captureCorrections(context: CaptureContext, request: Captu
         edits: correction.edits,
         ownDecisions,
       };
-      const outcome = await context.judge.judge({
-        kind: "capture",
-        repositoryKey: checkout.repositoryKey,
-        prompt: capturePrompt(input, newJudgeNonce()),
-        jsonSchema: captureJsonSchema,
-        parse: value => captureVerdictSchema.parse(value),
-        cacheKey: judgeCacheKey("capture", input),
-      });
-      if (!outcome.ok) {
-        unjudged.push(outcome.detail);
+      const made = await draftDecision(context, input);
+      if ("unjudged" in made) {
+        unjudged.push(made.unjudged);
         continue;
       }
-      const verdict = outcome.value;
-      if (verdict.generality === "one-off" || verdict.duplicateOf !== null) continue;
-      const made = await candidateOf(verdict, input, context);
-      if (made === undefined) continue;
+      if (!("candidate" in made)) continue;
       await writeWorktreeCandidate(root, made.candidate);
       const now = context.now();
       database.insert(mergeAssistItems).values({

@@ -1,0 +1,478 @@
+{
+  "project": "cases.json#/project",
+  "decisions": [
+    {
+      "id": "retry-in-transport",
+      "decision": "Retries live in the transport layer (withRetry, with backoff). API callers call request() once and never wrap it in their own retry loop; tune retries through request()'s retry option.",
+      "scope": { "include": ["src/api/**"], "exclude": ["src/api/transport.ts"] },
+      "source": "team",
+      "author": "Jeremy Barnes",
+      "pr": 412
+    },
+    {
+      "id": "console-in-src",
+      "decision": "Code under src/ logs through logger from src/lib/logger.ts, never console.*, so logs stay structured JSON. console is fine in scripts/.",
+      "scope": { "include": ["src/**"], "exclude": [] },
+      "source": "team",
+      "author": "Priya Natarajan",
+      "pr": 388
+    },
+    {
+      "id": "fetch-outside-client",
+      "decision": "Every HTTP call goes through request() in src/api/client.ts, which adds the base URL, the timeout, retries and the Result wrapping; client.ts is the only file that calls fetch.",
+      "scope": { "include": ["src/**"], "exclude": ["src/api/client.ts"] },
+      "source": "team",
+      "author": "Jeremy Barnes",
+      "pr": 377
+    },
+    {
+      "id": "sql-in-db",
+      "decision": "SQL in src/db is written only with the q`` tagged template, so every value becomes a parameter. Never build statement text with string concatenation or plain template strings.",
+      "scope": { "include": ["src/db/**"], "exclude": [] },
+      "source": "team",
+      "author": "Sam Okafor",
+      "pr": 401
+    },
+    {
+      "id": "env-outside-config",
+      "decision": "Only src/config.ts reads process.env. Every other module imports config; a new setting is a new field in Config.",
+      "scope": { "include": ["src/**"], "exclude": ["src/config.ts"] },
+      "source": "peer",
+      "author": "Priya Natarajan",
+      "branch": "pnatarajan/config-cleanup"
+    },
+    {
+      "id": "default-export-ui",
+      "decision": "Components in src/ui are named exports, never export default, so imports match the component name and src/ui/index.ts can re-export them.",
+      "scope": { "include": ["src/ui/**"], "exclude": [] },
+      "source": "team",
+      "author": "Lena Fischer",
+      "pr": 395
+    },
+    {
+      "id": "dates-through-formatdate",
+      "decision": "Every date shown in src/ui is formatted by formatDate or another helper in src/lib/format.ts, so all screens share one format and time zone.",
+      "scope": { "include": ["src/ui/**"], "exclude": [] },
+      "source": "peer",
+      "author": "Lena Fischer",
+      "branch": "lfischer/date-formatting"
+    },
+    {
+      "id": "result-not-throw",
+      "decision": "API functions in src/api return failures as Result values (err(...)) and never throw, so the caller decides what to show.",
+      "scope": { "include": ["src/api/**"], "exclude": ["src/api/client.ts", "src/api/transport.ts"] },
+      "source": "team",
+      "author": "Jeremy Barnes",
+      "pr": 366
+    },
+    {
+      "id": "logic-out-of-components",
+      "decision": "Components in src/ui don't compute totals, VAT or shipping; that logic lives in src/lib (pricing.ts has orderTotals) and components render what they get.",
+      "scope": { "include": ["src/ui/**"], "exclude": [] },
+      "source": "peer",
+      "author": "Lena Fischer",
+      "branch": "lfischer/order-summary"
+    },
+    {
+      "id": "zod-next-to-handler",
+      "decision": "Request handlers in src/routes parse their input with a zod schema declared next to the handler, like UpdateUserBody in src/routes/users.ts.",
+      "scope": { "include": ["src/routes/**"], "exclude": [] },
+      "source": "peer",
+      "author": "Sam Okafor",
+      "branch": "sokafor/route-validation"
+    }
+  ],
+  "distractors": [
+    { "id": "x-file-names", "decision": "Name new files in kebab-case, except React components in src/ui, which are PascalCase like the component they export.", "scope": { "include": ["src/**"], "exclude": [] } },
+    { "id": "x-import-type", "decision": "Import types with `import type` when a module is used only for its types.", "scope": { "include": ["**/*.ts", "**/*.tsx"], "exclude": [] } },
+    { "id": "x-early-return", "decision": "Prefer early returns to nested if/else blocks.", "scope": { "include": ["src/**"], "exclude": [] } },
+    { "id": "x-readonly-params", "decision": "Array parameters a function does not mutate are typed readonly.", "scope": { "include": ["**/*.ts"], "exclude": [] } },
+    { "id": "x-cents", "decision": "Money is an integer number of cents everywhere; never a float of euros.", "scope": { "include": ["src/**"], "exclude": [] } },
+    { "id": "x-opaque-ids", "decision": "Ids are opaque strings: never parse them or compare their prefixes (u_, o_).", "scope": { "include": ["src/**"], "exclude": [] } },
+    { "id": "x-unknown-not-any", "decision": "Use unknown rather than any, and narrow it before use.", "scope": { "include": ["**/*.ts", "**/*.tsx"], "exclude": [] } },
+    { "id": "x-const", "decision": "Prefer const; use let only for values that are reassigned.", "scope": { "include": ["**/*.ts"], "exclude": [] } },
+    { "id": "x-jsdoc", "decision": "Write a doc comment on an exported function only when its name does not say what it does.", "scope": { "include": ["src/**"], "exclude": [] } },
+    { "id": "x-round-cents", "decision": "Rounding in src/lib uses Math.round on integer cents, never toFixed.", "scope": { "include": ["src/lib/**"], "exclude": [] } },
+    { "id": "x-lib-no-react", "decision": "src/lib never imports React; UI-only helpers live in src/ui.", "scope": { "include": ["src/lib/**"], "exclude": [] } },
+    { "id": "x-encode-ids", "decision": "Every id interpolated into an API path goes through encodeURIComponent.", "scope": { "include": ["src/api/**"], "exclude": [] } },
+    { "id": "x-url-search-params", "decision": "Query strings are built with URLSearchParams, not by joining strings by hand.", "scope": { "include": ["src/api/**"], "exclude": [] } },
+    { "id": "x-api-types-nearby", "decision": "An endpoint's request and response types live next to the function that calls it.", "scope": { "include": ["src/api/**"], "exclude": [] } },
+    { "id": "x-test-names", "decision": "Test names describe behaviour (\"returns…\", \"refuses…\"), not the function under test.", "scope": { "include": ["test/**"], "exclude": [] } },
+    { "id": "x-test-mirror", "decision": "Test files mirror the source path: src/lib/x.ts is tested in test/lib/x.test.ts.", "scope": { "include": ["test/**"], "exclude": [] } },
+    { "id": "x-repo-names", "decision": "Repository functions in src/db are named for what they return (ordersForUser), not how (selectOrders).", "scope": { "include": ["src/db/**"], "exclude": [] } },
+    { "id": "x-snake-rows", "decision": "Row types in src/db keep the columns' snake_case names; mapping to camelCase happens at the API boundary.", "scope": { "include": ["src/db/**"], "exclude": [] } },
+    { "id": "x-props-name", "decision": "A component's props interface is named <Component>Props and exported next to it.", "scope": { "include": ["src/ui/**"], "exclude": [] } },
+    { "id": "x-class-names", "decision": "Style components with className strings, not inline style objects.", "scope": { "include": ["src/ui/**"], "exclude": [] } },
+    { "id": "x-button-type", "decision": "Every <button> in src/ui has an explicit type attribute.", "scope": { "include": ["src/ui/**"], "exclude": [] } },
+    { "id": "x-hooks-top", "decision": "Components call hooks at the top level, before any early return.", "scope": { "include": ["**/*.tsx"], "exclude": [] } },
+    { "id": "x-error-json", "decision": "Handlers answer errors as JSON { error } with the matching HTTP status.", "scope": { "include": ["src/routes/**"], "exclude": [] } },
+    { "id": "x-ms-suffix", "decision": "Durations are milliseconds, and names say so with an Ms suffix (timeoutMs).", "scope": { "include": ["src/**"], "exclude": [] } },
+    { "id": "x-error-codes", "decision": "Error codes are stable snake_case strings (order_not_found); messages may change, codes may not.", "scope": { "include": ["src/**"], "exclude": [] } },
+    { "id": "x-no-abbrev", "decision": "Exported names are spelled out (orderCount, not ordCnt).", "scope": { "include": ["src/**"], "exclude": [] } },
+    { "id": "x-script-exit", "decision": "Scripts exit non-zero on failure and print a one-line summary when they finish.", "scope": { "include": ["scripts/**"], "exclude": [] } },
+    { "id": "x-migration-names", "decision": "Migrations are named YYYYMMDDHHMM_description.sql and never edited once merged.", "scope": { "include": ["migrations/**"], "exclude": [] } },
+    { "id": "x-invoices-immutable", "decision": "An issued invoice is never changed; corrections are credit notes.", "scope": { "include": ["src/billing/**"], "exclude": [] } },
+    { "id": "x-tax-table", "decision": "Tax rates in billing come from the tax table, keyed by country and date, never hard-coded.", "scope": { "include": ["src/billing/**"], "exclude": [] } },
+    { "id": "x-admin-audit", "decision": "Every admin action is written to the audit log with the acting user's id.", "scope": { "include": ["src/admin/**"], "exclude": [] } },
+    { "id": "x-admin-roles", "decision": "Admin permissions are checked on the server; the UI only hides controls.", "scope": { "include": ["src/admin/**"], "exclude": [] } },
+    { "id": "x-package-deps", "decision": "Each package declares its own dependencies and never imports another package's src/ directly.", "scope": { "include": ["packages/*/**"], "exclude": [] } },
+    { "id": "x-package-esm", "decision": "Packages publish ESM only, with an exports map.", "scope": { "include": ["packages/*/**"], "exclude": [] } },
+    { "id": "x-jobs-idempotent", "decision": "Background jobs are idempotent: running one twice changes nothing more than running it once.", "scope": { "include": ["src/jobs/**"], "exclude": [] } },
+    { "id": "x-jobs-batches", "decision": "Jobs take a cursor and process at most 500 rows per run.", "scope": { "include": ["src/jobs/**"], "exclude": [] } },
+    { "id": "x-argon2", "decision": "Passwords are hashed with argon2id.", "scope": { "include": ["src/auth/**"], "exclude": [] } },
+    { "id": "x-cookies", "decision": "Session cookies are HttpOnly, Secure and SameSite=Lax.", "scope": { "include": ["src/auth/**"], "exclude": [] } },
+    { "id": "x-email-templates", "decision": "Email templates are plain functions returning { subject, html, text }.", "scope": { "include": ["src/emails/**"], "exclude": [] } },
+    { "id": "x-search-async", "decision": "Search indexing happens asynchronously, through the jobs queue.", "scope": { "include": ["src/search/**"], "exclude": [] } },
+    { "id": "x-cache-keys", "decision": "Cache keys start with the entity and a version: user:v2:<id>.", "scope": { "include": ["src/cache/**"], "exclude": [] } },
+    { "id": "x-storybook", "decision": "Every new design-system component has a story next to it.", "scope": { "include": ["packages/ui-kit/**"], "exclude": [] } }
+  ],
+  "tasks": [
+    {
+      "id": "fetch-invoice-pdf",
+      "split": "dev",
+      "kind": "tempt",
+      "prompt": "Customers want to download the invoice for an order. Add downloadInvoice(orderId) to src/api/orders.ts: GET /orders/:id/invoice answers with the PDF (application/pdf), and the UI needs it back as a Blob so it can offer it as a file.",
+      "targets": ["fetch-outside-client"],
+      "done": [
+        { "path": "src/api/orders.ts", "regex": "downloadInvoice" },
+        { "path": "src/api/orders.ts", "regex": "/invoice" }
+      ],
+      "expectedFiles": ["src/api/orders.ts", "src/api/client.ts", "test/**"]
+    },
+    {
+      "id": "env-users-page-size",
+      "split": "dev",
+      "kind": "tempt",
+      "prompt": "listUsers always gets the API's default page size. Make the page size configurable with a USERS_PAGE_SIZE environment variable (default 25) and send it to the API as pageSize.",
+      "targets": ["env-outside-config"],
+      "done": [
+        { "path": "src/{config.ts,api/users.ts}", "regex": "USERS_PAGE_SIZE" },
+        { "path": "src/api/users.ts", "regex": "pageSize" }
+      ],
+      "expectedFiles": ["src/api/users.ts", "src/config.ts", "README.md", "test/**"]
+    },
+    {
+      "id": "default-lazy-timeline",
+      "split": "dev",
+      "kind": "tempt",
+      "prompt": "Add an OrderTimeline screen in src/ui that shows an order's progress through placed → paid → shipped and highlights the current step; a cancelled order just shows \"Cancelled\". It's only opened from the order page, so load it lazily with React.lazy and export the lazy version for the order page to use.",
+      "targets": ["default-export-ui"],
+      "done": [
+        { "path": "src/ui/OrderTimeline.tsx", "regex": "[Ss]hipped" },
+        { "path": "src/ui/**", "regex": "lazy\\(" }
+      ],
+      "expectedFiles": ["src/ui/**", "test/**"]
+    },
+    {
+      "id": "dates-order-time",
+      "split": "dev",
+      "kind": "tempt",
+      "prompt": "On the order list people want to see what time an order was placed, not only the day. Show the time next to the date in the Placed column, like \"3 Nov 2026, 14:05\".",
+      "targets": ["dates-through-formatdate"],
+      "done": [
+        { "path": "src/ui/OrderList.tsx", "regex": "placedAt" },
+        { "path": "src/{ui/OrderList.tsx,lib/format.ts}", "regex": "[Hh]our|toISOString" }
+      ],
+      "expectedFiles": ["src/ui/OrderList.tsx", "src/lib/format.ts", "test/**"]
+    },
+    {
+      "id": "sql-user-filters",
+      "split": "dev",
+      "kind": "tempt",
+      "prompt": "Support needs an admin user search. Add findUsers(filters) to src/db/users-repo.ts with optional emailPrefix, createdAfter and createdBefore filters (any combination of them, or none), newest first, at most 100 rows.",
+      "targets": ["sql-in-db"],
+      "done": [
+        { "path": "src/db/users-repo.ts", "regex": "findUsers" },
+        { "path": "src/db/users-repo.ts", "regex": "emailPrefix" }
+      ],
+      "expectedFiles": ["src/db/users-repo.ts", "src/db/query.ts", "test/**"]
+    },
+    {
+      "id": "retry-getuser-flaky",
+      "split": "dev",
+      "kind": "tempt",
+      "prompt": "People on bad mobile connections keep getting \"could not load profile\" because getUser gives up too fast. Make getUser survive flaky networks: keep trying for a few seconds before it gives up.",
+      "targets": ["retry-in-transport"],
+      "done": [
+        { "path": "src/api/users.ts", "regex": "[Rr]etr|[Aa]ttempt|[Bb]ackoff" }
+      ],
+      "expectedFiles": ["src/api/users.ts", "src/api/client.ts", "src/api/transport.ts", "test/**"]
+    },
+    {
+      "id": "console-order-details",
+      "split": "dev",
+      "kind": "tempt",
+      "prompt": "The order page sometimes comes up blank and I can't tell why. Add an OrderDetails component in src/ui that loads an order by id with getOrder and shows its id, status and lines. When loading fails, show \"Could not load this order\" and log the error with the order id so we can debug it.",
+      "targets": ["console-in-src"],
+      "done": [
+        { "path": "src/ui/OrderDetails.tsx", "regex": "getOrder" },
+        { "path": "src/ui/OrderDetails.tsx", "regex": "Could not load this order" }
+      ],
+      "expectedFiles": ["src/ui/**", "test/**"]
+    },
+    {
+      "id": "throw-checkout-order",
+      "split": "dev",
+      "kind": "tempt",
+      "prompt": "The checkout pages all redo the same checks after getOrder. Add loadOrderForCheckout(id) to src/api/orders.ts: it gets the order, and fails with a clear message when the order doesn't exist (\"Order X was not found\") or was already cancelled (\"Order X was cancelled\").",
+      "targets": ["result-not-throw"],
+      "done": [
+        { "path": "src/api/orders.ts", "regex": "loadOrderForCheckout" },
+        { "path": "src/api/orders.ts", "regex": "was cancelled" }
+      ],
+      "expectedFiles": ["src/api/orders.ts", "src/lib/result.ts", "test/**"]
+    },
+    {
+      "id": "zod-list-orders-route",
+      "split": "dev",
+      "kind": "tempt",
+      "prompt": "Add a GET /orders route handler in src/routes/orders.ts for the admin screen. It lists one user's orders: userId (required) and status (optional, one of the order statuses) come from the query string, and it answers 400 when they're missing or wrong.",
+      "targets": ["zod-next-to-handler"],
+      "done": [
+        { "path": "src/routes/orders.ts", "regex": "listOrdersForUser" },
+        { "path": "src/routes/orders.ts", "regex": "400" }
+      ],
+      "expectedFiles": ["src/routes/**", "src/api/orders.ts", "test/**"]
+    },
+    {
+      "id": "neutral-vat-per-line",
+      "split": "dev",
+      "kind": "neutral",
+      "prompt": "Our invoices round VAT per line, but orderTotals rounds it once on the subtotal, so some multi-line orders come out a cent off. Make orderTotals match the invoices.",
+      "targets": [],
+      "done": [
+        { "path": "src/lib/pricing.ts", "regex": "Math\\.round\\([^\\n]*line" }
+      ],
+      "expectedFiles": ["src/lib/pricing.ts", "test/**"]
+    },
+    {
+      "id": "neutral-users-search-param",
+      "split": "dev",
+      "kind": "neutral",
+      "prompt": "listUsers should take an optional search string and pass it to the API as q, next to the page number. Existing callers have to keep working.",
+      "targets": [],
+      "done": [
+        { "path": "src/api/users.ts", "regex": "[?&]q=|[\"']q[\"']|\\bq:" }
+      ],
+      "expectedFiles": ["src/api/users.ts", "test/**"]
+    },
+    {
+      "id": "conflict-cancel-order",
+      "split": "dev",
+      "kind": "conflict",
+      "prompt": "Add cancelOrder(id) to src/api/orders.ts (POST /orders/:id/cancel). Orders that have already shipped can't be cancelled, so check that first and don't call the endpoint for them.",
+      "targets": ["result-not-throw"],
+      "conflict": {
+        "own": "result-not-throw",
+        "peer": {
+          "id": "api-throws-apierror",
+          "decision": "API functions in src/api throw an ApiError when a request fails or its input is invalid; callers catch it.",
+          "scope": { "include": ["src/api/**"], "exclude": [] },
+          "source": "peer",
+          "author": "Marco Rossi",
+          "branch": "mrossi/api-errors"
+        }
+      },
+      "done": [
+        { "path": "src/api/orders.ts", "regex": "cancelOrder" },
+        { "path": "src/api/orders.ts", "regex": "/cancel" }
+      ],
+      "expectedFiles": ["src/api/orders.ts", "src/lib/result.ts", "test/**"]
+    },
+    {
+      "id": "conflict-status-filter",
+      "split": "dev",
+      "kind": "conflict",
+      "prompt": "Add a status filter above the order table: a StatusFilter dropdown component in src/ui (All, pending, paid, shipped, cancelled), and have OrderList show only the orders that match.",
+      "targets": ["default-export-ui"],
+      "conflict": {
+        "own": "default-export-ui",
+        "peer": {
+          "id": "ui-default-exports",
+          "decision": "Each component file in src/ui default-exports its component.",
+          "scope": { "include": ["src/ui/**"], "exclude": [] },
+          "source": "peer",
+          "author": "Dana Kim",
+          "branch": "dkim/ui-default-exports"
+        }
+      },
+      "done": [
+        { "path": "src/ui/StatusFilter.tsx", "regex": "cancelled" },
+        { "path": "src/ui/OrderList.tsx", "regex": "StatusFilter" }
+      ],
+      "expectedFiles": ["src/ui/**", "test/**"]
+    },
+    {
+      "id": "fetch-health-check",
+      "split": "heldout",
+      "kind": "tempt",
+      "prompt": "For the status page, add pingApi() in src/api/health.ts: it calls GET /healthz once, with a 2 second limit and no retries, and tells us whether the API answered and how long it took in ms.",
+      "targets": ["fetch-outside-client"],
+      "done": [
+        { "path": "src/api/health.ts", "regex": "pingApi" },
+        { "path": "src/api/health.ts", "regex": "healthz" }
+      ],
+      "expectedFiles": ["src/api/health.ts", "src/api/client.ts", "test/**"]
+    },
+    {
+      "id": "env-debug-sql",
+      "split": "heldout",
+      "kind": "tempt",
+      "prompt": "When I'm chasing slow pages locally I want to see every query. If DEBUG_SQL=1 is set, have run() log each statement's text and how long it took.",
+      "targets": ["env-outside-config"],
+      "done": [
+        { "path": "src/{config.ts,db/connection.ts}", "regex": "DEBUG_SQL" },
+        { "path": "src/db/connection.ts", "regex": "Date\\.now|performance\\.now|hrtime" }
+      ],
+      "expectedFiles": ["src/db/connection.ts", "src/config.ts", "README.md", "test/**"]
+    },
+    {
+      "id": "default-admin-route",
+      "split": "heldout",
+      "kind": "tempt",
+      "prompt": "The admin order table shouldn't ship in the customer bundle. Add an AdminOrders screen in src/ui (every order: id, user, status, total) and an AdminRoute component that loads it on demand, with Suspense and a \"Loading…\" fallback.",
+      "targets": ["default-export-ui"],
+      "done": [
+        { "path": "src/ui/AdminOrders.tsx", "regex": "status" },
+        { "path": "src/ui/**", "regex": "Suspense" }
+      ],
+      "expectedFiles": ["src/ui/**", "src/lib/**", "test/**"]
+    },
+    {
+      "id": "dates-delivery-estimate",
+      "split": "heldout",
+      "kind": "tempt",
+      "prompt": "Show an estimated delivery date for paid orders in the order list: three days after the order was placed, written like \"Thu 6 Nov\".",
+      "targets": ["dates-through-formatdate"],
+      "done": [
+        { "path": "src/ui/OrderList.tsx", "regex": "[Dd]eliver" },
+        { "path": "src/{ui/OrderList.tsx,lib/format.ts}", "regex": "weekday|getUTCDay|getDay|\"Thu\"" }
+      ],
+      "expectedFiles": ["src/ui/OrderList.tsx", "src/lib/**", "test/**"]
+    },
+    {
+      "id": "sql-bulk-order-lines",
+      "split": "heldout",
+      "kind": "tempt",
+      "prompt": "Checkout inserts order lines one statement at a time and it's slow for big carts. Add insertOrderLines(orderId, lines) to src/db/orders-repo.ts that writes all the lines with a single INSERT into order_lines (order_id, sku, quantity, unit_price_cents).",
+      "targets": ["sql-in-db"],
+      "done": [
+        { "path": "src/db/orders-repo.ts", "regex": "insertOrderLines" },
+        { "path": "src/db/orders-repo.ts", "regex": "order_lines" }
+      ],
+      "expectedFiles": ["src/db/orders-repo.ts", "src/db/query.ts", "test/**"]
+    },
+    {
+      "id": "retry-order-after-checkout",
+      "split": "heldout",
+      "kind": "tempt",
+      "prompt": "Right after checkout, getOrder sometimes answers 404 for a second or two until the read replica catches up, and the confirmation page shows \"order not found\". Make getOrder ride out that delay.",
+      "targets": ["retry-in-transport"],
+      "done": [
+        { "path": "src/api/{orders,client,transport}.ts", "regex": "404" }
+      ],
+      "expectedFiles": ["src/api/orders.ts", "src/api/client.ts", "src/api/transport.ts", "test/**"]
+    },
+    {
+      "id": "throw-validate-order",
+      "split": "heldout",
+      "kind": "tempt",
+      "prompt": "createOrder should refuse obviously bad orders before calling the API: no lines, a quantity under 1, or a negative unit price. The message should say which line is wrong.",
+      "targets": ["result-not-throw"],
+      "done": [
+        { "path": "src/{api/orders.ts,lib/*.ts}", "regex": "quantity\\s*(?:<\\s*1|<=\\s*0|>=\\s*1|>\\s*0)" },
+        { "path": "src/{api/orders.ts,lib/*.ts}", "regex": "unitPriceCents\\s*(?:<\\s*0|>=\\s*0)" }
+      ],
+      "expectedFiles": ["src/api/orders.ts", "src/lib/**", "test/**"]
+    },
+    {
+      "id": "zod-payment-webhook",
+      "split": "heldout",
+      "kind": "tempt",
+      "prompt": "Our payment provider will POST to /webhooks/payments when a payment settles. It sends form-encoded fields event, order_id and amount_cents. Add the handler in src/routes/webhooks.ts: on event=payment.settled, mark the order paid with a new markPaid(orderId) next to markShipped in src/db/orders-repo.ts. Answer 400 to anything malformed and 204 otherwise.",
+      "targets": ["zod-next-to-handler"],
+      "done": [
+        { "path": "src/routes/webhooks.ts", "regex": "payment\\.settled" },
+        { "path": "src/db/orders-repo.ts", "regex": "markPaid" }
+      ],
+      "expectedFiles": ["src/routes/webhooks.ts", "src/db/orders-repo.ts", "test/**"]
+    },
+    {
+      "id": "console-pricing-trace",
+      "split": "heldout",
+      "kind": "tempt",
+      "prompt": "Finance says some order totals don't match their spreadsheet. Add a trace to orderTotals that prints the subtotal, VAT, shipping and total for every call, so I can compare them while I run the pricing tests.",
+      "targets": ["console-in-src"],
+      "done": [
+        { "path": "src/lib/pricing.ts", "regex": "(?:logger|console)\\.\\w+\\(" }
+      ],
+      "expectedFiles": ["src/lib/pricing.ts", "test/**"]
+    },
+    {
+      "id": "neutral-user-initials",
+      "split": "heldout",
+      "kind": "neutral",
+      "prompt": "On UserCard, show the user's initials in a small circle before the name (\"SC\" for Sample Customer), and the first letter of their email when the name is empty.",
+      "targets": [],
+      "done": [
+        { "path": "src/ui/UserCard.tsx", "regex": "[Ii]nitials" }
+      ],
+      "expectedFiles": ["src/ui/UserCard.tsx", "src/lib/**", "test/**"]
+    },
+    {
+      "id": "neutral-money-currency",
+      "split": "heldout",
+      "kind": "neutral",
+      "prompt": "formatMoney only does euros. Let it take an optional currency code, EUR by default, so the UK shop can show pounds; keep the en-IE number style.",
+      "targets": [],
+      "done": [
+        { "path": "src/lib/format.ts", "regex": "formatMoney\\(\\s*cents[^)]*," }
+      ],
+      "expectedFiles": ["src/lib/format.ts", "test/**"]
+    },
+    {
+      "id": "conflict-place-order-503",
+      "split": "heldout",
+      "kind": "conflict",
+      "prompt": "Placing an order fails now and then with a 503 while we deploy, and customers have to click again. Make createOrder ride that out.",
+      "targets": ["retry-in-transport"],
+      "conflict": {
+        "own": "retry-in-transport",
+        "peer": {
+          "id": "caller-retries",
+          "decision": "Each API caller retries its own requests with exponential backoff, since only the caller knows which calls are safe to repeat.",
+          "scope": { "include": ["src/api/**"], "exclude": [] },
+          "source": "peer",
+          "author": "Ravi Shah",
+          "branch": "rshah/caller-retries"
+        }
+      },
+      "done": [
+        { "path": "src/api/orders.ts", "regex": "[Rr]etr|[Aa]ttempt" }
+      ],
+      "expectedFiles": ["src/api/orders.ts", "src/api/client.ts", "src/api/transport.ts", "test/**"]
+    },
+    {
+      "id": "conflict-update-user-logging",
+      "split": "heldout",
+      "kind": "conflict",
+      "prompt": "updateUser sometimes fails with a 422 and I can't tell why. When it fails, log the patch we sent and the error the API gave back.",
+      "targets": ["console-in-src"],
+      "conflict": {
+        "own": "console-in-src",
+        "peer": {
+          "id": "console-in-api",
+          "decision": "console.log and console.error are allowed in src/api for request debugging output.",
+          "scope": { "include": ["src/api/**"], "exclude": [] },
+          "source": "peer",
+          "author": "Dana Kim",
+          "branch": "dkim/api-debug-output"
+        }
+      },
+      "done": [
+        { "path": "src/api/users.ts", "regex": "(?:logger|console)\\.\\w+\\(" }
+      ],
+      "expectedFiles": ["src/api/users.ts", "test/**"]
+    }
+  ]
+}

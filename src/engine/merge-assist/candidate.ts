@@ -10,6 +10,7 @@ import { z } from "zod";
 import { globPattern } from "../glob-pattern.js";
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { stableJsonText } from "../stable-json.js";
+import { MAX_SIGNALS, signalSchema } from "./signals.js";
 
 export const CANDIDATE_FORMAT = "rerail.candidate/v1";
 /** Where candidates live, relative to the top of a working tree or Git tree. */
@@ -97,6 +98,8 @@ export const candidateSchema = z.object({
   createdAt: z.iso.datetime(),
   state: z.enum(CANDIDATE_STATES),
   rule: codeRuleSchema.optional(),
+  /** Code fragments whose presence in new code means the decision is at stake. */
+  signals: z.array(signalSchema).max(MAX_SIGNALS, `a candidate has at most ${MAX_SIGNALS} signals`).optional(),
   supersedes: candidateIdSchema.nullable(),
 }).strict().superRefine((candidate, context) => {
   const rule = candidate.rule as CodeRule | undefined;

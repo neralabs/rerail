@@ -23,6 +23,51 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   1,000 generated scopes over 10,000 paths, with no model. It prints each metric against its pre-registered threshold
   (per-case rows with `--verbose`). Capture, transfer and compare spend the person's model budget on every judge call;
   results are never committed.
+- `merge-assist-context.ts` (`node --import tsx benchmark/merge-assist-context.ts --build-index out.json
+  [--distractors N]`, then `--index index.json --variants none,guard-signals,... --split dev|heldout|all
+  [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--no-control] [--json out.json] [--keep]
+  [--verbose] [--model m] [-c key=value]`, `--sweep control.json`, `--list-variants`, `--validate-oracles`) asks
+  whether injecting teammates' decisions into
+  a real Codex loop, when it touches files they cover, makes its code follow them, and which protocol does so with the
+  least chatter. The dataset, `fixtures/host/benchmark/merge-assist/context.json`, reuses cases.json's project and
+  names its ten lasting decisions (team or peer, with the hand-written text and scope the oracles grade through), the
+  distractor pool and 26 tasks: per split (`dev` for tuning, `heldout` to confirm), nine that tempt one decision each,
+  two neutral ones and two where this branch's decision contradicts a teammate's. Nothing hand-written about a real
+  decision reaches the agent: `--build-index` runs the product's `draftDecision` with the person's agent CLI judge on
+  each decision's capture case (correction, before and after) and keeps the decision text, scope and validated signals
+  it produces, leaving out any the judge calls one-off or does not answer; distractors and the conflict tasks'
+  teammate decisions get their signals from `deriveSignals`. The index stores each entry's provenance, every judge
+  prompt and each decision's embedding (the bundled model), and is never rebuilt over an existing file. Every run reads
+  it through `--index`, after an integrity check that refuses an entry with a field the product does not produce or
+  an oracle's regex in it, and reports the oracles' code text the product's own output holds. Each run gets a
+  temporary repository and `CODEX_HOME` (`auth.json` a symlink to `~/.codex/auth.json`, an empty `config.toml`, and
+  `hooks.json` running `merge-assist-context-hook.ts` on PreToolUse and PostToolUse), then `codex exec --json
+  --dangerously-bypass-hook-trust --sandbox workspace-write` for at most six minutes. The hook injects the variant's
+  decisions as `additionalContext`; variants are presets in the script (`--list-variants`), `none` the control
+  (`--no-control` skips it, for smoke runs). `--distractors N` adds N of the index's distractors to every run (the
+  same ones, in the same places, every run), as noise a protocol has to filter. The `guard-*` presets orient on
+  conflict pairs at a file's first touch and guard each patch: `signals` fires a decision in scope whose signals the
+  added lines contain, `embed` one whose embedding is at least `EMBED_THRESHOLD` similar to a 30-line block of them,
+  `both` either, at most three per patch. At every patch, the control included, the hook logs each scope-matching
+  decision's signal hits and similarity and the lines added; `--sweep control.json` labels a dev control run's patches
+  with their task's oracle and prints recall and fires per clean patch per source and threshold, the threshold to
+  freeze in `EMBED_THRESHOLD` (the embed presets refuse to run until it is). `upfront-final` is `upfront-all` with a
+  conflict's exact line to end the final message with. `area-orient` injects, on the first touch of an area (a file's
+  folder cut to two segments: `src/ui`, `src`), every undelivered decision whose scope covers the file or any project
+  file in that area, one terse line each, conflict pairs first, at most 12 per injection (an area the cap left out
+  keeps its turn); `area-guard` adds the signals guard for what orientation did not deliver. `--replay run.json`
+  re-chooses a report's injections from its logs. Deterministic oracles grade `git diff main`, and every oracle is
+  first checked against the labelled files in cases.json (`--validate-oracles` alone needs no model). It prints, per
+  variant: the tempt-task violation rate with a Wilson interval and its reduction against the control, the guardrails
+  (done rate, injected tokens, neutral overreach and violations, chatter to the person, conflict handling), the
+  delivery funnel, cost deltas (with the total: Δ input plus Δ output tokens against the control, what the run
+  actually consumed) and the hill-climbing score (per-run rows with `--verbose`). Every run spends the person's Codex
+  budget.
+- `merge-assist-guard.ts` (`node --import tsx benchmark/merge-assist-guard.ts --index index.json [--thresholds ...]
+  [--hook-calls N]`) scores the guard offline, with no agent: each labelled teammate file and project file as a
+  patch, it prints per real decision and source the recall on its caught files, fires on its passed files and cross
+  noise, distractor fires per patch, an embedding threshold sweep on these forms (reported, never frozen from here),
+  the hook's model load and embedding time per call, and fails when a teammate file line reached the judge.
 
 The workloads are host test data under `fixtures/host/benchmark/<kind>/`. Benchmark results are never committed. Keep
 them out of the repository, and put headline numbers in prose (with corpus commits and tool versions) where a change
