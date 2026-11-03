@@ -303,5 +303,40 @@ pub(in crate::code_rule_dsl) fn lower(
     Ok(Lowered { program: out, domains, ops, dialect })
 }
 
+impl Lowered {
+    /// `nearest($n, $a, set)` read from the transducer's file-local FIX (O12, option a): each literal becomes
+    /// the input atom `nearest_<set>($n, $a)`, which the run binds beside the base relations
+    /// (`facts::vtab::syntax::with_nearest`). The sets the run must make, each with its kind atoms.
+    pub(in crate::code_rule_dsl) fn transduce_nearest(&mut self) -> Vec<(String, Vec<i64>)> {
+        let prog = &mut self.program;
+        let mut used = std::collections::BTreeSet::new();
+        for rule in &mut prog.rules {
+            for literal in &mut rule.body {
+                if let Literal::Nearest { n, a, kindset } = literal {
+                    used.insert(kindset.clone());
+                    *literal = Literal::Atom(Atom {
+                        rel: format!("nearest_{kindset}"),
+                        args: vec![Term::Var(n.clone()), Term::Var(a.clone())],
+                        neg: false,
+                        gated: false,
+                    });
+                }
+            }
+        }
+        let mut sets = Vec::new();
+        for set in used {
+            let rel = format!("nearest_{set}");
+            prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+            if !prog.inputs.contains(&rel) {
+                prog.inputs.push(rel.clone());
+            }
+            self.domains.insert(rel, vec![Domain::Node, Domain::Node]);
+            let kinds = prog.kindsets.get(&set).into_iter().flatten().filter_map(|k| k.parse::<i64>().ok()).collect();
+            sets.push((set, kinds));
+        }
+        sets
+    }
+}
+
 #[cfg(test)]
 mod tests;

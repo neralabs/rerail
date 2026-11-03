@@ -17,7 +17,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O9 | Phase 2 | Kind histograms are digests only; their rows are not stored | open (Phase 3) |
 | O10 | Phase 2 | Core facts of a non-UTF-8 blob, an unknown language or a parse stopped at a limit are `ABSENT` | open |
 | O11 | Phase 6 | §12's "unbounded value cycle" has no definition of a bound; T's programs recurse through `@cat` | **closed** (2026-11-03): option (b), `logic::front::cycles` |
-| O12 | Phase 6 | `nearest` has no executor after the native tape functions were dropped; Phase 6's check needs one | open, **decision needed** |
+| O12 | Phase 6 | `nearest` has no executor after the native tape functions were dropped; Phase 6's check needs one | **closed** (2026-11-03): option (a), `typing::file_local` |
 | O13 | Phase 6 | Symbols as atoms in the planner's SQL | SQL side done (decision 0009); native strata open |
 | O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | closed (2026-10-30): `logic::plan::emit`; independent strata share waves; plans from the boundary's counts |
 | O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | copy placed (2026-10-29): S's oracle runs as copied on P's anchor engine (`findings::tests::s_native_oracle`, `matcher::p_anchors`); open only: which comparison survives (O19) |
@@ -299,6 +299,23 @@ check run before Phase 4 f and Phase 9. Closure: the decision, then the Phase 6 
 Note (2026-10-27): `logic::plan` ports T's SQL lowering of `nearest` too, a recursive CTE over a
 `tape(n, par, size)` input relation, so T's programs run end to end over T's facts (row 5 step 1's
 goldens). That is (b) in SQL, over a per-run copy of the tree, and not the target shape.
+
+**Closed (2026-11-03): option (a), decided by the user** ("implement the part of step 29 you need to
+make it a transducer program"). `typing::file_local::nearest` is the first file-local stratum:
+- **One flat-lattice system per chunk**, a cell per (set, node): a node whose parent's kind is in the
+  set is seeded with its parent, any other copies its parent's cell. The transducer's file-local FIX
+  solves it (list step 17, `metal_lattice` on the device work queue: one launch for all of a
+  program's sets); the CPU solves the same system as the reference.
+- **The strata read it as an input**: `Lowered::transduce_nearest` rewrites each `nearest($n, $a, set)`
+  into `nearest_<set>($n, $a)`, and `facts::vtab::syntax::with_nearest` binds those relations beside
+  the base relations of the same batch (looked up by `n` and by `a`), with their statistics made at
+  bind time (`syntax::statistics`).
+- **T's programs derive T's outputs** that way on both bindings
+  (`t_programs_with_the_transducers_nearest_derive_t_outputs`); the device's values equal the CPU's
+  and a parent climb's (`typing::file_local::tests`).
+- Kept, not the target: T's SQL lowering (the recursive CTE over `tape`) and its native climb, which
+  `t_programs_over_atoms_plan_and_run_like_t` still uses to reproduce T's plans line for line. Open
+  for list step 29: the wave path binding `nearest_<set>` per chunk, and the other file-local strata.
 
 ## O13. Symbols as atoms in the planner's SQL
 

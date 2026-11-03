@@ -519,6 +519,117 @@ pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreRe
     Ok(out)
 }
 
+impl Batch {
+    /// The batch's trees for the file-local FIX: per node row, its parent's row (or `file_local::NONE`)
+    /// and its kind atom, as `node.kind` reads it.
+    fn trees(&self) -> (Vec<u32>, Vec<i64>) {
+        let n = *self.nodes.last().unwrap_or(&0);
+        let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for (doc, p) in self.docs.iter().enumerate() {
+            for local in 0..p.len() as usize {
+                let up = p.parent[local];
+                parent.push(if up == NONE { crate::code_rule_dsl::typing::file_local::NONE } else { (self.nodes[doc] + up as usize) as u32 });
+                let code = (p.facts.kind[p.core[local] as usize] % KIND_STRIDE) as usize;
+                kind.push(i64::from(kind_atom(p.tag, self.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16))));
+            }
+        }
+        (parent, kind)
+    }
+    /// The node id of row `row` of the node view.
+    fn id(&self, row: usize) -> i64 {
+        let (p, local) = self.locate(View::Node, row);
+        p.global(local as u32)
+    }
+}
+
+/// `nearest_<set>(n, a)`: `a` is `n`'s nearest strict ancestor of a kind in the set, a row per node that has
+/// one, by `n` and by `a`. Made by the transducer's file-local FIX (`typing::file_local::nearest`).
+struct Nearest {
+    /// `(n, a)`, ascending by `n`.
+    rows: Vec<(i64, i64)>,
+    /// The rows ascending by `a`.
+    by_ancestor: Vec<usize>,
+}
+
+impl Source for Nearest {
+    fn columns(&self) -> Vec<String> {
+        vec!["n".to_owned(), "a".to_owned()]
+    }
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        let per = if column == 0 { 1 } else { 16 };
+        if batch { per * 8 } else { per }
+    }
+    fn indexed(&self, column: usize) -> bool {
+        column < 2
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        let mut out = Vec::new();
+        for &v in values {
+            if column == 0 {
+                out.extend(self.rows.binary_search_by_key(&v, |r| r.0).ok());
+            } else {
+                let start = self.by_ancestor.partition_point(|&r| self.rows[r].1 < v);
+                out.extend(self.by_ancestor[start..].iter().take_while(|&&r| self.rows[r].1 == v));
+            }
+        }
+        Some(out)
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        if column == 0 { self.rows[row].0 } else { self.rows[row].1 }
+    }
+}
+
+/// T's base relations over `documents` (`sources`), and `nearest_<set>(n, a)` for each of `sets` (a name
+/// and its kind atoms), made by the transducer's file-local FIX bound as `binding`.
+pub(crate) fn with_nearest(
+    store: &ContentStore,
+    documents: Vec<Document>,
+    sets: &[(String, Vec<i64>)],
+    binding: crate::code_rule_dsl::typing::file_local::Binding,
+) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+    use crate::code_rule_dsl::typing::file_local;
+    let (batch, relations) = Batch::build(store, documents)?;
+    let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
+    for (name, view) in [("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape)] {
+        out.push((name.to_owned(), Arc::new(Viewed { batch: Arc::clone(&batch), view })));
+    }
+    let (parent, kind) = batch.trees();
+    let kinds: Vec<Vec<i64>> = sets.iter().map(|(_, kinds)| kinds.clone()).collect();
+    let found = file_local::nearest(&file_local::Trees { parent: &parent, kind: &kind }, &kinds, binding)?;
+    for ((name, _), ancestors) in sets.iter().zip(found) {
+        let rows: Vec<(i64, i64)> = ancestors.iter().enumerate().filter(|(_, a)| **a != file_local::NONE).map(|(row, &a)| (batch.id(row), batch.id(a as usize))).collect();
+        let mut by_ancestor: Vec<usize> = (0..rows.len()).collect();
+        by_ancestor.sort_by_key(|&r| (rows[r].1, rows[r].0));
+        out.push((format!("nearest_{name}"), Arc::new(Nearest { rows, by_ancestor })));
+    }
+    Ok(out)
+}
+
+/// The planner's statistics of `source` (`stat_col`'s rows, ndv, sq and sqd per column, `sqd` by
+/// document `d = id >> 32`), for a relation made at bind time rather than at ingestion.
+pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
+    let rows = source.len();
+    source
+        .columns()
+        .into_iter()
+        .enumerate()
+        .map(|(c, name)| {
+            let mut postings: HashMap<i64, i64> = HashMap::new();
+            let mut by_doc: HashMap<(i64, i64), i64> = HashMap::new();
+            for row in 0..rows {
+                let v = source.value(row, c);
+                *postings.entry(v).or_default() += 1;
+                *by_doc.entry((source.value(row, 0) >> 32, v)).or_default() += 1;
+            }
+            let square = |m: &dyn Fn() -> Vec<i64>| m().iter().map(|n| n * n).sum::<i64>();
+            (name, rows as i64, postings.len() as i64, square(&|| postings.values().copied().collect()), square(&|| by_doc.values().copied().collect()))
+        })
+        .collect()
+}
+
 /// Fails if a document's facts are not those its `#core:` name binds now (§4).
 pub(crate) fn fresh(graph: &(impl Graph + ?Sized), documents: &[Document]) -> StoreResult<()> {
     for d in documents {

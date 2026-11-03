@@ -189,6 +189,41 @@ fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore, fi
     }
 }
 
+/// `got`'s outputs, node ids as T's (`first`: each document's first node in T's facts), against T's goldens.
+fn outputs_match(name: &str, got: &Outcome, first: &HashMap<i64, i64>, failures: &mut Vec<String>) {
+    let golden = root().join(format!("plan/golden/{name}"));
+    assert!(!got.outputs.is_empty() && got.outputs.values().any(|r| !r.is_empty()), "{name}");
+    for (rel, rows) in &got.outputs {
+        let nodes = &got.nodes[rel];
+        let mut rows: Vec<String> = rows
+            .iter()
+            .map(|row| {
+                row.split('\t')
+                    .enumerate()
+                    .map(|(i, v)| match v.parse::<i64>() {
+                        Ok(v) if nodes.contains(&i) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
+                        _ => v.to_owned(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
+            .collect();
+        rows.sort();
+        let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
+        let expected: Vec<&str> = expected.lines().collect();
+        if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
+            let i = (0..rows.len().max(expected.len())).find(|&i| rows.get(i).map(String::as_str) != expected.get(i).copied());
+            failures.push(format!(
+                "{name} {rel}: {} rows, expected {}; first difference {:?} vs {:?}",
+                rows.len(),
+                expected.len(),
+                i.and_then(|i| rows.get(i)),
+                i.and_then(|i| expected.get(i))
+            ));
+        }
+    }
+}
+
 /// O13: lowered to atoms and run over the base-relation vtabs of the same files (`facts::vtab::syntax`), T's programs
 /// get T's plans and, decoded, T's outputs.
 #[test]
@@ -233,36 +268,7 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
         if let Some(i) = (0..lines.len().max(expected.len())).find(|&i| lines.get(i).map(String::as_str) != expected.get(i).copied()) {
             failures.push(format!("{name} plan {i}:\n  got      {:?}\n  expected {:?}", lines.get(i), expected.get(i)));
         }
-        assert!(!got.outputs.is_empty() && got.outputs.values().any(|r| !r.is_empty()), "{name}");
-        for (rel, rows) in &got.outputs {
-            let nodes = &got.nodes[rel];
-            let mut rows: Vec<String> = rows
-                .iter()
-                .map(|row| {
-                    row.split('\t')
-                        .enumerate()
-                        .map(|(i, v)| match v.parse::<i64>() {
-                            Ok(v) if nodes.contains(&i) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
-                            _ => v.to_owned(),
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\t")
-                })
-                .collect();
-            rows.sort();
-            let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
-            let expected: Vec<&str> = expected.lines().collect();
-            if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
-                let i = (0..rows.len().max(expected.len())).find(|&i| rows.get(i).map(String::as_str) != expected.get(i).copied());
-                failures.push(format!(
-                    "{name} {rel}: {} rows, expected {}; first difference {:?} vs {:?}",
-                    rows.len(),
-                    expected.len(),
-                    i.and_then(|i| rows.get(i)),
-                    i.and_then(|i| expected.get(i))
-                ));
-            }
-        }
+        outputs_match(name, &got, &first, &mut failures);
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -338,6 +344,51 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
             }
             first.get_or_insert(sql);
             counts = Some(outcome.rows);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// O12 (option a): `nearest` made by the transducer's file-local FIX (`typing::file_local`) and read as the input
+/// `nearest_<set>(n, a)`, on the CPU and on the device work queue: T's programs derive T's outputs.
+#[test]
+fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
+    use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let t = Connection::open_in_memory().unwrap();
+    let dump = zstd::decode_all(std::fs::File::open(root().join("plan/golden/facts.sql.zst")).unwrap()).unwrap();
+    t.execute_batch(std::str::from_utf8(&dump).unwrap()).unwrap();
+    let first: HashMap<i64, i64> =
+        t.prepare("SELECT d, min(n) FROM node GROUP BY d").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect();
+    let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+    let mut failures = Vec::new();
+    for binding in [Binding::Cpu, Binding::Metal] {
+        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let db = Connection::open(&path).unwrap();
+        let modules = Modules::default();
+        atomized_statistics(&t, &db, &store, &first);
+        for name in ["workload", "workload_demand", "calls"] {
+            let p = program(name);
+            let mut lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+            let sets = lowered.transduce_nearest();
+            assert!(!sets.is_empty(), "{name} reads nearest");
+            assert!(!lowered.program.rules.iter().flat_map(|r| &r.body).any(|l| matches!(l, Literal::Nearest { .. })));
+            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, binding).unwrap() {
+                if rel.starts_with("nearest_") {
+                    db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
+                    for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
+                        db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd]).unwrap();
+                    }
+                }
+                modules.bind(&db, &rel, source).unwrap();
+            }
+            let got = run_atoms(&lowered, &db, "s").unwrap_or_else(|e| panic!("{binding:?} {name}: {e}"));
+            let before = failures.len();
+            outputs_match(name, &got, &first, &mut failures);
+            for failure in &mut failures[before..] {
+                *failure = format!("{binding:?} {failure}");
+            }
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
