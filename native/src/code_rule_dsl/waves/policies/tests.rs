@@ -45,7 +45,13 @@ fn the_python_pack_runs_as_its_logic_program() {
     assert_eq!(lowered.clauses.len(), lowered.shapes.len());
     let forbids = lowered.program.rules.iter().filter(|rule| rule.body.iter().any(|l| matches!(l, Literal::Ast { .. }))).count();
     assert!(forbids >= lowered.clauses.len(), "{forbids} forbid rules, {} lowered", lowered.clauses.len());
-    assert_eq!(lowered.logic.rules.matches(":- match(").count(), lowered.clauses.len(), "one rule per lowered atom");
+    // Rules of one shape are one rule over its table: each lowered atom is a row, or a rule kept as written.
+    let wave = front::parse(&lowered.logic.rules).unwrap();
+    let rows: usize = wave.facts.iter().filter(|(rel, _)| rel.starts_with("violation_shape_")).map(|(_, rows)| rows.len()).sum();
+    let kept = wave.rules.iter().filter(|rule| !rule.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.starts_with("violation_shape_")))).count();
+    assert!(rows > 0, "the pack's forbid rules share a shape");
+    assert_eq!(rows + kept, lowered.clauses.len(), "each lowered atom once");
+    assert!(wave.rules.len() < lowered.clauses.len() / 4, "{} rules for {} atoms", wave.rules.len(), lowered.clauses.len());
     // YAML rules demand every clause on every document of the chunk.
     let demand = lowered.logic.demand.as_ref().expect("a demand program");
     assert_eq!(demand.rules.iter().filter(|rule| rule.head.rel.starts_with("magic_ast_")).count(), lowered.clauses.len());
@@ -80,4 +86,30 @@ fn magic_sets_demand_each_clause_where_its_rules_read_it() {
     let mut rows = db.prepare(&sql).unwrap().query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
     rows.sort();
     assert_eq!(rows, [(0, 5), (0, 7), (1, 7), (2, 5), (2, 7)]);
+}
+
+/// Rules equal once their variables are renamed and their constants taken out are one rule over a table of
+/// their constants; a rule of its own shape is kept as written.
+#[test]
+fn rules_of_one_shape_are_one_rule_over_their_constants() {
+    let src = r#"
+        .decl violation(policy: sym, clause: sym, d: int, n: int)
+        violation("p", "a", $D, $N) :- match(0, $D, $N).
+        violation("q", "b", $X, $Y) :- match(1, $X, $Y).
+        violation("p", "c", $D, $N) :- match(2, $D, $N), $D = 7.
+    "#;
+    let prog = merged(front::parse(src).unwrap());
+    assert_eq!(prog.rules.len(), 2, "{:?}", prog.rules.iter().map(ToString::to_string).collect::<Vec<_>>());
+    assert_eq!(prog.rules[0].to_string(), "violation($K0, $K1, $V0, $V1) :- violation_shape_0($K0, $K1, $K2), match($K2, $V0, $V1)");
+    assert_eq!(prog.rules[1].to_string(), r#"violation("p", "c", $D, $N) :- match(2, $D, $N), $D = 7"#);
+    let rows = &prog.facts["violation_shape_0"];
+    assert_eq!(rows, &vec![
+        vec![Value::Str("p".into()), Value::Str("a".into()), Value::Int(0)],
+        vec![Value::Str("q".into()), Value::Str("b".into()), Value::Int(1)],
+    ]);
+    assert_eq!(prog.decls["violation_shape_0"].iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(), ["sym", "sym", "int"]);
+    // The wave's text parses back to the same program.
+    let back = front::parse(&wave_text(&prog)).unwrap();
+    assert_eq!(back.rules, prog.rules);
+    assert_eq!(back.facts, prog.facts);
 }

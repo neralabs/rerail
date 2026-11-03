@@ -18,7 +18,9 @@
 //!   table and reloads the planner's copy.
 //!
 //! Compiled programs also live in memory, in the bounded cache copied from Data-layer-rule-
-//! expressivity (`cache.rs`), keyed the same way; the store is their durable copy.
+//! expressivity (`cache.rs`), keyed the same way and by the store they were read from or written
+//! to: the store is their durable copy, so a plan another store holds is read from this one or
+//! compiled into it, never answered from memory alone.
 
 use super::cache::Cache;
 use rusqlite::{Connection, OptionalExtension, Result, params};
@@ -53,6 +55,13 @@ pub(in crate::code_rule_dsl) struct Compiled {
     pub program: Vec<u8>,
 }
 
+/// A plan in memory: the store's file (its main database) and the plan.
+type Key = (String, PlanId);
+
+fn key(db: &Connection, plan: &PlanId) -> Key {
+    (db.path().unwrap_or_default().to_owned(), *plan)
+}
+
 struct Held {
     compiled: Arc<Compiled>,
     bounds: Vec<(String, u64, u64)>,
@@ -64,7 +73,7 @@ fn holds(bounds: &[(String, u64, u64)], current: &BTreeMap<String, u64>) -> bool
 
 /// Compiled plans, in memory and in the store.
 pub(in crate::code_rule_dsl) struct Plans {
-    memory: Cache<PlanId, Held>,
+    memory: Cache<Key, Held>,
 }
 
 impl Default for Plans {
@@ -85,7 +94,7 @@ impl Plans {
         let mut valid = BTreeMap::new();
         let mut missing = Vec::new();
         for plan in plans {
-            match self.memory.get(plan) {
+            match self.memory.get(&key(db, plan)) {
                 Some(entry) if holds(&entry.bounds, current) => {
                     valid.insert(*plan, Arc::clone(&entry.compiled));
                 }
@@ -122,7 +131,7 @@ impl Plans {
                 valid.insert(plan, Arc::clone(&entry.compiled));
             }
             let bytes = entry.compiled.program.len() + entry.compiled.decisions.len();
-            self.memory.insert(plan, entry, bytes);
+            self.memory.insert(key(db, &plan), entry, bytes);
         }
         Ok(valid)
     }
@@ -150,7 +159,7 @@ impl Plans {
         }
         let bytes = compiled.program.len() + compiled.decisions.len();
         let compiled = Arc::new(compiled);
-        self.memory.insert(plan, Held { compiled: Arc::clone(&compiled), bounds }, bytes);
+        self.memory.insert(key(db, &plan), Held { compiled: Arc::clone(&compiled), bounds }, bytes);
         Ok(compiled)
     }
 }

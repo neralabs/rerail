@@ -21,12 +21,20 @@
 //! `demanded(i, d)`. Before each chunk's batch is registered, that statement is run, and a clause's root
 //! programs start only on the documents it names (`Wave::demand`). A demand program that needs recursion or
 //! setup is not planned: every clause is demanded on every document, counted as `wave.demand.all`.
+//!
+//! **Rules of one shape are one rule (`merged`).** A pack's forbid rules differ mostly in their constants:
+//! `violation("p", "c", $D, $N) :- match(3, $D, $N)` and the next clause's. Each rule's constants in its head
+//! and positive atoms become variables, read from a constant table of the shape, so the rules that are equal
+//! once their variables are renamed in order are one rule
+//! `violation($K0, $K1, $V0, $V1) :- violation_shape_0($K0, $K1, $K2), match($K2, $V0, $V1)` and one row
+//! each. The wave plans one statement per shape and one for the table, not one per rule (about 1,300 per
+//! chunk on the data-layer pack before). A shape of one rule is kept as written.
 
 use super::findings::Shape;
 use super::matches::Clause;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Program, Rule, Term, yaml};
+use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Program, Rule, Term, Value, yaml};
 use crate::code_rule_dsl::logic::magic;
 use crate::code_rule_dsl::logic::plan::emit;
 use crate::code_rule_dsl::matcher::match_tree;
@@ -69,7 +77,7 @@ impl Logic {
             prog.rules.push(Rule { head, body: vec![matched(i, "D", "N")] });
         }
         declare_violation(&mut prog);
-        Self { rules: wave_text(&prog), demand: None }
+        Self { rules: wave_text(&merged(prog)), demand: None }
     }
 
     /// The demand statement on `store` (its atoms interned there): a SELECT of `(i, d)` rows over
@@ -133,7 +141,115 @@ fn wave_text(prog: &Program) -> String {
     for rule in &prog.rules {
         out += &format!("{rule}.\n");
     }
+    for (rel, rows) in &prog.facts {
+        for row in rows {
+            let values = row.iter().map(|v| match v {
+                Value::Int(i) => Term::Int(*i),
+                Value::Str(s) => Term::Str(s.clone()),
+            });
+            out += &format!("{rel}({}).\n", front::join(&values.collect::<Vec<_>>()));
+        }
+    }
     out
+}
+
+/// A rule with its variables renamed `V0, V1, …` in order of appearance, and its constants in the head and in
+/// positive atoms replaced by `K0, K1, …`: the rule's shape, and the constants it was written with.
+fn shape(rule: &Rule) -> (Rule, Vec<Value>) {
+    let mut names = HashMap::<String, String>::new();
+    let mut rename = |v: &mut String| {
+        let next = names.len();
+        *v = names.entry(v.clone()).or_insert_with(|| format!("V{next}")).clone();
+    };
+    fn term(t: &mut Term, rename: &mut dyn FnMut(&mut String)) {
+        match t {
+            Term::Var(v) => rename(v),
+            Term::Call(_, args) => args.iter_mut().for_each(|a| term(a, rename)),
+            _ => {}
+        }
+    }
+    let mut constants = Vec::new();
+    let abstracted = |args: &mut Vec<Term>, rename: &mut dyn FnMut(&mut String), constants: &mut Vec<Value>| {
+        for arg in args {
+            let value = match arg {
+                Term::Int(i) => Value::Int(*i),
+                Term::Str(s) => Value::Str(s.clone()),
+                other => {
+                    term(other, rename);
+                    continue;
+                }
+            };
+            *arg = Term::Var(format!("K{}", constants.len()));
+            constants.push(value);
+        }
+    };
+    let mut out = rule.clone();
+    abstracted(&mut out.head.args, &mut rename, &mut constants);
+    for literal in &mut out.body {
+        match literal {
+            Literal::Atom(a) if !a.neg && !a.gated => abstracted(&mut a.args, &mut rename, &mut constants),
+            Literal::Atom(a) => a.args.iter_mut().for_each(|t| term(t, &mut rename)),
+            Literal::Cmp { l, r, .. } => {
+                term(l, &mut rename);
+                term(r, &mut rename);
+            }
+            Literal::Agg { var, over, atom, .. } => {
+                atom.args.iter_mut().for_each(|t| term(t, &mut rename));
+                rename(var);
+                if let Some(over) = over {
+                    rename(over);
+                }
+            }
+            Literal::Nearest { n, a, .. } => {
+                rename(n);
+                rename(a);
+            }
+            Literal::Ast { document, node, .. } => {
+                rename(document);
+                rename(node);
+            }
+        }
+    }
+    (out, constants)
+}
+
+/// `prog`'s rules of one shape (`shape`) as one rule over the shape's constant table, `<head>_shape_<k>`,
+/// with a row per rule. A shape of one rule, or of none of its constants, is kept as written.
+fn merged(mut prog: Program) -> Program {
+    let kind = |v: &Value| if matches!(v, Value::Int(_)) { "int" } else { "sym" };
+    let mut groups: Vec<(Rule, Vec<Vec<Value>>, Vec<Rule>)> = Vec::new();
+    let mut by_key = HashMap::<String, usize>::new();
+    for rule in std::mem::take(&mut prog.rules) {
+        let (shaped, constants) = shape(&rule);
+        let key = format!("{shaped} / {}", constants.iter().map(kind).collect::<Vec<_>>().join(","));
+        let at = *by_key.entry(key).or_insert_with(|| {
+            groups.push((shaped, Vec::new(), Vec::new()));
+            groups.len() - 1
+        });
+        groups[at].1.push(constants);
+        groups[at].2.push(rule);
+    }
+    let mut tables = 0;
+    for (shaped, rows, rules) in groups {
+        if rules.len() < 2 || rows[0].is_empty() {
+            prog.rules.extend(rules);
+            continue;
+        }
+        let rel = loop {
+            let rel = format!("{}_shape_{tables}", shaped.head.rel);
+            tables += 1;
+            if !prog.decls.contains_key(&rel) {
+                break rel;
+            }
+        };
+        let columns = rows[0].iter().enumerate().map(|(j, v)| (format!("k{j}"), kind(v).to_owned())).collect();
+        prog.decls.insert(rel.clone(), columns);
+        let args = (0..rows[0].len()).map(|j| var(&format!("K{j}"))).collect();
+        prog.facts.insert(rel.clone(), rows);
+        let body = std::iter::once(atom(&rel, args)).chain(shaped.body).collect();
+        prog.rules.push(Rule { head: shaped.head, body });
+    }
+    prog
 }
 
 /// The lowered policies: the wave's clauses and their shapes (aligned), and the rules over them.
@@ -242,7 +358,7 @@ pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]
         return Err(invalid(format!("clause {}/{} lowers twice: its violations would not tell its matchers apart", key.0, key.1)));
     }
     let demand = demand_program(demand, &wave, clauses.len())?;
-    Ok(Lowered { clauses, shapes, logic: Logic { rules: wave_text(&wave), demand }, program })
+    Ok(Lowered { clauses, shapes, logic: Logic { rules: wave_text(&merged(wave)), demand }, program })
 }
 
 /// The demand program of `rules` (each reading `ast_i` atoms after `wave` seeds): `.demand` on every atom,

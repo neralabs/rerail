@@ -243,11 +243,13 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
     wave.route = route;
     let program = wave.program(&store).unwrap();
     // One step per output of the batch (`match`, `span`), neither reading the other: they share
-    // the first wave. Then each clause's forbid rule over `match` (list step 21).
-    let first = program.steps.iter().filter(|s| s.output != "violation").collect::<Vec<_>>();
+    // the first wave. Then the clauses' forbid rules over `match` (list step 21), of one shape: one rule
+    // over the shape's table, and the table's rows.
+    let first = program.steps.iter().filter(|s| !s.output.starts_with("violation")).collect::<Vec<_>>();
     assert_eq!(first.len(), 2, "{:?}", first.iter().map(|s| &s.sql).collect::<Vec<_>>());
     assert!(first.iter().all(|s| s.reads.iter().all(|r| !program.relations.iter().any(|(rel, _)| r.ends_with(rel.as_str())))));
-    assert_eq!(program.steps.len(), 2 + clauses.len());
+    assert!(clauses.len() > 1);
+    assert_eq!(program.steps.len(), 2 + 2, "{:?}", program.steps.iter().map(|s| &s.output).collect::<Vec<_>>());
     assert_eq!(program.strata(), 2);
     let backing = Backing::default();
     let scope = backing.enter(&store);
