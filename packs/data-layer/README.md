@@ -2,6 +2,7 @@
 
 This private pack contains sixty authored candidates from the pinned data-layer revision.
 All six batches pass their recorded source-detection gates; retained integration contracts remain documented.
+The [restart plan](../../docs/data-layer-port-restart.md) identifies batch seven and the remaining 82 checks.
 The policies are in `candidates/rules/` and are not activated by the pack manifest.
 
 Run the original tests with `scripts/dsl/data_layer_record.py`.

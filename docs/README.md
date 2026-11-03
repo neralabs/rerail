@@ -29,6 +29,7 @@
   historical performance evidence, and migration order
 - [data-layer-port-execution-plan.md](data-layer-port-execution-plan.md): upstream test recording, strict parity gates,
   native replay requirements, and the complete batch plan
+- [data-layer-port-restart.md](data-layer-port-restart.md): the recovered 60/142 inventory, batch-seven scope, engine alignment, and completion gates
 - [data-layer-batch-two.md](data-layer-batch-two.md): the next ten candidate ports, upstream and supplemental parity, and cumulative measurements
 - [data-layer-batch-three.md](data-layer-batch-three.md): the third ten ports, direct AST visitor recording, configuration parity, and cumulative measurements
 - [data-layer-batch-four.md](data-layer-batch-four.md): Completed SQL grammar candidates, Rust coverage, upstream ambiguities, and performance measurements

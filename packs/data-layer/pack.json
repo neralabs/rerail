@@ -3,7 +3,7 @@
   "id": "data-layer",
   "name": "Data-layer architecture rules",
   "category": "repository",
-  "covers": "Forty-eight nera-data-layer candidate checks at the pinned revision. Fifth-batch symbol-graph parity remains incomplete.",
+  "covers": "Sixty nera-data-layer candidate checks at the pinned revision. Recorded detection parity passed; activation and integration certification remain pending.",
   "reason": "Repository-specific candidate ports; activation waits for parity and integration checks.",
   "rules": []
 }

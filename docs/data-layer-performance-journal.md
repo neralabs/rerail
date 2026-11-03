@@ -5467,3 +5467,23 @@ Parser/source-graph ownership and additional memory attribution require their ow
 The 125.804-second first-50 target remains unmet.
 SC1–SC4 implementation and semantic checks are complete; resource acceptance stays explicitly open on RSS.
 No new Linear issues or production optimization flags were added.
+
+
+### Recover rule-port continuation after the performance work (2026-11-03)
+
+The [restart plan](data-layer-port-restart.md) and [machine-readable inventory](../fixtures/host/data-layer-port/restart-20261103.json) recover the complete original 142-check scope.
+A fresh read-only Git inventory confirms 60 candidate policies matching batches 1–6 exactly, with 82 unported checks in batches 7–15.
+The associated-test survey has no parse errors. Batch seven has ten associated modules and 168 test definitions before parameter expansion.
+These are survey results, not new oracle, native parity, or performance passes.
+
+The existing corpus recorder and repository recorder accept only batches 1–6.
+Batch-seven work must extend the real analyzer and test mappings, including `check_versioned_merged_identity.py`.
+The restart plan links each of its ten source requirements and keeps signing, reporters, and retained integration cases visible.
+Stale pack metadata claiming 48 candidates and incomplete fifth-batch parity is corrected; the activation list stays empty.
+
+Newer integrated and final-shape engine branches have changed policy semantics and execution contracts.
+The restart preserves this branch's source and evidence, identifies those successors, and requires an executable reduced-rule gate before targeting a newer engine.
+No automatic merge, rule regeneration, or sibling-worktree edit was performed.
+The frozen October addon no longer loads because its temporary allocator library is absent; the temporary Cargo target is also gone.
+Existing full-run receipts remain historical evidence, including the failed OS RSS gate.
+No new candidate or Linear issue was created during recovery.
