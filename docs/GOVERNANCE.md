@@ -51,12 +51,12 @@ When a maintainer cannot act on an issue without more from its reporter, a versi
 concerns, they ask for it in the issue and label it `needs-info`. From then on the issue is the reporter's turn, and
 [.github/workflows/stale.yml](../.github/workflows/stale.yml) keeps it from waiting for ever:
 
-- A comment from the reporter removes `needs-info`. The issue is the maintainers' turn again, and the
-  [response times](../CONTRIBUTING.md#response-times) apply from that comment.
+- A comment from the reporter swaps `needs-info` for `needs-triage`. The issue is back in the maintainers' queue, and
+  the [response times](../CONTRIBUTING.md#response-times) apply from that comment.
 - After 14 days with no activity, the bot asks once more and labels the issue `stale`. Any comment or edit removes
   `stale`.
 - 7 days after that, it closes the issue as not planned, saying how to get it reopened: comment there, or open a new
-  issue if the details have changed. A comment from the reporter reopens it, and it is the maintainers' turn again.
+  issue if the details have changed. A comment from the reporter reopens it and puts it back in `needs-triage`.
 
 Nothing else is closed for age. An issue a maintainer has confirmed (`bug`, `rule-misfire`, `known-issue`,
 `enhancement`) stays open until it is fixed or declined with a reason ([Saying no](#how-decisions-are-made)), however
