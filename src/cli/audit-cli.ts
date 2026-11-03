@@ -104,7 +104,7 @@ async function targetDaemon(options: AuditCliOptions): Promise<DaemonEndpoint> {
 }
 
 async function api<T>(base: DaemonEndpoint, path: string, method: "GET" | "PATCH" | "POST", body?: unknown): Promise<T> {
-  const response = await fetch(new URL(path, base.url), {
+  const response = await base.fetch(new URL(path, base.url), {
     signal: AbortSignal.timeout(WAIT_TIMEOUT_MS),
     method,
     headers: { ...base.headers, ...(body === undefined ? {} : { "content-type": "application/json" }) },

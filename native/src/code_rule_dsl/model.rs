@@ -466,7 +466,9 @@ pub(super) enum Query {
     },
     Ast {
         /// One compiled matcher per grammar the rule language spans; a file uses the grammar its label selects.
-        matchers: Vec<GrammarMatcher>,
+        /// Shared: a workspace copies a code rule's clauses into the synthetic clauses it adds, and the
+        /// matchers never change once compiled.
+        matchers: Arc<[GrammarMatcher]>,
         /// The `calls` terms of the rule and its utilities, each once: their seeds run per file,
         /// their closure is read at call nodes.
         calls: Vec<Arc<CallsTerm>>,
@@ -475,6 +477,9 @@ pub(super) enum Query {
         select: Box<Query>,
         exists: Box<Query>,
     },
+    /// `{ "file": {} }`: one witness per file in the code rule's scope, without a source location;
+    /// it reads neither the file's content nor its path.
+    File,
 }
 
 impl Query {
@@ -487,7 +492,7 @@ impl Query {
                 terms.extend(exists.calls());
                 terms
             }
-            Query::Regex { .. } => Vec::new(),
+            Query::Regex { .. } | Query::File => Vec::new(),
         }
     }
 
@@ -505,7 +510,7 @@ impl Query {
             Query::SelectWhen { select, exists } => {
                 select.reads_server_graph() || exists.reads_server_graph()
             }
-            Query::Regex { .. } => false,
+            Query::Regex { .. } | Query::File => false,
         }
     }
 
@@ -513,13 +518,21 @@ impl Query {
     /// one matched (`import_target::fs::View`).
     pub(super) fn reads_import_targets(&self) -> bool {
         match self {
-            Query::Ast { matchers, .. } => matchers.iter().any(|matcher| {
-                crate::code_rule_dsl::matcher::reads_import_targets(&matcher.matcher)
-            }),
+            Query::Ast { matchers, .. } => matchers.iter().any(|matcher| matcher.import_target),
             Query::SelectWhen { select, exists } => {
                 select.reads_import_targets() || exists.reads_import_targets()
             }
-            Query::Regex { .. } => false,
+            Query::Regex { .. } | Query::File => false,
+        }
+    }
+
+    /// Whether a leaf here reads a file as text (a regex over either source) or stands for the
+    /// file itself (`file`): such a query reads files no code-rule language lists.
+    pub(super) fn reads_text(&self) -> bool {
+        match self {
+            Query::Regex { .. } | Query::File => true,
+            Query::Ast { .. } => false,
+            Query::SelectWhen { select, exists } => select.reads_text() || exists.reads_text(),
         }
     }
 }
@@ -663,6 +676,19 @@ impl CompiledCodeRule {
                     || evidence.ast.query.reads_import_targets()
             }
             ClauseKind::Budget { query, .. } => query.ast.query.reads_import_targets(),
+            ClauseKind::Llm => false,
+        })
+    }
+
+    /// Whether any clause reads text (`Query::reads_text`): files no code-rule language lists are
+    /// read, as text, for such a code rule alone.
+    pub(super) fn reads_text(&self) -> bool {
+        self.clauses.iter().any(|clause| match &clause.kind {
+            ClauseKind::Forbid(query) => query.reads_text(),
+            ClauseKind::RequireEach { subject, evidence } => {
+                subject.ast.query.reads_text() || evidence.ast.query.reads_text()
+            }
+            ClauseKind::Budget { query, .. } => query.ast.query.reads_text(),
             ClauseKind::Llm => false,
         })
     }

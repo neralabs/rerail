@@ -1,5 +1,5 @@
 /**
- * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack that comes with Rerail, alphabetical, filtered
+ * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack installed on this machine, alphabetical, filtered
  * by kind, as a list or as cards; each added or not, with Add pack or a quiet Remove pack that asks first, its
  * question on a line of its own under the pack's text. A pack removed here reads Removed with Undo until the page is
  * left. A pack is added whole: its rules arrive as the pack starts them, opt-in ones off. The review
@@ -8,8 +8,8 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { failed, fmt, plural } from "../format.js";
-import { isRunning } from "../derive.js";
-import { data, ui, isAttached, packGroups, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
+import { isRerailPack, isRunning, isWorktreePack, publisherLabel } from "../derive.js";
+import { data, ui, isAttached, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
 import { loadRecommendations } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import { commonActions, keepPack } from "../actions.js";
@@ -21,8 +21,8 @@ export const needs = ["rules", "packs", "activity"];
 /** The catalog's kind filter ("all" or a pack category); back to All each time the catalog is entered. */
 let kind = "all";
 
-/** The packs the catalog and the review list: the ones with rules to add. */
-const listed = () => data.packs.filter(pack => pack.rules.length > 0);
+/** The packs the catalog and the review list: the installed ones with rules to add, never the worktree's own rules. */
+const listed = () => data.packs.filter(pack => pack.rules.length > 0 && !isWorktreePack(pack));
 
 /** "8 rules", plus how many are on once it is added and Rerail is started here: before that, nothing is on. */
 function packMeta(pack) {
@@ -54,10 +54,13 @@ function catalogItem(pack) {
       h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
   }
   return h("div.prow2", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
-    packIcon(pack), h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers), h("span.meta", null, packMeta(pack))),
+    packIcon(pack), h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers),
+      h("span.meta", null, isRerailPack(pack) ? packMeta(pack) : `${packMeta(pack)} · ${publisherLabel(pack)}`)),
     asking ? null : h("div.pend", null, h("span.pstatus", null, status), action),
     question);
 }
+
+const CATALOG_LINE = "Rule packs for languages, frameworks and code quality. Add one to this repo, or remove it later.";
 
 function catalog() {
   const all = listed(), kinds = catalogKinds(all);
@@ -66,7 +69,7 @@ function catalog() {
   const added = shown.filter(isAttached).length;
   return h("div.catalog", null,
     h("div.ghead", null, h("h2", null, "Rule packs", h("span.n2", null, `${fmt(added)} of ${fmt(shown.length)} added`)),
-      h("p", null, "Each pack checks one language or framework. Added packs get their own page in the menu.")),
+      h("p", null, CATALOG_LINE)),
     h("div.cattools", null,
       h("div.chips", { role: "group", "aria-label": "Pack kind" },
         kinds.map(([k, label]) => h("button.chip", { "data-act": "catkind", "data-i": k, "aria-pressed": String(kind === k) }, label))),
@@ -79,16 +82,25 @@ function catalog() {
 /* ---------- the review ---------- */
 
 function reviewRow(pack, reason) {
-  const kept = keptPacks().includes(pack.id), groups = packGroups(pack).length, n = pack.rules.length, repo = repoName() || "this repo";
+  const kept = keptPacks().includes(pack.id), repo = repoName() || "this repo";
   return h("div.prow2", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
     packIcon(pack),
     h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers),
       reason === null ? null : h("span.why", null, h("b", null, "Why"), reason),
-      h("span.meta", null, `${fmt(groups)} ${plural(groups, "group")} · ${fmt(n)} ${plural(n, "rule")}`)),
+      h("span.meta", null, packMeta(pack))),
     h("div.pact2", null, reason !== null || kept
-      ? h("span.swl", null, h("span", null, kept ? "On" : "Off"),
+      ? h("span.swl", null,
         h("button.sw", { role: "switch", "aria-checked": String(kept), "aria-label": `${pack.name} in ${repo}`, "data-act": "reviewtoggle", "data-i": pack.id }))
       : h("button.btn.sm", { "data-act": "reviewtoggle", "data-i": pack.id }, icon("plus"), "Add pack")));
+}
+
+/** What is different while Rerail is not started: nothing the switches keep runs yet. */
+function reviewBanner(repo, picked) {
+  if (stateHere() === "started") return null;
+  const n = picked.length;
+  return h("div.welcome", { role: "status" }, h("div", null,
+    h("b", null, n === 0 ? `No rule pack picked for ${repo}.` : `${fmt(n)} ${plural(n, "rule pack")} picked for ${repo}.`),
+    h("p", null, `Nothing is on yet. ${n === 0 ? "Add any that fit" : "Switch off any you don’t want"}, then start Rerail from your coding agent session.`)));
 }
 
 function review() {
@@ -97,16 +109,13 @@ function review() {
   const packs = catalogPacks(listed(), "all");
   const reasons = new Map(data.recommendations.map(r => [r.packId, r.reason ?? ""]));
   const picked = packs.filter(p => reasons.has(p.id)), others = packs.filter(p => !reasons.has(p.id));
-  const kept = keptPacks(), keptPicked = packs.filter(p => kept.includes(p.id));
-  const keptRules = keptPicked.reduce((n, p) => n + p.rules.length, 0);
   return h("div.catalog.rv", null,
     h("div.cathead", null, h("button.btn.sm.ghost.link", { "data-act": "nav", "data-i": "overview" }, icon("back"), repo)),
-    h("div.ghead", null, h("h2", null, `Review the rule packs for ${repo}`,
-      h("span.n2", null, `${fmt(keptPicked.length)} ${plural(keptPicked.length, "pack")} · ${fmt(keptRules)} ${plural(keptRules, "rule")}`)),
-    h("p", null, "Picked for ", h("span.mono", null, repo), " from its files. Switch off any you don't want, then finish in your coding agent.")),
+    reviewBanner(repo, picked),
+    h("div.ghead", null, h("h2", null, "Rule packs"), h("p", null, CATALOG_LINE)),
     h("div.list", null, picked.map(pack => reviewRow(pack, reasons.get(pack.id)))),
     others.length ? h("div.ghead.top", null, h("h2", null, "Other rule packs", h("span.n2", null, `${fmt(others.length)} not picked`)),
-      h("p", null, "Not picked for this repo. Add any that fit.")) : null,
+      h("p", null, "Add any that fit.")) : null,
     others.length ? h("div.list", null, others.map(pack => reviewRow(pack, null))) : null);
 }
 

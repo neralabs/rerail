@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "ruff-air312-airflow3-suggested-to-move-to-provider",
- "revision": 1,
+ "revision": 2,
  "mode": "steer",
  "description": "Import Airflow operators, sensors, hooks and triggers from the standard provider package instead of their deprecated core modules; the core paths are due for removal after Airflow 3.0.",
  "scope": {"include": ["**/*"], "exclude": []},
@@ -376,11 +376,11 @@
        }
       },
       "seen-airflow": {"inside": {"stopBy": "end", "kind": "module", "matches": "imports-airflow"}},
+      "airflow-name": {"kind": "dotted_name", "regex": "^airflow([^0-9A-Za-z_]|$)"},
       "imports-airflow": {
        "has": {
         "stopBy": "end",
-        "kind": "dotted_name",
-        "regex": "^airflow([^0-9A-Za-z_]|$)",
+        "matches": "airflow-name",
         "any": [
          {"inside": {"stopBy": "neighbor", "kind": "import_statement"}},
          {
@@ -425,6 +425,7 @@
          {"matches": "string-attribute", "not": {"matches": "guarded-attribute"}}
         ]
        },
+       {"inside": {"stopBy": "end", "kind": "module", "has": {"stopBy": "end", "matches": "airflow-name"}}},
        {"matches": "seen-airflow"}
       ]
      }

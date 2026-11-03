@@ -272,3 +272,52 @@ fn the_result_catalog_differs_when_only_the_suppressions_choice_differs() {
         workspace.close();
     }
 }
+
+/// A workspace's `file.content` regex reads an ECMAScript file from past a leading byte order
+/// mark, as ESLint's rules read its text, and reports over the file's own bytes.
+#[test]
+fn content_regexes_skip_a_leading_byte_order_mark_in_ecmascript_files() {
+    let compiled = CodeRuleDslRuntime::compile(
+        json!({
+            "format": "rerail.policy/v1", "id": "bom", "revision": 1, "mode": "block",
+            "scope": { "include": ["**/*"], "exclude": [] },
+            "clauses": [{
+                "id": "start", "violation": { "anchor": "witness.span", "code": "START",
+                    "message": "start" },
+                "forbid": { "regex": { "source": "file.content", "pattern": "\\A[\\x{FEFF}x]" } }
+            }]
+        })
+        .to_string(),
+        "json".into(),
+        CAPABILITIES.to_owned(),
+    )
+    .unwrap();
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&compiled, None).unwrap();
+    let source = "\u{feff}x = 1;\n";
+    let evaluation = apply(
+        &workspace,
+        vec![
+            json!({ "path": "a.ts", "language": "typescript", "source": source }),
+            json!({ "path": "a.py", "language": "python", "source": source }),
+        ],
+    );
+    let mut found = evaluation["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|violation| {
+            (
+                violation["path"].as_str().unwrap().to_owned(),
+                violation["span"]["startByte"].as_u64().unwrap(),
+                violation["span"]["endByte"].as_u64().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    found.sort();
+    assert_eq!(
+        found,
+        [("a.py".to_owned(), 0, 3), ("a.ts".to_owned(), 3, 4)],
+        "{evaluation}"
+    );
+}

@@ -6,10 +6,10 @@
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { fmt, whenLabel, clock, shortSessionId } from "../format.js";
-import { ruleMode, isLog, isByRerail, originLabel, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
+import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
-import { ASK, ASK_OPEN, askPrompt, agentSeesPrompt, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
+import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, askHint, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
 import { sheetState, syncSheetState, askRule } from "./rule-sheet-actions.js";
 
 const kv = rows => rows.flatMap(([k, v, cls]) => [h("dt", null, k), h("dd", { class: cls }, v)]);
@@ -53,14 +53,15 @@ function buildRule() {
     MODES.map(([v, l, o]) => h("button", { "data-v": v, "aria-disabled": "true", "aria-pressed": "false" }, icon(o, 14), l)));
   el.modeText = h("p");
   el.stats = h("div.pstats", null, h("div", null, h("b.num"), h("span")), h("div", null, h("b"), h("span", null, "last logged")), h("div", null, h("b.num"), h("span", null, "since install")));
-  el.statsNone = h("p.pstats-none", null, "No violations logged yet.");
+  el.statsNone = h("p.pstats-none");
   el.description = h("p.desc");
   el.source = h("dl.kv");
   el.applies = h("p");
   el.sees = h("section.psec.sees");
   el.recent = h("div");
   el.foot = h("div.pfoot");
-  el.body = h("div.pbody", null, el.pask,
+  el.approval = h("div");
+  el.body = h("div.pbody", null, el.pask, el.approval,
     h("div.enf", null, h("div.lbl", null, "On a violation"), el.modes, el.modeText),
     el.stats, el.statsNone,
     h("section.psec", null, h("h3", null, "Description"), el.description),
@@ -89,12 +90,12 @@ function renderAsk(stored) {
   setText(p.askWhere, `Pick what to change, then paste the prompt into a coding agent session in ${repoLabel()}.`);
   setText(p.askWhy, `${ASK_OPEN[ui.askIntent] ? "Finish the sentence after pasting. " : ""}${ui.askIntent === "ask"
     ? "Your coding agent answers from the rule and its History."
-    : "Your coding agent changes the rule by its id. The change applies from the next audit."}`);
+    : askHint({ fromPack: isFromPack(stored) })}`);
 }
 
 /** Why a mode button does nothing when clicked: its title and its toast. */
 const BLOCK_NOT_LIVE = "Block is not in this release";
-const MODE_READ_ONLY = "Change the mode with Edit with coding agent";
+const MODE_READ_ONLY = "Use Edit with coding agent to change this";
 
 function renderModes(stored) {
   const mode = ruleMode(stored);
@@ -104,28 +105,48 @@ function renderModes(stored) {
     setAttr(b, "title", pressed ? null : why);
     setAttr(b, "data-act", pressed ? null : "modeinfo");
   }
-  // Only what the chosen mode does; that Block is not in this release is the Block button's to say.
+  // What the chosen mode does; a rule on Block reads that Block is not in this release and it steers instead.
   setText(p.modeText, MODE_PLAIN[mode] ?? "");
 }
 
-function renderStats(id) {
+function renderStats(stored, id) {
   const measured = isMeasured(id), f = fires(id), all = allFires(id), lastSeen = activityAllOf(id).lastSeenAt;
   // A measured rule that never logged one says so in a line; the three cells would all read nothing.
   const none = measured && all === 0;
   setAttr(p.stats, "hidden", none);
   setAttr(p.statsNone, "hidden", !none);
-  if (none) return;
+  // Off is off in every folder: `enabled` also reads off for a rule on in only some of them.
+  if (none) { setText(p.statsNone, stored.folderStates.every(state => !state.on) ? "Off. Nothing is logged or steered." : "No violations logged yet."); return; }
   const [s1, s2, s3] = p.stats.children;
   setText(s1.firstChild, measured ? fmt(f) : "–");
-  setText(s1.lastChild, measured ? `logged ${rangeLabel()}` : "not counted yet");
+  setText(s1.lastChild, measured ? `logged ${rangeLabel()}` : "not counted in this release");
   setText(s2.firstChild, all && lastSeen ? whenLabel(lastSeen) : "never");
   setText(s3.firstChild, measured ? fmt(all) : "–");
+}
+
+/**
+ * While the rule's content (or its pack's) waits for a person's approval, what that means and an Approve button that
+ * approves exactly the content this page read; nothing once approved, or for a rule that needs none.
+ */
+function renderApproval(stored) {
+  const waiting = awaitingApproval(stored), subject = stored.approval?.subject;
+  const pack = subject?.kind === "pack" ? data.packs.find(x => x.approval?.subject.id === subject.id) : undefined;
+  setContent(p.approval, JSON.stringify([waiting, subject, pack?.name]), () => (!waiting ? null
+    : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+      h("b", null, subject.kind === "pack" ? `Its pack, ${pack?.name ?? subject.id}, waits for approval.` : "This rule waits for approval."),
+      h("p", null, subject.kind === "pack"
+        ? "Rerail did not publish it, so every rule in it runs in Log, steering no one, until a person approves what this version ships."
+        : "Rerail did not write it, so it runs in Log, steering no one, until a person approves what it says. An edit waits again."),
+      h("p", null, "Read what it tells the coding agent first, or ask your coding agent to audit it: ", h("span.mono", null, "/rerail-create approve the rules"), "."),
+      h("p.acts", null, h("button.btn.sm.solid", { "data-act": "approve", "data-i": subject.id, "data-kind": subject.kind, "data-digest": subject.digest }, "Approve"))))));
 }
 
 /** Where the rule comes from (its pack, or created by you) and when it was added here and last edited. */
 function renderSource(stored, id) {
   const pack = attachedPackOf(stored) ?? packOfRule(stored);
-  const from = pack ? ["Rule pack", pack.name] : ["Origin", isByRerail(stored) ? "By Rerail, added on its own" : originLabel(stored)];
+  // A third party's pack names its publisher beside it: Rerail has not reviewed it.
+  const from = pack ? ["Rule pack", packOriginName(pack)]
+    : ["Origin", isFromPack(stored) ? `${UNKNOWN_PACK_ORIGIN}, added on its own` : "Created by you"];
   const updated = stored.updatedAt ?? null;
   setContent(p.source, JSON.stringify([id, from, stored.addedAt, updated]), () => kv([
     from,
@@ -146,21 +167,20 @@ function renderSees(stored, id) {
   setContent(p.sees, editing ? `edit|${id}` : `show|${id}|${message}|${log}`, () => [
     h("div.h3row", null, h("h3", null, "What the agent sees"),
       editing ? null : h("button.btn.sm.ghost.link", { "data-act": "promptedit" }, "Edit")),
-    editing ? agentSeesEdit(id, message) : [
+    editing ? agentSeesEdit(stored, message) : [
       h("p", null, h("span.said2", null, message)),
-      log ? h("p.muted.note2", null, "On Log, Rerail keeps this for you; the agent is told only once the rule is set to Steer or Block.") : null,
+      log ? h("p.muted.note2", null, LOG_NOTE) : null,
     ],
   ]);
 }
 
-/** The hand-off: an editable draft of the text and the prompt that asks the coding agent to make it the message. */
-function agentSeesEdit(id, message) {
+/** The hand-off: an editable draft of the text and what saving it does; Copy prompt asks the coding agent to save it. */
+function agentSeesEdit(stored, message) {
   const draft = h("textarea", { id: "agentDraft", rows: 3, "aria-label": "New text for what the agent sees" });
   draft.value = message;
   return h("div.pask.sees-edit", null,
     draft,
-    h("p.why", null, "Copy prompt copies: ", h("span.mono", null, agentSeesPrompt(id, "<your text>")),
-      ". Paste it into a coding agent session; the agent sees the new text from its next check."),
+    h("p.why", null, agentSeesHint({ fromPack: isFromPack(stored), log: isLog(stored) })),
     h("div.foot", null, h("span"), h("span.btns",
       null,
       h("button.btn.sm", { "data-act": "promptcancel" }, "Cancel"),
@@ -183,8 +203,8 @@ function renderRecent(stored, id) {
   const said = agentSees(stored, id);
   setContent(p.recent, `${id}|${top.map(x => `${x.auditId}:${x.id}`).join(",")}|${total}|${all}|${ui.range}|${said}`, () => {
     // A measured rule that never logged one already says so above the description.
-    if (top.length === 0) return h("p.muted", null, all ? `None logged ${rangeLabel()}. Widen the range to see earlier ones.`
-      : isMeasured(id) ? "None yet." : "No violations logged yet. Rerail is silent until this rule matches.");
+    if (top.length === 0) return h("p.muted", null, all ? "Nothing in this range."
+      : isMeasured(id) ? "None yet." : "Not counted in this release.");
     return [h("div.ract", null, top.map(x => violationRow(x, said))),
       h("button.btn.sm.ghost.link", { "data-act": "actrule", "data-i": id, style: "margin-top:6px" },
         total > RECENT_SHOWN ? `See all ${fmt(total)} in History` : "See it in History")];
@@ -201,7 +221,7 @@ function renderFoot(stored, id) {
     ? h("div.pask.pdelbox", null,
       h("p.lbl", null, `Delete “${id}”?`),
       h("ul", null, deleteConsequences({ repo, pastViolations: past, on: stored.enabled }).map(line => h("li", null, line))),
-      h("div.foot", null, h("span", null, "You can undo this for a few seconds."), h("span.btns", null,
+      h("div.foot", null, h("span"), h("span.btns", null,
         h("button.btn.sm", { "data-act": "delcancel" }, "Cancel"),
         h("button.btn.sm.danger.solid", { "data-act": "delgo", "data-i": id }, "Delete rule"))))
     : h("button.btn.sm.danger.quiet", { "data-act": "delask", "aria-expanded": "false" }, "Delete rule")));
@@ -222,7 +242,8 @@ function renderRule(root, stored) {
   setText(p.swText, stored.enabled ? "On" : "Off");
   renderAsk(stored);
   renderModes(stored);
-  renderStats(id);
+  renderApproval(stored);
+  renderStats(stored, id);
   setText(p.description, twoSentences(conditionText(stored) || `${titleOf(stored)}.`));
   renderSource(stored, id);
   setText(p.applies, scopeText(stored));

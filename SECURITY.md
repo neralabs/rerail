@@ -3,6 +3,9 @@
 Rerail runs inside the coding-agent loop: its hooks and extensions see the agent's tool calls, and its daemon listens on
 loopback. We treat reports about it accordingly.
 
+[docs/threat-model.md](docs/threat-model.md) defines what Rerail protects, from whom, and what it does not defend
+against. A report that breaks a boundary it claims is a vulnerability; one it lists as a non-goal is useful too.
+
 ## Reporting a vulnerability
 
 Report vulnerabilities privately through GitHub:

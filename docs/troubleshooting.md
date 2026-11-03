@@ -55,6 +55,7 @@ On a system or processor Rerail has no engine for (FreeBSD, 32-bit ARM), it read
 
 ```
 ✕ Rerail needs Git, and found none where it looks:
+    /home/me/.local/bin/git
     /usr/bin/git
     /usr/local/bin/git
     /opt/homebrew/bin/git
@@ -66,14 +67,16 @@ On a system or processor Rerail has no engine for (FreeBSD, 32-bit ARM), it read
   Then run the same command again.
 ```
 
-Rerail reads every repository through Git, and runs it only from the places listed, never from `PATH`, so a
-repository cannot put its own `git` first. On Windows those are `C:\Program Files\Git\cmd`,
-`C:\Program Files (x86)\Git\cmd`, `~\AppData\Local\Programs\Git\cmd` (Git for Windows installed for one user) and
-`~\scoop\apps\git\current\cmd`. The install command fits the system: `apt-get`, `dnf`, `pacman` or `zypper` (without
-`sudo` when you are root), `xcode-select --install` on macOS, `winget install --id Git.Git -e` on Windows; elsewhere
-it says to use your package manager or https://git-scm.com. A Git that lives anywhere else is not found: install it
-in one of these places. On macOS `/usr/bin/git` is always there, but only as a stub for Apple's developer tools:
-Rerail counts it only once the Command Line Tools are installed (`xcode-select --install`), or Xcode with Git.
+Rerail reads every repository through Git. It runs the first `git` on your `PATH` (`git.exe` on Windows), then the
+usual install locations: the ones listed, and on Windows `C:\Program Files\Git\cmd`, `C:\Program Files (x86)\Git\cmd`,
+`~\AppData\Local\Programs\Git\cmd` (Git for Windows installed for one user) and `~\scoop\apps\git\current\cmd`. So a
+repository's own `bin/` cannot put its `git` first, it skips a `PATH` entry that is relative (`.`, `bin`), inside the
+repository it runs in (direnv's `PATH_add`), or inside a `node_modules` folder; a Git only there is not found. A
+folder named `git`, or a `git` without its execute bit, is passed over too. The
+install command fits the system: `apt-get`, `dnf`, `pacman` or `zypper` (without `sudo` when you are root),
+`xcode-select --install` on macOS, `winget install --id Git.Git -e` on Windows; elsewhere it says to use your package
+manager or https://git-scm.com. On macOS `/usr/bin/git` is always there, but only as a stub for Apple's developer
+tools: Rerail counts it only once the Command Line Tools are installed (`xcode-select --install`), or Xcode with Git.
 
 ### Windows PowerShell: `npx.ps1 cannot be loaded`
 
@@ -260,12 +263,33 @@ With Claude Code and Cursor both connected, Cursor's Third-Party Imports setting
 the hooks in `~/.claude/settings.json` too. Rerail's Claude Code hook ignores the events Cursor sends it, so each
 Cursor chat is recorded once, as a Cursor session. Nothing to do.
 
+### Claude Code: a command on Rerail's files says `Operation not permitted`
+
+With Claude Code's sandbox on, set-up keeps the agent's commands and file tools out of the Rerail home and
+`~/.cache/rerail` (see [What a coding agent can reach](installation.md#what-a-coding-agent-can-reach)). Rerail's own
+commands run outside the sandbox, but only as a plain call: one with a redirect (`> file`), a `cd` or a `$(...)`
+stays sandboxed and fails. Run the command without them, or run it yourself in a terminal. Run `rerail setup` again
+after moving `RERAIL_HOME` or Node, so the entries name the new paths.
+
 ### A session open before set-up shows nothing
 
 Coding agents load hooks and commands when a session starts. Open a new session after set-up, `rerail install`,
 `rerail update` and `rerail install --remove`.
 
 ## Daemon and dashboard
+
+### The daemon keeps running after `/rerail-stop`
+
+That is on purpose. `/rerail-stop` (and `rerail stop`) stops Rerail in this checkout and the worktrees inside it: no
+rules run there and nothing is logged. The daemon is shared by every checkout and coding agent on the computer, so it
+keeps running for the others, and the reply says so. To shut it down, run this in a terminal:
+
+```sh
+rerail daemon stop
+```
+
+A coding agent's session in a checkout where Rerail is still started starts the daemon again with its next event; stop
+Rerail there too to keep it down. `rerail status` says whether it is running.
 
 ### The dashboard URL changed
 
@@ -298,9 +322,13 @@ devcontainers forward loopback ports): the daemon stays on loopback. Only where 
 daemon on every interface and publish the port on the host's loopback only:
 
 ```sh
-rerail daemon stop && rerail daemon start --host 0.0.0.0 --allow-remote   # in the container
-docker run -p 127.0.0.1:4737:4737 …                                       # on the host
+rerail daemon stop && rerail daemon start --host 0.0.0.0 --allow-remote --insecure-http   # in the container
+docker run -p 127.0.0.1:4737:4737 …                                                       # on the host
 ```
+
+`--insecure-http` keeps plain http, which is fair here only because the port is published on the host's loopback;
+publish it anywhere else and pass `--tls-cert <pem> --tls-key <pem>` instead, so the capability is not sent in clear
+(see the daemon section of [reference.md](reference.md)).
 
 Off loopback the capability changes on every start, so open the new link (`rerail daemon start` prints it) after a
 restart. Anyone holding the link can read and change your rules, so do not paste it anywhere. Publishing on
@@ -334,6 +362,51 @@ Set-up run in WSL for a repository on the Windows drive says so, and goes on:
   Rerail and your coding agent have to be installed on the same side: both in WSL, or both on Windows.
   Repos on the Windows drive are slow from WSL; a clone in the Linux file system (under ~) is faster.
 ```
+
+## Reporting a problem
+
+In a coding agent, run `/rerail-bug-report`. It works out what kind of problem this is, and what to do about it:
+
+| The problem | What it does |
+| --- | --- |
+| An engine bug: Rerail itself crashed, hung, lost a steer or could not run a rule | Offers to report it with the Bug report form |
+| A bug in a rule that ships with Rerail | Offers Log or off in this repository, and to report it with the Rule misfire form |
+| A bug in your own rule, or your team's | Helps you fix it, through `/rerail-create`'s Tune |
+| Not a bug: Rerail is off here, the rule is on Log, or it works as documented | Says why, and how to get what you wanted |
+
+To report it, the agent gives you the form filled in, for you to finish and submit, or files the issue if you ask it to.
+Nothing is sent without you.
+
+A dashboard link only opens on your computer, so a maintainer can't follow one. To give them what they need, write a
+support bundle and attach it to [your issue](https://github.com/neralabs/rerail/issues/new/choose). `/rerail-bug-report`
+writes it and checks the file with you; in a terminal, inside the repository, run:
+
+```sh
+rerail support-bundle
+```
+
+It writes `~/rerail-support-bundle.json` (`--output <file>` for elsewhere), readable by your user only, and sends
+nothing. It reports the repository's latest session; `--session <id>` names another, whose id is in its dashboard
+address. It works where Rerail won't start or set-up never finished, and says which parts it could not read.
+
+| In the file | Left out |
+| --- | --- |
+| Rerail, Node and OS versions; whether the daemon and engine are healthy; the coding agents connected | Your prompts and the agent's replies |
+| The packs installed, and any that failed to load; the repository's state and its rule ids with their modes | Tool input and output, and source code |
+| The session's timeline: event kinds, tool names, times, what it dropped or could not check | Rule text and a violation's message, captures and fix |
+| Steers as the agent got them, and violations by rule, file and line | Paths named like secrets |
+| The last 200 lines of `daemon.log`, scrubbed | Capabilities and tokens |
+
+In what stays, Rerail replaces what it knows about your computer: the daemon's capabilities, your home folder (anyone's
+`/Users/…`, `/home/…` or `C:\Users\…`), the paths and names of the repositories it has recorded, the session's id, your
+user name and the computer's name. It also takes out common secret shapes (API keys, auth headers, passwords in URLs,
+private keys) and email addresses. Other absolute paths, such as `/opt/…`, `/srv/…` or `/Volumes/…`, stay as written,
+and a user name under four characters is replaced inside paths only.
+
+Read it before you attach it: issues are public. Patterns cannot catch everything. A steer can quote your code, and a file path or your own rule's id can name a project;
+replace anything you'd rather not post with `<redacted>`. A vulnerability goes through [SECURITY.md](../SECURITY.md)
+instead. A support bundle is diagnostic context for a report, for maintainers; it is not meant for showing other people
+what Rerail did.
 
 ## Removing Rerail completely
 

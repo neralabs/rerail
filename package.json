@@ -54,7 +54,8 @@
     "claude-code",
     "codex",
     "cursor",
-    "omp"
+    "omp",
+    "pi"
   ],
   "workspaces": [
     "packs/*"
@@ -73,7 +74,8 @@
     "hooks",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
-    "skills"
+    "skills",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "build": "npm run build:clean && npm run build:native && npm run build:js",
@@ -81,7 +83,7 @@
     "build:clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build:ui": "node scripts/build/copy-ui.mjs",
     "ensure:sqlite": "node scripts/build/ensure-sqlite.mjs",
-    "build:native": "node scripts/build/require-cargo.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
+    "build:native": "node scripts/build/require-cargo.mjs && node scripts/build/require-lfs.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "build:ts": "tsc -p tsconfig.build.json && esbuild src/presentation/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/presentation/session-presentation.js",
     "build:omp": "esbuild src/hosts/omp/default-extension.ts --bundle --platform=node --target=node24 --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/omp/default-extension.js",
     "build:test-host": "esbuild integration/support/omp-host-extension.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
@@ -89,8 +91,9 @@
     "build:cursor": "esbuild src/hosts/cursor/cursor-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/cursor/cursor-hook.js",
     "build:claude": "esbuild src/hosts/claude/claude-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/claude/claude-hook.js",
     "build:codex": "esbuild src/hosts/codex/codex-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/codex/codex-hook.js",
-    "check": "tsc --noEmit && npm run check:boundaries && npm run check:structure && npm run check:windows-paths && npm run check:internal-refs && npm run check:pins",
+    "check": "tsc --noEmit && npm run check:boundaries && npm run check:structure && npm run check:windows-paths && npm run check:internal-refs && npm run check:pins && npm run check:ci-paths",
     "check:boundaries": "node scripts/check/check-boundaries.mjs",
+    "check:ci-paths": "node scripts/check/check-ci-paths.mjs",
     "check:native": "cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings",
     "check:all": "npm run check && npm run check:native && npm run check:ui-tokens && npm run check:reference && npm run check:licenses",
     "check:internal-refs": "node scripts/check/check-internal-refs.mjs",
@@ -132,8 +135,8 @@
     "generate:packs": "node --import tsx scripts/generate/packs/pack-list.ts",
     "package:check": "npm run build && npm pack --dry-run",
     "version:packs": "changeset version && node scripts/release/sync-pack-lockfile.mjs",
-    "prepack": "node scripts/build/stamp-plugin-versions.mjs stamp",
-    "postpack": "node scripts/build/stamp-plugin-versions.mjs restore"
+    "prepack": "node scripts/release/shrinkwrap-pack.mjs write && node scripts/build/stamp-plugin-versions.mjs stamp",
+    "postpack": "node scripts/build/stamp-plugin-versions.mjs restore && node scripts/release/shrinkwrap-pack.mjs remove"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
@@ -158,7 +161,7 @@
     "@changesets/cli": "3.0.3",
     "@earendil-works/pi-agent-core": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
     "@napi-rs/cli": "3.10.9",
     "@oh-my-pi/omptype": "18.13.3",
     "@oh-my-pi/pi-agent-core": "18.13.3",

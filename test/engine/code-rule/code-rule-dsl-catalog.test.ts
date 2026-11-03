@@ -25,6 +25,7 @@ import { applyCodeRuleConfig } from "../../../src/engine/code-rule/code-rule-opt
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { addAttachment, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
+import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
@@ -129,7 +130,8 @@ describe("checkout code-rule catalog", () => {
     const database = openRerailDatabase(databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
     try {
-      upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code");
+      const apiOnly = upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code");
+      approve(database, ruleSubject("test:api-only", apiOnly.payloadHash));
       addAttachment(database, { repositoryKey: key, folder: "api", sourceKind: "library_rule", sourceId: "test:api-only" });
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "legacy", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null });
       setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "web", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "log" });
@@ -482,6 +484,12 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a fix on a file.path regex", document({ forbid: { regex: { pattern: "x", source: "file.path" } }, violation: { ...violation, fix: "y" } }), /file.path regex match is not source text/],
     ["a capture anchor on a regex without that group", document({ violation: { ...violation, anchor: "capture.X" } }), /capture.X names no capture of the query/],
     ["a message variable on a group-less regex", document({ violation: { ...violation, message: "set $HOME" } }), /\$HOME names no capture/],
+    ["a file query with a key", document({ forbid: { file: { path: "x" } } }), /Unrecognized key/],
+    ["a file query beside a regex", document({ forbid: { file: {}, ...regex } }), /exactly one source: regex, ast, select_when, or file/],
+    ["a fix on a file query", document({ forbid: { file: {} }, violation: { ...violation, fix: "y" } }), /Only forbid clauses over an ast or file.content regex query can suggest a fix/],
+    ["a capture anchor on a file query", document({ forbid: { file: {} }, violation: { ...violation, anchor: "capture.X" } }), /no source location a capture can anchor/],
+    ["each on a file query", document({ forbid: { file: {} }, violation: { ...violation, each: "X" } }), /each enumerates the captures of an ast query/],
+    ["a capture anchor on a file.path regex group", document({ forbid: { regex: { pattern: "(?<X>x)", source: "file.path" } }, violation: { ...violation, anchor: "capture.X" } }), /no source location a capture can anchor/],
     ["a capture outside parse", py({ kind: "string", capture: "S" }), /capture binds a node of a parsed tree; use it inside parse/],
     ["an unknown grammar", py({ kind: "string", parse: { grammar: "yaml", kind: "format" } }), /grammar must be one of percentFormat, braceFormat/],
     ["a parse without a rule", py({ kind: "string", parse: { grammar: "percentFormat" } }), /parse must hold a rule over the parsed tree/],
@@ -1287,6 +1295,10 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["an end anchor with a regex fix", document({ violation: { ...violation, anchor: "witness.end", fix: "y" } })],
     ["a capture anchor, interpolation, and an ast fix", ast({ pattern: "f($A)" }, {}, { anchor: "capture.A", message: "f of $A", fix: "g($A)" })],
     ["a named regex group", document({ forbid: { regex: { pattern: "(?<X>x)", source: "file.content" } }, violation: { ...violation, anchor: "capture.X", message: "$X", fix: "[$X]" } })],
+    ["a file query", document({ forbid: { file: {} } })],
+    ["a file query with a file start anchor", document({ forbid: { file: {} }, violation: { ...violation, anchor: "file.start" } })],
+    ["a file query on either side of select_when", document({ forbid: { select_when: { select: { file: {} }, exists: { file: {} } } } })],
+    ["a file.path regex group in a message", document({ forbid: { regex: { pattern: "(?<X>x)", source: "file.path" } }, violation: { ...violation, message: "$X" } })],
     ["escaped and digit dollars in a message", document({ violation: { ...violation, message: "set \\$HOME, pay $100" } })],
     ["a comparison of names its own negation binds", ast({
       kind: "pair",

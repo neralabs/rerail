@@ -70,6 +70,14 @@ export interface ValidatePackOptions {
    * publishes; a fixture pack elsewhere is published nowhere, so no list names it.
    */
   listed?: boolean;
+  /**
+   * Whether check 4 scores the ported rules on the tools' fixtures. Default true. Off, check 4 keeps the rest (rules
+   * that do not compile, stale exemptions, uncovered capabilities, suppression comments) and leaves the scoring to the
+   * conformance check (`npm run test:conformance`), which scores every port on the same fixtures through the same
+   * runner, and fails on every failure the scoring here reports: CI's unit tests turn it off, so the fixtures are
+   * scored once, in the conformance job.
+   */
+  fixtures?: boolean;
 }
 
 /** Validation material: kept in the repository, never published. */
@@ -749,7 +757,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
     const report = await runPack(loaded, {
       rules: loaded.pack.rules.filter(port => !notSupported.has(port.id)).map(port => port.id),
-      fixtures: true,
+      fixtures: options.fixtures ?? true,
       samples: false,
       date: new Date().toISOString().slice(0, 10),
     });

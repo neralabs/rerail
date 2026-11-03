@@ -9,9 +9,11 @@ name: Dependabot pins
 # The push uses the neralabs-ci app, because a push with the workflow's own token starts no CI run. A Dependabot run
 # gets secrets from Dependabot secrets only (configuration variables are not restricted), so the app's key is stored
 # there under its Actions name, RELEASE_APP_PRIVATE_KEY; its client id is the RELEASE_APP_CLIENT_ID variable, as in
-# release-pr.yml. No step that runs project or dependency code holds a write token: the sync runs without `npm ci` and
-# installs nothing, and the app token is made only for the push. Once this pushes, Dependabot stops rebasing the branch
-# on its own; comment `@dependabot recreate` for a fresh one, which this run then completes again.
+# release-pr.yml. Branch code never runs in the job that holds the app token. The `sync` job runs the branch's
+# sync-pins.mjs with a read-only token and no secret, without `npm ci`, and hands its changes on as a patch. The `push`
+# job runs nothing from the branch: it checks out the same commit, applies the patch only if it edits the pin files
+# below and nothing else, and pushes. Once this pushes, Dependabot stops rebasing the branch on its own; comment
+# `@dependabot recreate` for a fresh one, which this run then completes again.
 
 on:
   pull_request:
@@ -31,16 +33,20 @@ jobs:
     if: github.actor == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.changed.outputs.changed }}
     steps:
       - name: Checkout the Dependabot branch
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
@@ -52,11 +58,34 @@ jobs:
       - id: changed
         name: Anything to push?
         run: |
+          set -euo pipefail
           if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
           git diff --stat
+          git diff > "${RUNNER_TEMP}/pins.patch"
 
-      - name: Require the app's key as a Dependabot secret
+      - name: Hand the changes to the push job
         if: steps.changed.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pins-patch
+          path: ${{ runner.temp }}/pins.patch
+          retention-days: 1
+          if-no-files-found: error
+
+  push:
+    name: Push the pins to the Dependabot branch
+    needs: sync
+    if: needs.sync.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      # The files scripts/deps/sync-pins.mjs brings along with package.json (OMP_HOST, DIFFERENTIAL_TEST). A patch that
+      # touches any other file is refused.
+      PIN_FILES: scripts/host/install-omp-host.mjs test/engine/code-rule/code-rule-dsl-upstream-differential.test.ts
+    steps:
+      - name: Require the app's key as a Dependabot secret
         env:
           PRIVATE_KEY_SET: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
         run: |
@@ -65,10 +94,50 @@ jobs:
             exit 1
           fi
 
+      # The commit the sync job read, named by the event rather than by anything the sync job reports, so the patch
+      # applies to what it was made from. A later push to the branch makes the push below fail as a non-fast-forward
+      # rather than overwrite it.
+      - name: Checkout the Dependabot branch's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download the changes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pins-patch
+          path: ${{ runner.temp }}/pins
+
+      - name: Apply the changes to the pin files, and nothing else
+        env:
+          PATCH: ${{ runner.temp }}/pins/pins.patch
+        run: |
+          set -euo pipefail
+          # Edits to existing files only: no file created, deleted, renamed, or given a new mode (a symlink, say).
+          summary="$(git apply --summary "$PATCH")"
+          if [ -n "$summary" ]; then
+            printf '%s\n' "$summary"
+            echo "::error::The sync's patch creates, deletes, renames or changes the mode of a file."
+            exit 1
+          fi
+          git apply "$PATCH"
+          if [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            echo "::error::Applying the sync's patch left untracked files."
+            exit 1
+          fi
+          while IFS= read -r -d '' path; do
+            case " ${PIN_FILES} " in
+              *" ${path} "*) ;;
+              *) echo "::error::The sync's patch changes ${path}, which is not a pin file this workflow pushes."; exit 1 ;;
+            esac
+          done < <(git diff --name-only -z)
+          git diff --stat
+
       - id: app-token
         name: Get the neralabs-ci app token
-        if: steps.changed.outputs.changed == 'true'
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -76,7 +145,6 @@ jobs:
 
       # The commit is the app's bot user's, as GitHub attributes it.
       - name: Commit and push to the Dependabot branch
-        if: steps.changed.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BOT: ${{ steps.app-token.outputs.app-slug }}[bot]

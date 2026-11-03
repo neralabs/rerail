@@ -3,18 +3,39 @@
 //! their derived names, in upper case only. Named sequences are not characters and do not resolve.
 //! `names/names.bin` comes from `scripts/generate/value/names.py`, which checks every name against CPython.
 
+use std::cell::Cell;
 use std::cmp::Ordering;
+use std::sync::LazyLock;
 
-const TABLE: &[u8] = include_bytes!("names/names.bin");
+const TABLE_BYTES: &[u8] = include_bytes!("names/names.bin");
+const MAGIC: &[u8] = b"TNAMES01";
+const LFS_POINTER: &[u8] = b"version https://git-lfs";
 const CJK: &str = "CJK UNIFIED IDEOGRAPH-";
 const HANGUL: &str = "HANGUL SYLLABLE ";
 
+/// The failure a clause reports where it read a `\N{...}` escape the malformed table could not
+/// answer (`take_unavailable`). `native/build.rs` refuses to build with such a table, so only a
+/// table corrupted past its header gets here.
+pub(crate) const TABLE_UNAVAILABLE: &str = "the engine's Unicode names table (names.bin) is malformed: rebuild the engine after `git lfs install && git lfs pull`";
+
+thread_local! {
+    /// Whether a lookup on this thread found the table malformed since `take_unavailable` last
+    /// cleared it.
+    static UNAVAILABLE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether a `\N{...}` lookup on this thread found the table malformed since the last call: the
+/// name read as unknown, so the clause reading it has no verdict of its own.
+pub(crate) fn take_unavailable() -> bool {
+    UNAVAILABLE.replace(false)
+}
+
 /// The table's parts: the Unicode version, the CJK ranges, and the name buckets.
-struct Table {
-    version: &'static str,
-    ranges: &'static [u8],
-    buckets: &'static [u8],
-    entries: &'static [u8],
+struct Table<'a> {
+    version: &'a str,
+    ranges: &'a [u8],
+    buckets: &'a [u8],
+    entries: &'a [u8],
 }
 
 fn u16_at(bytes: &[u8], at: usize) -> usize {
@@ -25,47 +46,87 @@ fn u32_at(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
 }
 
-fn table() -> Table {
-    assert_eq!(&TABLE[..8], b"TNAMES01", "names.bin format");
-    let version_len = usize::from(TABLE[8]);
-    let version = std::str::from_utf8(&TABLE[9..9 + version_len]).expect("ASCII version");
-    let mut at = 9 + version_len;
-    let range_count = u16_at(TABLE, at);
-    at += 2;
-    let ranges = &TABLE[at..at + 8 * range_count];
-    at += 8 * range_count;
-    let bucket_count = u32_at(TABLE, at + 4) as usize;
-    at += 8;
-    let buckets = &TABLE[at..at + 4 * bucket_count];
-    at += 4 * bucket_count;
-    Table {
+/// The next `len` bytes at `at`, which then moves past them.
+fn take<'a>(bytes: &'a [u8], at: &mut usize, len: usize) -> Result<&'a [u8], String> {
+    let end = at
+        .checked_add(len)
+        .filter(|end| *end <= bytes.len())
+        .ok_or_else(|| format!("names.bin is truncated at byte {at}"))?;
+    let taken = &bytes[*at..end];
+    *at = end;
+    Ok(taken)
+}
+
+/// Reads and checks the whole table: its header, and that every bucket starts an entry and every
+/// entry lies within the table, so the lookups below index it without bounds failures.
+fn parse(bytes: &[u8]) -> Result<Table<'_>, String> {
+    if bytes.starts_with(LFS_POINTER) {
+        return Err("names.bin is a Git LFS pointer, not the names table".to_owned());
+    }
+    if !bytes.starts_with(MAGIC) {
+        return Err("names.bin has no TNAMES01 header".to_owned());
+    }
+    let mut at = MAGIC.len();
+    let version_len = usize::from(take(bytes, &mut at, 1)?[0]);
+    let version = std::str::from_utf8(take(bytes, &mut at, version_len)?)
+        .map_err(|_| "names.bin's Unicode version is not text".to_owned())?;
+    let range_count = u16_at(take(bytes, &mut at, 2)?, 0);
+    let ranges = take(bytes, &mut at, 8 * range_count)?;
+    let bucket_count = u32_at(take(bytes, &mut at, 8)?, 4) as usize;
+    let buckets = take(bytes, &mut at, bucket_count.saturating_mul(4))?;
+    let entries = &bytes[at..];
+    let mut bucket = 0;
+    let mut at = 0;
+    while at < entries.len() {
+        if bucket < bucket_count && u32_at(buckets, bucket * 4) as usize == at {
+            bucket += 1;
+        }
+        let len = usize::from(take(entries, &mut at, 2)?[1]);
+        take(entries, &mut at, len + 3)?;
+    }
+    if bucket != bucket_count {
+        return Err("names.bin's buckets do not start its entries".to_owned());
+    }
+    Ok(Table {
         version,
         ranges,
         buckets,
-        entries: &TABLE[at..],
-    }
+        entries,
+    })
 }
+
+/// The embedded table, read once per process.
+static TABLE: LazyLock<Result<Table<'static>, String>> = LazyLock::new(|| parse(TABLE_BYTES));
 
 /// The Unicode version the table was generated from.
 #[cfg(test)]
 pub(crate) fn unicode_version() -> &'static str {
-    table().version
+    TABLE.as_ref().expect("names table").version
 }
 
-/// The character `\N{name}` names, or `None` where CPython raises a SyntaxError.
+/// The character `\N{name}` names, or `None` where CPython raises a SyntaxError. A malformed table
+/// answers `None` for every name it would hold, and marks the thread (`take_unavailable`).
 pub(crate) fn lookup(name: &str) -> Option<char> {
-    let table = table();
-    debug_assert!(!table.version.is_empty());
-    if let Some(hex) = name.strip_prefix(CJK) {
-        return ideograph(&table, hex);
-    }
+    lookup_in(&TABLE, name)
+}
+
+fn lookup_in(table: &Result<Table<'_>, String>, name: &str) -> Option<char> {
+    // Hangul syllables' names are derived from their jamo alone.
     if let Some(jamo) = name.strip_prefix(HANGUL) {
         return syllable(jamo);
+    }
+    let Ok(table) = table else {
+        UNAVAILABLE.set(true);
+        return None;
+    };
+    debug_assert!(!table.version.is_empty());
+    if let Some(hex) = name.strip_prefix(CJK) {
+        return ideograph(table, hex);
     }
     if !name.is_ascii() {
         return None;
     }
-    stored(&table, name.to_ascii_uppercase().as_bytes())
+    stored(table, name.to_ascii_uppercase().as_bytes())
 }
 
 /// `CJK UNIFIED IDEOGRAPH-XXXX`: four or five upper-case hex digits, within a range.
@@ -232,7 +293,7 @@ mod tests {
 
     #[test]
     fn every_stored_name_resolves() {
-        let table = table();
+        let table = TABLE.as_ref().expect("names table");
         let mut current = Vec::new();
         let mut at = 0;
         let mut count = 0;
@@ -247,5 +308,35 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 35_301);
+    }
+
+    #[test]
+    fn a_malformed_table_is_an_error_not_a_panic() {
+        let pointer = b"version https://git-lfs.github.com/spec/v1\noid sha256:4d7a\nsize 123\n";
+        assert!(parse(pointer).is_err_and(|error| error.contains("Git LFS pointer")));
+        assert!(parse(b"").is_err());
+        assert!(parse(b"not a table").is_err());
+        assert!(parse(MAGIC).is_err());
+        // A real header cut short anywhere, entries included, never reads past the end.
+        for cut in [9, 20, TABLE_BYTES.len() / 2, TABLE_BYTES.len() - 1] {
+            assert!(parse(&TABLE_BYTES[..cut]).is_err(), "cut at {cut}");
+        }
+        assert!(parse(TABLE_BYTES).is_ok());
+    }
+
+    #[test]
+    fn lookups_on_a_malformed_table_mark_the_thread() {
+        let broken = parse(b"version https://git-lfs.github.com/spec/v1\n");
+        take_unavailable();
+        // Hangul syllables need no table.
+        assert_eq!(lookup_in(&broken, "HANGUL SYLLABLE GA"), Some('\u{AC00}'));
+        assert!(!take_unavailable());
+        assert_eq!(lookup_in(&broken, "LATIN SMALL LETTER A"), None);
+        assert!(take_unavailable());
+        assert!(!take_unavailable());
+        assert_eq!(lookup_in(&broken, "CJK UNIFIED IDEOGRAPH-4E00"), None);
+        assert!(take_unavailable());
+        assert_eq!(lookup("LATIN SMALL LETTER A"), Some('a'));
+        assert!(!take_unavailable());
     }
 }

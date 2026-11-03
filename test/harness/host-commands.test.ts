@@ -84,7 +84,7 @@ describe("/rerail", () => {
   it("says what Rerail is doing in this session, then lists every command", async () => {
     mocks.presentation.mockResolvedValue({
       status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],
-      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1 },
+      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1, awaitingApproval: 0 },
     });
     mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
     const { run, notices } = commandHarness();
@@ -103,10 +103,23 @@ describe("/rerail", () => {
     expect(notice?.message).not.toContain("rerail-test");
   });
 
+  it("counts what runs in Log waiting for approval, linked to the dashboard, whose Overview lists it", async () => {
+    mocks.presentation.mockResolvedValue({
+      status: "on", text: "", url: null, parts: [],
+      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 0, awaitingApproval: 2 },
+    });
+    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#rules", reason: null });
+    const { run, notices } = commandHarness();
+    await run("rerail");
+    expect(notices[0]?.message).toContain(
+      "  2 to approve, running in Log → http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#rules\n",
+    );
+  });
+
   it("answers /rerail-help exactly as /rerail", async () => {
     mocks.presentation.mockResolvedValue({
       status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],
-      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1 },
+      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1, awaitingApproval: 0 },
     });
     mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
     const { run, notices } = commandHarness();
@@ -114,7 +127,7 @@ describe("/rerail", () => {
     await run("rerail-help");
     expect(notices).toHaveLength(2);
     expect(notices[1]).toEqual(notices[0]);
-    expect(notices[0]?.message).toContain("/rerail-help        show a list of commands");
+    expect(notices[0]?.message).toContain("/rerail-help         show a list of commands");
   });
 
   it("says Rerail is not on here, and how to start it, where it is stopped", async () => {
@@ -232,6 +245,26 @@ describe("/rerail-show-me", () => {
     expect(sent[0]).toContain(`${cli}' show-me --json`);
     expect(sent[0]).toContain(`${cli}' show-me --cleanup`);
     expect(sent[0]).toContain("with your file edit or write tool");
+  });
+});
+
+describe("/rerail-bug-report", () => {
+  it("hands the coding agent the person's words and the skill, through the session's own launcher", async () => {
+    const { run, sent, notices } = commandHarness();
+    await run("rerail-bug-report", "the daemon hung");
+    expect(notices).toEqual([]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("\"the daemon hung\"");
+    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' support-bundle --json`);
+  });
+
+  it("points the coding agent at a skill the package ships", async () => {
+    const { run, sent } = commandHarness();
+    await run("rerail-bug-report", "");
+    expect(sent[0]).toContain("The person's words: (none given)");
+    const path = /Read (\S+SKILL\.md) and follow it\./u.exec(sent[0]!)?.[1];
+    expect(path).toBeDefined();
+    await expect(readFile(path!, "utf8")).resolves.toMatch(/^---\nname: rerail-bug-report\n/u);
   });
 });
 

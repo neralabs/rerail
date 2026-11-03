@@ -1,11 +1,11 @@
 # Rule pack structure and validation contract
 
-Status: the layout and the validation contract (checks 1 to 8) are implemented. `test/engine/catalog/packs.test.ts` validates every
-`packs/*` directory: `python`, `php`, `blade`, `rust`, `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `sql` and `complexity`. Core
-ships none of them: set-up and `rerail packs add` install them from npm into `$RERAIL_HOME/packs`, and core reads them
-from there; it lists them by name only, in `src/engine/catalog/pack-list.generated.ts` ([rule packs](rule-packs.md#installing-packs)).
-Each pack is published on its own by the [release workflow](#release). A pack introduces no new file format: it
-combines the two schemas the repository already has. To start one, see [language packs](language-packs.md#start-a-pack).
+Every rule pack is a directory under `packs/` in this repository, and `test/engine/catalog/packs.test.ts` validates each
+one against the [validation contract](#the-validation-contract). Core ships none of them: set-up and `rerail packs add`
+install them from npm into `$RERAIL_HOME/packs`, and core reads them from there; it lists them by name only, in
+`src/engine/catalog/pack-list.generated.ts` ([rule packs](rule-packs.md#installing-packs)). Each pack is published on
+its own by the [release workflow](#release). A pack introduces no new file format: it combines the two schemas the
+repository already has. To start one, see [language packs](language-packs.md#start-a-pack).
 
 Core has no rules of its own: every rule document it ships is in a pack. Like every By Rerail rule, a pack's rules run
 only in repositories that add them (or the pack). The engine's `capabilities.json`, which every code rule compiles
@@ -27,7 +27,7 @@ against, is `native/src/code_rule_dsl/capabilities.json`.
 ```text
 packs/<id>/
 ├── package.json        npm package @neralabs/rerail-pack-<id>: licence, files, core range
-├── pack.json           the pack: rerail.rule-pack/v1, as today
+├── pack.json           the pack: rerail.rule-pack/v1
 ├── README.md           what the pack covers, for people: the rules it ships, never a candidate's details
 ├── LICENSE, NOTICE     the pack's licence and notice
 ├── rules/
@@ -36,8 +36,8 @@ packs/<id>/
 │   └── <project>/      upstream LICENSE (verbatim) and UPSTREAM.md (per repository: source, path patterns taken, not copied)
 │
 │   only for packs that port rules from another tool:
-├── conformance.json    the conformance pack schema of conformance/languages/pack.ts, as today
-├── divergences.json    declared disagreements with the tools, as today
+├── conformance.json    the conformance pack schema of conformance/languages/pack.ts
+├── divergences.json    declared disagreements with the tools
 ├── upstream/
 │   └── <tool>/         gates.yaml, the generator, test-data.lock, samples.lock and SAMPLES.md (optional), and
 │                       UPSTREAM.md when Rerail wrote files for the tool to score; the tool's copied tests
@@ -48,7 +48,9 @@ packs/<id>/
 ```
 
 `<id>` is lowercase letters, digits and dashes. It is the directory name, the `id` in `pack.json`, and the npm name
-`@neralabs/rerail-pack-<id>`.
+`@neralabs/rerail-pack-<id>`. That scope is Rerail's: a pack published outside this repository is named
+`rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, and core loads it if it passes the checks the catalog runs
+([third parties' packs](rule-packs.md#third-parties-packs)).
 
 ### package.json
 
@@ -80,25 +82,79 @@ packs/<id>/
 
 ### pack.json
 
-Today's `rerail.rule-pack/v1` ([format](rule-packs.md#format)): `id`, `name`, `category`, `covers`, `reason`,
-`match`, `honourSuppressionComments`, and per rule `id`, `title`, `group`, optional `mode`, `on` and
-`examples: { caught, passes }`. One change: a rule now names its document, `rules/<id>.json`, so a pack is
-self-contained. A pack may ship no rules (`"rules": []`) while all its ports are candidates; such a pack is never
-recommended. A ported rule starts at the level upstream's recommended configuration gives it: a rule upstream sets to
-`warn` (an ESLint-family `"warn"`, a Clippy lint whose default level is `warn`, a PHP_CodeSniffer warning) carries
-`"mode": "log"` in pack.json, so it is recorded and steers no one until a repository switches it to `steer`; a rule
-upstream sets to `error` or `deny` keeps its document's `steer`. Tools with no warning level (Ruff, Bandit, SQLFluff,
-PHPStan, Psalm, tlint, blade-parser) keep the document's mode, and the document itself stays a faithful port with no
-level. `document` is required (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`); core reads each rule's
-document from the pack:
+`pack.json` is the pack, in the `rerail.rule-pack/v1` format (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`).
+The TypeScript pack, with one of its rules:
 
 ```json
-{ "id": "complexity-cyclomatic-python", "document": "rules/complexity-cyclomatic-python.json", "title": "Keep Python functions at cyclomatic complexity 6 or lower", "group": "Complexity" }
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "typescript",
+  "name": "TypeScript",
+  "category": "language",
+  "covers": "typescript-eslint and @vitest/eslint-plugin rules for safe, idiomatic TypeScript and Vitest tests.",
+  "reason": "matches TypeScript",
+  "match": {
+    "any": [
+      { "dependencies": { "ecosystem": "npm", "names": ["typescript"] } },
+      { "files": ["**/*.ts", "**/*.mts", "**/*.cts"], "exclude": ["**/*.d.ts"], "label": "*.ts files" },
+      { "files": ["**/*.tsx"], "label": "*.tsx files" }
+    ]
+  },
+  "rules": [
+    { "id": "typescript-eslint-ban-tslint-comment", "document": "rules/typescript-eslint-ban-tslint-comment.json", "title": "typescript-eslint ban-tslint-comment: Disallow `// tslint:<rule-flag>` comments", "group": "typescript-eslint", "on": false }
+  ]
+}
 ```
 
-An example's `path` is required in a pack: it decides the file's language and must be inside the rule's scope.
+- `covers` is the line the dashboard shows under the pack's name: one sentence on what the rules are for and where
+  they come from. It counts no rules and says nothing of which start on; the dashboard shows both beside it.
+- `category` is `language`, `framework` or `repository`. It drives the kind chips of the dashboard's rule pack
+  catalog. Packs are listed languages first, then frameworks, then repository packs.
+- `match` (required) is `{ "any": [signal, …] }`: what set-up recommends the pack for. A signal is one of:
+  - `{ "files", "exclude"?, "label" }`: repository-relative globs. `**` crosses folders, `*` and `?` stay within one,
+    and `{a,b}` gives alternatives.
+  - `{ "dependencies": { "ecosystem", "names" } }`: any manifest in the repository that depends on one of the
+    packages.
+    - `npm` reads `package.json` (`dependencies`, `devDependencies`, `peerDependencies`, `optionalDependencies`).
+    - `pypi` reads `requirements*.txt` and `pyproject.toml` (PEP 621 `dependencies` and `optional-dependencies`,
+      Poetry's `dependencies` less `python`, its `group.<name>.dependencies`, and the `dev-dependencies` of Poetry
+      before 1.2), comparing names normalised as PEP 503 does.
+    - `composer` reads `composer.json` (`require`, `require-dev`), case-insensitively.
+- `reason` is the pack's own summary. The reason shown for a repository is built from what matched:
+  `matches the typescript dependency in package.json and *.ts files in src`. It names at most two signals. A file
+  signal names the folder its files share, which lets a person see when a pack was picked only because of a stray
+  folder.
+- `honourSuppressionComments` (optional, default `true`): whether the pack's rules start out honouring their linters'
+  suppression comments, the pack's start for the `suppressions` rule setting. With `false`, no linter's comment
+  silences them until a repository or checkout sets `suppressions: "honour"`; Rerail's own `rerail-ignore` always
+  does.
+- `rules` lists the pack's rules; each rule belongs to exactly one pack. A pack may ship no rules (`"rules": []`) while
+  all its ports are candidates. Set-up recommends only a pack with at least one rule that starts on
+  ([rule packs](rule-packs.md#the-packs)).
+  - `id`: see [Rule ids](#rule-ids) below.
+  - `document` (required) is the rule's document, `rules/<id>.json`, relative to the pack; it must carry the rule's
+    id. Core reads each rule's document from the pack, so a pack is self-contained.
+  - `title` and `group` are what the dashboard shows.
+  - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode.
+    Ported rules use it for upstream's warning level (below).
+  - `on` (optional, default `true`) is whether the pack starts the rule on.
+  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`.
+    A code rule's examples need a `path`, which decides the file's language and must be inside the rule's scope; a
+    conversation rule's have none. The complexity pack has one pair per rule.
 
-**Rule ids.** Every pack uses one id style, because people turn rules on and off by id and an id must not change once
+A ported rule starts at the level upstream's recommended configuration gives it. A rule upstream sets to `warn` (an
+ESLint-family `"warn"`, a Clippy lint whose default level is `warn`, a PHP_CodeSniffer warning) carries
+`"mode": "log"` in `pack.json`, so it is recorded and steers no one until a repository switches it to `steer`. A rule
+upstream sets to `error` or `deny` keeps its document's `steer`. Tools with no warning level (Ruff, Bandit, SQLFluff,
+PHPStan, Psalm, tlint, blade-parser) keep the document's mode, and the document itself stays a faithful port with no
+level.
+
+`test/engine/catalog/rule-packs.test.ts` holds what a pack's match and examples promise: every rule starts in the mode
+its pack or document gives it, and every example is caught or passes as it says.
+
+#### Rule ids
+
+Every pack uses one id style, because people turn rules on and off by id and an id must not change once
 its pack is published: lowercase letters, digits and dashes (`RULE_PACK_RULE_ID` in `src/engine/catalog/rule-packs.ts`),
 the upstream tool's name then its rule for a port (`eslint-no-empty`, `typescript-eslint-no-explicit-any`,
 `ruff-b011-assert-false`, `n-no-sync`), and the pack's name then the rule for a rule of Rerail's own
@@ -109,7 +165,7 @@ that two documents in any packs share.
 
 ### conformance.json, divergences.json, upstream/
 
-Today's schemas from `conformance/languages/pack.ts`, moved next to the rules they validate. The runner reads a pack's
+The schemas of `conformance/languages/pack.ts`, beside the rules they validate. The runner reads a pack's
 expected findings from `upstream/` unless `conformance.json` sets `oracles`:
 
 - `conformance.json`: the language family (or, for a pack whose ports span languages, the families: complexity's
@@ -137,14 +193,29 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   `rules` the run reported, the `files` (units: a path, or a list of paths for a multi-file unit), and `units`, each
   unit's upstream origin by its key (its path, or its first path): `rules`, the upstream rules whose tests the unit was
   written from. A unit without an entry (Rerail's probes, or one whose origin is unknown) is scored but is no rule's
-  own evidence for `stays-silent`.
+  own evidence for `stays-silent`. An ECMA unit's entry may also carry `languageOptions`, the language upstream linted
+  it under where its test case set one beyond ESLint's flat-config defaults for its extension: `ecmaVersion` (left out
+  when `"latest"`), `sourceType` (left out when it is the extension's: `commonjs` for `.cjs` and `.cts`, `module`
+  otherwise) and `parserOptions` (without `ecmaFeatures.jsx`, which the extension gives), never `globals`
+  (`unitLanguage` in `scripts/pack-data/eslint-expected.mjs`). A rename variant carries its original's. The
+  conformance runner evaluates the unit under them: it merges them into the `languageOptions` of each AST clause of
+  the port (its `ecmaVersion` and `sourceType`, `parserOptions.ecmaFeatures`' `globalReturn` and `impliedStrict`, and
+  typescript-eslint's `jsxPragma`, `jsxFragmentName` and `lib`, which a code rule spells at the top of
+  `languageOptions`; a query that had none keeps reading its listed `global` names as unbound, `declared: false`), so
+  the port judges the file as the linter did; a unit without them gets the port's own
+  `languageOptions` (ESLint's defaults unless the port sets others). Today the javascript pack's two tools and
+  eslint-plugin-vitest record them; the other ECMA generators lint every case under one configuration of ESLint's
+  defaults (vue's, next's, react's, typescript-eslint's) or convey the source type through the unit's `package.json`
+  (eslint-plugin-n's), so their units carry none.
 - Rename variants (the ECMA tool-packs): the generator writes a renamed copy of every upstream unit under
-  `fixtures/renamed/<the original's path>`, its identifiers and string and number literal contents renamed by
-  `scripts/pack-data/rename/ecmascript.ts` (same length and shape, one bijective map per file, keywords, the standard
-  library and common host names protected), and lints it with upstream like any unit. Its `source.units` entry adds
+  `fixtures/renamed/<the original's path>`, its identifiers renamed by `scripts/pack-data/rename/ecmascript.ts` (same
+  length and shape, one order-preserving bijective map per file; literals, comments other than `/* global */`-style
+  name lists, keywords, the standard library, common host, framework and test-runner API names, hook-shaped and
+  `…Sync` names, and what a package exports kept), and
+  lints it with upstream like any unit. Its `source.units` entry adds
   `renamedFrom`, the key of the original unit, which must be an original with an origin. The conformance check scores
-  variants apart from the originals (`holds-under-rename`), so a port that matches the tests' names or literals rather
-  than the construct fails. A family without variants takes its overfit evidence from its samples alone.
+  variants apart from the originals (`holds-under-rename`), so a port that matches the tests' names rather than the
+  construct fails. A family without variants takes its overfit evidence from its samples alone.
 - `upstream/<tool>/gates.yaml` (a gated tool-pack): the upstream manifest the conformance check reads: the pins, the
   file types upstream lints, and per upstream rule its declared deprecation and recommended configuration
   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
@@ -188,7 +259,7 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
 
 A tool-pack's test data and real-code samples are not in git and never reach npm. Each kind is one archive in S3 that a
 tracked lock in the tool directory names; [docs/upstream.md](upstream.md) says how the data is made, published and
-judged, and [CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data) who does what.
+judged, and who does what ([Publishing pack data](upstream.md#publishing-pack-data)).
 
 **Test data** is the files under `packs/<id>/upstream/<tool>/` that `PACK_FIXTURE_PATTERNS`
 (`scripts/s3/pack-fixtures.mjs`) matches: the tool's test cases (`fixtures/`, `tests/`, case lists such as
@@ -200,7 +271,10 @@ judged, and [CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data) who does what.
   `upstream/<tool>/UPSTREAM.md` lists ([UPSTREAM.md](#upstreammd)), and everything under `upstream/<tool>/authored/`, a
   contributor's code corpus with its ground truth where the corpus is no public repository a pin can name;
 - **derived**: everything else, upstream's tests copied or derived and the tool's expected findings, which the
-  generators make from the pins.
+  generators make from the pins. The expected findings' `source.units` say per unit where it came from, whether it is
+  a rename variant (`renamedFrom`) and, for an ECMA unit its test case linted under its own language, that language
+  (`languageOptions`), which the conformance runner evaluates the unit under
+  ([above](#conformancejson-divergencesjson-upstream)).
 
 **Samples** are the tool-pack's labelled real files ([docs/upstream.md, "Samples"](upstream.md#samples)). The
 archive's layout is `scripts/samples/format.ts`: each sample is `<sample-id>/<source path>` beside its
@@ -305,11 +379,12 @@ These criteria are for reviewers and never block a merge: no check reads a messa
 
 ## The validation contract
 
-Implemented: `validatePack(directory, { listed? })` in `conformance/pack-validation.ts` runs
-checks 1 to 8 over one pack and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
-`test/engine/catalog/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per rule, and has
-the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
-Running it against the newest published core inside each pack's range is for pack CI, which does not exist yet.
+`validatePack(directory, { listed?, fixtures? })` in `conformance/pack-validation.ts` runs checks 1 to 8 over one pack
+and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
+`test/engine/catalog/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per
+rule, and has the validator's own tests over the fixture packs in `fixtures/packs/`. It runs with the core in this
+repository: in `npm test`, and in `release-packs.yml` on a pull request from this repository that touches `packs/` and
+before each publish ([release](#release)).
 
 The contract is the floor every pack meets. A ported rule must also pass the [conformance check's gate](../conformance/README.md#the-gate)
 to ship: it judges the rule on upstream's cases and their rename variants (no unexplained false positive or miss), on
@@ -323,7 +398,10 @@ npx vitest run test/engine/catalog/packs.test.ts -t "pack python"        # one p
 
 Check 4 scores ported rules on the tools' fixtures. The rename variants and the real-code samples are scored by the
 conformance check (`npm run test:conformance`), not here. To see every false positive and false negative of one
-ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule <rule> --fixtures`.
+ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule <rule> --fixtures`. CI's unit tests set
+`RERAIL_PACK_FIXTURES_IN_CONFORMANCE=1`, which passes `fixtures: false`: check 4 then skips the scoring, which the
+conformance job does on the same fixtures with the same runner and fails on the same failures, so CI scores them once.
+The pack publish gate scores them in check 4 as `npm test` does.
 
 | # | Check | Fails when |
 |---|---|---|
@@ -429,9 +507,6 @@ Precisely:
 3 and 4 skip it until core reads the language. Any other compile error still fails check 1. So a pack for a planned
 language can land before the engine supports it.
 
-A public `rerail pack check` command, for packs written outside this repository, can wrap the same checks later; it
-is not part of this contract.
-
 ## Versioning and release
 
 Packs are pre-release until 1.0.0: below it, every change to a pack is a `patch`. From 1.0.0 the bump follows the
@@ -445,6 +520,12 @@ table:
 
 Pack versions are managed with [changesets](https://github.com/changesets/changesets): a pull request that changes a
 pack adds a changeset (`npx changeset`) naming the pack's package and its bump, with a one-line summary for users.
+The summary is the pack's release note, and goes out as it is on the pack's GitHub Release: it says what changed for
+the person upgrading, in plain language, in a sentence or two (at most 60 words), and leaves out commit hashes,
+ticket ids, pull request numbers and repository-internal maintenance; the **Changesets** job fails a pull request
+whose changeset says otherwise ([release notes](release.md#release)). `changeset version` writes each summary as one
+changelog entry, as written (`scripts/release/changeset-changelog.mjs`, the generator `.changeset/config.json`
+names), without the commit hash changesets' default generator led each entry with.
 A change counts when it touches what the pack publishes: its `package.json` (except `publishConfig` alone, which only
 steers `npm publish`) or a path its `files` lists (`pack.json`, `rules/`, `licenses/`, `LICENSE`, `NOTICE`,
 `README.md`); expected findings, candidates and `CHANGELOG.md` do not. The
@@ -455,7 +536,7 @@ of its own naming that pack (`missingChangesets` in `scripts/release/packs.mjs`)
 Nobody edits a pack's `version` or `CHANGELOG.md` by hand: `npx changeset version` applies the pending changesets,
 bumps each pack and writes its `CHANGELOG.md` when packs are released. Changesets cover only the packs: the core
 package at the repository root is bumped by the same Release pull request when what it ships changes, with its notes
-in the root `CHANGELOG.md` ([release](release.md#release)), and a changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
+pending in `.changelog/` ([release](release.md#release)), and a changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
 rules, so its first release is `0.1.1`.
 
 ### Release
@@ -501,6 +582,17 @@ them; core's `v*` release (`release.yml`) is separate.
    the version or its `next` is older than its `latest`. A pack that fails to move, or whose dist-tags cannot be read,
    does not stop the others; the run fails naming it and can be run again. A version that was never released fails
    the run. These runs go one at a time.
+
+Every released pack version gets a GitHub Release on its tag `@neralabs/rerail-pack-<id>@<version>`, whose notes are
+that version's section of the pack's `CHANGELOG.md`, so a pack's release notes are written once, in its changeset's
+summary, in words for the people who upgrade. The notes are the section's entries alone: its one `### Patch Changes`
+heading, which changesets writes over every section of a pack below 1.0.0, and the commit hash the entries of versions
+released before this generator carry, are left out. After the **Published dist-tags** job passes, the run's **GitHub
+Releases** job makes one for each version it published (`scripts/release/github-release.mjs`). A pack's Release is
+never the repository's latest release, which is core's, and is a pre-release only for a held pack published under
+`next`. Run again, the job rewrites the notes and flags of a Release that exists. Releases missing for tags released
+before this, or by a run that failed before its Release, are made by hand with the script's backfill, which skips a
+version whose changelog has no section ([release.md](release.md#release)).
 
 The scripts are in `scripts/release/`. To check a pack's tarball locally:
 `node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>`.
@@ -576,23 +668,3 @@ one rule: a file from an Apache-2.0-only source is refused unless that glob's ki
 Apache-2.0 file must carry its change notices. A licence passes when some way to satisfy its SPDX expression uses only
 allowlisted licences (`AND` binds tighter than `OR`); a malformed expression is refused. A sample's licence is its
 repository's recorded one ([docs/upstream.md](upstream.md#sample-licences)).
-
-## Moving to this layout
-
-| Today | Becomes |
-|---|---|
-| Core's shipped complexity rules and their documents | `packs/complexity/pack.json` and `rules/`, published on their own; core ships no packs |
-| `conformance/languages/<lang>/pack.json`, `rules/`, `divergences.json` | `packs/<lang>/conformance.json`, `rules/` or `candidates/`, `divergences.json`, plus a `pack.json` |
-| `fixtures/<family>/rules/<tool>/` expected findings, copied tests and generators | `packs/<lang>/upstream/<tool>/`; for a language without rules yet, `fixtures/<family>/upstream/<tool>/` |
-| `fixtures/<family>/{candidates,probes,policies}/` | `packs/<lang>/candidates/` |
-| `fixtures/<family>/licenses/<project>/` for rule tools | `packs/<lang>/licenses/<project>/`, keeping only the rule tests' rows; rows for engine oracles stay in `fixtures/` |
-| `conformance/languages/` runner and scorer | Test support in core that the pack tests call: `conformance/pack-validation.ts` |
-| Everything else under `fixtures/` (parsing, scope, values, calls oracles) | Stays: engine tests, not pack validation |
-
-Moved: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next`, `sql` and `rust`, each from `conformance/languages/<id>/`,
-`fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint expected-findings
-helper they share is `scripts/pack-data/eslint-expected.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
-The complexity rules moved to `packs/complexity/`; their lizard parity test stays in
-`test/engine/code-rule/complexity-rules.test.ts`, and lizard is a gated tool-pack of its own
-(`packs/complexity/upstream/lizard/gates.yaml`). `vue` moved from `fixtures/vue/upstream/`, its
-draft `rules.json` becoming `packs/vue/conformance.json`.

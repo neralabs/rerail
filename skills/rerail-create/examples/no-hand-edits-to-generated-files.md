@@ -48,7 +48,7 @@ through the shell (`sed -i`) is not caught; the read-back said so.
               "all": [
                 {
                   "field": "input.file_path",
-                  "regex": "^(?:[^\\s\\[\\]#]*\\.generated\\.[^\\s\\[\\]#/]*|(?:[^\\s\\[\\]#]*/)?packs/node/(?:rules|candidates)/[^\\s\\[\\]#]+|(?:[^\\s\\[\\]#]*/)?packs/typescript/candidates/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|(?:[^\\s\\[\\]#]*/)?model/(?:model\\.safetensors|tokenizer\\.json|config\\.json|manifest\\.json)|(?:[^\\s\\[\\]#]*/)?native/src/code_rule_dsl/value/names/names\\.bin)$"
+                  "regex": "^(?:[^\\s\\[\\]#]*\\.generated\\.[^\\s\\[\\]#/]*|(?:[^\\s\\[\\]#]*/)?packs/node/(?:rules|candidates)/[^\\s\\[\\]#]+|(?:[^\\s\\[\\]#]*/)?packs/typescript/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|(?:[^\\s\\[\\]#]*/)?model/(?:model\\.safetensors|tokenizer\\.json|config\\.json|manifest\\.json)|(?:[^\\s\\[\\]#]*/)?native/src/code_rule_dsl/value/names/names\\.bin)$"
                 },
                 {
                   "not": {
@@ -62,7 +62,7 @@ through the shell (`sed -i`) is not caught; the read-back said so.
               "all": [
                 {
                   "field": "input.path",
-                  "regex": "^(?:[^\\s\\[\\]#]*\\.generated\\.[^\\s\\[\\]#/]*|(?:[^\\s\\[\\]#]*/)?packs/node/(?:rules|candidates)/[^\\s\\[\\]#]+|(?:[^\\s\\[\\]#]*/)?packs/typescript/candidates/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|(?:[^\\s\\[\\]#]*/)?model/(?:model\\.safetensors|tokenizer\\.json|config\\.json|manifest\\.json)|(?:[^\\s\\[\\]#]*/)?native/src/code_rule_dsl/value/names/names\\.bin)$"
+                  "regex": "^(?:[^\\s\\[\\]#]*\\.generated\\.[^\\s\\[\\]#/]*|(?:[^\\s\\[\\]#]*/)?packs/node/(?:rules|candidates)/[^\\s\\[\\]#]+|(?:[^\\s\\[\\]#]*/)?packs/typescript/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|(?:[^\\s\\[\\]#]*/)?model/(?:model\\.safetensors|tokenizer\\.json|config\\.json|manifest\\.json)|(?:[^\\s\\[\\]#]*/)?native/src/code_rule_dsl/value/names/names\\.bin)$"
                 },
                 {
                   "not": {
@@ -74,11 +74,11 @@ through the shell (`sed -i`) is not caught; the read-back said so.
             },
             {
               "field": "input.input",
-              "regex": "(?m)^\\[(?:[^\\]\\n]*/)?(?:[^\\]\\n/]*\\.generated\\.[^\\]\\n#/]*|packs/node/(?:rules/n-no-process-exi[^t]|rules/n-no-process-[^e]|rules/n-no-[^p]|rules/n-[^n]|rules/[^n]|candidates/)[^\\]\\n]*|packs/typescript/candidates/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|model/(?:tokenizer|config|manifest)\\.json)#[0-9A-Fa-f]{4}\\]"
+              "regex": "(?m)^\\[(?:[^\\]\\n]*/)?(?:[^\\]\\n/]*\\.generated\\.[^\\]\\n#/]*|packs/node/(?:rules/n-no-process-exi[^t]|rules/n-no-process-[^e]|rules/n-no-[^p]|rules/n-[^n]|rules/[^n]|candidates/)[^\\]\\n]*|packs/typescript/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|model/(?:tokenizer|config|manifest)\\.json)#[0-9A-Fa-f]{4}\\]"
             },
             {
               "field": "input.input",
-              "regex": "(?m)^\\*\\*\\* (?:Update|Add|Delete) File: (?:\\S*/)?(?:\\S*\\.generated\\.\\S*|packs/node/candidates/\\S+|packs/typescript/candidates/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|model/(?:tokenizer|config|manifest)\\.json)\\s*$"
+              "regex": "(?m)^\\*\\*\\* (?:Update|Add|Delete) File: (?:\\S*/)?(?:\\S*\\.generated\\.\\S*|packs/node/candidates/\\S+|packs/typescript/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|model/(?:tokenizer|config|manifest)\\.json)\\s*$"
             }
           ]
         }
