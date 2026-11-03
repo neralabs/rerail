@@ -393,3 +393,55 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// O13: T's native modes over atoms. Lowered with the transducer's `nearest` and run over the base-relation vtabs,
+/// each component a mode runs in `logic::native` gives the rows T's pure SQL mode gives (the goldens).
+#[test]
+fn t_programs_run_natively_over_atoms_like_t() {
+    use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let t = Connection::open_in_memory().unwrap();
+    let dump = zstd::decode_all(std::fs::File::open(root().join("plan/golden/facts.sql.zst")).unwrap()).unwrap();
+    t.execute_batch(std::str::from_utf8(&dump).unwrap()).unwrap();
+    let first: HashMap<i64, i64> =
+        t.prepare("SELECT d, min(n) FROM node GROUP BY d").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect();
+    let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let store = ContentStore::open(&path).unwrap();
+    let db = Connection::open(&path).unwrap();
+    let modules = Modules::default();
+    atomized_statistics(&t, &db, &store, &first);
+    let mut failures = Vec::new();
+    let mut ran = BTreeSet::new();
+    for name in ["workload", "workload_demand", "calls"] {
+        let p = program(name);
+        let mut lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let sets = lowered.transduce_nearest();
+        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, Binding::Cpu).unwrap() {
+            if rel.starts_with("nearest_") {
+                db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
+                for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
+                    db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd]).unwrap();
+                }
+            }
+            modules.bind(&db, &rel, source).unwrap();
+        }
+        for modes in ["fixpoint", "fixpoint,vtab", "fixpoint,direct", "upsert", "setfix", "setfix,join", "all", "program"] {
+            match run_atoms_native(&lowered, &db, "s", modes) {
+                Ok(got) => {
+                    let before = failures.len();
+                    outputs_match(name, &got, &first, &mut failures);
+                    for failure in &mut failures[before..] {
+                        *failure = format!("{modes} {failure}");
+                    }
+                    ran.extend(got.native.iter().map(|c| format!("{modes} {name} {c}")));
+                }
+                Err(e) => failures.push(format!("{modes} {name}: {e}")),
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    for mode in ["fixpoint", "setfix", "program"] {
+        assert!(ran.iter().any(|c| c.starts_with(mode)), "no component ran natively under {mode}: {ran:?}");
+    }
+}

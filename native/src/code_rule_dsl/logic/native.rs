@@ -23,7 +23,7 @@ mod setfix;
 #[cfg(test)]
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
-pub(in crate::code_rule_dsl) use setfix::{flush_symbols, register_symbols};
+pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, register_symbols};
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConnection, VTabCursor, VTabKind};
@@ -167,8 +167,16 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
             bins.push((r.get(0)?, op, r.get(2)?, r.get(3)?));
         }
     }
-    let n = seeds.iter().map(|r| r.0).chain(copies.iter().flat_map(|r| [r.0, r.1]))
-        .chain(bins.iter().flat_map(|r| [r.0, r.2, r.3])).max().map_or(0, |m| m as usize + 1);
+    // Keys are compacted to dense cells: T's node ids were dense, the store's are `d << 32 | index` (O13).
+    let mut keys: Vec<i64> = seeds.iter().map(|r| r.0).chain(copies.iter().flat_map(|r| [r.0, r.1]))
+        .chain(bins.iter().flat_map(|r| [r.0, r.2, r.3])).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    let cell = |k: i64| keys.binary_search(&k).expect("every key is a cell") as i64;
+    let seeds: Vec<(i64, i64)> = seeds.iter().map(|&(k, v)| (cell(k), v)).collect();
+    let copies: Vec<(i64, i64)> = copies.iter().map(|&(a, b)| (cell(a), cell(b))).collect();
+    let bins: Vec<(i64, u8, i64, i64)> = bins.iter().map(|&(c, o, l, r)| (cell(c), o, cell(l), cell(r))).collect();
+    let n = keys.len();
     let mut seed = vec![BOT; n];
     for &(k, v) in &seeds { seed[k as usize] = lat.join(seed[k as usize], v); }
     // In-edges per node (to evaluate it) and out-edges (to find dependents), as CSR.
@@ -211,7 +219,7 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
             .map_err(|error| user_err(format!("lattice_fixpoint on Metal: {error:?}")))?;
         crate::code_rule_dsl::prof::count("lattice.device_retries", solved.retries as usize);
         // On the queue a wave is a launch: the device decides each further evaluation.
-        return finish(conn, p, target, solved.values, solved.launches as u32, solved.visits, t);
+        return finish(conn, p, target, keys, solved.values, solved.launches as u32, solved.visits, t);
     }
     let _ = binding;
     let mut val = seed.clone();
@@ -239,17 +247,19 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
         frontier = upd.iter().map(|u| u.0).collect();
         for (v, x) in upd { val[v as usize] = x; }
     }
-    finish(conn, p, target, val, waves, visits, t)
+    finish(conn, p, target, keys, val, waves, visits, t)
 }
 
 /// The solved values written where `target` says, with the run's summary.
-fn finish(conn: &Connection, p: &str, target: Option<&str>, val: Vec<i64>, waves: u32, visits: u64, t: Instant) -> Result<String> {
+/// `keys[cell]` is the key of each cell of `val`.
+#[allow(clippy::too_many_arguments)]
+fn finish(conn: &Connection, p: &str, target: Option<&str>, keys: Vec<i64>, val: Vec<i64>, waves: u32, visits: u64, t: Instant) -> Result<String> {
     let solve = t.elapsed();
     if let Some(name) = target.and_then(|t| t.strip_prefix('@')) {
         let rows = val.iter().filter(|&&v| v != BOT).count();
         let mut reg = RESULTS.lock().unwrap();
         reg.retain(|(n, _)| n != name);
-        reg.push((name.to_string(), Arc::new(val)));
+        reg.push((name.to_string(), Arc::new((keys, val))));
         return Ok(format!("{rows} {waves} {visits} {:.1} {:.1}", solve.as_secs_f64() * 1e3, t.elapsed().as_secs_f64() * 1e3));
     }
     let out_table = match target {
@@ -262,18 +272,19 @@ fn finish(conn: &Connection, p: &str, target: Option<&str>, val: Vec<i64>, waves
     let mut rows = 0usize;
     {
         let mut ins = conn.prepare(&format!("INSERT INTO {out_table} VALUES (?1, ?2)"))?;
-        for (k, &v) in val.iter().enumerate() {
-            if v != BOT { ins.execute((k as i64, v))?; rows += 1; }
+        for (&k, &v) in keys.iter().zip(&val) {
+            if v != BOT { ins.execute((k, v))?; rows += 1; }
         }
     }
     Ok(format!("{rows} {waves} {visits} {:.1} {:.1}", solve.as_secs_f64() * 1e3, t.elapsed().as_secs_f64() * 1e3))
 }
 
-/// Fixpoint results kept in memory, by name, for `lattice_result`.
-static RESULTS: Mutex<Vec<(String, Arc<Vec<i64>>)>> = Mutex::new(Vec::new());
+/// Fixpoint results kept in memory, by name, for `lattice_result`: each cell's key (ascending) and value.
+type Solution = Arc<(Vec<i64>, Vec<i64>)>;
+static RESULTS: Mutex<Vec<(String, Solution)>> = Mutex::new(Vec::new());
 
 #[repr(C)]
-struct ResultTab { base: ffi::sqlite3_vtab, vals: Arc<Vec<i64>>, rows: usize }
+struct ResultTab { base: ffi::sqlite3_vtab, vals: Solution, rows: usize }
 
 unsafe impl<'vtab> VTab<'vtab> for ResultTab {
     type Aux = ();
@@ -282,7 +293,7 @@ unsafe impl<'vtab> VTab<'vtab> for ResultTab {
         let name = std::str::from_utf8(args.last().copied().unwrap_or(b"")).unwrap_or("").trim().to_string();
         let vals = RESULTS.lock().unwrap().iter().find(|(n, _)| *n == name).map(|r| r.1.clone())
             .ok_or_else(|| Error::ModuleError(format!("no lattice result named {name:?}")))?;
-        let rows = vals.iter().filter(|&&v| v != BOT).count();
+        let rows = vals.1.iter().filter(|&&v| v != BOT).count();
         Ok((Cow::Borrowed(c"CREATE TABLE x(c0 INTEGER, c1 INTEGER)"), ResultTab { base: ffi::sqlite3_vtab::default(), vals, rows }))
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
@@ -308,19 +319,19 @@ unsafe impl<'vtab> VTab<'vtab> for ResultTab {
 impl CreateVTab<'_> for ResultTab { const KIND: VTabKind = VTabKind::Default; }
 
 #[repr(C)]
-struct ResultCursor { base: ffi::sqlite3_vtab_cursor, vals: Arc<Vec<i64>>, pos: usize, end: usize }
+struct ResultCursor { base: ffi::sqlite3_vtab_cursor, vals: Solution, pos: usize, end: usize }
 impl ResultCursor {
-    fn skip(&mut self) { while self.pos < self.end && self.vals[self.pos] == BOT { self.pos += 1; } }
+    fn skip(&mut self) { while self.pos < self.end && self.vals.1[self.pos] == BOT { self.pos += 1; } }
 }
 unsafe impl VTabCursor for ResultCursor {
     fn filter(&mut self, idx_num: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
         if idx_num == 1 {
-            match args.get::<Option<i64>>(0)? {
-                Some(k) if k >= 0 && (k as usize) < self.vals.len() => { self.pos = k as usize; self.end = k as usize + 1; }
-                _ => { self.pos = 0; self.end = 0; }
+            match args.get::<Option<i64>>(0)?.and_then(|k| self.vals.0.binary_search(&k).ok()) {
+                Some(at) => { self.pos = at; self.end = at + 1; }
+                None => { self.pos = 0; self.end = 0; }
             }
         } else {
-            self.pos = 0; self.end = self.vals.len();
+            self.pos = 0; self.end = self.vals.1.len();
         }
         self.skip();
         Ok(())
@@ -328,7 +339,7 @@ unsafe impl VTabCursor for ResultCursor {
     fn next(&mut self) -> Result<()> { self.pos += 1; self.skip(); Ok(()) }
     fn eof(&self) -> bool { self.pos >= self.end }
     fn column(&self, ctx: &mut VContext, i: c_int) -> Result<()> {
-        if i == 0 { ctx.set_result(&(self.pos as i64)) } else { ctx.set_result(&self.vals[self.pos]) }
+        if i == 0 { ctx.set_result(&self.vals.0[self.pos]) } else { ctx.set_result(&self.vals.1[self.pos]) }
     }
     fn rowid(&self) -> Result<i64> { Ok(self.pos as i64) }
 }

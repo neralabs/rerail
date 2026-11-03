@@ -18,7 +18,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O10 | Phase 2 | Core facts of a non-UTF-8 blob, an unknown language or a parse stopped at a limit are `ABSENT` | open |
 | O11 | Phase 6 | §12's "unbounded value cycle" has no definition of a bound; T's programs recurse through `@cat` | **closed** (2026-11-03): option (b), `logic::front::cycles` |
 | O12 | Phase 6 | `nearest` has no executor after the native tape functions were dropped; Phase 6's check needs one | **closed** (2026-11-03): option (a), `typing::file_local` |
-| O13 | Phase 6 | Symbols as atoms in the planner's SQL | SQL side done (decision 0009); native strata open |
+| O13 | Phase 6 | Symbols as atoms in the planner's SQL | **closed** (2026-11-03): SQL side (decision 0009), native strata (list step 22) |
 | O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | closed (2026-10-30): `logic::plan::emit`; independent strata share waves; plans from the boundary's counts |
 | O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | copy placed (2026-10-29): S's oracle runs as copied on P's anchor engine (`findings::tests::s_native_oracle`, `matcher::p_anchors`); open only: which comparison survives (O19) |
 | O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | closed (2026-10-29): jemalloc stays the global allocator (user decision); `mimalloc` remains a dependency only |
@@ -335,6 +335,22 @@ Status (2026-10-27): the SQL side is done (decision 0009): `logic::plan::lower` 
 base-relation vtabs (decision 0008) with T's statistics atomized, give T's plans and outputs on the fixture
 (`t_programs_over_atoms_plan_and_run_like_t`). Open: the native strata over the lowered program, and the planner's
 statistics from `stats::ingest` instead of T's tables.
+
+**Closed (2026-11-03, list step 22).** `logic::plan::run_atoms_native` runs T's native modes over atoms, on
+`logic::native` registered on the store's connection, with `nearest` from the transducer (O12). On workload,
+workload_demand and calls, every mode (`fixpoint`, `fixpoint,vtab`, `fixpoint,direct`, `upsert`, `setfix`,
+`setfix,join`, `all`, `program`) gives T's outputs (`t_programs_run_natively_over_atoms_like_t`); `program` runs 23,
+24 and 72 components natively. What over atoms needed:
+- **Lattice keys are compacted to dense cells.** `lattice_fixpoint` sized its arrays by the largest key; T's node
+  ids were dense, the store's are `d << 32 | index`. The result vtab looks keys up by binary search.
+- **A transfer's operator is its name atom**; the bin table is mapped to `+`, `-`, `*` before the native solve.
+- **Every native column is an integer over atoms** (`sym_char`): a `sym` column holds name, kind or field atoms,
+  and only name atoms have text, so the native store's live statistics and their constants stay integers.
+- **The join engine's loaded inputs are per run** (`setfix::forget_inputs`, keyed by database): T cached them by
+  SQL text for its process; the base relations here are rebound per batch, and `calls` read `workload`'s rows.
+- Dropped over atoms: T's `nearest` and `kseed` modes, which read a per-run copy of the tree (`tape_load`).
+Open: the planner's statistics from `stats::ingest` instead of T's tables (list step 29, with the typing
+programs' own ingestion), and these strata on the wave path (O14's `emit` covers the SQL strata only).
 
 ## O14. The planner's stratum loop and the frontier loop
 

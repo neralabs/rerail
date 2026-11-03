@@ -1407,6 +1407,12 @@ fn observe(stats: &mut Stats, order: &[Step], line: &str) {
 }
 
 /// A relation's column types (T's `prog_types`).
+/// A column's type in the native store's spec: `s`, a symbol it reads as text, only where symbols are text. Over
+/// atoms every column is an integer (a name, kind or field atom), as the planner's SQL holds it (O13).
+fn sym_char(inputs: &Inputs, t: &str) -> char {
+    if t == "sym" && inputs.atoms.is_none() { 's' } else { 'i' }
+}
+
 fn prog_types<'p>(prog: &'p Program, r: &str) -> Vec<&'p str> {
     prog.decls[r].iter().map(|(_, t)| t.as_str()).collect()
 }
@@ -1435,7 +1441,7 @@ fn live_stats(prog: &Program, model: &mut Model, r: &str, line: &str) {
             .filter_map(|x| {
                 let (v, m) = x.split_once('=')?;
                 let v = unhex(v)?;
-                let v = if types.get(c) == Some(&"sym") { Constant::Str(v) } else { Constant::Int(v.parse().ok()?) };
+                let v = if types.get(c) == Some(&"sym") && model.inputs.atoms.is_none() { Constant::Str(v) } else { Constant::Int(v.parse().ok()?) };
                 Some((v, m.parse().ok()?))
             })
             .collect();
@@ -1543,7 +1549,7 @@ impl Run<'_> {
                     wheres.push(format!("{} = {}", sql_col(&l.rel, c), sql_term(t, &HashMap::new(), self.model.inputs.atoms).ok()?.render()));
                 }
             }
-            let types: String = keep.iter().map(|&c| if prog.decls[&l.rel][c].1 == "sym" { 's' } else { 'i' }).collect();
+            let types: String = keep.iter().map(|&c| sym_char(&self.model.inputs, &prog.decls[&l.rel][c].1)).collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
             let mut sel = self.model.relation(prog, &l.rel, false).render();
             if !wheres.is_empty() {
@@ -1658,7 +1664,7 @@ impl Run<'_> {
         gates.sort_by(|a, b| (a.1.level, &a.0).cmp(&(b.1.level, &b.0)));
         // A gate's rule only placed it here.
         let rules: Vec<&Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
-        let types = |r: &str| prog_types(prog, r).iter().map(|t| if *t == "sym" { 's' } else { 'i' }).collect::<String>();
+        let types = |r: &str| prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
         let mut lines = vec![format!("name {name}")];
         lines.extend(rels.iter().map(|r| format!("rel {r} {}", types(r))));
         lines.push("nowrite".to_owned());
@@ -1839,6 +1845,13 @@ impl Run<'_> {
             let select = self.model.sql_select(prog, head, &order, None, None)?;
             self.db.execute(&format!("INSERT INTO {} {select}", head.rel), [])?;
         }
+        // Over atoms a transfer's operator is its name atom; `lattice_fixpoint` reads the operator's text.
+        if let Some([plus, minus, times]) = self.model.inputs.atoms {
+            self.db.execute(
+                &format!("UPDATE lfx_{rel}_bin SET c1 = CASE c1 WHEN {plus} THEN '+' WHEN {minus} THEN '-' WHEN {times} THEN '*' ELSE '?' END"),
+                [],
+            )?;
+        }
         let native = &self.model.inputs.native;
         if native.contains("vtab") {
             // Kept in memory; the relation becomes a virtual table over it (no rows written).
@@ -1884,12 +1897,12 @@ impl Run<'_> {
                     .args
                     .iter()
                     .position(|t| matches!(t, Term::Var(x) if x == v))
-                    .map(|c| if prog.decls[&a.rel][c].1 == "sym" { 's' } else { 'i' }),
+                    .map(|c| sym_char(&self.model.inputs, &prog.decls[&a.rel][c].1)),
                 _ => None,
             })
         };
         let tables: HashMap<String, (String, String)> = rels.iter().map(|r| ((*r).clone(), (format!("sfx_f_{r}"), format!("sfx_d_{r}")))).collect();
-        let types = |r: &str| prog_types(prog, r).iter().map(|t| if *t == "sym" { 's' } else { 'i' }).collect::<String>();
+        let types = |r: &str| prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
         let mut lines = vec![format!("name {name}")];
         lines.extend(rels.iter().map(|r| format!("rel {r} {}", types(r))));
         let mut edges: Vec<(Atom, Vec<Step>)> = Vec::new();
@@ -2142,6 +2155,24 @@ pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connect
     super::native::register_symbols(db)?;
     let inputs =
         Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native: BTreeSet::new(), batch: HashMap::new() };
+    let out = run(&lowered.program, db, inputs, Some(lowered));
+    super::native::flush_symbols(db)?;
+    out
+}
+
+/// `run_atoms` with T's native modes (O13): the components a mode takes run in `logic::native` (registered on
+/// `db`) over atoms, the rest in SQL. T's `nearest` and `kseed` modes read a per-run copy of the tree
+/// (`tape_load`), which is not kept: `nearest` is the transducer's (`Lowered::transduce_nearest`), so those two
+/// modes are dropped from `modes`.
+pub(in crate::code_rule_dsl) fn run_atoms_native(lowered: &lower::Lowered, db: &Connection, stats: &str, modes: &str) -> Result<Outcome> {
+    db.execute_batch("PRAGMA temp_store = MEMORY;")?;
+    super::native::register(db)?;
+    super::native::register_symbols(db)?;
+    super::native::forget_inputs(db);
+    let mut native = native_modes(modes);
+    native.remove("nearest");
+    native.remove("kseed");
+    let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native, batch: HashMap::new() };
     let out = run(&lowered.program, db, inputs, Some(lowered));
     super::native::flush_symbols(db)?;
     out

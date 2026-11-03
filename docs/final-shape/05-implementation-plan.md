@@ -364,6 +364,11 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 - **Rules of one shape are one rule (`policies::merged`).** A rule's constants in its head and positive atoms become variables read from the shape's constant table (`violation_shape_k`, one row per rule); rules equal once their variables are renamed in order share it. The Python pack's 87 forbid rules are one rule and one table: 2 statements per chunk, not 87. The four backends find the same 710 keys, CPU per audit 4.3 / 4.2 / 2.3 / 2.0 s at load 25 (6.4 / 6.4 / 3.0 / 2.9 s at load 43 before; the load differs, so the drop is not all the merge's). A data-layer rule with its own filters is its own shape; how many shapes the 142 have is measured when they are rewritten (list step 30).
 - **Compiled plans in memory are per store.** `stats::plans` kept its memory cache by plan id alone, so a store that had never compiled a plan was answered from another's and its `compiled_plans` stayed empty (`the_statistics_loop_runs_on_the_slices_path` failed under parallel tests). The cache is keyed by the store's file and the plan.
 
+**List step 22 (2026-11-03): the native strata over atoms (O13), with O11 and O12 decided.**
+- **O11, option (b):** `logic::front::cycles` refuses a value cycle (a made value flowing back to its builtin's arguments, outside a lattice's value column) unless it moves one way along tree edges. T's five programs pass with `qn`, `modn` and `resolves` bounded by the tree.
+- **O12, option (a):** `typing::file_local::nearest`, the first file-local stratum, is a flat-lattice system per chunk solved by the transducer's file-local FIX (device work queue, one launch) or the CPU reference; the strata read it as `nearest_<set>(n, a)`. T's programs derive T's outputs that way on both bindings.
+- **O13:** `run_atoms_native` runs every one of T's native modes over atoms with T's outputs (see open-items O13 for what that needed).
+
 Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust port on T's 574/331-file workloads; CPU and RSS ≤ T's numbers.
 
 ### Phase 7: SQL-driven waves (§4, §7; E1, E12, E14)

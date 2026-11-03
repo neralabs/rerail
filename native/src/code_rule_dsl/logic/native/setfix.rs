@@ -831,10 +831,20 @@ impl InRel {
         }).clone()
     }
 }
-static INPUTS: LazyLock<Mutex<HashMap<String, Arc<InRel>>>> = LazyLock::new(Default::default);
+/// Input relations loaded for joins, by database and spec, for the run that loaded them: the base relations are
+/// vtabs rebound per batch, so a load is not reused across runs (`forget_inputs`). T cached them for its process,
+/// which ran one program over one facts file.
+static INPUTS: LazyLock<Mutex<HashMap<(String, String), Arc<InRel>>>> = LazyLock::new(Default::default);
+
+/// Drops the input relations loaded on `conn`'s database: a run starts over the relations bound now.
+pub fn forget_inputs(conn: &Connection) {
+    let path = conn.path().unwrap_or_default().to_owned();
+    INPUTS.lock().unwrap().retain(|(p, _), _| *p != path);
+}
 
 fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel>> {
-    if let Some(r) = INPUTS.lock().unwrap().get(spec) { return Ok(r.clone()); }
+    let key = (conn.path().unwrap_or_default().to_owned(), spec.to_owned());
+    if let Some(r) = INPUTS.lock().unwrap().get(&key) { return Ok(r.clone()); }
     let parts: Vec<&str> = spec.splitn(4, ':').collect();
     let [which, table, cols, types] = parts[..] else { return Err(err(format!("bad input {spec}"))) };
     let base = which == "b";
@@ -856,7 +866,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     if std::env::var_os("RDL_PROFILE").is_some() {
         eprintln!("      input {} rows in {:.1} ms: SELECT {cols} FROM {table}", rel.len(), t0.elapsed().as_secs_f64() * 1e3);
     }
-    INPUTS.lock().unwrap().insert(spec.to_string(), rel.clone());
+    INPUTS.lock().unwrap().insert(key, rel.clone());
     Ok(rel)
 }
 
