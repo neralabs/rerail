@@ -518,12 +518,15 @@ once the cause is fixed, or bump it by hand (`npm run upstream:bump`, then deriv
   pack (`conformance:languages:check -- --shard <k>/<n>`), and `tools` makes the reports from their results and judges
   them (`-- --results <dir>`), then uploads the summary and pull request comment as the `conformance-summary` artifact,
   which the `conformance-report` job posts on the pull request
-  ([conformance/README.md](../conformance/README.md#what-runs-on-a-pull-request)).
+  ([conformance/README.md](../conformance/README.md#what-runs-on-a-pull-request)). On a pull request they run when it
+  changes what the check reads, which any change under `packs/` does; a change to none of it (docs, the dashboard, the
+  hosts) skips the shards, the comment and the `tools` job's conformance steps.
 - **Lint and type-check** (`lint`) runs structure metric #3, which fails while any `publish/` is tracked, a tool
   directory lacks its `test-data.lock`, a lock is malformed, or pack test data is tracked in the pulled layout
   ([repository-structure.md](repository-structure.md#3-fixture-data-outside-fixtures-and-packsupstream-pack-test-data-in-git-or-unpinned-or-pack-data-waiting-to-publish--target-0)).
 - **CI result** (`ci-result`) needs every other job and fails when any failed or was cancelled; it is the check the
-  ruleset requires, since GitHub counts a job skipped after a failed dependency as passing.
+  ruleset requires, since GitHub counts a job skipped after a failed dependency as passing. A job a path filter of the
+  `changes` job skips passes it, as a job skipped for a fork or Dependabot does.
 
 CI verifies the data by sha256 only: it never derives it again or asks upstream. Pack test data is a point-in-time
 artifact, and no CI job checks that it reproduces from the pins; the approving code owner checks that what a pull
