@@ -48,6 +48,17 @@ def normalize(check, result, files, logical):
         else:
             value = asdict(item) if is_dataclass(item) else item if isinstance(item, dict) else vars(item)
         supplied = value.get("path", value.get("file", value.get("file_path")))
+        if supplied is None and check == "versioned_merged_identity":
+            caller = value["caller"]
+            matches = [file["path"] for file in files if Path(file["path"]).name == caller.split(":", 1)[0]]
+            if value["code"] == "VMI001":
+                # Python's line 0 denotes absent source. Rerail anchors the
+                # project diagnostic at the start of the declared domain.
+                supplied = "impl/common/l2070_server_plan/steps"
+            elif len(matches) == 1:
+                supplied = matches[0]
+            else:
+                raise ValueError("Constructor caller does not identify one source file: " + caller)
         if supplied is None:
             if len(files) != 1:
                 raise ValueError("Finding without a file requires an explicit diagnostic-domain adapter")
@@ -58,8 +69,12 @@ def normalize(check, result, files, logical):
         code = value.get("code") or value.get("category")
         if not code:
             raise ValueError("Finding has no diagnostic identity")
-        output.append({"path": path, "line": value.get("line", 1), "column": value.get("col"),
-                       "code": code, "message": value.get("message", value.get("detail", ""))})
+        finding = {"path": path, "line": value.get("line", 1), "column": value.get("col"),
+                   "code": code, "message": value.get("message", value.get("detail", ""))}
+        if check == "versioned_merged_identity":
+            finding.update(caller=value["caller"], original_line=value["line"])
+            if code == "VMI001": finding["line"] = 1
+        output.append(finding)
     return output
 
 
@@ -120,16 +135,24 @@ def install(recorder):
                     files = [{"path": logical(p), "source": p.read_text()} for p in paths]
                 elif check == "versioned_merged_identity":
                     root = Path(arguments.get("root", module.ROOT))
-                    paths = sorted((root / "impl/common/l2070_server_plan/steps").rglob("*.py"))
+                    paths = [path for directory in module.PRODUCTION_ROOTS for path in sorted((root / directory).glob("*.py"))]
                     files = [{"path": logical(p), "source": p.read_text()} for p in paths]
                     event["oracle_config"] = {"options": {"expectedCallers": sorted(arguments.get("expected_callers", module.EXPECTED_CALLERS))}}
                 else:
                     raise ValueError("No original source-bearing analyzer input")
-                if not files:
+                if not files and check != "versioned_merged_identity":
                     raise ValueError("Empty source domain needs an absent-owner diagnostic adapter")
                 event["files"] = files
                 if check in CHECKERS:
                     event["oracle_config"] = {"options": {"sourceAnalyzer": True}}
+                if entry == "_RuntimeOpBehaviorVisitor.visit":
+                    visitor = args[0]
+                    event["oracle_config"] = {"options": {
+                        "entryPoint": entry,
+                        "targetFunction": getattr(tree, "name", ""),
+                        "initialTaint": sorted(visitor._tainted_names),
+                        "helperFunctions": sorted(visitor._function_defs),
+                    }}
                 if not Path.read_text.__module__.startswith("pathlib"):
                     raise ValueError("Test replaces the source reader; retain its original I/O assertions")
             except Exception as error:

@@ -76,8 +76,8 @@
     "scripts/tests/test_lint_unknown_contract_defaults.py::test_the_three_state_names_are_unambiguous",
     "scripts/tests/test_lint_unknown_contract_defaults.py::test_the_excluded_names_are_still_ambiguous"
   ],
-  "eligible_calls": 150,
-  "positive_calls": 108,
+  "eligible_calls": 151,
+  "positive_calls": 109,
   "clean_calls": 42,
   "test_outcomes": {
     "scripts/tests/test_lint_post_op_side_effects.py::test_detector_is_not_helper_name_based": [
@@ -3012,7 +3012,17 @@
           "source": "\ndef handler(raw):\n    return strip_json_object_agg_null_key_counts()\n"
         }
       ],
-      "oracle_ms": 0.016250007320195436,
+      "oracle_config": {
+        "options": {
+          "entryPoint": "_RuntimeOpBehaviorVisitor.visit",
+          "targetFunction": "handler",
+          "initialTaint": [],
+          "helperFunctions": [
+            "handler"
+          ]
+        }
+      },
+      "oracle_ms": 0.01854199217632413,
       "findings": [],
       "upstream_passed": true
     },
@@ -3034,7 +3044,18 @@
           "source": "\ndef helper(row):\n    row[\"id\"] = 12\n\ndef handler(raw):\n    for row in raw:\n        helper(dict(row))\n"
         }
       ],
-      "oracle_ms": 0.04745900514535606,
+      "oracle_config": {
+        "options": {
+          "entryPoint": "_RuntimeOpBehaviorVisitor.visit",
+          "targetFunction": "handler",
+          "initialTaint": [],
+          "helperFunctions": [
+            "handler",
+            "helper"
+          ]
+        }
+      },
+      "oracle_ms": 0.04687500768341124,
       "findings": [
         {
           "path": "input.py",
@@ -3064,7 +3085,17 @@
           "source": "\ndef handler(inner_post_op, raw, hydrator, runtime_refs):\n    return materialize_compiled_post_op(inner_post_op, raw, hydrator, runtime_refs)\n"
         }
       ],
-      "oracle_ms": 0.016875012079253793,
+      "oracle_config": {
+        "options": {
+          "entryPoint": "_RuntimeOpBehaviorVisitor.visit",
+          "targetFunction": "handler",
+          "initialTaint": [],
+          "helperFunctions": [
+            "handler"
+          ]
+        }
+      },
+      "oracle_ms": 0.015416997484862804,
       "findings": [
         {
           "path": "input.py",
@@ -3094,7 +3125,17 @@
           "source": "\ndef handler(raw):\n    for row in raw:\n        row_dict = dict(row)\n        return {key.removeprefix(\"__edge_\"): value for key, value in row_dict.items() if key.startswith(\"__edge_\")}\n"
         }
       ],
-      "oracle_ms": 0.047084002289921045,
+      "oracle_config": {
+        "options": {
+          "entryPoint": "_RuntimeOpBehaviorVisitor.visit",
+          "targetFunction": "handler",
+          "initialTaint": [],
+          "helperFunctions": [
+            "handler"
+          ]
+        }
+      },
+      "oracle_ms": 0.06220900104381144,
       "findings": [
         {
           "path": "input.py",
@@ -3124,7 +3165,17 @@
           "source": "\ndef handler(raw):\n    return [row for row in raw if row.get(\"ok\")]\n"
         }
       ],
-      "oracle_ms": 0.020334002329036593,
+      "oracle_config": {
+        "options": {
+          "entryPoint": "_RuntimeOpBehaviorVisitor.visit",
+          "targetFunction": "handler",
+          "initialTaint": [],
+          "helperFunctions": [
+            "handler"
+          ]
+        }
+      },
+      "oracle_ms": 0.02566599869169295,
       "findings": [
         {
           "path": "input.py",
@@ -3154,7 +3205,17 @@
           "source": "\ndef handler(hydrator):\n    return getattr(hydrator, \"txn\", None)\n"
         }
       ],
-      "oracle_ms": 0.015457975678145885,
+      "oracle_config": {
+        "options": {
+          "entryPoint": "_RuntimeOpBehaviorVisitor.visit",
+          "targetFunction": "handler",
+          "initialTaint": [],
+          "helperFunctions": [
+            "handler"
+          ]
+        }
+      },
+      "oracle_ms": 0.01712498487904668,
       "findings": [
         {
           "path": "input.py",
@@ -3184,7 +3245,17 @@
           "source": "\ndef handler(row_dict, updates, row, result):\n    row_dict.update(updates)\n    row[\"id\"] = 12\n    result.append(row.model_copy(update=updates))\n    holder.state = result\n"
         }
       ],
-      "oracle_ms": 0.049875001423060894,
+      "oracle_config": {
+        "options": {
+          "entryPoint": "_RuntimeOpBehaviorVisitor.visit",
+          "targetFunction": "handler",
+          "initialTaint": [],
+          "helperFunctions": [
+            "handler"
+          ]
+        }
+      },
+      "oracle_ms": 0.048707996029406786,
       "findings": [
         {
           "path": "input.py",
@@ -3242,7 +3313,7 @@
           "source": "ENFORCE_POST_OP_RUNTIME_ALLOWLIST = True\ndef assert_post_op_symbol_signed(symbol):\n    if not ENFORCE_POST_OP_RUNTIME_ALLOWLIST:\n        return\n    verify_allowlist(symbol)\n"
         }
       ],
-      "oracle_ms": 0.004417001036927104,
+      "oracle_ms": 0.004708999767899513,
       "findings": [
         {
           "path": "input.py",
@@ -3272,7 +3343,7 @@
           "source": "def assert_post_op_symbol_signed(symbol):\n    if not verify_allowlist(symbol):\n        raise RuntimeError\n    if symbol in SIGNED_POST_OP_SYMBOLS:\n        return\n    raise RuntimeError\n"
         }
       ],
-      "oracle_ms": 0.032625015592202544,
+      "oracle_ms": 0.04058299236930907,
       "findings": [],
       "upstream_passed": true
     },
@@ -3289,7 +3360,7 @@
       },
       "production_scope": false,
       "retained_reason": "Input adapter: ValueError: No original source-bearing analyzer input",
-      "oracle_ms": 90.39020797354169,
+      "oracle_ms": 82.11116699385457,
       "upstream_passed": true
     },
     {
@@ -3305,7 +3376,7 @@
       },
       "production_scope": false,
       "retained_reason": "Input adapter: ValueError: No original source-bearing analyzer input",
-      "oracle_ms": 93.8683339918498,
+      "oracle_ms": 88.41020800173283,
       "upstream_passed": true
     },
     {
@@ -3321,7 +3392,7 @@
       },
       "production_scope": false,
       "retained_reason": "Input adapter: ValueError: No original source-bearing analyzer input",
-      "oracle_ms": 100.34654100309126,
+      "oracle_ms": 83.58125001541339,
       "upstream_passed": true
     },
     {
@@ -3337,7 +3408,7 @@
       },
       "production_scope": false,
       "retained_reason": "Input adapter: ValueError: No original source-bearing analyzer input",
-      "oracle_ms": 94.6932919905521,
+      "oracle_ms": 89.91629199590534,
       "upstream_passed": true
     },
     {
@@ -3358,7 +3429,7 @@
           "source": "\ndef materialize_runtime_builder(kind):\n    if kind is RuntimeBuilderKind.PROJECTION:\n        return 1\n    if kind is RuntimeBuilderKind.PROJECTION:\n        return 2\n    return None\n"
         }
       ],
-      "oracle_ms": 2.856459002941847,
+      "oracle_ms": 2.0819170167669654,
       "findings": [
         {
           "path": "sample.py",
@@ -3409,7 +3480,7 @@
           "source": "\ndef materialize_vector_query_builder(spec):\n    if spec.builder_name == RuntimeBuilderName.PROJECT:\n        return 1\n    return None\n"
         }
       ],
-      "oracle_ms": 2.2541249927598983,
+      "oracle_ms": 1.3828329974785447,
       "findings": [
         {
           "path": "sample.py",
@@ -3446,7 +3517,7 @@
           "source": "\ndef materialize_runtime_builder(kwargs):\n    if \"target_node_type\" in kwargs:\n        return 1\n    return None\n"
         }
       ],
-      "oracle_ms": 2.3071670148056,
+      "oracle_ms": 1.3918750046286732,
       "findings": [
         {
           "path": "sample.py",
@@ -3483,7 +3554,7 @@
           "source": "\ndef materialize_bulk_ops_builder(spec):\n    if spec.builder_name == RuntimeBuilderName.BUILD:\n        return 1\n    if spec.builder_name == RuntimeBuilderName.SIGN:\n        return 2\n    return None\n"
         }
       ],
-      "oracle_ms": 2.100749989040196,
+      "oracle_ms": 1.43162501626648,
       "findings": [
         {
           "path": "sample.py",
@@ -3541,7 +3612,7 @@
           "source": "\ndef compile_step():\n    return runtime_builder_post_op()\n"
         }
       ],
-      "oracle_ms": 2.420292003080249,
+      "oracle_ms": 1.3625420106109232,
       "findings": [
         {
           "path": "sample.py",
@@ -3571,7 +3642,7 @@
           "source": "\ndef _materialize_graph_result(raw):\n    return []\n"
         }
       ],
-      "oracle_ms": 2.3653329990338534,
+      "oracle_ms": 1.2524999910965562,
       "findings": [
         {
           "path": "l2070_batching/post_op.py",
@@ -3601,7 +3672,7 @@
           "source": "\ndef _materialize_terminal_array(spec, raw):\n    literal_payload = spec.literal_payload if isinstance(spec.literal_payload, dict) else {}\n    if literal_payload.get(\"embedding_worker\") == \"dispatch_groups\":\n        return []\n    return raw\n"
         }
       ],
-      "oracle_ms": 2.7716670010704547,
+      "oracle_ms": 1.6032910207286477,
       "findings": [
         {
           "path": "l2070_batching/post_op.py",
@@ -3631,7 +3702,7 @@
           "source": "\ndef _materialize_terminal_object(spec, raw):\n    payload = spec.literal_payload if isinstance(spec.literal_payload, dict) else {}\n    renamed = payload\n    if \"domain\" in renamed:\n        return renamed[\"domain\"]\n    return raw\n"
         }
       ],
-      "oracle_ms": 2.9106670117471367,
+      "oracle_ms": 1.4089159958530217,
       "findings": [
         {
           "path": "l2070_batching/post_op.py",
@@ -3668,7 +3739,7 @@
           "source": "\nclass DomainMaterializer(ResultRowMaterializer):\n    def materialize(self, raw, hydrator):\n        return raw\n"
         }
       ],
-      "oracle_ms": 2.321916981600225,
+      "oracle_ms": 1.4205840125214309,
       "findings": [
         {
           "path": "sample.py",
@@ -3698,7 +3769,7 @@
           "source": "\ndef build_post_op():\n    return ResultMaterializationSpec(row_materializer=DomainMaterializer())\n"
         }
       ],
-      "oracle_ms": 2.664500003447756,
+      "oracle_ms": 1.3967090053483844,
       "findings": [
         {
           "path": "sample.py",
@@ -3728,7 +3799,7 @@
           "source": "setattr(step, \"_cte_output_columns\", columns)\n"
         }
       ],
-      "oracle_ms": 0.03791699418798089,
+      "oracle_ms": 0.04116701893508434,
       "findings": [
         {
           "path": "executor.py",
@@ -3758,7 +3829,7 @@
           "source": "return step.with_optimizer_projection(columns, hints)\n"
         }
       ],
-      "oracle_ms": 0.04558300133794546,
+      "oracle_ms": 0.055540993344038725,
       "findings": [],
       "upstream_passed": true
     },
@@ -3780,7 +3851,7 @@
           "source": "def step_tags():\n    return frozenset({\"read\", \"history\", \"runtime\"})\n"
         }
       ],
-      "oracle_ms": 2.611749980133027,
+      "oracle_ms": 1.4725000073667616,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/steps/intent_history.py",
@@ -3810,7 +3881,7 @@
           "source": "\nclass FilterHistoryEntriesStep(ServerPlanStep):\n    def step_tags(self):\n        return frozenset({\"read\", \"history\", \"runtime\"})\n"
         }
       ],
-      "oracle_ms": 2.2347079939208925,
+      "oracle_ms": 1.4015829947311431,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/steps/intent_history.py",
@@ -3840,7 +3911,7 @@
           "source": "\ndef runtime_filter_history_entries_compiled_step():\n    return CompiledStep(runtime_ref_ids=(\"x\",), post_op_with_refs=lambda refs, hydrator: refs.get(\"x\"))\n"
         }
       ],
-      "oracle_ms": 2.0260000019334257,
+      "oracle_ms": 1.4632499951403588,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/steps/runtime_history_bad.py",
@@ -3870,7 +3941,7 @@
           "source": "\nclass QueryHistoryRowsStep(ServerPlanStep):\n    def step_tags(self):\n        return frozenset({\"read\", \"history\", \"grammar\"})\n\n    def compile(self, ctx):\n        return CompiledStep(grammar=stmt, post_op=hydrate_rows)\n"
         }
       ],
-      "oracle_ms": 2.434416994219646,
+      "oracle_ms": 1.3697920076083392,
       "findings": [],
       "upstream_passed": true
     },
@@ -3892,7 +3963,7 @@
           "source": "class SqlRevisionAncestryDefinition:\n    pass\nsql = 'CAST(rp.revision_sys_id AS TEXT)'\n"
         }
       ],
-      "oracle_ms": 0.7182080007623881,
+      "oracle_ms": 0.6614580051973462,
       "findings": [
         {
           "path": "bad_ancestry.py",
@@ -3929,7 +4000,7 @@
           "source": "sql = 'CAST(? AS UUID)'\njoin = 'rp.revision_sys_id = ancestry.rev_id'\n"
         }
       ],
-      "oracle_ms": 0.11070800246670842,
+      "oracle_ms": 0.104957987787202,
       "findings": [],
       "upstream_passed": true
     },
@@ -3958,7 +4029,7 @@
           "source": "\ndef build():\n    projection = catalog_versioned_merged_projection(Model, columns)\n    return SqlVersionedMergedCte(read_projection=projection)\n"
         }
       ],
-      "oracle_ms": 1.687790994765237,
+      "oracle_ms": 1.5234589809551835,
       "findings": [],
       "upstream_passed": true
     },
@@ -3987,14 +4058,16 @@
           "source": "\ndef build():\n    projection = VersionedMergedReadProjection(columns, identity)\n    return SqlVersionedMergedCte(read_projection=projection)\n"
         }
       ],
-      "oracle_ms": 1.0924159723799676,
+      "oracle_ms": 0.7514999888371676,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/steps/probe.py",
           "line": 4,
           "column": null,
           "code": "VMI003",
-          "message": "Merged constructor must use a catalog-backed projection builder."
+          "message": "Merged constructor must use a catalog-backed projection builder.",
+          "caller": "probe.py:build",
+          "original_line": 4
         }
       ],
       "upstream_passed": true
@@ -4024,14 +4097,16 @@
           "source": "\ndef build():\n    result = SqlVersionedMergedCte(read_projection=projection)\n    projection = catalog_versioned_merged_projection(Model, columns)\n    return result\n"
         }
       ],
-      "oracle_ms": 0.9429590136278421,
+      "oracle_ms": 0.7474159938283265,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/steps/probe.py",
           "line": 3,
           "column": null,
           "code": "VMI003",
-          "message": "Merged constructor must use a catalog-backed projection builder."
+          "message": "Merged constructor must use a catalog-backed projection builder.",
+          "caller": "probe.py:build",
+          "original_line": 3
         }
       ],
       "upstream_passed": true
@@ -4059,14 +4134,16 @@
           "source": "\ndef build():\n    return SqlVersionedMergedCte(\n        read_projection=catalog_versioned_merged_projection(Model, columns),\n    )\n"
         }
       ],
-      "oracle_ms": 0.8584590104874223,
+      "oracle_ms": 0.8521669951733202,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/steps/probe.py",
           "line": 3,
           "column": null,
           "code": "VMI002",
-          "message": "Unreviewed merged constructor requires catalog identity audit."
+          "message": "Unreviewed merged constructor requires catalog identity audit.",
+          "caller": "probe.py:build",
+          "original_line": 3
         }
       ],
       "upstream_passed": true
@@ -4090,8 +4167,19 @@
           ]
         }
       },
-      "retained_reason": "Input adapter: ValueError: Empty source domain needs an absent-owner diagnostic adapter",
-      "oracle_ms": 0.40816699038259685,
+      "files": [],
+      "oracle_ms": 0.2839579829014838,
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/steps",
+          "line": 1,
+          "column": null,
+          "code": "VMI001",
+          "message": "Expected merged constructor is absent.",
+          "caller": "probe.py:build",
+          "original_line": 0
+        }
+      ],
       "upstream_passed": true
     },
     {
@@ -4119,14 +4207,16 @@
           "source": "\ndef build():\n    def nested():\n        projection = catalog_versioned_merged_projection(Model, columns)\n        return projection\n    return SqlVersionedMergedCte(read_projection=projection)\n"
         }
       ],
-      "oracle_ms": 1.131500001065433,
+      "oracle_ms": 1.0621249966789037,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/steps/probe.py",
           "line": 6,
           "column": null,
           "code": "VMI003",
-          "message": "Merged constructor must use a catalog-backed projection builder."
+          "message": "Merged constructor must use a catalog-backed projection builder.",
+          "caller": "probe.py:build",
+          "original_line": 6
         }
       ],
       "upstream_passed": true
@@ -4154,14 +4244,16 @@
           "source": "\nfrom package import SqlVersionedMergedCte as MergedCte\n\ndef build():\n    return MergedCte(\n        read_projection=catalog_versioned_merged_projection(Model, columns),\n    )\n"
         }
       ],
-      "oracle_ms": 0.925166008528322,
+      "oracle_ms": 0.8302910136990249,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/steps/probe.py",
           "line": 5,
           "column": null,
           "code": "VMI002",
-          "message": "Unreviewed merged constructor requires catalog identity audit."
+          "message": "Unreviewed merged constructor requires catalog identity audit.",
+          "caller": "probe.py:build",
+          "original_line": 5
         }
       ],
       "upstream_passed": true
@@ -4189,7 +4281,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.059707992477342486,
+      "oracle_ms": 0.04674997762776911,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4224,7 +4316,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.02808397402986884,
+      "oracle_ms": 0.030957977287471294,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4259,7 +4351,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.019458006136119366,
+      "oracle_ms": 0.024999986635521054,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4294,7 +4386,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01695798709988594,
+      "oracle_ms": 0.021584011847153306,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4329,7 +4421,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.021499989088624716,
+      "oracle_ms": 0.01937500201165676,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4364,7 +4456,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.018208986148238182,
+      "oracle_ms": 0.018082995666190982,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4399,7 +4491,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.016874982975423336,
+      "oracle_ms": 0.01795799471437931,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4434,7 +4526,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.015792000340297818,
+      "oracle_ms": 0.016707985196262598,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4469,7 +4561,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.025708985049277544,
+      "oracle_ms": 0.03391600330360234,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4504,7 +4596,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.020916020730510354,
+      "oracle_ms": 0.020083010895177722,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4539,7 +4631,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.03037499845959246,
+      "oracle_ms": 0.034083990612998605,
       "findings": [],
       "upstream_passed": true
     },
@@ -4566,7 +4658,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.025707995519042015,
+      "oracle_ms": 0.03125000512227416,
       "findings": [],
       "upstream_passed": true
     },
@@ -4593,7 +4685,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.02204100019298494,
+      "oracle_ms": 0.04054201417602599,
       "findings": [],
       "upstream_passed": true
     },
@@ -4620,7 +4712,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.019625003915280104,
+      "oracle_ms": 0.019208004232496023,
       "findings": [],
       "upstream_passed": true
     },
@@ -4647,7 +4739,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.021459010895341635,
+      "oracle_ms": 0.021541985915973783,
       "findings": [],
       "upstream_passed": true
     },
@@ -4674,7 +4766,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.004292000085115433,
+      "oracle_ms": 0.004208006430417299,
       "findings": [],
       "upstream_passed": true
     },
@@ -4701,7 +4793,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.023416010662913322,
+      "oracle_ms": 0.02420798409730196,
       "findings": [
         {
           "path": "impl/postgres/compilation.py",
@@ -4736,7 +4828,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.023334025172516704,
+      "oracle_ms": 0.02720800694078207,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4771,7 +4863,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.031625007977709174,
+      "oracle_ms": 0.0550410186406225,
       "findings": [
         {
           "path": "impl/common/l2070_server_plan/strategies/compound_sequence.py",
@@ -4820,7 +4912,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.03687501884996891,
+      "oracle_ms": 0.03383299917913973,
       "findings": [
         {
           "path": "probe.py",
@@ -4855,7 +4947,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.020500010577961802,
+      "oracle_ms": 0.0272089964710176,
       "findings": [
         {
           "path": "probe.py",
@@ -4890,7 +4982,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01966700074262917,
+      "oracle_ms": 0.02125001628883183,
       "findings": [
         {
           "path": "probe.py",
@@ -4925,7 +5017,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01766698551364243,
+      "oracle_ms": 0.018874998204410076,
       "findings": [
         {
           "path": "probe.py",
@@ -4960,7 +5052,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.013499986380338669,
+      "oracle_ms": 0.015541998436674476,
       "findings": [],
       "upstream_passed": true
     },
@@ -4987,7 +5079,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01824999344535172,
+      "oracle_ms": 0.013791985111311078,
       "findings": [],
       "upstream_passed": true
     },
@@ -5014,7 +5106,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.014541990822181106,
+      "oracle_ms": 0.011625001206994057,
       "findings": [],
       "upstream_passed": true
     },
@@ -5041,7 +5133,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.013625016435980797,
+      "oracle_ms": 0.012083997717127204,
       "findings": [],
       "upstream_passed": true
     },
@@ -5068,7 +5160,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01937500201165676,
+      "oracle_ms": 0.02529201447032392,
       "findings": [
         {
           "path": "probe.py",
@@ -5103,7 +5195,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01691601937636733,
+      "oracle_ms": 0.018916995031759143,
       "findings": [
         {
           "path": "probe.py",
@@ -5138,7 +5230,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.020333012798801064,
+      "oracle_ms": 0.01575000351294875,
       "findings": [
         {
           "path": "probe.py",
@@ -5173,7 +5265,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.011333002476021647,
+      "oracle_ms": 0.01116600469686091,
       "findings": [],
       "upstream_passed": true
     },
@@ -5200,7 +5292,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.008124974556267262,
+      "oracle_ms": 0.008041010005399585,
       "findings": [],
       "upstream_passed": true
     },
@@ -5227,7 +5319,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01158300437964499,
+      "oracle_ms": 0.011416996130719781,
       "findings": [],
       "upstream_passed": true
     },
@@ -5254,7 +5346,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.011666998034343123,
+      "oracle_ms": 0.008708011591807008,
       "findings": [],
       "upstream_passed": true
     },
@@ -5281,7 +5373,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01775001874193549,
+      "oracle_ms": 0.0158329785335809,
       "findings": [
         {
           "path": "probe.py",
@@ -5316,7 +5408,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.017790996935218573,
+      "oracle_ms": 0.020292005501687527,
       "findings": [
         {
           "path": "probe.py",
@@ -5351,7 +5443,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.015875004464760423,
+      "oracle_ms": 0.016167003195732832,
       "findings": [
         {
           "path": "probe.py",
@@ -5386,7 +5478,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.015208992408588529,
+      "oracle_ms": 0.013957993360236287,
       "findings": [
         {
           "path": "probe.py",
@@ -5421,7 +5513,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.015249999705702066,
+      "oracle_ms": 0.016417005099356174,
       "findings": [
         {
           "path": "probe.py",
@@ -5456,7 +5548,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.014833000022917986,
+      "oracle_ms": 0.015500001609325409,
       "findings": [
         {
           "path": "probe.py",
@@ -5491,7 +5583,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.014958000974729657,
+      "oracle_ms": 0.013667013263329864,
       "findings": [
         {
           "path": "probe.py",
@@ -5526,7 +5618,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.018999999156221747,
+      "oracle_ms": 0.016417005099356174,
       "findings": [
         {
           "path": "probe.py",
@@ -5561,7 +5653,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.016167003195732832,
+      "oracle_ms": 0.015583995264023542,
       "findings": [
         {
           "path": "probe.py",
@@ -5596,7 +5688,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01591700129210949,
+      "oracle_ms": 0.0158329785335809,
       "findings": [
         {
           "path": "probe.py",
@@ -5631,7 +5723,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.014167017070576549,
+      "oracle_ms": 0.013791985111311078,
       "findings": [
         {
           "path": "probe.py",
@@ -5666,7 +5758,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.014499993994832039,
+      "oracle_ms": 0.012790987966582179,
       "findings": [
         {
           "path": "probe.py",
@@ -5701,7 +5793,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01420799526385963,
+      "oracle_ms": 0.012417003745213151,
       "findings": [
         {
           "path": "probe.py",
@@ -5736,7 +5828,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.013917015166953206,
+      "oracle_ms": 0.01216601231135428,
       "findings": [
         {
           "path": "probe.py",
@@ -5771,7 +5863,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.018708000425249338,
+      "oracle_ms": 0.0195419997908175,
       "findings": [
         {
           "path": "probe.py",
@@ -5806,7 +5898,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.017417012713849545,
+      "oracle_ms": 0.01554097980260849,
       "findings": [
         {
           "path": "probe.py",
@@ -5841,7 +5933,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04008400719612837,
+      "oracle_ms": 0.03762499545700848,
       "findings": [
         {
           "path": "probe.py",
@@ -5883,7 +5975,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.035792007111012936,
+      "oracle_ms": 0.016082980437204242,
       "findings": [
         {
           "path": "probe.py",
@@ -5918,7 +6010,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.014541990822181106,
+      "oracle_ms": 0.012625008821487427,
       "findings": [],
       "upstream_passed": true
     },
@@ -5945,7 +6037,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.022124993847683072,
+      "oracle_ms": 0.019333994714543223,
       "findings": [],
       "upstream_passed": true
     },
@@ -5972,7 +6064,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.02416700590401888,
+      "oracle_ms": 0.08029199671000242,
       "findings": [
         {
           "path": "probe.py",
@@ -6007,7 +6099,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.07816700963303447,
+      "oracle_ms": 0.07791598909534514,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6042,7 +6134,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.05258299643173814,
+      "oracle_ms": 0.054917007219046354,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6077,7 +6169,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.051041977712884545,
+      "oracle_ms": 0.053041992941871285,
       "findings": [],
       "upstream_passed": true
     },
@@ -6104,7 +6196,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.22704200819134712,
+      "oracle_ms": 0.05045798025093973,
       "findings": [],
       "upstream_passed": true
     },
@@ -6131,7 +6223,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.06454199319705367,
+      "oracle_ms": 0.09779099491424859,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6166,7 +6258,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04916702164337039,
+      "oracle_ms": 0.04362498293630779,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6201,7 +6293,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.10445798397995532,
+      "oracle_ms": 0.12237500050105155,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6236,7 +6328,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.015416997484862804,
+      "oracle_ms": 0.016958016203716397,
       "findings": [],
       "upstream_passed": true
     },
@@ -6263,7 +6355,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.03404199378564954,
+      "oracle_ms": 0.031000003218650818,
       "findings": [],
       "upstream_passed": true
     },
@@ -6290,7 +6382,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.02954198862425983,
+      "oracle_ms": 0.02712497371248901,
       "findings": [],
       "upstream_passed": true
     },
@@ -6317,7 +6409,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.025874993298202753,
+      "oracle_ms": 0.022958003683015704,
       "findings": [],
       "upstream_passed": true
     },
@@ -6344,7 +6436,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.045082997530698776,
+      "oracle_ms": 0.03658398054540157,
       "findings": [],
       "upstream_passed": true
     },
@@ -6371,7 +6463,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.039457983803004026,
+      "oracle_ms": 0.03654201282188296,
       "findings": [],
       "upstream_passed": true
     },
@@ -6398,7 +6490,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.048582995077595115,
+      "oracle_ms": 0.041749997762963176,
       "findings": [],
       "upstream_passed": true
     },
@@ -6425,7 +6517,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.11595801333896816,
+      "oracle_ms": 0.10108298738487065,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6467,7 +6559,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04474999150261283,
+      "oracle_ms": 0.039292004657909274,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6502,7 +6594,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.05558301927521825,
+      "oracle_ms": 0.04883401561528444,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6537,7 +6629,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.049458001740276814,
+      "oracle_ms": 0.04341700696386397,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6572,7 +6664,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04920799983665347,
+      "oracle_ms": 0.0424169993493706,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6607,7 +6699,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.049583002692088485,
+      "oracle_ms": 0.04333298420533538,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6642,7 +6734,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.07350000669248402,
+      "oracle_ms": 0.04254101077094674,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6677,7 +6769,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.05620799493044615,
+      "oracle_ms": 0.042166997445747256,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6712,7 +6804,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04937499761581421,
+      "oracle_ms": 0.04225000157020986,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6747,7 +6839,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.0466250057797879,
+      "oracle_ms": 0.042625004425644875,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6782,7 +6874,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04600000102072954,
+      "oracle_ms": 0.042750005377456546,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6817,7 +6909,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04199999966658652,
+      "oracle_ms": 0.042333995224907994,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6852,7 +6944,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.043041014578193426,
+      "oracle_ms": 0.043167005060240626,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6887,7 +6979,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04312500823289156,
+      "oracle_ms": 0.04279200220480561,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6922,7 +7014,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04408400855027139,
+      "oracle_ms": 0.04387501394376159,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6957,7 +7049,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.06004099850542843,
+      "oracle_ms": 0.04095898475497961,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -6992,7 +7084,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.0514579878654331,
+      "oracle_ms": 0.04237500252202153,
       "findings": [],
       "upstream_passed": true
     },
@@ -7019,7 +7111,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04054201417602599,
+      "oracle_ms": 0.033249991247430444,
       "findings": [],
       "upstream_passed": true
     },
@@ -7046,7 +7138,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.057666999055072665,
+      "oracle_ms": 0.049708993174135685,
       "findings": [],
       "upstream_passed": true
     },
@@ -7073,7 +7165,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.050875009037554264,
+      "oracle_ms": 0.04358301521278918,
       "findings": [],
       "upstream_passed": true
     },
@@ -7100,7 +7192,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.10199999087490141,
+      "oracle_ms": 0.08245799108408391,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -7135,7 +7227,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.05679202149622142,
+      "oracle_ms": 0.04895799793303013,
       "findings": [],
       "upstream_passed": true
     },
@@ -7162,7 +7254,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.058542005717754364,
+      "oracle_ms": 0.050125003326684237,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -7197,7 +7289,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.03225001273676753,
+      "oracle_ms": 0.031083007343113422,
       "findings": [
         {
           "path": "impl/common/l2100_sql_grammar/tree/statements.py",
@@ -7232,7 +7324,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.027040980057790875,
+      "oracle_ms": 0.03254201146773994,
       "findings": [
         {
           "path": "probe.py",
@@ -7267,7 +7359,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.018457998521625996,
+      "oracle_ms": 0.01695897663012147,
       "findings": [
         {
           "path": "probe.py",
@@ -7302,7 +7394,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01966700074262917,
+      "oracle_ms": 0.015500001609325409,
       "findings": [
         {
           "path": "probe.py",
@@ -7337,7 +7429,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.027000001864507794,
+      "oracle_ms": 0.015833997167646885,
       "findings": [
         {
           "path": "probe.py",
@@ -7372,7 +7464,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.019749975763261318,
+      "oracle_ms": 0.021124986233189702,
       "findings": [
         {
           "path": "probe.py",
@@ -7407,7 +7499,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.018084014300256968,
+      "oracle_ms": 0.023208995116874576,
       "findings": [
         {
           "path": "probe.py",
@@ -7442,7 +7534,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.020167004549875855,
+      "oracle_ms": 0.019166996935382485,
       "findings": [
         {
           "path": "probe.py",
@@ -7477,7 +7569,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.04979199729859829,
+      "oracle_ms": 0.01754198456183076,
       "findings": [
         {
           "path": "probe.py",
@@ -7512,7 +7604,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.022833002731204033,
+      "oracle_ms": 0.016792007954791188,
       "findings": [
         {
           "path": "probe.py",
@@ -7547,7 +7639,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.02112501533702016,
+      "oracle_ms": 0.01662501017563045,
       "findings": [
         {
           "path": "probe.py",
@@ -7582,7 +7674,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.020333012798801064,
+      "oracle_ms": 0.02012500772252679,
       "findings": [
         {
           "path": "probe.py",
@@ -7617,7 +7709,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.018375023500993848,
+      "oracle_ms": 0.021540996385738254,
       "findings": [
         {
           "path": "probe.py",
@@ -7652,7 +7744,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01708397758193314,
+      "oracle_ms": 0.0186669931281358,
       "findings": [
         {
           "path": "probe.py",
@@ -7687,7 +7779,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01750001683831215,
+      "oracle_ms": 0.01624997821636498,
       "findings": [
         {
           "path": "probe.py",
@@ -7722,7 +7814,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.015291007002815604,
+      "oracle_ms": 0.017790996935218573,
       "findings": [],
       "upstream_passed": true
     },
@@ -7749,7 +7841,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01300001167692244,
+      "oracle_ms": 0.01233298098668456,
       "findings": [],
       "upstream_passed": true
     },
@@ -7776,7 +7868,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.016999983927235007,
+      "oracle_ms": 0.01925000105984509,
       "findings": [
         {
           "path": "probe.py",
@@ -7811,7 +7903,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.017125013982877135,
+      "oracle_ms": 0.0160830095410347,
       "findings": [
         {
           "path": "probe.py",
@@ -7846,7 +7938,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.014082994312047958,
+      "oracle_ms": 0.014416989870369434,
       "findings": [],
       "upstream_passed": true
     },
@@ -7873,7 +7965,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.013584009138867259,
+      "oracle_ms": 0.015166995581239462,
       "findings": [],
       "upstream_passed": true
     },
@@ -7900,7 +7992,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.010041985660791397,
+      "oracle_ms": 0.009875016985461116,
       "findings": [],
       "upstream_passed": true
     },
@@ -7927,7 +8019,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.03345799632370472,
+      "oracle_ms": 0.0314170029014349,
       "findings": [
         {
           "path": "probe.py",
@@ -7969,7 +8061,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.01824999344535172,
+      "oracle_ms": 0.018082995666190982,
       "findings": [
         {
           "path": "probe.py",
@@ -8004,7 +8096,7 @@
           "sourceAnalyzer": true
         }
       },
-      "oracle_ms": 0.017292011762037873,
+      "oracle_ms": 0.017375015886500478,
       "findings": [],
       "upstream_passed": true
     }

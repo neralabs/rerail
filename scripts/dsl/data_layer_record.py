@@ -282,7 +282,7 @@ def main() -> None:
     output = {
         "format": "rerail.data-layer-recording/v1",
         "commit": commit,
-        "missing_test_modules": [f"scripts/tests/test_lint_{check}.py" for check in batch_four.BATCH_FOUR if not (root / f"scripts/tests/test_lint_{check}.py").exists()] if args.batch == 4 else [path for path in batch_five.TESTS.values() if not (root/path).exists()] if args.batch == 5 else [],
+        "missing_test_modules": [path for path in batch_seven.TESTS.values() if not (root/path).exists()] if args.batch == 7 else [f"scripts/tests/test_lint_{check}.py" for check in batch_four.BATCH_FOUR if not (root / f"scripts/tests/test_lint_{check}.py").exists()] if args.batch == 4 else [path for path in batch_five.TESTS.values() if not (root/path).exists()] if args.batch == 5 else [],
         "checks": list(batch_seven.BATCH_SEVEN) if args.batch == 7 else list(batch_six.BATCH_SIX) if args.batch == 6 else list(batch_five.BATCH_FIVE) if args.batch == 5 else list(batch_four.BATCH_FOUR) if args.batch == 4 else sorted({check for check in (*BATCH_ONE, *batch_two.BATCH_TWO, *batch_three.BATCH_THREE, *batch_four.BATCH_FOUR) if any(f"test_lint_{check}.py" in test for test in args.tests)}),
         "python": sys.version,
         "pytest": pytest.__version__,
