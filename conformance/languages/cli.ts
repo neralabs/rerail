@@ -33,7 +33,7 @@ const USAGE = `Language-pack rule conformance (T4).
                         holds-under-rename among them), and the not-gated list; exit 1 on any unexplained FP/FN,
                         missed label or finding on a clean sample, engine failure, stale divergence, test data or
                         samples error, shipped port with no fixture TP and no pack.json examples, or shipped rule of a
-                        gated tool-pack that fails a check. Spread over one worker process per core (shards.ts)
+                        gated tool-pack that fails a check. Spread over worker processes (shards.ts)
   --base <sha>          with --check: the commit the not-gated and pending lists may only shrink against
   --out <dir>           with --check: write summary.json, summary.md, gates.json and the pull request comment
                         (comment.md) there

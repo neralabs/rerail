@@ -9,16 +9,16 @@
  * their own. `--check --results <dir>` then makes every pack's report from the results all shards wrote, and judges the
  * gated tool-packs. A plain `--check` is both, as shard 1 of 1, into a temporary directory.
  *
- * On each machine the work goes to worker processes (worker.ts), one per core: the engine evaluates one workspace at a
- * time per process. A shard's jobs go out in chunks, as workers come free.
+ * On each machine the work goes to worker processes (worker.ts), one per core and per 5 GiB of memory (`WorkerPool`):
+ * the engine evaluates one workspace at a time per process. A shard's jobs go out in chunks, as workers come free.
  */
 import { fork, type ChildProcess } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { availableParallelism } from "node:os";
+import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deserialize, serialize } from "node:v8";
-import type { ToolPackVerdict } from "./gates.js";
+import type { DocumentGates, ToolPackVerdict } from "./gates.js";
 import { gatedToolPacks } from "./manifest.js";
 import { loadPack, RERAIL_ROOT } from "./pack.js";
 import type { T4Report } from "./report.js";
@@ -27,17 +27,23 @@ import type { Job, JobResult, RunOptions } from "./runner.js";
 /** The options every process plans with: a function (the samples-directory test seam) cannot travel. */
 export type PlanOptions = Omit<RunOptions, "samplesDirectory">;
 
+/**
+ * What a worker is asked. `jobs` plans the pack, compiling its rules; `evaluate` runs jobs, planning the pack if this
+ * worker has not, with the rules the `jobs` plan compiled (`compiles`), compiling each only when a job needs it.
+ */
 export type WorkerRequest =
   | { kind: "jobs"; directory: string; options: PlanOptions }
-  | { kind: "evaluate"; directory: string; options: PlanOptions; jobs: number[] }
+  | { kind: "evaluate"; directory: string; options: PlanOptions; compiles: string[]; jobs: number[] }
   | { kind: "report"; directory: string; options: PlanOptions; results: string }
-  | { kind: "judge"; directory: string; report: T4Report; tool: string };
+  | { kind: "documents"; directory: string; tool: string }
+  | { kind: "judge"; directory: string; report: T4Report; tool: string; documents: DocumentGates };
 
 /** A worker's answer, of its request's `kind`, or the error that stopped it. */
 export type WorkerResponse =
-  | { kind: "jobs"; jobs: Pick<Job, "source" | "weight">[] }
+  | { kind: "jobs"; jobs: JobOutline[]; compiles: string[] }
   | { kind: "evaluate"; results: JobResult[] }
   | { kind: "report"; report: T4Report }
+  | { kind: "documents"; documents: DocumentGates }
   | { kind: "judge"; verdict: ToolPackVerdict }
   | { kind: "error"; error: string };
 
@@ -55,20 +61,31 @@ export function parseShard(text: string): Shard {
   return shard;
 }
 
+/** What the parent knows of a job, to share jobs out: everything but running it. */
+export type JobOutline = Pick<Job, "source" | "weight" | "group">;
+
 /**
- * The jobs of `shard`: in each run of consecutive jobs of one source, the shard's share of about equal weight, a job
- * going to the share its weight's midpoint falls in.
+ * The jobs of `shard`: in each run of consecutive jobs of one source, its jobs grouped by `group` (groups in order of
+ * first appearance, jobs in order within them), then the shard's share of about equal weight, a job going to the share
+ * its weight's midpoint falls in. A shard so runs few groups, and compiles little for them.
  */
-export function shardJobs(jobs: readonly Pick<Job, "source" | "weight">[], shard: Shard): number[][] {
+export function shardJobs(jobs: readonly JobOutline[], shard: Shard): number[][] {
   const blocks: number[][] = [];
   for (const [index, job] of jobs.entries()) {
     if (index === 0 || jobs[index - 1]!.source !== job.source) blocks.push([]);
     blocks.at(-1)!.push(index);
   }
   return blocks.map(block => {
-    const total = block.reduce((sum, index) => sum + jobs[index]!.weight, 0);
+    const groups = new Map<string, number[]>();
+    for (const index of block) {
+      const group = groups.get(jobs[index]!.group);
+      if (group === undefined) groups.set(jobs[index]!.group, [index]);
+      else group.push(index);
+    }
+    const grouped = [...groups.values()].flat();
+    const total = grouped.reduce((sum, index) => sum + jobs[index]!.weight, 0);
     let before = 0;
-    return block.filter(index => {
+    return grouped.filter(index => {
       const weight = jobs[index]!.weight;
       const share = total === 0 ? 0 : Math.min(shard.count - 1, Math.floor(((before + weight / 2) / total) * shard.count));
       before += weight;
@@ -115,9 +132,16 @@ interface Pending {
 }
 
 /**
- * Worker processes, one per core, each running one request at a time; requests wait in order for a free one, which
- * takes the first for a pack it has planned already, if any, since planning a pack compiles its rules. The first
- * failure (a worker's error, or a worker that exits) fails every request not answered yet, and stops the workers.
+ * The memory one worker is given: a worker can hold a few gigabytes of compiled rules (the node pack's builtins rule
+ * alone compiles to about one), and a machine that pages runs slower than one with a worker fewer.
+ */
+const WORKER_MEMORY = 5 * 1024 ** 3;
+
+/**
+ * Worker processes, one per core and per `WORKER_MEMORY` of the machine's memory, each running one request at a time;
+ * requests wait in order for a free one, which takes the first for a pack it has planned already, if any, since
+ * planning a pack compiles its rules. The first failure (a worker's error, or a worker that exits) fails every request
+ * not answered yet, and stops the workers.
  */
 export class WorkerPool {
   readonly #idle: ChildProcess[] = [];
@@ -127,9 +151,10 @@ export class WorkerPool {
   readonly #waiting: Pending[] = [];
   #failure: Error | undefined;
 
-  constructor(readonly size = availableParallelism()) {
+  constructor(readonly size = Math.max(1, Math.min(availableParallelism(), Math.floor(totalmem() / WORKER_MEMORY)))) {
     for (let index = 0; index < size; index += 1) {
-      const child = fork(WORKER, { execArgv: process.execArgv, serialization: "advanced" });
+      // `--expose-gc`: a worker collects after each request (worker.ts).
+      const child = fork(WORKER, { execArgv: [...process.execArgv, "--expose-gc"], serialization: "advanced" });
       child.on("message", (response: WorkerResponse) => {
         const pending = this.#busy.get(child);
         this.#busy.delete(child);
@@ -149,14 +174,15 @@ export class WorkerPool {
     }
   }
 
-  async jobs(directory: string, options: PlanOptions): Promise<Pick<Job, "source" | "weight">[]> {
+  /** The pack's jobs, and the rules that compile (`PackPlan.compiles`). */
+  async jobs(directory: string, options: PlanOptions): Promise<{ jobs: JobOutline[]; compiles: string[] }> {
     const response = await this.#run({ kind: "jobs", directory, options });
     if (response.kind !== "jobs") throw unexpected(response);
-    return response.jobs;
+    return { jobs: response.jobs, compiles: response.compiles };
   }
 
-  async evaluate(directory: string, options: PlanOptions, jobs: number[]): Promise<JobResult[]> {
-    const response = await this.#run({ kind: "evaluate", directory, options, jobs });
+  async evaluate(directory: string, options: PlanOptions, compiles: string[], jobs: number[]): Promise<JobResult[]> {
+    const response = await this.#run({ kind: "evaluate", directory, options, compiles, jobs });
     if (response.kind !== "evaluate") throw unexpected(response);
     return response.results;
   }
@@ -168,8 +194,15 @@ export class WorkerPool {
     return response.report;
   }
 
-  async judge(directory: string, report: T4Report, tool: string): Promise<ToolPackVerdict> {
-    const response = await this.#run({ kind: "judge", directory, report, tool });
+  /** The gates of the tool-pack's documents alone (`judgeDocuments`), which need no report. */
+  async documents(directory: string, tool: string): Promise<DocumentGates> {
+    const response = await this.#run({ kind: "documents", directory, tool });
+    if (response.kind !== "documents") throw unexpected(response);
+    return response.documents;
+  }
+
+  async judge(directory: string, report: T4Report, tool: string, documents: DocumentGates): Promise<ToolPackVerdict> {
+    const response = await this.#run({ kind: "judge", directory, report, tool, documents });
     if (response.kind !== "judge") throw unexpected(response);
     return response.verdict;
   }
@@ -233,7 +266,7 @@ function unexpected(response: WorkerResponse): Error {
 export async function evaluateShard(pool: WorkerPool, directories: readonly string[], options: PlanOptions, shard: Shard, directory: string): Promise<number> {
   const counts = await Promise.all(
     directories.map(async packDirectory => {
-      const jobs = await pool.jobs(packDirectory, options);
+      const { jobs, compiles } = await pool.jobs(packDirectory, options);
       const sources = shardJobs(jobs, shard).map(block => {
         const target = block.reduce((sum, index) => sum + jobs[index]!.weight, 0) / (4 * pool.size);
         const chunks: number[][] = [];
@@ -250,7 +283,7 @@ export async function evaluateShard(pool: WorkerPool, directories: readonly stri
       });
       const turns = Math.max(0, ...sources.map(chunks => chunks.length));
       const chunks = Array.from({ length: turns }, (_, turn) => sources.flatMap(chunksOf => (turn < chunksOf.length ? [chunksOf[turn]!] : []))).flat();
-      const evaluated = await Promise.all(chunks.map(chunk => pool.evaluate(packDirectory, options, chunk)));
+      const evaluated = await Promise.all(chunks.map(chunk => pool.evaluate(packDirectory, options, compiles, chunk)));
       writeResults(directory, loadPack(packDirectory).pack.pack, shard, jobs.length, chunks.flat(), evaluated.flat());
       return chunks.flat().length;
     }),
@@ -258,7 +291,10 @@ export async function evaluateShard(pool: WorkerPool, directories: readonly stri
   return counts.reduce((sum, count) => sum + count, 0);
 }
 
-/** Each pack's report from the results under `results`, and the verdicts of its gated tool-packs, in path order. */
+/**
+ * Each pack's report from the results under `results`, and the verdicts of its gated tool-packs, in path order. The
+ * tool-packs' document gates are asked for with the reports, so they are made while the reports are.
+ */
 export function reportPacks(
   pool: WorkerPool,
   directories: readonly string[],
@@ -269,7 +305,15 @@ export function reportPacks(
   return directories.map(packDirectory => {
     const pack = loadPack(packDirectory).pack.pack;
     const report = pool.report(packDirectory, options, results);
-    const verdicts = report.then(made => Promise.all(gated.filter(entry => entry.pack === pack).map(({ tool }) => pool.judge(packDirectory, made, tool))));
+    const verdicts = Promise.all(
+      gated
+        .filter(entry => entry.pack === pack)
+        .map(async ({ tool }) => {
+          const documents = pool.documents(packDirectory, tool);
+          documents.catch(() => undefined);
+          return pool.judge(packDirectory, await report, tool, await documents);
+        }),
+    );
     // Each is awaited in its turn; one failing meanwhile is not left unhandled.
     report.catch(() => undefined);
     verdicts.catch(() => undefined);

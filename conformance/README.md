@@ -49,7 +49,7 @@ the four `conformance` jobs of `ci.yml` each score a share of every pack
 from all their results and judges them (`npm run conformance:languages:check -- --results <dir> --base <base> --out
 <dir>`). The reports are the ones one run scoring everything writes: each pack's scoring is a list of evaluations that
 any process can run, put back together in order (`conformance/languages/shards.ts`). On one machine, `--check` spreads
-the same evaluations over a worker process per core. What blocks and what is reported:
+the same evaluations over a worker process per core and per 5 GiB of memory. What blocks and what is reported:
 
 | Blocks the job | Reported only |
 | --- | --- |

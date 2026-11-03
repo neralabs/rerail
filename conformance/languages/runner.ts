@@ -78,11 +78,13 @@ interface Evaluation {
 /**
  * One evaluation of a pack's scoring (`planPack`): a fixture unit, or a rule over its samples. Every process that makes
  * the same plan has the same jobs, so any of them can run one, and its result is structured-clone data that travels.
- * `weight` estimates its work against the others of its `source`, for splitting them evenly.
+ * `weight` estimates its work against the others of its `source`, for splitting them evenly. Jobs of one `group` share
+ * what a process compiles for them (a fixture unit's language, `unitLanguageRules`), so they are best run together.
  */
 export interface Job {
   source: "fixtures" | typeof SAMPLES_SOURCE;
   weight: number;
+  group: string;
   run(): Promise<JobResult>;
 }
 
@@ -246,7 +248,7 @@ interface CompiledRule {
   policyId: string;
   /** The code rule document's text, for its applicability probe (`applicabilityProbe`). */
   document: string;
-  compiled: NativeCompiledCodeRuleDsl;
+  readonly compiled: NativeCompiledCodeRuleDsl;
 }
 
 const codeRuleDocumentSchema = z.object({
@@ -254,8 +256,11 @@ const codeRuleDocumentSchema = z.object({
   clauses: z.array(z.object({ id: z.string(), violation: z.object({ code: z.string() }).optional() })).min(1),
 });
 
-/** Compiles each rule's code rule; a code rule whose clauses report another code than the upstream rule is an error. */
-function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: string[]): CompiledRule[] {
+/**
+ * Compiles each rule's code rule; a code rule whose clauses report another code than the upstream rule is an error.
+ * With `compiles`, the rules another plan of the pack compiled, the rules are those, each compiled when first evaluated.
+ */
+function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: string[], compiles?: ReadonlySet<string>): CompiledRule[] {
   const runtime = loadNativeBinding().CodeRuleDslRuntime;
   const seen = new Map<string, string>();
   return rules.flatMap(rule => {
@@ -270,7 +275,10 @@ function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: st
         if (clause.violation !== undefined && clause.violation.code !== rule.upstream.rule)
           throw new Error(`clause ${clause.id} reports code ${clause.violation.code}, not the upstream rule ${rule.upstream.rule}`);
       }
-      return [{ rule, policyId: document.id, document: text, compiled: runtime.compile(text, "json", capabilitiesJson()) }];
+      if (compiles === undefined) return [{ rule, policyId: document.id, document: text, compiled: runtime.compile(text, "json", capabilitiesJson()) }];
+      if (!compiles.has(rule.id)) return [];
+      let compiled: NativeCompiledCodeRuleDsl | undefined;
+      return [{ rule, policyId: document.id, document: text, get compiled() { return (compiled ??= runtime.compile(text, "json", capabilitiesJson())); } }];
     } catch (error) {
       errors.push(`${rule.id}: ${relative(RERAIL_ROOT, path)}: ${error instanceof Error ? error.message : String(error)}`);
       return [];
@@ -416,12 +424,17 @@ export function inUnitLanguage(documentText: string, language: UnitLanguage): st
  * rule recompiled with that language in its AST clauses (`inUnitLanguage`), once per rule and distinct language. The
  * engine's languageOptions are per query, not per file, so a unit of its own language takes its own copy of the rule.
  * A copy that does not compile is an error (in `errors`, the unit's), and the rule is not evaluated on the unit.
+ * `oneLanguage` keeps only the last language's copies, for a process given its units grouped by language (`Job.group`):
+ * a pack's copies in every language take gigabytes.
  */
-function unitLanguageRules(): (rules: readonly CompiledRule[], language: UnitLanguage | undefined, unit: string, errors: string[]) => CompiledRule[] {
+function unitLanguageRules(oneLanguage: boolean): (rules: readonly CompiledRule[], language: UnitLanguage | undefined, unit: string, errors: string[]) => CompiledRule[] {
   const cache = new Map<string, CompiledRule | string>();
+  let last: string | undefined;
   return (rules, language, unit, errors) => {
     if (language === undefined) return [...rules];
     const key = JSON.stringify(language);
+    if (oneLanguage && key !== last) cache.clear();
+    last = key;
     return rules.flatMap(entry => {
       const cacheKey = `${entry.policyId}\0${key}`;
       let compiled = cache.get(cacheKey);
@@ -433,7 +446,7 @@ function unitLanguageRules(): (rules: readonly CompiledRule[], language: UnitLan
           return [entry];
         }
         try {
-          compiled = { ...entry, compiled: loadNativeBinding().CodeRuleDslRuntime.compile(document, "json", capabilitiesJson()) };
+          compiled = { rule: entry.rule, policyId: entry.policyId, document: entry.document, compiled: loadNativeBinding().CodeRuleDslRuntime.compile(document, "json", capabilitiesJson()) };
         } catch (error) {
           compiled = error instanceof Error ? error.message : String(error);
         }
@@ -662,11 +675,11 @@ async function evaluateApart(rules: readonly CompiledRule[], files: readonly Sou
  * errors its reading records go into `log`, in order; a unit's own errors (a rule that does not compile in its
  * language) are its job's, logged where the unit is.
  */
-function planFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], log: ErrorLog, jobs: Job[]): (results: readonly JobResult[]) => FixturesRun {
+function planFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], log: ErrorLog, jobs: Job[], oneLanguage: boolean): (results: readonly JobResult[]) => FixturesRun {
   const languages = familyLanguages(loaded);
   const expectedByTool: FixturesRun["expectedByTool"] = new Map();
   const tools: string[] = [];
-  const inLanguage = unitLanguageRules();
+  const inLanguage = unitLanguageRules(oneLanguage);
   const planned: { tool: string; key: string; origin: UnitOrigin | undefined; files: SourceFile[]; job: number }[] = [];
   for (const tool of toolsOf(compiled)) {
     const toolExpected = pinnedExpectedFindings(loaded, tool, fixturesExpectedPath(loaded, tool));
@@ -703,6 +716,7 @@ function planFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], log
       jobs.push({
         source: "fixtures",
         weight: covering.length * (1 + [...manifests, ...files].reduce((bytes, file) => bytes + file.source.length, 0) / 1024),
+        group: origin?.languageOptions === undefined ? "" : JSON.stringify(origin.languageOptions),
         run: async () => {
           const errors: string[] = [];
           // A unit linted under its test case's own language is evaluated under it too.
@@ -894,6 +908,7 @@ function planSamples(
         source: SAMPLES_SOURCE,
         // The applicability probe evaluates the same files again.
         weight: (clean.length > 0 ? 2 : 1) * all.reduce((bytes, file) => bytes + file.source.length, 0),
+        group: "",
         run: async () => {
           const errors: string[] = [];
           const evaluation = await evaluateWorkspace([entry.compiled], all);
@@ -1195,6 +1210,8 @@ const ALL_SOURCES = ["fixtures", SAMPLES_SOURCE] as const;
 /** A pack's scoring as its jobs, which any process making the same plan can run, and the report their results make. */
 export interface PackPlan {
   jobs: readonly Job[];
+  /** The pack rules that compiled, by id, in order: what another plan of the pack takes as `compiles`. */
+  compiles: readonly string[];
   /** The report, from every job's result, in job order. */
   finish(results: readonly JobResult[]): T4Report;
 }
@@ -1202,21 +1219,25 @@ export interface PackPlan {
 /**
  * T4: the plan of scoring the pack's rules over its upstream fixtures and/or its real-code samples. Making it reads the
  * pack's data and compiles its rules; the evaluations are its jobs. The same pack and options make the same plan.
+ * Given `compiles` (another plan's), it compiles each rule only when a job first evaluates it, and has the same jobs;
+ * only a plan that compiled its rules itself, and so knows their errors, makes the report.
  */
-export function planPack(loaded: LoadedPack, options: RunOptions): PackPlan {
+export function planPack(loaded: LoadedPack, options: RunOptions, compiles?: readonly string[]): PackPlan {
   const { pack } = loaded;
   const unknown = (options.rules ?? []).filter(id => !pack.rules.some(rule => rule.id === id));
   if (unknown.length > 0) throw new Error(`unknown rule(s) in ${pack.pack}: ${unknown.join(", ")}`);
   const selected = options.rules === undefined ? pack.rules : pack.rules.filter(rule => options.rules!.includes(rule.id));
   const compileErrors: string[] = [];
-  const compiled = compileRules(loaded, selected, compileErrors);
+  const compiled = compileRules(loaded, selected, compileErrors, compiles === undefined ? undefined : new Set(compiles));
   const log: ErrorLog = [...compileErrors];
   const jobs: Job[] = [];
-  const finishFixtures = options.fixtures && compiled.length > 0 ? planFixtures(loaded, compiled, log, jobs) : undefined;
+  // A plan given the rules that compile runs jobs a parent shared out grouped by language (shards.ts).
+  const finishFixtures = options.fixtures && compiled.length > 0 ? planFixtures(loaded, compiled, log, jobs, compiles !== undefined) : undefined;
   const directoryOf = options.samplesDirectory ?? ((tool: string) => samplesTree({ root: RERAIL_ROOT, pack: pack.pack, tool }));
   const finishSamples = options.samples && compiled.length > 0 ? planSamples(loaded, compiled, directoryOf, log, jobs) : undefined;
 
   const finish = (results: readonly JobResult[]): T4Report => {
+    if (compiles !== undefined) throw new Error(`${pack.pack}: a plan given the rules that compile does not know their errors, so makes no report`);
     if (results.length !== jobs.length) throw new Error(`${pack.pack}: ${results.length} job result(s) for ${jobs.length} job(s)`);
     const errors = log.flatMap(entry => (typeof entry === "string" ? [entry] : results[entry.job]!.errors));
     const fixtures = finishFixtures?.(results);
@@ -1270,7 +1291,7 @@ export function planPack(loaded: LoadedPack, options: RunOptions): PackPlan {
     report.pass = reportFailures(report).length === 0;
     return report;
   };
-  return { jobs, finish };
+  return { jobs, compiles: compiled.map(entry => entry.rule.id), finish };
 }
 
 /** T4: score the pack's rules over its upstream fixtures and/or its real-code samples, every job here, one at a time. */
