@@ -166,8 +166,17 @@ pub(in crate::code_rule_dsl) fn emit_batch(
     batch: &HashMap<String, (String, f64)>,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
 ) -> Result<Emitted> {
-    let prog = crate::code_rule_dsl::logic::front::parse(source)?;
-    let lowered = lower::lower(&prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
+    emit_program(&crate::code_rule_dsl::logic::front::parse(source)?, name, batch, intern)
+}
+
+/// `emit_batch` of a program already parsed (or built, as a wave's demand program is).
+pub(in crate::code_rule_dsl) fn emit_program(
+    prog: &crate::code_rule_dsl::logic::front::Program,
+    name: &str,
+    batch: &HashMap<String, (String, f64)>,
+    intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
+) -> Result<Emitted> {
+    let lowered = lower::lower(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
     emit(&lowered, &Connection::open_in_memory()?, "main", name, None, batch)
 }
 

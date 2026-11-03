@@ -108,7 +108,7 @@ pub(super) fn ast_captures<'a>(
     match matcher {
         AstMatcher::Pattern(pattern) => names.extend(pattern.defined_vars()),
         AstMatcher::Semantic(semantic) => semantic::ast_captures(semantic, utils, summaries, names),
-        AstMatcher::Kind(_)
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
@@ -327,7 +327,7 @@ fn node_regexes_in<'a>(
         }
         AstMatcher::Constrained(core) => node_regexes_in(&core.rule, utils, summaries, regexes),
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Count(_)

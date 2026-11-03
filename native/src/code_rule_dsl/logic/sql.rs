@@ -4,5 +4,6 @@
 //! read, so emitted SQL names only declared fact families. N's `relational_ir.rs`/`relational.rs`
 //! (tree axes in SQL) are not kept: tree navigation is the transducer's.
 pub(in crate::code_rule_dsl) mod physical;
+pub(in crate::code_rule_dsl) mod select;
 pub(in crate::code_rule_dsl) mod sql_ast;
 pub(in crate::code_rule_dsl) mod typed_boundary;

@@ -1,0 +1,83 @@
+use super::*;
+use crate::code_rule_dsl::CodeRuleDslRuntime;
+use crate::code_rule_dsl::test_support::CAPABILITIES;
+use std::path::{Path, PathBuf};
+
+fn files(directory: &Path, found: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files(&path, found);
+        } else if path.extension().is_some_and(|e| e == "json") {
+            found.push(path);
+        }
+    }
+}
+
+/// A pack's compiled policies, by file stem.
+fn policies(pack: &str) -> Vec<(String, CompiledCodeRuleDsl)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(pack);
+    let mut paths = Vec::new();
+    files(&root.join("rules"), &mut paths);
+    files(&root.join("candidates/rules"), &mut paths);
+    paths.sort();
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(&path).ok()?, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+            Some((path.file_stem()?.to_string_lossy().into_owned(), compiled))
+        })
+        .collect()
+}
+
+fn store() -> ContentStore {
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    ContentStore::open(&std::env::temp_dir().join(format!("rerail-policies-{}-{nonce}.sqlite", std::process::id()))).unwrap()
+}
+
+/// The Python pack through the logic language: every document round-trips, every lowered clause is an
+/// `ast` atom of its forbid rule, and the wave's rules derive `violation` from `match`.
+#[test]
+fn the_python_pack_runs_as_its_logic_program() {
+    let policies = policies("python");
+    let lowered = lower(&policies).unwrap();
+    assert!(!lowered.clauses.is_empty());
+    assert_eq!(lowered.clauses.len(), lowered.shapes.len());
+    let forbids = lowered.program.rules.iter().filter(|rule| rule.body.iter().any(|l| matches!(l, Literal::Ast { .. }))).count();
+    assert!(forbids >= lowered.clauses.len(), "{forbids} forbid rules, {} lowered", lowered.clauses.len());
+    assert_eq!(lowered.logic.rules.matches(":- match(").count(), lowered.clauses.len(), "one rule per lowered atom");
+    // YAML rules demand every clause on every document of the chunk.
+    let demand = lowered.logic.demand.as_ref().expect("a demand program");
+    assert_eq!(demand.rules.iter().filter(|rule| rule.head.rel.starts_with("magic_ast_")).count(), lowered.clauses.len());
+    let sql = lowered.logic.demand_statement(&store()).unwrap().expect("one statement");
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    db.execute_batch("CREATE TEMP TABLE wave_document(position INTEGER, d INTEGER); INSERT INTO temp.wave_document VALUES (0, 5), (1, 9)").unwrap();
+    let rows: usize = db.prepare(&sql).unwrap().query_map([], |_| Ok(())).unwrap().count();
+    assert_eq!(rows, 2 * lowered.clauses.len());
+}
+
+/// Demand follows the rules: a document filter before an atom narrows its clause's demand, and an atom
+/// read after another is demanded wherever the seed is (widened: the other is the batch's).
+#[test]
+fn magic_sets_demand_each_clause_where_its_rules_read_it() {
+    let rule = |clause: &str, body: Vec<Literal>| Rule {
+        head: Atom { rel: "violation".to_owned(), args: vec![Term::Str("p".to_owned()), Term::Str(clause.to_owned()), var("D"), var("N")], neg: false, gated: false },
+        body: std::iter::once(atom(WAVE, vec![var("D")])).chain(body).collect(),
+    };
+    let ast = |i: usize, n: &str| atom(&format!("ast_{i}"), vec![var("D"), var(n)]);
+    let seven = Literal::Cmp { l: var("D"), op: "=", r: Term::Int(7) };
+    let prog = Program {
+        rules: vec![rule("a", vec![ast(0, "N")]), rule("b", vec![seven, ast(1, "N")]), rule("c", vec![ast(0, "M"), ast(2, "N")])],
+        ..Program::default()
+    };
+    let mut wave = Program::default();
+    declare_violation(&mut wave);
+    let demand = demand_program(prog, &wave, 3).unwrap().unwrap();
+    let logic = Logic { rules: String::new(), demand: Some(demand) };
+    let sql = logic.demand_statement(&store()).unwrap().expect("one statement");
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    db.execute_batch("CREATE TEMP TABLE wave_document(position INTEGER, d INTEGER); INSERT INTO temp.wave_document VALUES (0, 5), (1, 7)").unwrap();
+    let mut rows = db.prepare(&sql).unwrap().query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+    rows.sort();
+    assert_eq!(rows, [(0, 5), (0, 7), (1, 7), (2, 5), (2, 7)]);
+}

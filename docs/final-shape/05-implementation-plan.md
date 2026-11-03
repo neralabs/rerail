@@ -184,11 +184,121 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 
 - Packed runtime (`5bf45ff0` copy, `a36418d0`): in the module tree under `transducer`; W's bench-only JIT and Metal backends and the `bench-backends` feature removed.
 - Verifier proofs and query front end (`98e96170`, `692ff6ba` copies; next commit): Tempo's cycle-progress and greedy-contract proofs replace N's backward-goto heuristic in `validate`; `scm.rs` compiles tree-sitter queries to programs; F1 is a test that the verifier's opcodes are exactly the Metal interpreter's.
-- Metal pieces (`cf19c0d9` copy, and G's grid executor `b90a7b0a`, `e92c5958`, `faf1c92b`, `be5197b5`, `6dd8ae15`): placed (`bb4c9605`). G's grid executor is `ExecutionBackend::Metal` (`metal_grid_backend`) beside N's `MetalInterpreter`/`MetalJit`, which stay; shared files are 3-way merges over N's base Tempo@176ea093d. The adaptations (plan-sized pools within 500 MB for the 2 GB `METAL_BUFFER_LIMIT` and the 600-launch cap, K1, K3) are outstanding.
+- Metal pieces (`cf19c0d9` copy, and G's grid executor `b90a7b0a`, `e92c5958`, `faf1c92b`, `be5197b5`, `6dd8ae15`): placed (`bb4c9605`). G's grid executor is `ExecutionBackend::Metal` (`metal_grid_backend`) beside N's `MetalInterpreter`/`MetalJit`, which stay; shared files are 3-way merges over N's base Tempo@176ea093d. The adaptations (plan-sized pools within 500 MB for the 2 GB `METAL_BUFFER_LIMIT` and the 600-launch cap, K1, K3) are done (list step 13, below).
 - Placement differs from the table: row 3's modules sit flat in `transducer/packed/`, not in `packed/metal/`. G's files are 3-way merges into files N's base already has at flat paths (`metal_backend.rs`, `metal_launch.rs`, `metal_parallel*`), and `#[path]` keeps G's names. Moving only G's new files into `packed/metal/` would split one merged unit across two directories.
 - Row 1's "keep W `persist_search_index_batch`": kept (`transducer.rs:534`), called from `workspace/storage.rs` and the packed tests. `POSITIONAL_INDEX_VERSION` is W's 3 (decided with row 1).
 
+- **Plan-sized pools (list step 13, 2026-11-02).** The guards are plan-time bounds:
+  - **Launches: at most 99 an evaluation** (`metal_launch_budget::KERNEL_LAUNCH_LIMIT`, was 600). The wave's label plan counts its launches before encoding (`label_passes::run`: each level's kernels, a fused group as its one dispatch, rounds from what is left). A plan that cannot fit is refused as `BackendLaunchLimit`, and the wave splits the batch, still on Metal (`waves::matches::labelled_metal`). The ledger stays as the backstop, and every Metal submission is now checked (`production_encoders_cannot_bypass_the_launch_guard` passes; the set steps and the profiling split bypassed it).
+  - **The set program is one dispatch** (`set_steps`): a threadgroup per file runs every step over the file's words, a barrier between steps. On the device each file starts at a word boundary. S7's program was 533 steps, 684 dispatches; it is now 1 (sets 22 → 16 ms).
+  - **Device memory: one 256 MiB pool** (`METAL_BUFFER_LIMIT`, was 2 GB), the device's share of the 500 MB (02 §6). Buffers are sized from the plan, not the worst case. Root records are reserved at one per 16 roots, not 4 per root; a batch that writes more overflows to the CPU, as before. The deep fused groups share one stack buffer. A batch that does not fit is refused as `BackendCapacity` and split.
+  - **Measured** (S7, 250 files, load 35–46):
+    - Metal: 44 launches in one evaluation (plan 50), plus 1 for the sets.
+    - Device buffers: peak 248 MB, was 694 MB (root records 351 MB, group stacks 5 × 33 MB).
+    - Results: 710 keys = W on CPU and Metal; Metal CPU time 2.2 s.
+    - The 15-fixture wave check (`the_wave_is_one_evaluation_on_metal`): 46 launches, was 77.
+  - **Diagnostics:** `RERAIL_LAUNCHES` prints planned against actual launches; `RERAIL_BUFFERS` prints each reservation of 4 MB or more with its call site.
+- **Set mode (list step 14, 2026-11-02),** t1 spec-transducer §1 :95-100, §2.7, §3 :368-377.
+  - **A program-level flag** (`Program::in_set_mode`): the program's consumer reads its output as a set of (task, label) keys. It is in the digest, so the JIT's cache tells the two modes apart. Tree-sitter queries stay exact, because their repeats reduce by capture containment (§2 :132).
+  - **The freedoms.** A label emits at most once per task, and a task ends once every label has fired. The host's executors also drop a pending path whose reachable labels have all fired (`set_mode::Reach`: per pc, the labels reachable through fall-through, `FORK` and `GOTO`).
+    - Interpreter and micro walk (host): all of the above.
+    - CPU JIT and the device's root walks: the task ends at its first emit, for single-label programs (the device's flag is `RootPass.pad`). A program with more labels runs exact there, which gives the same keys.
+  - **Lazy enumeration (§2.7).** The interpreter's `CHILD` and `DESCEND` are one resumable cursor each (`WorkItem::Children`, `WorkItem::Descend`), as `FOLLOWING` already was, instead of a pending path per candidate. Programs with repeats keep the eager form, whose queued states are deduplicated. The micro walks were already lazy (`Resume`). The JIT's moves still fork eagerly (list step 17, device-side enqueue, with its loops).
+  - **Which programs.** The wave's root programs (their matches are read as `match(c, d, n)` and spans) and every roots label are in set mode. Targets and count labels stay exact: they need every captured node, or every match.
+  - **The oracle** is finding keys plus Complete/Unknown per (rule, file), as S7 checks (decision 0017; the loose findings contract).
+  - **Measured.** S7: 710 keys = W on CPU and Metal. Root records went from 5,023 to 5,009, because S7's roots rarely have more than one emitting path. `set_mode_emits_each_key_once_on_every_cpu_executor`: on a program with many emitting paths per start, the interpreter, micro walk and JIT give exact mode's keys, each once. The packed runtime's 35 tests, the matcher lowering's and the wave's pass.
+- **The combined cross-rule graph (list step 15, 2026-11-02),** t1 spec-fusion §4.1 and §4.7. This is the fusion model's first priority: shared sub-rule evaluation.
+  - **Hash-consed labels** (`LoweredWave::new`). A clause's sub-rules are its labels. A label equal to an earlier one becomes that label: equal means the same `Label::key` (kind, program digest, domain, constraints, count bounds), with every label it reads already renamed in the wave. Steps are in evaluation order, so a label's reads are named before it.
+    - Each clause's kept labels take the next ids, so its labels stay one range. A duplicate's slot and pass are gone, so the wave's bitsets hold each distinct label once.
+    - A clause keeps copies of the definitions it borrows (`Labels::borrowed`), for their domains.
+    - A recursive group equal to an earlier one is that group, member by member. Its key is its members' keys in order, each member named by its position in the group and every other label by its wave name (S7: 16 groups shared, 496 → 470 labels).
+  - **Scheduling.** `levels` tracks when each label is final across the whole wave, so a borrowed label's level is its owner's. A clause's labels also run where a clause that reads them is active (`LoweredWave::spread`, through `feeds`, transitive).
+  - **Measured** (S7, 87 clauses, load 55):
+    - Labels: 833 separately, 496 combined (40% shared).
+    - Results: 710 keys = W on CPU and Metal; Metal still 44 launches.
+    - The CPU backend's audit: CPU time 5.3 s, from 6.3–6.6 s at step 14.
+    - The device's buffer peak: 211 MB, from 248.
+    - `the_combined_graph_shares_labels_and_keeps_each_clauses_roots`: on the pack's fixtures, each clause's roots from the combined wave equal its roots alone, with clauses active on half the tapes.
+  - **Program fusion** (`packed::fusion::Fused`), t1 spec-fusion §2.6, §4.3, §4.4. Micro-walk programs walked from the same starts become one program:
+    - their common leading words once (the trie's shared path), stopping before any word a member jumps back into;
+    - then a `FORK` chain with one branch per member, so a member's paths finish before the next member's branch runs;
+    - each member's emits renumbered through an emit table, (member, its own label), at most 32. Its tables (strings, text predicates, capture names) are concatenated and their operands offset. In set mode where every member is.
+    - The same transform is used in four places, each routing an emit back to its member:
+      - host label passes (`matcher::Packs`): a level's roots or targets passes over one domain; `Micro::run_labelled` marks each member's label;
+      - device label passes (`Runner::size`): passes over one shared root list, marking roots or captures. The kernel's route bit 2 reads the emit's scratch row from a table after the words, and a roots pack ends once every emit fired. A pack counts its members for a recursive group's one-dispatch fusion, and stays in its members' stack tier;
+      - host root walks (`PackedDemand::packs`): terminal root programs with the same entry test, walked over the union of their anchors. Records are routed to the member's tasks, labels and capture names, then ordered per member by (task, walk order) and cut at its result limit;
+      - device root walks (`Runner::records`): the same packs, as passes after the programs' passes. `RootPass.pad` = 1 + emit count drops an emit whose label fired and ends the walk once all have; `decode_roots` routes the records.
+    - **Measured** (S7, load 54): 710 keys = W on CPU and Metal; Metal 44 launches (planned 50), buffer peak 209 MB, audit CPU 2.3 s; the CPU backend's audit 6.1 s. Packed: 151 host label passes in 28 packs, 116 device label passes in 39, 1,828 host root walks in 493, 32 device root programs. `RERAIL_ROOTS_CHECK`: the fused host root walks equal the backend's on every (file, program), 0 differ. `fusion::tests`: the prefix, fork chain and emit table; a jump into the prefix stops it there.
+    - No speedup measured: CPU time is flat within the load's noise (architecture first; the walks it saves are measured above).
+  - **The fused plan's cache key** (§4.9) is list step 16's plan identity (below); step 20's `stats::identity` keys stored plans by it. Since list step 20 the wave's planned SQL program is a compiled plan (below); its lowering (`LoweredWave`) is still built per audit.
+- **Interpreted first, the JIT swapped in (list step 16, 2026-11-02),** 03 §3 "Interpreted, then JIT"; decision 0012's background backends, now keyed by plan.
+  - **One plan identity** (`compilation::PlanId`): a digest of what runs, independent of the binding.
+    - A wave's is `LoweredWave::identity`: its labels by id (`Label::key`), its steps, recursive groups and borrowed labels, and each clause's root program and domain. Equal waves have equal identities, whichever backend binds them.
+    - A batch of a range of the wave's programs is `PlanId::part` of it (`PackedDemand::with_plan`). A batch without a wave is `PlanId::of_programs`.
+  - **Two bindings of the plan** (`compilation::resolve_plan`). Requests, readiness and failure are per (binding, plan). A background backend runs a batch on the interpreter until the plan's compiled binding is ready, requesting it on a thread, then swaps it in at the plan's next batch. A plan whose compile failed stays interpreted. The CPU JIT's and Metal's caches still hold the compiled forms by their own keys; the plan decides which binding runs.
+  - **Production binds in the background:** the slice's napi backends are `CpuBackground` and `MetalBackground`, and so is S7. A Metal wave's roots bind `CpuBackground`.
+  - **Measured** (S7, load 53): 710 keys = W on CPU (audit CPU 5.1 s) and Metal (2.2 s, 44 launches, 209 MB peak). Every S7 root batch is a micro walk (`demand.walked`), so no batch reached a binding, and none waited on a compile. `a_plan_runs_interpreted_until_its_binding_is_compiled`: interpreter, then the JIT after the request, same outputs. `the_wave_has_one_plan_identity_for_every_binding`. Decision 0012's two background tests and the background wave gate pass.
+  - **Not in this step:** Metal's per-clause pattern kernels (`pattern_pipeline`) still compile synchronously on first use, since they have no interpreted binding. The device's label kernels are built once per process (`warm`).
+- **Device-side enqueue, lattice FIX on the device, `R[tid]` (list step 17, 2026-11-02),** items (e)–(g); decision 0027.
+  - **(e) Device-side enqueue: the device work queue** (`metal_work_queue.{metal,rs}`; decision 0027, reworked at the user's direction from a first version that kept loops inside one threadgroup). One persistent dispatch sized to what the device keeps resident (≤ 64 groups of 256). Workers take items from a linear queue (capacity: the most items the work can push) and push the items their work creates; idle workers take them up across every threadgroup. No worker waits on another without a bound: slots are handed over by exchange (a taker that finds a slot unwritten marks it TAKEN and moves on; the pusher takes another), idle workers poll a bounded number of times and exit, and the host re-launches the same dispatch only if items remain (at most 8). Every loop is a bounded `for`: an endless `while` was miscompiled (a thread's own counter overcounted: 52,096 visits for 50,000 takes; bounded, exact). A queue-only probe: 50,000 items pushed by their predecessors, 50,000 taken, none twice, none missed.
+    - Label groups keep `Runner::group`: their rounds evaluate complements and counts between barriers (stratified, not push-on-change), and files across workers would only redo the hardware's scheduling. Groups whose members are interpreter tasks or pattern kernels (other pipelines) keep host rounds (O34); G's frontier waves stay as O33.
+  - **(f) File-local lattice FIX on the queue** (`metal_lattice::solve`, kernel `lattice_queue`): an item is a cell; a cell whose value rose pushes its dependents (de-duplicated by a queued bit). Each cell's state only rises (BOT, writing, constant, TOP; a constant published by claim, write, device fence, release), so no value falls and none is read half written; a reader seeing "writing" reads BOT, and a raise finding it pushes the cell again. `lattice_fixpoint(..., 'metal')` binds it for a flat lattice without widening; the production caller (`logic::plan`) still binds the CPU (which lattices go to the device is not decided).
+    - **Measured** (`the_device_fix_waves_reach_the_cpus_fixpoint`, load ~60): 300 components of 40 cells (cycles, transfers, conflicting seeds) and one 20,000-cell chain counting up from 0, 32,001 cells: the device's values equal the CPU's (twice). One launch, 0 retries, 65,977 evaluations (the CPU 67,121, in 20,000 waves); solve 475 ms with the pipeline's compile, 165 ms warm, against the CPU's 8.7 ms: the chain is 20,000 dependent steps, each a queue round trip and a fence. No speedup is claimed (architecture first).
+  - **(g) `R[tid]`** (`prefilter::terms`, 03 §16): a walk's text slot is read as a node set. Its predicate runs once over the language's vocabulary (`vocabulary_term`, the prefilter's `VOCABULARY` stages; a literal is a join on its atom), its bits on a tape are the matched terms' postings plus the uncovered nodes (`term_coverage.missing`) confirmed on their text, filtered by the slot's kind. The rows ride on the wave's tapes (`TapeDoc::with_texts`), keyed by `Micro::slot_key`; a Lua pattern is computed on the text as before. No per-node structure is stored (decision 0026).
+  - **Measured** (S7, load ~60, with `RERAIL_TEXTS_CHECK`, which also scans each indexed slot): 710 keys = W on CPU (audit CPU 7.1 s) and Metal (3.3 s, 44 launches, 209 MB peak). Slots read from the index: CPU 16,009, Metal 18,500, all equal to the scan (`texts.check_differ` 0); scanned (Lua or unconfirmed) 1,094 and 2,205. `demand.texts` 391 ms / 299 ms (vocabulary 77 ms, postings 130 ms, rows 165 ms). The times include the check's scans; no speedup is claimed (architecture first).
+- **The text dump and assembler (list step 18, 2026-11-02),** item (h); L2, P `spec-tooling.md` §2.2.1–2.2.2.
+  - **`rir`** (`transducer::packed::rir`): a program as UTF-8 lines.
+    - Header: `program sha256:<digest> ir=7 grammar=<dialect>@<16 hex>|none caps=interp[,micro][,pattern]`. The digest is the only hash. `ir` is the format version. `grammar` names the dialect plus a SHA-256 over its kind and field tables (`rir::Names`). `caps` lists what can run the program: the interpreter always, the micro-op form where `Micro::of` lowers it, and the ast-grep pattern matcher where it carries a pattern. The JIT is not listed, because only compiling decides it.
+    - Tables print in index order: mode (set, query), strings (escaped), labels, longs, text predicates, capture assertions, directives, and the ast-grep pattern as an s-expression. Lists are bracketed.
+    - Then the words: mnemonic, mode, and an operand typed by its prefix (`@` jump, `L` label, `P` predicate, `A` assertion), with label names as comments.
+    - Names: with a grammar, kinds print as names (a quoted name for an anonymous kind), and fields print as names. Ids without a name, and derived classes, print as `#id`. Without a grammar, everything prints as `#id`.
+  - **The assembler** (`rir::assemble`; `assemble_named`; `assemble_all` for every `program` block of a dump):
+    - It resolves names against the header's grammar, and refuses a dump whose grammar tables have changed since it was written.
+    - It rebuilds the program's components and lowers its derived tables (value, capture and output programs).
+    - It runs the verifier (`Program::validate`, which every constructor runs).
+    - It checks a stated digest, `ir` and `caps` against the assembled program. `program -` marks a hand-written program.
+    - Round trip: the same digest, which covers every component, and the same text.
+  - **The wave's dump** (`LoweredWave::dump`, `Wave::dump(fused, setplan)`, `Rules::dump`, `slice::dump`):
+    - Always included:
+      - its plan identity;
+      - each clause's root program, label table, steps, recursive groups and borrowed labels, with domain kinds by name;
+      - every program once, by digest.
+    - `fused` adds:
+      - the plan's passes by step and level, with the packs they fuse into;
+      - each pack's members, emit table and fused program;
+      - each member's entry (its kind or supertype test, or `-`), its branch start, and the label its captures come from.
+    - `setplan` adds the candidates' set plan (`prefilter::sets::dump`), with kinds by name.
+  - **Entry points.** The tools are Rust (`code_rule_dsl::tools`, exported as `rerail_engine::tools`) and run without Node:
+    - `rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]` and `rerail-engine asm <file.rir>` (`native/src/bin/rerail-engine.rs`; `cargo build --bin rerail-engine`). The crate builds as `rlib` as well as `cdylib` for this.
+    - The TS wrappers call the same functions, and their output is byte-identical to the binary's:
+    - `rerail engine dump --rule <file>... [--clause <id>] [--fused] [--setplan]` (`src/cli/engine-cli.ts`, napi `dumpRir`). It lowers JSON or YAML rule files against the bundled capabilities, with no store. `--clause` selects one clause, by `policy/clause` or by clause id.
+    - `rerail engine asm <file.rir>` (napi `assembleRir`). It assembles each program through the verifier and prints it again by its own grammar, or prints the first refusal.
+    - `CodeRuleSlice.dump(fused?, setplan?)`.
+  - **Goldens.** Both are rewritten only with `RERAIL_BLESS=1`.
+    - `waves/matches/wave.rir`, the S7 pack's wave: 87 clauses, 470 labels, 45 packs, 476 programs, a 439-op set plan, 400 KB. Checked by `the_wave_dumps_as_rir_and_assembles_back` (every block assembles to its digest, and the dump is the same for every binding) and `a_dump_names_one_clause`.
+    - `transducer/packed/rir_goldens.rir`: one golden per frontend, 12 programs. It covers ast-grep patterns (one with several captures), an ast-grep literal, a regex, navigation, set mode, and tree-sitter queries with fields, `#eq?`, `#match?` over an alternation, a quantifier, directives and an offset.
+  - **Tests** (`rir::tests`):
+    - every program table, and every table and assertion kind, round trip;
+    - kinds and fields print by name;
+    - an ast-grep pattern program round trips;
+    - the verifier refuses a word out of its tables, a stale digest, a changed grammar, wrong caps, rows out of order and an old `ir`;
+    - a generated-program property test: 3000 attempts, more than 500 accepted, with and without names;
+    - a mutation fuzzer over dumps: 8000 mutations, including hand-written `program -` blocks. Every mutated dump it accepts reassembles to the same digest.
+  - **Limits:**
+    - `caps` is static, from what the program carries, not from what a run used.
+    - The fuzzing is the in-test mutation fuzzer. There is no `cargo-fuzz` target, because cargo-fuzz is not installed here.
+    - Many pack members print `entry=-`, because their first word is not a kind or supertype test.
+    - `explain`, `--trace`, replay bundles and `--dump-jit` are L2's other tools (spec-tooling §2.2.3–2.2.5) and are not part of this step.
+
 Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base, then differential finding keys for interpreter vs JIT vs Metal on a 100–300-file sample.
+
+**Check (list step 19, 2026-11-02).** Profiling build with `--features metal-tests`. Load average was 50–70.
+- N's contract suites (`demand::driver::catalog::`, `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base): 186 passed, 0 ignored, 0 failed, after O17's decisions (supertypes match their members, as in N; W's 50% unread rule stays, with that one case re-blessed). The first run, before the decisions, had 184 passed and 2 ignored; 4.1 s user + 0.9 s sys CPU.
+- Differential finding keys (`slice::tests::the_backends_find_the_same_keys_on_real_files`):
+  - S7's sample: real upstream Python files (`RERAIL_S7_FIXTURES`, default 150 copied, 250 paths audited) and the pack's 87 lowered clauses, each backend cold in its own store.
+  - The CPU interpreter, CPU JIT, Metal interpreter and Metal compiled kernel each find the same 710 keys and the same coverage.
+  - CPU per audit: 6.7 s, 6.6 s, 3.0 s and 3.0 s. Test total 17.7 s user + 2.2 s sys.
+  - The grid binding (`ExecutionBackend::Metal`) is not on the slice's path (`UnsupportedBackend` there), so it is not in the comparison.
 
 ### Phase 5: the `demand(batch)` vtab (§3, E6)
 
@@ -203,6 +313,22 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 
 - Batch vtab: `demand::vtab` on the packed runtime. The CPU `ast_grep` fact post-pass, the navigation producer and their relations are gone, which leaves batch status, producer status, terminal matches, captures and document maps. Row estimates come from `fact_stats` for each relation, which the driver fills when it merges match facts (row 2). Capture rows still compute N's `semanticPlain` structural key with the CPU value adapter; that moves to the findings layer's equality (Phase 8). Inputs from `prefilter/` candidate sets and the slab cache wait on Phases 7 and 9.
 - Driver: `demand::driver::drive(store, batch, statements, files)` runs lowered statements over a registered batch in one transaction on the content store and decodes violation and failure rows. N's catalog lowering (`SqlPlans::compile` over `relational_ir`) is not copied, per the table, so the driver takes statements from the logic planner (Phase 6). For the same reason N's two contract suites (`production_contract_tests.rs`, `policy_lowering_tests.rs`), which Phase 4's check names, cannot run until Phase 6 lowers rule catalogs; they stay outside the tree until then.
+- **Wired (list step 20, 2026-11-02):**
+  - **One batch driver.** `driver::with_batch` registers a `PackedDemand`, runs the statements, checks `rerail_batch_status` and always removes the batch. `driver::drive` and the wave's `schedule::run_over` both go through it.
+  - **`stats::identity` keys `compiled_plans`.**
+    - The wave's planned program (`Wave::emit`) is stored under a `CompiledPlanId`: the logic program, its source, the batch inputs and their sources, the clause names, and compiler version 2.
+    - It is reused only while the atoms it was planned with (`decisions`) re-intern to the same ids in this store. Its counters are `wave.plan.reused` and `wave.plan.compiled`.
+    - The prefilter gate's identity is a `CompiledPlanId` too.
+    - Test: `the_wave_program_is_a_compiled_plan` (one row per wave; a store with other atom ids plans again under the same identity).
+  - **The planner emits through `logic::sql`.**
+    - `Model::sql_select` builds a `select::Query`: SELECT blocks, CTEs and recursive walks over `sql_ast`'s expressions, with new forms for qualified columns, bare calls, `BETWEEN`, `EXISTS` and scalar subqueries.
+    - The query is checked before it is rendered. It may read only the program's relations (inputs, batch inputs, derived relations, and views the run planned from), CTEs once defined, and columns of FROM items in scope, correlated subqueries included.
+    - Every rule body of T's goldens passes the check. The check caught the native `kseed` mode's `rdl_kinds` view, which is now declared by its statistics.
+    - N's operator graph (`SqlAst`) is not used for these blocks: the planner's Selinger order needs flat `CROSS JOIN` blocks.
+  - **The fallback has a driver.**
+    - With `RERAIL_CANDIDATES=sql`, the wave's `Candidates::Sql` route selects candidates with `prefilter::fallback` over `nera_tree` instead of the sets.
+    - `the_wave_finds_ws_matches_from_the_sql_fallback` finds W's 164 matched nodes, 0 differing, from 3,696 candidates against the sets' 26,151 (8 fixtures, 87 clauses).
+  - **Not wired:** the rule catalog still does not reach the driver as logic programs (list step 21), and the findings layer's SQL is not yet typed (list step 27).
 - Gate: full `cargo test --lib`, run once: 1601 passed, 12 failed, 27 ignored; 139 s user + 12 s sys CPU (load average 21–28). The 12 failures are the environmental ones of Phases 1–3 (3 pack fixtures not in git, 9 `git_workspace` temp repos blocked by the agent git hook).
 
 ### Phase 6: the logic language (§12; B1, B3, B4, B10–B14, I9)
@@ -219,6 +345,22 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 **Status (2026-10-27): copies done (`8934168d` native fixpoint; `091b65fb` `rdl.py` and its programs, the port's source); adaptations outstanding. The YAML row is W's own `compile/*`, so it has no copy.**
 
 **Status (2026-10-27): rows 1 (steps 1–3), 2 and 4 adapted: `logic::native` (lattices, `widen`, store atoms), `logic::front`, and `logic::magic` (T's `magic_sets`, `magic_adorn` and `gate_negations`, matching T's transformed programs on its five programs in all three modes). Row 5 step 1: `logic::plan`, T's planner and SQL evaluation, choosing T's plans and deriving T's outputs on three of its programs over a nine-module fixture. Row 3: `logic::front::yaml`, every pack's `rerail.policy/v1` document round-tripping through the logic AST and Datalog text, forbid matchers as `violation(…) :- ast($D, $N, {…})` rules and the rest as `.policy {…}`. 2026-10-29: row 5's native strata ported (T's `RDL_NATIVE` modes: `native_stratum`, `native_fixpoint`, `native_set_fixpoint`, `join_spec`, `observe`, `live_stats`, `merge_upsert`, the `tape_nearest` climb), on T's extension and its own set engine (restored `d0a8636d`), every mode deriving T's outputs on its three programs. Outstanding: row 1 step 4 (after Phases 7–8), the native strata over atoms (O13), `sql_ast` lowering and `compiled_plans`; O11, O12, O13.**
+
+**List step 21 (2026-11-03): rules through the logic language** (`waves::policies`; user decisions: demand keyed by (clause, document), findings read `violation`).
+- **The round trip on the path.** `Rules::lower` reads each policy's canonical document into one logic program (`yaml::add`). The documents the program gives back must equal those read, or the policy is refused.
+- **The wave runs the rules.**
+  - Each `ast` atom whose Python matcher lowers is a wave clause `i`, and it reads `match(i, $D, $N)`. A rule whose atom does not lower is left out.
+  - The rewritten rules join the wave's source, so `violation(policy, clause, d, n)` is derived as written.
+  - The findings layer reads it as `forbidden`, mapping (policy, clause) atoms to its clause through `clause(c, p, k)`. Its own relation is renamed `reported`.
+  - The slice runs `Program::strata()` waves per chunk (two: the batch's outputs, then the rules).
+- **Magic sets per wave (C10).**
+  - Each lowered atom is a relation `ast_i(d, n)` under `.demand`. Each rule reading one starts with `wave($D)`, the chunk's documents. T's `magic_sets` gives the magic rules.
+  - What a magic rule cannot read before the batch is dropped, which widens demand. That means another atom, a relation derived from one, or an input the wave lacks.
+  - The rest is one statement (`emit::single`) deriving `demanded(i, d)`. Before each chunk's batch, `Wave::demand` runs it and keeps a clause's candidates only on its demanded documents.
+  - A demand program needing recursion or setup demands everything (`wave.demand.all`).
+  - For YAML rules every pair is demanded. Rules whose literals before an atom are available narrow it; `magic_sets_demand_each_clause_where_its_rules_read_it` gives demand (0,5), (0,7), (1,7), (2,5), (2,7) for a document filter and a widened atom.
+- **Measured** (load 43): `the_backends_find_the_same_keys_on_real_files` gives 710 keys on all four backends, CPU per audit 6.4/6.4/3.0/2.9 s, unchanged within noise. `waves::`, `slice::`, `logic::` and `tools::`: 150 passed.
+- **Not yet:** inputs a wave could read before its batch (the `py.*` families, list step 25) are what will narrow demand on the data-layer rules. Each forbid rule is one step, about 1,300 statements per chunk at data-layer scale; merging rules of one shape is open.
 
 Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust port on T's 574/331-file workloads; CPU and RSS ≤ T's numbers.
 

@@ -2169,8 +2169,8 @@
         "failures": [
           {
             "clauseId": "contract",
-            "code": "source-partial",
-            "message": "file has syntax errors; AST clauses ran outside 1 error region(s), first at line 1, column 1",
+            "code": "source-incomplete",
+            "message": "file did not parse: error regions cover 91% of it, first at line 1, column 1",
             "path": "contract.py"
           }
         ],

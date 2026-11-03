@@ -16,7 +16,7 @@
 //! `direct`), `native_set_fixpoint` (`setfix`), `join_spec` (`join`), `observe` and `live_stats` (statistics the
 //! native store reports), `merge_upsert` (`upsert`) and the `tape_nearest` climb (`nearest`). They call the SQL
 //! functions of T's extension (`logic::native`), which the caller registers on the connection, as T loads it.
-//! Adaptations still to come: the emitted SQL through `sql::sql_ast` and plans into `compiled_plans`. Left out of the
+//! Rule bodies are typed queries (`sql::select`, over `sql_ast`'s expressions), checked before they are rendered; the wave keeps its planned program in `compiled_plans` (`waves::matches`). Left out of the
 //! port: T's measurement switches (`RDL_PLAN0`, `RDL_SQL_REPLAN`, `RDL_CLUSTER=0`, `RDL_WHOLE=0`, `RDL_REPLAN`, traces
 //! and profiles, with `timed_plan`, T's planning timer) and its 1 GB page caches (over the 500 MB budget; SQLite's
 //! defaults instead).
@@ -113,14 +113,6 @@ impl Inputs {
     /// T's facts file attached as `f`, statistics in it.
     fn file() -> Self {
         Inputs { facts: "f.".to_owned(), stats: "f.".to_owned(), atoms: None, native: BTreeSet::new(), batch: HashMap::new() }
-    }
-    /// `sym_text` of an expression in atoms mode, the expression itself in text mode.
-    fn text(&self, e: &str) -> String {
-        if self.atoms.is_some() { format!("sym_text({e})") } else { e.to_owned() }
-    }
-    /// `sym_atom` of a text expression in atoms mode.
-    fn symbol(&self, e: &str) -> String {
-        if self.atoms.is_some() { format!("sym_atom({e})") } else { e.to_owned() }
     }
 }
 
@@ -379,18 +371,7 @@ pub(in crate::code_rule_dsl) struct Model {
 
 /// T's input column names; a derived relation's columns are `c0`, `c1`, ….
 pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
-    let names: &[&str] = match rel {
-        "node" => &["d", "n", "kind", "start", "end_"],
-        "doc" => &["d", "path", "module"],
-        "child" => &["p", "c", "idx"],
-        "field" => &["p", "f", "c"],
-        "text" => &["n", "s"],
-        "intval" => &["n", "v"],
-        "op" => &["n", "s"],
-        "pkg" => &["d", "p"],
-        _ => &[],
-    };
-    names.get(col).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
+    super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
 
 fn is_join(l: &Literal) -> bool {
@@ -795,28 +776,65 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
 }
 
 // ---- SQL backend -------------------------------------------------------------------------------------------------
+//
+// A rule body is built as a typed query (`sql::select`), checked against the program's relations and the
+// columns in scope, then rendered (list step 20).
 
-fn sql_term(t: &Term, env: &HashMap<String, String>, atoms: Option<[i64; 3]>) -> Result<String> {
+use super::sql::select::{Cte, FromItem, Join, Query, Relation, Select};
+use super::sql::sql_ast::{SqlBinaryOperator as Op, SqlExpression as Expr, SqlUnaryOperator, SqlValue as Value_};
+
+fn integer(i: i64) -> Expr {
+    Expr::Value(Value_::Integer(i))
+}
+fn string(s: &str) -> Expr {
+    Expr::Value(Value_::Text(s.to_owned()))
+}
+fn col(alias: &str, column: &str) -> Expr {
+    Expr::Qualified { alias: alias.to_owned(), column: column.to_owned() }
+}
+fn bin(operator: Op, left: Expr, right: Expr) -> Expr {
+    Expr::Binary { operator, left: Box::new(left), right: Box::new(right) }
+}
+fn eq(left: Expr, right: Expr) -> Expr {
+    bin(Op::Equal, left, right)
+}
+fn call(name: &'static str, arguments: Vec<Expr>) -> Expr {
+    Expr::Call { name, arguments }
+}
+fn length(e: &Expr) -> Expr {
+    call("length", vec![e.clone()])
+}
+fn substr(arguments: Vec<Expr>) -> Expr {
+    call("substr", arguments)
+}
+
+fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> Result<Expr> {
     Ok(match t {
         Term::Var(v) => env.get(v).cloned().ok_or_else(|| Error::Plan(format!("${v} is unbound in SQL")))?,
-        Term::Int(i) => i.to_string(),
-        Term::Str(s) => format!("'{}'", s.replace('\'', "''")),
-        Term::Top => TOP.to_string(),
+        Term::Int(i) => integer(*i),
+        Term::Str(s) => string(s),
+        Term::Top => integer(TOP),
         Term::Call(f, args) => {
             let a = args.iter().map(|x| sql_term(x, env, atoms)).collect::<Result<Vec<_>>>()?;
             match (f.as_str(), a.as_slice()) {
-                ("cat", [x, y]) if atoms.is_some() => format!("sym_cat({x}, {y})"),
-                ("cat", [x, y]) => format!("({x} || '.' || {y})"),
+                ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
+                ("cat", [x, y]) => bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone()),
                 ("flat_bin", [o, x, y]) => {
-                    let big = 1i64 << 40;
+                    let big = integer(1i64 << 40);
                     let [plus, minus, times] = match atoms {
-                        Some(ops) => ops.map(|o| o.to_string()),
-                        None => ["'+'", "'-'", "'*'"].map(str::to_owned),
+                        Some(ops) => ops.map(integer),
+                        None => ["+", "-", "*"].map(string),
                     };
-                    format!(
-                        "(CASE WHEN {x} = {TOP} OR {y} = {TOP} THEN {TOP} WHEN {o} = {plus} THEN {x} + {y} WHEN {o} = {minus} THEN {x} - {y} \
-                         WHEN {o} = {times} AND abs({x}) < {big} AND abs({y}) < {big} THEN {x} * {y} ELSE {TOP} END)"
-                    )
+                    let small = |e: &Expr| bin(Op::Less, call("abs", vec![e.clone()]), big.clone());
+                    Expr::Case {
+                        branches: vec![
+                            (bin(Op::Or, eq(x.clone(), integer(TOP)), eq(y.clone(), integer(TOP))), integer(TOP)),
+                            (eq(o.clone(), plus), bin(Op::Add, x.clone(), y.clone())),
+                            (eq(o.clone(), minus), bin(Op::Subtract, x.clone(), y.clone())),
+                            (bin(Op::And, bin(Op::And, eq(o.clone(), times), small(x)), small(y)), bin(Op::Multiply, x.clone(), y.clone())),
+                        ],
+                        fallback: Box::new(integer(TOP)),
+                    }
                 }
                 _ => return Err(Error::Plan(format!("no SQL for {t}"))),
             }
@@ -825,11 +843,46 @@ fn sql_term(t: &Term, env: &HashMap<String, String>, atoms: Option<[i64; 3]>) ->
     })
 }
 
+/// A kind set's members as SQL values: kind atoms, or kind names.
+fn kinds(members: &[String]) -> Vec<Expr> {
+    members.iter().map(|k| k.parse::<i64>().map_or_else(|_| string(k), integer)).collect()
+}
+
+impl Inputs {
+    /// A symbol expression as text: `sym_text` of it in atoms mode.
+    fn text_of(&self, e: &Expr) -> Expr {
+        if self.atoms.is_some() { call("sym_text", vec![e.clone()]) } else { e.clone() }
+    }
+    /// `sym_atom` of a text expression in atoms mode.
+    fn symbol_of(&self, e: Expr) -> Expr {
+        if self.atoms.is_some() { call("sym_atom", vec![e]) } else { e }
+    }
+}
+
 impl Model {
-    fn table(&self, prog: &Program, rel: &str, which: &str) -> String {
+    /// Where a rule reads `rel`: its batch source, the facts' input, or the derived table (or its delta).
+    fn relation(&self, prog: &Program, rel: &str, delta: bool) -> Relation {
         if let Some((source, _)) = self.inputs.batch.get(rel) {
-            source.clone()
-        } else if prog.inputs.iter().any(|i| i == rel) { format!("{}{rel}", self.inputs.facts) } else { format!("{which}{rel}") }
+            Relation::Batch { rel: rel.to_owned(), source: source.clone() }
+        } else if prog.inputs.iter().any(|i| i == rel) {
+            Relation::Input { schema: self.inputs.facts.clone(), rel: rel.to_owned() }
+        } else {
+            Relation::Derived { rel: rel.to_owned(), delta }
+        }
+    }
+
+    /// Whether a statement of `prog` may read `relation`: its inputs, batch inputs and derived relations, and
+    /// the tape relations the `nearest` walks read, and views the run planned from.
+    fn declared(&self, prog: &Program, relation: &Relation) -> bool {
+        match relation {
+            Relation::Input { rel, .. } => prog.inputs.contains(rel) || matches!(rel.as_str(), "tape" | "node"),
+            Relation::Batch { rel, .. } => self.inputs.batch.contains_key(rel),
+            Relation::Derived { rel, .. } | Relation::Bound { rel, .. } => {
+                // Or a view the run made and planned from (`rdl_kinds`: its statistics are the model's).
+                prog.decls.contains_key(rel) || prog.rules.iter().any(|rule| rule.head.rel == *rel) || self.stats.card.contains_key(rel)
+            }
+            _ => true,
+        }
     }
 
     /// One SELECT for a planned rule body. `delta_at` is the plan position of the recursive atom that reads its delta
@@ -843,27 +896,50 @@ impl Model {
         delta_at: Option<usize>,
         tables: Option<&HashMap<String, (String, String)>>,
     ) -> Result<String> {
-        let (mut env, mut frm, mut wh, mut ctes) = (HashMap::<String, String>::new(), Vec::<(String, Vec<String>)>::new(), Vec::new(), Vec::new());
+        let query = self.sql_query(prog, head, order, delta_at, tables)?;
+        query.check(&|relation| self.declared(prog, relation)).map_err(|e| Error::Plan(format!("the SQL for {head}: {e}")))?;
+        Ok(query.render())
+    }
+
+    /// `sql_select`'s query, before it is checked.
+    pub(in crate::code_rule_dsl) fn sql_query(
+        &self,
+        prog: &Program,
+        head: &Atom,
+        order: &[Step],
+        delta_at: Option<usize>,
+        tables: Option<&HashMap<String, (String, String)>>,
+    ) -> Result<Query> {
+        let atoms = self.inputs.atoms;
+        let (mut env, mut frm, mut wh, mut ctes) = (HashMap::<String, Expr>::new(), Vec::<(FromItem, Vec<Expr>)>::new(), Vec::<Expr>::new(), Vec::<Cte>::new());
         let mut alias = 0;
         let mut a_name = || {
             alias += 1;
             format!("t{alias}")
         };
-        let neg_conds = |a: &Atom, al: &str, env: &HashMap<String, String>, skip: Option<&str>| -> Result<Vec<String>> {
+        let neg_conds = |a: &Atom, al: &str, env: &HashMap<String, Expr>, skip: Option<&str>| -> Result<Vec<Expr>> {
             a.args
                 .iter()
                 .enumerate()
                 .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if Some(v.as_str()) == skip))
-                .map(|(c, t)| Ok(format!("{al}.{} = {}", sql_col(&a.rel, c), sql_term(t, env, self.inputs.atoms)?)))
+                .map(|(c, t)| Ok(eq(col(al, &sql_col(&a.rel, c)), sql_term(t, env, atoms)?)))
                 .collect()
+        };
+        let subquery = |what: Expr, relation: Relation, al: String, predicates: Vec<Expr>| Select {
+            columns: vec![(what, None)],
+            from: vec![FromItem::cross(relation, al)],
+            predicates,
+            ..Select::default()
         };
         for (idx, s) in order.iter().enumerate() {
             match &s.lit {
                 Literal::Atom(l) if !l.neg => {
                     let al = a_name();
-                    let src = match tables.and_then(|t| t.get(&l.rel)) {
-                        Some((full, delta)) => if Some(idx) == delta_at { delta.clone() } else { full.clone() },
-                        None => self.table(prog, &l.rel, if Some(idx) == delta_at { "delta_" } else { "" }),
+                    let relation = match tables.and_then(|t| t.get(&l.rel)) {
+                        Some((full, delta)) => {
+                            Relation::Bound { rel: l.rel.clone(), table: if Some(idx) == delta_at { delta.clone() } else { full.clone() } }
+                        }
+                        None => self.relation(prog, &l.rel, Some(idx) == delta_at),
                     };
                     let mut conds = Vec::new();
                     if s.mode == Some(Mode::Range) {
@@ -879,35 +955,40 @@ impl Model {
                         });
                         let (v, dv) = found.ok_or_else(|| Error::Plan(format!("no document for the range read of {l}")))?;
                         let ra = a_name();
-                        frm.push((format!("{}stat_docrange {ra}", self.inputs.stats), vec![format!("{ra}.d = {}", sql_term(&dv, &env, self.inputs.atoms)?)]));
+                        let range = FromItem::cross(Relation::DocRange { schema: self.inputs.stats.clone() }, ra.clone());
+                        frm.push((range, vec![eq(col(&ra, "d"), sql_term(&dv, &env, atoms)?)]));
                         let rc = l.args.iter().position(|t| matches!(t, Term::Var(x) if *x == v)).expect("the range column");
-                        conds.push(format!("{al}.{} BETWEEN {ra}.lo AND {ra}.hi", sql_col(&l.rel, rc)));
+                        conds.push(Expr::Between {
+                            input: Box::new(col(&al, &sql_col(&l.rel, rc))),
+                            low: Box::new(col(&ra, "lo")),
+                            high: Box::new(col(&ra, "hi")),
+                        });
                     }
-                    for (col, t) in l.args.iter().enumerate() {
-                        let c = format!("{al}.{}", sql_col(&l.rel, col));
+                    for (c, t) in l.args.iter().enumerate() {
+                        let column = col(&al, &sql_col(&l.rel, c));
                         match t {
                             Term::Var(v) => match env.get(v) {
-                                Some(e) => conds.push(format!("{c} = {e}")),
+                                Some(e) => conds.push(eq(column, e.clone())),
                                 None => {
-                                    env.insert(v.clone(), c);
+                                    env.insert(v.clone(), column);
                                 }
                             },
-                            Term::Int(_) | Term::Str(_) | Term::Top => conds.push(format!("{c} = {}", sql_term(t, &env, self.inputs.atoms)?)),
+                            Term::Int(_) | Term::Str(_) | Term::Top => conds.push(eq(column, sql_term(t, &env, atoms)?)),
                             _ => {}
                         }
                     }
-                    frm.push((format!("{src} {al}"), conds));
+                    frm.push((FromItem::cross(relation, al), conds));
                 }
                 Literal::Atom(l) => {
                     let al = a_name();
                     let conds = neg_conds(l, &al, &env, None)?;
-                    let conds = if conds.is_empty() { "1".to_owned() } else { conds.join(" AND ") };
-                    wh.push(format!("NOT EXISTS (SELECT 1 FROM {} {al} WHERE {conds})", self.table(prog, &l.rel, "")));
+                    let query = subquery(integer(1), self.relation(prog, &l.rel, false), al, conds);
+                    wh.push(Expr::Exists { negated: true, query: Box::new(query) });
                 }
                 Literal::Cmp { l, op, r } => {
                     let lv = if let Term::Var(v) = l { Some(v) } else { None };
                     if *op == "=" && lv.is_some_and(|v| !env.contains_key(v)) {
-                        let e = sql_term(r, &env, self.inputs.atoms)?;
+                        let e = sql_term(r, &env, atoms)?;
                         env.insert(lv.expect("a variable").clone(), e);
                     } else if *op == "="
                         && let Some(lv) = lv
@@ -921,112 +1002,191 @@ impl Model {
                         // A split of the bound whole: at the "." a bound part places, else at every "." (`rdl_int`).
                         // In atoms mode the text is `sym_text`'s, and the parts are interned (`sym_atom`).
                         let inputs = &self.inputs;
-                        let w = inputs.text(&env[lv]);
+                        let w = inputs.text_of(&env[lv]);
                         let Term::Call(_, parts) = r else { unreachable!() };
                         let (Term::Var(q), Term::Var(x)) = (&parts[0], &parts[1]) else { unreachable!() };
-                        if let Some(eq) = env.get(q).map(|e| inputs.text(e)) {
-                            wh.push(format!("substr({w}, 1, length({eq}) + 1) = {eq} || '.'"));
-                            env.insert(x.clone(), inputs.symbol(&format!("substr({w}, length({eq}) + 2)")));
-                        } else if let Some(ex) = env.get(x).map(|e| inputs.text(e)) {
-                            wh.push(format!("substr({w}, -length({ex}) - 1) = '.' || {ex} AND length({w}) > length({ex})"));
-                            env.insert(q.clone(), inputs.symbol(&format!("substr({w}, 1, length({w}) - length({ex}) - 1)")));
+                        if let Some(eq_) = env.get(q).map(|e| inputs.text_of(e)) {
+                            wh.push(eq(
+                                substr(vec![w.clone(), integer(1), bin(Op::Add, length(&eq_), integer(1))]),
+                                bin(Op::Concatenate, eq_.clone(), string(".")),
+                            ));
+                            env.insert(x.clone(), inputs.symbol_of(substr(vec![w, bin(Op::Add, length(&eq_), integer(2))])));
+                        } else if let Some(ex) = env.get(x).map(|e| inputs.text_of(e)) {
+                            let negated = Expr::Unary { operator: SqlUnaryOperator::Negate, input: Box::new(length(&ex)) };
+                            wh.push(eq(substr(vec![w.clone(), bin(Op::Subtract, negated, integer(1))]), bin(Op::Concatenate, string("."), ex.clone())));
+                            wh.push(bin(Op::Greater, length(&w), length(&ex)));
+                            let end = bin(Op::Subtract, bin(Op::Subtract, length(&w), length(&ex)), integer(1));
+                            env.insert(q.clone(), inputs.symbol_of(substr(vec![w, integer(1), end])));
                         } else {
                             let al = a_name();
-                            frm.push((format!("rdl_int {al}"), vec![format!("{al}.i <= length({w})"), format!("substr({w}, {al}.i, 1) = '.'")]));
-                            env.insert(q.clone(), inputs.symbol(&format!("substr({w}, 1, {al}.i - 1)")));
-                            env.insert(x.clone(), inputs.symbol(&format!("substr({w}, {al}.i + 1)")));
+                            let at = col(&al, "i");
+                            let conds = vec![bin(Op::LessOrEqual, at.clone(), length(&w)), eq(substr(vec![w.clone(), at.clone(), integer(1)]), string("."))];
+                            frm.push((FromItem::cross(Relation::Integers, al), conds));
+                            env.insert(q.clone(), inputs.symbol_of(substr(vec![w.clone(), integer(1), bin(Op::Subtract, at.clone(), integer(1))])));
+                            env.insert(x.clone(), inputs.symbol_of(substr(vec![w, bin(Op::Add, at, integer(1))])));
                         }
                     } else {
-                        let op = match *op {
-                            "!=" => "<>",
-                            o => o,
+                        let operator = match *op {
+                            "=" => Op::Equal,
+                            "!=" | "<>" => Op::NotEqual,
+                            "<" => Op::Less,
+                            "<=" => Op::LessOrEqual,
+                            ">" => Op::Greater,
+                            ">=" => Op::GreaterOrEqual,
+                            o => return Err(Error::Plan(format!("no SQL for the comparison {o}"))),
                         };
-                        wh.push(format!("{} {op} {}", sql_term(l, &env, self.inputs.atoms)?, sql_term(r, &env, self.inputs.atoms)?));
+                        wh.push(bin(operator, sql_term(l, &env, atoms)?, sql_term(r, &env, atoms)?));
                     }
                 }
                 Literal::Agg { var, op, over, atom } => {
                     let al = a_name();
                     let conds = neg_conds(atom, &al, &env, over.as_deref())?;
-                    let conds = if conds.is_empty() { "1".to_owned() } else { conds.join(" AND ") };
                     let what = match (op, over) {
-                        (AggOp::Count, _) | (_, None) => "count(*)".to_owned(),
+                        (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
                         (AggOp::Min | AggOp::Max, Some(o)) => {
                             let c = atom.args.iter().position(|t| matches!(t, Term::Var(v) if v == o)).expect("the aggregated column");
-                            format!("{}({al}.{})", if *op == AggOp::Min { "min" } else { "max" }, sql_col(&atom.rel, c))
+                            call(if *op == AggOp::Min { "min" } else { "max" }, vec![col(&al, &sql_col(&atom.rel, c))])
                         }
                     };
-                    env.insert(var.clone(), format!("(SELECT {what} FROM {} {al} WHERE {conds})", self.table(prog, &atom.rel, "")));
+                    let query = subquery(what, self.relation(prog, &atom.rel, false), al, conds);
+                    env.insert(var.clone(), Expr::Scalar(Box::new(query)));
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) && self.inputs.native.contains("nearest") => {
                     // The climb is a native function over the tape: no CTE, and its result is just a column expression.
-                    let near = format!("tape_nearest({}, '{}')", env[n], prog.kindsets[kindset].join(","));
+                    let near = call("tape_nearest", vec![env[n].clone(), string(&prog.kindsets[kindset].join(","))]);
                     if let Some(e) = env.get(a) {
-                        wh.push(format!("{near} = {e}"));
+                        wh.push(eq(near, e.clone()));
                     } else {
                         env.insert(a.clone(), near.clone());
-                        wh.push(format!("{near} IS NOT NULL"));
+                        wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(near) });
                     }
                 }
                 Literal::Nearest { n, a, kindset } => {
                     // A lowered program's members are kind atoms.
-                    let ks = prog.kindsets[kindset]
-                        .iter()
-                        .map(|k| if k.parse::<i64>().is_ok() { k.clone() } else { format!("'{k}'") })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let f = &self.inputs.facts;
+                    let ks = kinds(&prog.kindsets[kindset]);
+                    let member = |e: Expr| Expr::In { input: Box::new(e), values: ks.clone() };
+                    let input = |rel: &str| Relation::Input { schema: self.inputs.facts.clone(), rel: rel.to_owned() };
+                    let on = |rel: &str, alias: &str, on: Vec<Expr>| FromItem { relation: input(rel), alias: alias.to_owned(), join: Join::On(on) };
                     // Everything joined so far becomes the seed CTE; the walk is a recursive CTE seeded only from it.
                     let k = ctes.len();
+                    let (seed, walk, near) = (format!("seed{k}"), format!("walk{k}"), format!("near{k}"));
                     let seed_cols: Vec<String> = env.keys().cloned().collect::<BTreeSet<_>>().into_iter().collect();
-                    let seed_sel = seed_cols.iter().map(|v| format!("{} AS {v}", env[v])).collect::<Vec<_>>().join(", ");
-                    let seed_from = match frm.split_first() {
-                        Some((f, rest)) => f.0.clone() + &rest.iter().map(|(f, _)| format!(" CROSS JOIN {f}")).collect::<String>(),
-                        None => String::new(),
-                    };
-                    let conds: Vec<String> = frm.iter().flat_map(|(_, c)| c.iter().cloned()).chain(wh.iter().cloned()).collect();
-                    let seed_where = if conds.is_empty() { "1".to_owned() } else { conds.join(" AND ") };
-                    ctes.push(format!("seed{k} AS (SELECT DISTINCT {seed_sel} FROM {seed_from} WHERE {seed_where})"));
+                    if frm.is_empty() {
+                        return Err(Error::Plan(format!("the walk of {} reads nothing before it", s.lit)));
+                    }
+                    let (items, conds): (Vec<FromItem>, Vec<Vec<Expr>>) = frm.drain(..).unzip();
+                    ctes.push(Cte {
+                        name: seed.clone(),
+                        columns: None,
+                        arms: vec![Select {
+                            distinct: true,
+                            columns: seed_cols.iter().map(|v| (env[v].clone(), Some(v.clone()))).collect(),
+                            from: items,
+                            predicates: conds.into_iter().flatten().chain(wh.drain(..)).collect(),
+                        }],
+                    });
                     // The seed's columns are threaded through the walk (ast-index-spike S050 `_path_threaded`), so the
                     // walk's output is the extended row and nothing joins back to the seed.
-                    let cols = seed_cols.join(", ");
-                    let wcols = seed_cols.iter().map(|v| format!("w.{v}")).collect::<Vec<_>>().join(", ");
-                    let scols = seed_cols.iter().map(|v| format!("s.{v}")).collect::<Vec<_>>().join(", ");
+                    let threaded = |alias: &str| seed_cols.iter().map(|v| (col(alias, v), None)).collect::<Vec<_>>();
+                    let with = |alias: &str, extra: Vec<Expr>| threaded(alias).into_iter().chain(extra.into_iter().map(|e| (e, None))).collect::<Vec<_>>();
+                    let mut walk_columns = seed_cols.clone();
                     let out_var = if s.mode == Some(Mode::Climb) {
-                        ctes.push(format!(
-                            "walk{k}({cols}, cur) AS (SELECT {scols}, t.par FROM seed{k} s JOIN {f}tape t ON t.n = s.{n} WHERE t.par >= 0 \
-                             UNION ALL SELECT {wcols}, t.par FROM walk{k} w JOIN {f}node k ON k.n = w.cur AND k.kind NOT IN ({ks}) \
-                             JOIN {f}tape t ON t.n = w.cur WHERE t.par >= 0)"
-                        ));
-                        let cond = if env.contains_key(a) { format!(" AND w.cur = w.{a}") } else { String::new() };
-                        ctes.push(format!(
-                            "near{k} AS (SELECT {wcols}, w.cur AS near_out FROM walk{k} w CROSS JOIN {f}node k WHERE k.n = w.cur AND k.kind IN ({ks}){cond})"
-                        ));
+                        walk_columns.push("cur".to_owned());
+                        let above = bin(Op::GreaterOrEqual, col("t", "par"), integer(0));
+                        let arms = vec![
+                            Select {
+                                columns: with("s", vec![col("t", "par")]),
+                                from: vec![FromItem::cross(Relation::Cte(seed.clone()), "s"), on("tape", "t", vec![eq(col("t", "n"), col("s", n))])],
+                                predicates: vec![above.clone()],
+                                ..Select::default()
+                            },
+                            Select {
+                                columns: with("w", vec![col("t", "par")]),
+                                from: vec![
+                                    FromItem::cross(Relation::Cte(walk.clone()), "w"),
+                                    on("node", "k", vec![eq(col("k", "n"), col("w", "cur")), Expr::Unary { operator: SqlUnaryOperator::Not, input: Box::new(member(col("k", "kind"))) }]),
+                                    on("tape", "t", vec![eq(col("t", "n"), col("w", "cur"))]),
+                                ],
+                                predicates: vec![above],
+                                ..Select::default()
+                            },
+                        ];
+                        ctes.push(Cte { name: walk.clone(), columns: Some(walk_columns), arms });
+                        let mut predicates = vec![eq(col("k", "n"), col("w", "cur")), member(col("k", "kind"))];
+                        if env.contains_key(a) {
+                            predicates.push(eq(col("w", "cur"), col("w", a)));
+                        }
+                        let arm = Select {
+                            columns: with("w", Vec::new()).into_iter().chain([(col("w", "cur"), Some("near_out".to_owned()))]).collect(),
+                            from: vec![FromItem::cross(Relation::Cte(walk.clone()), "w"), FromItem::cross(input("node"), "k")],
+                            predicates,
+                            ..Select::default()
+                        };
+                        ctes.push(Cte { name: near.clone(), columns: None, arms: vec![arm] });
                         a
                     } else {
-                        ctes.push(format!(
-                            "walk{k}({cols}, cur, stop) AS (SELECT {scols}, s.{a} + 1, s.{a} + t.size FROM seed{k} s JOIN {f}tape t ON t.n = s.{a} WHERE t.size > 0 \
-                             UNION ALL SELECT {wcols}, CASE WHEN k.kind IN ({ks}) THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop \
-                             FROM walk{k} w JOIN {f}node k ON k.n = w.cur JOIN {f}tape t ON t.n = w.cur WHERE w.cur < w.stop)"
-                        ));
-                        let cond = if env.contains_key(n) { format!(" AND w.cur = w.{n}") } else { String::new() };
-                        ctes.push(format!("near{k} AS (SELECT {wcols}, w.cur AS near_out FROM walk{k} w WHERE w.cur <= w.stop{cond})"));
+                        walk_columns.extend(["cur".to_owned(), "stop".to_owned()]);
+                        let size = col("t", "size");
+                        let arms = vec![
+                            Select {
+                                columns: with("s", vec![bin(Op::Add, col("s", a), integer(1)), bin(Op::Add, col("s", a), size.clone())]),
+                                from: vec![FromItem::cross(Relation::Cte(seed.clone()), "s"), on("tape", "t", vec![eq(col("t", "n"), col("s", a))])],
+                                predicates: vec![bin(Op::Greater, size.clone(), integer(0))],
+                                ..Select::default()
+                            },
+                            Select {
+                                columns: with(
+                                    "w",
+                                    vec![
+                                        Expr::Case {
+                                            branches: vec![(member(col("k", "kind")), bin(Op::Add, bin(Op::Add, col("w", "cur"), size), integer(1)))],
+                                            fallback: Box::new(bin(Op::Add, col("w", "cur"), integer(1))),
+                                        },
+                                        col("w", "stop"),
+                                    ],
+                                ),
+                                from: vec![
+                                    FromItem::cross(Relation::Cte(walk.clone()), "w"),
+                                    on("node", "k", vec![eq(col("k", "n"), col("w", "cur"))]),
+                                    on("tape", "t", vec![eq(col("t", "n"), col("w", "cur"))]),
+                                ],
+                                predicates: vec![bin(Op::Less, col("w", "cur"), col("w", "stop"))],
+                                ..Select::default()
+                            },
+                        ];
+                        ctes.push(Cte { name: walk.clone(), columns: Some(walk_columns), arms });
+                        let mut predicates = vec![bin(Op::LessOrEqual, col("w", "cur"), col("w", "stop"))];
+                        if env.contains_key(n) {
+                            predicates.push(eq(col("w", "cur"), col("w", n)));
+                        }
+                        let arm = Select {
+                            columns: with("w", Vec::new()).into_iter().chain([(col("w", "cur"), Some("near_out".to_owned()))]).collect(),
+                            from: vec![FromItem::cross(Relation::Cte(walk.clone()), "w")],
+                            predicates,
+                            ..Select::default()
+                        };
+                        ctes.push(Cte { name: near.clone(), columns: None, arms: vec![arm] });
                         n
                     };
-                    env = seed_cols.iter().map(|v| (v.clone(), format!("near{k}.{v}"))).collect();
-                    env.entry(out_var.clone()).or_insert_with(|| format!("near{k}.near_out"));
-                    frm = vec![(format!("near{k}"), Vec::new())];
-                    wh.clear();
+                    env = seed_cols.iter().map(|v| (v.clone(), col(&near, v))).collect();
+                    env.entry(out_var.clone()).or_insert_with(|| col(&near, "near_out"));
+                    frm = vec![(FromItem::cross(Relation::Cte(near.clone()), near), Vec::new())];
                 }
                 Literal::Ast { .. } => return Err(Error::Plan(format!("no SQL for {}", s.lit))),
             }
         }
-        let sel = head.args.iter().enumerate().map(|(i, t)| Ok(format!("{} AS c{i}", sql_term(t, &env, self.inputs.atoms)?))).collect::<Result<Vec<_>>>()?.join(", ");
-        let (f0, rest) = frm.split_first().ok_or_else(|| Error::Plan(format!("rule for {head} reads nothing")))?;
-        let from_sql = f0.0.clone() + &rest.iter().map(|(f, _)| format!(" CROSS JOIN {f}")).collect::<String>();
-        let conds: Vec<String> = frm.iter().flat_map(|(_, c)| c.iter().cloned()).chain(wh).collect();
-        let w = if conds.is_empty() { "1".to_owned() } else { conds.join(" AND ") };
-        let with_sql = if ctes.is_empty() { String::new() } else { format!("WITH RECURSIVE {} ", ctes.join(", ")) };
-        Ok(format!("{with_sql}SELECT DISTINCT {sel} FROM {from_sql} WHERE {w}"))
+        let columns = head
+            .args
+            .iter()
+            .enumerate()
+            .map(|(i, t)| Ok((sql_term(t, &env, atoms)?, Some(format!("c{i}")))))
+            .collect::<Result<Vec<_>>>()?;
+        if frm.is_empty() {
+            return Err(Error::Plan(format!("rule for {head} reads nothing")));
+        }
+        let (from, conds): (Vec<FromItem>, Vec<Vec<Expr>>) = frm.into_iter().unzip();
+        let body = Select { distinct: true, columns, from, predicates: conds.into_iter().flatten().chain(wh).collect() };
+        Ok(Query { ctes, body })
     }
 }
 
@@ -1378,12 +1538,12 @@ impl Run<'_> {
             let mut wheres = Vec::new();
             for (c, t) in l.args.iter().enumerate() {
                 if is_const(t) {
-                    wheres.push(format!("{} = {}", sql_col(&l.rel, c), sql_term(t, &HashMap::new(), self.model.inputs.atoms).ok()?));
+                    wheres.push(format!("{} = {}", sql_col(&l.rel, c), sql_term(t, &HashMap::new(), self.model.inputs.atoms).ok()?.render()));
                 }
             }
             let types: String = keep.iter().map(|&c| if prog.decls[&l.rel][c].1 == "sym" { 's' } else { 'i' }).collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
-            let mut sel = self.model.table(prog, &l.rel, "");
+            let mut sel = self.model.relation(prog, &l.rel, false).render();
             if !wheres.is_empty() {
                 sel += &format!(" WHERE {}", wheres.join(" AND "));
             }

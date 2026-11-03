@@ -135,8 +135,9 @@ Resident state is the **working set of the current wave**, never the corpus:
 |---|---|---|
 | `tape.resident` / `source.resident` | the current batches' v9np and source, decompressed directly into 64 MiB anonymous-mmap slabs; one no-copy shared `MTLBuffer` per slab, retained; pre-touched | ~128–192 MB, by residency waves |
 | `edit` slab | the edited documents' tapes, encoded straight from the parse | a few MB |
-| `tape.derived` | `par`, `cidx`, line starts, `tid` per resident tape | ~0.3× tape |
+| `tape.derived` | parents (one stack pass at decode) and line starts per resident tape, a reader's working state, never stored (decision 0026) | ~0.3× tape |
 | `set.*`, `lattice.*`, `output.*` | plan-sized, count → scan → scatter | ~32–64 MB |
+| device pool | every Metal buffer alive at once (`METAL_BUFFER_LIMIT`): the resident tapes' device copies plus the rows above; a plan that does not fit is refused and its batch split (05 Phase 4, list step 13; S7 peak 248 MB) | 256 MiB |
 | SQLite page cache | facts, interfaces, postings and statistics on demand | ~32–64 MB |
 | plans, interner hot set, consolidation | — | small |
 

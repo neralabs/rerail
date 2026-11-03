@@ -40,6 +40,8 @@ pub(super) fn execute(
         }));
         while let Some(work) = pending.pop() {
             let (mut path, mut admitted) = match work {
+                // The spike's moves fork eagerly; set mode's cursors are the interpreter's own.
+                WorkItem::Children { .. } | WorkItem::Descend { .. } => unreachable!("the spike pushes no lazy cursor"),
                 WorkItem::Path(path) => {
                     if prune {
                         queued_states.remove(&program.query_state_identity(&path));

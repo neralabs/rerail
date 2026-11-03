@@ -775,7 +775,7 @@ fn node_local(matcher: &AstMatcher) -> bool {
     let stop_local = |stop: &StopBy| stop_rule(stop).is_none_or(node_local);
     match matcher {
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Never
         | AstMatcher::Semantic(Semantic::Value(_)) => true,
@@ -853,6 +853,7 @@ fn node_kinds(
             kinds
         };
     match matcher {
+        AstMatcher::Supertype(supertype) => Some(supertype.kinds.iter().copied().collect()),
         AstMatcher::Kind(kind) => kind
             .potential_kinds()
             .map(|kinds| kinds.iter().map(|kind| kind as u16).collect()),

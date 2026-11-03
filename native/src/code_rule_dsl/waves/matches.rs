@@ -23,7 +23,7 @@ use crate::code_rule_dsl::facts::observe::path_name;
 use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::language::{GrammarDialect, tape_tag};
 use crate::code_rule_dsl::matcher::AnchorPlan;
-use crate::code_rule_dsl::transducer::packed::{ExecutionBackend, LoweredMatcher, LoweredWave};
+use crate::code_rule_dsl::transducer::packed::{ExecutionBackend, LoweredMatcher, LoweredWave, PlanId};
 use crate::content_store::{StoreError, StoreResult};
 #[cfg(test)]
 use std::collections::BTreeSet;
@@ -64,6 +64,8 @@ pub(in crate::code_rule_dsl) const KEPT_SPAN: &str = "temp.wave_kept_span";
 /// and its lowered matcher.
 pub(in crate::code_rule_dsl) struct Clause {
     pub name: String,
+    /// Its policy's id and its own: the key of its violations (`violation("<policy>", "<clause>", …)`).
+    pub key: (String, String),
     pub plan: Arc<AnchorPlan>,
     pub matcher: LoweredMatcher,
 }
@@ -82,34 +84,98 @@ pub(in crate::code_rule_dsl) struct Wave {
     names: Vec<String>,
     plans: Vec<Arc<AnchorPlan>>,
     lowered: LoweredWave,
+    /// The lowered wave's plan identity (`LoweredWave::identity`): its roots' batches are its parts.
+    plan: PlanId,
     lang: u32,
+    /// How the candidates are selected (`Candidates`).
+    pub(in crate::code_rule_dsl) route: Candidates,
+    /// The policies' rules over the clauses, and their demand (`policies`, list step 21).
+    logic: super::policies::Logic,
+    /// The demand statement, planned on the run's store when its program is (`Logic::demand_sql`).
+    demand_sql: std::sync::Mutex<Option<Option<String>>>,
     /// Each chunk's candidates, in order.
     pub chunks: Vec<Chunk>,
+}
+
+/// How a wave selects its candidates: the plans' sets over the batch's node space on the wave's
+/// device (decision 0024 §2), or the pure-SQL fallback (03 §17, `prefilter::fallback`): the same
+/// plans lowered to SQLite over `nera_tree`, `RERAIL_CANDIDATES=sql`. Both are supersets of the
+/// roots, exact where the plans are; the walks confirm them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::code_rule_dsl) enum Candidates {
+    Sets,
+    Sql,
+}
+
+impl Candidates {
+    fn from_environment() -> Self {
+        if std::env::var("RERAIL_CANDIDATES").is_ok_and(|route| route == "sql") { Self::Sql } else { Self::Sets }
+    }
+}
+
+/// Each clause's candidates kept only on the documents it is demanded on.
+fn restrict(candidates: &mut [Vec<Vec<u32>>], demanded: Option<&[Vec<bool>]>) {
+    let Some(demanded) = demanded else { return };
+    for (clause, on) in candidates.iter_mut().zip(demanded) {
+        for (nodes, &on) in clause.iter_mut().zip(on) {
+            if !on {
+                *nodes = Vec::new();
+            }
+        }
+    }
 }
 
 fn invalid(error: impl std::fmt::Debug) -> StoreError {
     StoreError::Invalid(format!("{error:?}"))
 }
 
+
+/// The process's planned wave programs, in memory before the store (`stats::plans`' bounded cache).
+static WAVE_PLANS: std::sync::LazyLock<std::sync::Mutex<crate::code_rule_dsl::stats::plans::Plans>> = std::sync::LazyLock::new(Default::default);
+
 impl Wave {
+    /// The wave of `clauses`, each its own forbid rule demanded everywhere (`Logic::per_clause`).
     pub(in crate::code_rule_dsl) fn new(clauses: &[Clause], backend: ExecutionBackend) -> StoreResult<Self> {
+        Self::with_logic(clauses, super::policies::Logic::per_clause(clauses), backend)
+    }
+
+    /// The wave of `clauses` running the policies' rules `logic` (`policies::lower`).
+    pub(in crate::code_rule_dsl) fn with_logic(clauses: &[Clause], logic: super::policies::Logic, backend: ExecutionBackend) -> StoreResult<Self> {
         #[cfg(target_os = "macos")]
         if matches!(backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground) {
             LoweredWave::warm_metal();
         }
         let matchers = clauses.iter().map(|clause| &clause.matcher).collect::<Vec<_>>();
+        let lowered = LoweredWave::new(&matchers).map_err(invalid)?;
         Ok(Self {
             backend,
             names: clauses.iter().map(|clause| clause.name.clone()).collect(),
             plans: clauses.iter().map(|clause| Arc::clone(&clause.plan)).collect(),
-            lowered: LoweredWave::new(&matchers).map_err(invalid)?,
+            plan: lowered.identity(),
+            lowered,
             lang: u32::from(tape_tag(GrammarDialect::Python).expect("Python has a tape")),
+            route: Candidates::from_environment(),
+            logic,
+            demand_sql: std::sync::Mutex::new(None),
             chunks: Vec::new(),
         })
     }
 
     pub(in crate::code_rule_dsl) fn lowered(&self) -> &LoweredWave {
         &self.lowered
+    }
+
+    /// The wave as `rir` (list step 18, `rerail engine dump`), its kinds and fields named by
+    /// its grammar: the lowered wave (`LoweredWave::dump`; with `fused` its plan, packs and
+    /// groups), and with `setplan` its candidates' set plan (`prefilter::sets::dump`).
+    pub(in crate::code_rule_dsl) fn dump(&self, fused: bool, setplan: bool) -> StoreResult<String> {
+        let grammar = crate::code_rule_dsl::transducer::packed::rir::Names::of(GrammarDialect::Python);
+        let mut out = self.lowered.dump(&self.names, Some(&grammar), fused).map_err(invalid)?;
+        if setplan {
+            let plans = self.plans.iter().map(|plan| plan.as_ref()).collect::<Vec<_>>();
+            out.push_str(&crate::code_rule_dsl::prefilter::sets::dump(&plans, Some(&grammar)));
+        }
+        Ok(out)
     }
 
     /// The wave program: the planner's step that reads the chunk's batch into `match`.
@@ -125,7 +191,90 @@ impl Wave {
         self.emit(store, true)
     }
 
+    /// The planned program, from `compiled_plans` while its decisions hold (list step 20): it is
+    /// keyed by a `CompiledPlanId` over the planner's inputs, and it reads each batch input's row
+    /// estimate, valid while each stays in its log2 bucket. Otherwise it is planned and recorded.
     fn emit(&self, store: &ContentStore, kept: bool) -> StoreResult<Program> {
+        // The run's demand statement, its atoms this store's.
+        *self.demand_sql.lock().expect("demand statement mutex poisoned") = Some(self.logic.demand_sql(store)?);
+        let (source, batch) = self.inputs(kept);
+        let mut identity = crate::code_rule_dsl::stats::identity::CompiledPlanId::builder()
+            .text("rerail.wave-program/v1")
+            .text(PROGRAM)
+            .text(&source)
+            .u64(crate::code_rule_dsl::stats::plans::COMPILER_VERSION as u64);
+        let mut inputs = batch.iter().collect::<Vec<_>>();
+        inputs.sort_by(|a, b| a.0.cmp(b.0));
+        let mut reads = std::collections::BTreeMap::new();
+        for (name, (from, estimate)) in &inputs {
+            identity = identity.text(name).text(from);
+            reads.insert(format!("batch.{name}"), *estimate as u64);
+        }
+        for name in &self.names {
+            identity = identity.text(name);
+        }
+        let id = *identity.finish().as_bytes();
+        let held = store.candidate_transaction(false, |db| WAVE_PLANS.lock().expect("wave plans mutex poisoned").valid(db, &[id], &reads))?;
+        if let Some(held) = held.get(&id) {
+            // The SQL holds this store's atom ids: a plan is reused only where the atoms it was
+            // planned with have the same ids here (its decisions record them).
+            let atoms = serde_json::from_str::<Vec<(String, u32)>>(&held.decisions).unwrap_or_default();
+            let names = atoms.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>();
+            let same = store.intern_atoms(&names)?.into_iter().eq(atoms.iter().map(|(_, atom)| *atom));
+            if let (true, Ok(program)) = (same, serde_json::from_slice::<Program>(&held.program)) {
+                crate::code_rule_dsl::prof::count("wave.plan.reused", 1);
+                return Ok(program);
+            }
+        }
+        let mut atoms = Vec::<(String, u32)>::new();
+        let intern = &mut |names: &[&str]| {
+            let found = store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()))?;
+            atoms.extend(names.iter().map(|name| (*name).to_owned()).zip(found.iter().copied()));
+            Ok(found)
+        };
+        let mut program = emit::emit_batch(&source, PROGRAM, &batch, intern).map_err(invalid)?.program;
+        program.file_local = true;
+        program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
+        let bytes = serde_json::to_vec(&program).map_err(|error| invalid(error.to_string()))?;
+        atoms.sort();
+        atoms.dedup();
+        let decisions = serde_json::to_string(&atoms).map_err(|error| invalid(error.to_string()))?;
+        store.candidate_transaction(true, |db| {
+            let compiled = crate::code_rule_dsl::stats::plans::Compiled { decisions: decisions.clone(), program: bytes.clone() };
+            WAVE_PLANS.lock().expect("wave plans mutex poisoned").put(db, id, compiled, &reads).map(|_| ())
+        })?;
+        crate::code_rule_dsl::prof::count("wave.plan.compiled", 1);
+        Ok(program)
+    }
+
+    /// Per clause, per document of the chunk: whether the policies' rules demand the clause there
+    /// (`policies`: the magic rules seeded by the chunk's documents in `temp.wave_document`, run
+    /// before the batch). `None`: every clause everywhere.
+    fn demanded(&self, lease: &Lease<'_>, store: &ContentStore, documents: &[Document]) -> StoreResult<Option<Vec<Vec<bool>>>> {
+        let sql = {
+            let mut held = self.demand_sql.lock().expect("demand statement mutex poisoned");
+            if held.is_none() {
+                *held = Some(self.logic.demand_sql(store)?);
+            }
+            held.clone().flatten()
+        };
+        let Some(sql) = sql else { return Ok(None) };
+        let position = documents.iter().enumerate().map(|(at, d)| (i64::from(d.key), at)).collect::<HashMap<_, _>>();
+        let mut demanded = vec![vec![false; documents.len()]; self.plans.len()];
+        let mut statement = lease.prepare_cached(&sql)?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let (clause, d): (i64, i64) = (row.get(0)?, row.get(1)?);
+            if let (Some(clause), Some(&file)) = (demanded.get_mut(clause as usize), position.get(&d)) {
+                clause[file] = true;
+            }
+        }
+        crate::code_rule_dsl::prof::count("demand.pairs", demanded.iter().flatten().filter(|&&on| on).count());
+        Ok(Some(demanded))
+    }
+
+    /// The planner's source and the batch inputs it reads, each with its source and estimate.
+    fn inputs(&self, kept: bool) -> (String, HashMap<String, (String, f64)>) {
         let mut batch = HashMap::from([
             (
                 "terminal".to_owned(),
@@ -137,16 +286,13 @@ impl Wave {
             ("document".to_owned(), ("(SELECT position AS c0, d AS c1 FROM temp.wave_document)".to_owned(), 100.0)),
         ]);
         let mut source = SOURCE.to_owned();
+        source.push_str(&self.logic.rules);
         if kept {
             source.push_str(KEPT);
             batch.insert("kept_match".to_owned(), (format!("(SELECT c0, c1, c2 FROM {KEPT_MATCH})"), 1000.0));
             batch.insert("kept_span".to_owned(), (format!("(SELECT c0, c1, c2, c3 FROM {KEPT_SPAN})"), 1000.0));
         }
-        let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
-        let mut program = emit::emit_batch(&source, PROGRAM, &batch, intern).map_err(invalid)?.program;
-        program.file_local = true;
-        program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
-        Ok(program)
+        (source, batch)
     }
 
     /// The chunk's batch: its documents' stored tapes, in order, labelled by every clause's
@@ -154,6 +300,7 @@ impl Wave {
     /// kinds.
     pub(in crate::code_rule_dsl) fn demand(
         &mut self,
+        lease: &Lease<'_>,
         graph: &(impl Graph + ?Sized),
         scope: &str,
         documents: &[Document],
@@ -162,6 +309,7 @@ impl Wave {
         if documents.is_empty() {
             return Ok(None);
         }
+        let demanded = crate::code_rule_dsl::prof::time("demand.magic", || self.demanded(lease, graph.store(), documents))?;
         let tapes = crate::code_rule_dsl::prof::time("demand.tapes", || {
             documents
                 .iter()
@@ -174,6 +322,8 @@ impl Wave {
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("1.tapes");
         let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
+        // The walks' text tests from the term index (`R[tid]`, list step 17).
+        let docs = crate::code_rule_dsl::prof::time("demand.texts", || self.texts(graph.store(), &tapes, docs))?;
         let metal = cfg!(target_os = "macos")
             && matches!(self.backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground);
         let programs = self.lowered.programs();
@@ -182,7 +332,8 @@ impl Wave {
             // On Metal the candidates come first (set steps on the device, ~150 ms), then every
             // clause's labels and its roots from those candidates in one run: the roots read the
             // labels in place and come back as match records (decision 0024 §3).
-            let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
+            let mut candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
+            restrict(&mut candidates, demanded.as_deref());
             let active = vec![vec![true; docs.len()]; self.plans.len()];
             let views = crate::code_rule_dsl::prof::time("demand.labels", || {
                 #[cfg(target_os = "macos")]
@@ -197,7 +348,8 @@ impl Wave {
             })?;
             (candidates, views)
         } else {
-            let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
+            let mut candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
+            restrict(&mut candidates, demanded.as_deref());
             crate::code_rule_dsl::prof::release();
             crate::code_rule_dsl::prof::peak("2.candidates");
             // A clause's labels are needed only where its root program starts.
@@ -215,16 +367,48 @@ impl Wave {
         // The roots run on the CPU whatever labelled the tapes: they start only at the prefilter's
         // candidates, few and scattered, and carry captures and outputs, where the labels are a pass
         // over every node (decision 0017; 06 S7: 1.2 s on the CPU's JIT, 4.3 s on Metal's).
+        // Bound as the wave's: compiled now, or interpreted until the background binding of the
+        // wave's plan is ready (list step 16).
         let roots = match self.backend {
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit => ExecutionBackend::CpuJit,
+            ExecutionBackend::MetalBackground => ExecutionBackend::CpuBackground,
             backend => backend,
         };
-        let mut demand = PackedDemand::new(roots, programs, views, anchors, grid, limits).map_err(invalid)?;
+        let mut demand = PackedDemand::new(roots, programs, views, anchors, grid, limits).map_err(invalid)?.with_plan(self.plan);
         if let Some(found) = found {
             demand = demand.with_records(found).map_err(invalid)?;
         }
         self.chunks.push(Chunk { candidates });
         Ok(Some(demand))
+    }
+
+    /// `docs` with every text test the wave's walks make read from the term index (03 §16 item
+    /// 4, `prefilter::terms`): one slot per distinct test (`Micro::slot_key`). `RERAIL_TEXTS=scan`
+    /// tests each node's text instead.
+    fn texts(&self, store: &ContentStore, tapes: &[Arc<Tape>], docs: Vec<crate::code_rule_dsl::tape::TapeDoc>) -> StoreResult<Vec<crate::code_rule_dsl::tape::TapeDoc>> {
+        use crate::code_rule_dsl::tape::TapeDoc;
+        use crate::code_rule_dsl::prefilter::terms::{TextSlot, rows};
+        use crate::code_rule_dsl::transducer::packed::Micro;
+        if std::env::var("RERAIL_TEXTS").is_ok_and(|mode| mode == "scan") {
+            return Ok(docs);
+        }
+        let walks = self.lowered.walked_programs().into_iter().filter_map(|program| Micro::of(program).map(|walk| (walk, program))).collect::<Vec<_>>();
+        let mut seen = std::collections::HashSet::new();
+        let mut slots = Vec::new();
+        for (walk, program) in &walks {
+            for slot in 0..walk.texts.len() {
+                let key = walk.slot_key(program, slot);
+                let Some((expression, literal)) = walk.predicate(program, slot) else { continue };
+                if !seen.insert(key.clone()) {
+                    continue;
+                }
+                let kind = walk.texts[slot].1;
+                slots.push(TextSlot { key, expression, literal, kind, confirm: Box::new(move |tape: &TapeDoc, node| walk.test(program, slot, tape, node)) });
+            }
+        }
+        let ids = tapes.iter().map(|tape| tape.id.row()).zip(&docs).collect::<Vec<_>>();
+        let rows = rows(store, self.lang, &ids, &slots)?;
+        Ok(docs.iter().zip(rows).map(|(doc, rows)| if rows.is_empty() { doc.clone() } else { doc.with_texts(rows) }).collect())
     }
 
     /// Per clause, per tape: the prefilter's candidates (one statement for every clause's plan over
@@ -236,6 +420,26 @@ impl Wave {
     ) -> StoreResult<Vec<Vec<Vec<u32>>>> {
         let ids = tapes.iter().map(|tape| tape.id).collect::<Vec<_>>();
         let plans = self.plans.iter().map(Arc::as_ref).collect::<Vec<_>>();
+        if self.route == Candidates::Sql {
+            let rows = crate::code_rule_dsl::prof::time("candidates.sql", || {
+                crate::code_rule_dsl::prefilter::fallback(graph.store(), self.lang, &plans, &ids)
+            })?;
+            // Rows are (file, preorder), ascending: each file's starts stay in order.
+            return Ok(rows
+                .into_iter()
+                .enumerate()
+                .map(|(clause, (rows, _exact))| {
+                    let mut out = vec![Vec::new(); tapes.len()];
+                    for (file, node) in rows {
+                        if self.lowered.starts(clause, &tapes[file as usize].doc, node) {
+                            out[file as usize].push(node);
+                        }
+                    }
+                    crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
+                    out
+                })
+                .collect());
+        }
         // The plans' sets over the batch's node space, on the wave's device (decision 0024 §2).
         use crate::code_rule_dsl::prefilter::sets::Device;
         let device = match self.backend {
@@ -310,7 +514,7 @@ pub(in crate::code_rule_dsl) fn documents(graph: &(impl Graph + ?Sized), scope: 
 }
 
 /// The tapes labelled on Metal, all at once or, where their label levels outgrow a workspace
-/// (06 S7: 250 files in one chunk), each half on its own: a file's labels read only that file.
+/// (06 S7: 250 files in one chunk) or the evaluation's launch bound, each half on its own: a file's labels read only that file.
 /// Their roots' records come with them (`RootsFound`): a half's program that did not run on the
 /// device makes the program's records `None` for both.
 #[cfg(target_os = "macos")]
@@ -322,7 +526,9 @@ fn labelled_metal(
 ) -> Result<(Vec<crate::code_rule_dsl::tape::TapeDoc>, crate::code_rule_dsl::transducer::packed::RootsFound), crate::code_rule_dsl::transducer::packed::Error> {
     use crate::code_rule_dsl::transducer::packed::{Error as PackedError, RootJobs};
     match lowered.labelled_metal(docs, active, Some(jobs)) {
-        Err(PackedError::BackendCapacity) if docs.len() > 1 => {
+        // A pool or the launch bound the plan cannot fit (list step 13): the batch is split, still
+        // on Metal (a half's chains, and so its rounds, are no longer than the whole's).
+        Err(PackedError::BackendCapacity | PackedError::BackendLaunchLimit) if docs.len() > 1 => {
             let half = docs.len() / 2;
             let split = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
             let part = |range: std::ops::Range<usize>| RootJobs {
