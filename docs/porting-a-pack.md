@@ -89,8 +89,9 @@ the pack publishes.
      suppression comment silences it.
    - `description` is one sentence, under 200 characters, no backticks, naming no tool
      ([description](pack-format.md#description)); `message` follows the [message criteria](pack-format.md#message).
-   - Match the construct, not the tests: a rule that matches the test files' names or literals fails
-     `holds-under-rename` where variants exist, and the real-code samples everywhere.
+   - Match the construct, not the tests: a rule that matches the test files' names fails `holds-under-rename` where
+     variants exist (the renamer keeps literals, so a rule that reads one keeps its findings), and the real-code
+     samples everywhere.
 
 3. **Add the port entry** to `packs/<id>/conformance.json` `rules[]`: `id`, `upstream: { tool, rule }`,
    `policy: "candidates/rules/<rule>.json"`, `match` (`line` or `line+column`, as the tool-pack's other ports), and the
@@ -109,7 +110,8 @@ the pack publishes.
 
 5. **Add the `gates.yaml` entry**, when the rule has none: `deprecated` (upstream's message, or `null`) and
    `recommended` (the first approved configuration that turns it on, with the option values that configuration uses,
-   or `null`). No entry means the rule fails `upstream-rule` and can never start on. Take the values from upstream's
+   or `null`), and `rename_exempt: <why>` only for a rule whose findings are the very names the rename variants
+   change. No entry means the rule fails `upstream-rule` and can never start on. Take the values from upstream's
    rule table and default settings at the pinned release, and say how in the pull request
    ([Declared upstream facts](../conformance/README.md#declared-upstream-facts-gatesyaml)).
 
@@ -270,6 +272,8 @@ a language core does not read yet lands the same way, with its rules skipped as 
 
 3. **A changeset** for the new pack, `patch`, "Add the <name> pack: …"; its first release is `0.1.1`
    ([versioning](pack-format.md#versioning-and-release)). Every later change to what the pack publishes adds one too.
+   The summary is the pack's release note as written: what changed for the person upgrading, in at most 60 words,
+   with no ticket id, pull request number or commit hash; the **Changesets** job fails one that says otherwise.
 
 4. **The tool-pack**, as [A new tool-pack](#a-new-tool-pack) describes, with every port a candidate. A pack may ship
    no rules (`"rules": []`) while all its ports are candidates; such a pack is never recommended.
@@ -344,7 +348,7 @@ data error): a rule cannot pass on a pack that does not score. Then, per check:
 | `compact` | A document under 15 KiB, or one that states the logic | Replace listed cases with the construct they share |
 | `no-unexplained-false-positives`, `no-unexplained-misses` | Agreement with the tool on its tests and Rerail's probes | Fix the rule. Declare a divergence in `divergences.json` only after checking the tool's own answer on that line, with the evidence in the entry ([Divergences](../conformance/README.md#divergences)) |
 | `catches-something` | A true positive on the fixtures, or `examples` in `pack.json` | Give the rule a true positive: a test of the tool it should report, or an authored case the tool confirms. A candidate's pair on its port entry serves check 3, not this check; it counts once the rule ships |
-| `holds-under-rename` | Agreement on the rename variants (ECMA tool-packs) | The rule matched names or literals: match the construct. A pass "without evidence" is reported; say in the pull request what other evidence stands in |
+| `holds-under-rename` | Agreement on the rename variants (ECMA tool-packs), and at least one finding that survives the renaming | The rule matched the cases' names: match the construct. When the renaming takes every finding and none survives, the check fails, unless the rule's `gates.yaml` entry gives a `rename_exempt` reason (its findings are the very names the variants change) |
 | `samples-catch-labelled`, `samples-silent-on-clean` | Agreement with the labelled lines of the real-code samples | Fix the rule, or declare a `"source": "samples"` divergence after checking the label ([How samples are judged](../conformance/README.md#how-samples-are-judged)) |
 | `stays-silent` | One of the rule's own upstream units where the tool reports nothing, or one clean sample the rule is silent on | When every upstream test for the rule has findings, add a clean real-code sample labelled for it ([Samples](upstream.md#samples)). Other rules' units and Rerail's probes do not count |
 | `divergences-current` | Every declared divergence still explains a disagreement | A fix that makes the rule agree removes its divergence in the same pull request |
@@ -396,12 +400,14 @@ Promote from the judged commit's `summary.json` `promotable` list, and confirm `
    ```
 
 8. **A changeset per pack**, `patch` while the pack is below 1.0.0 ([.changeset/README.md](../.changeset/README.md)).
+   Its summary is the release note: what changed for the person upgrading, at most 60 words, no ticket id, pull
+   request number or commit hash.
 
 9. **The suppression case**, for the tools whose generator demands one, if the candidate has none.
 
 10. **Evidence in the pull request.** The rule's results against the tool's expected findings, its rename variants and
-    samples, every divergence checked, and each check listed under **Passing without evidence** with what stands in
-    for it ([REVIEW.md](../REVIEW.md#what-blocks-a-merge-here)).
+    samples, every divergence checked, and, for a `rename_exempt` rule, why the reason holds and what other evidence
+    stands in ([REVIEW.md](../REVIEW.md#what-blocks-a-merge-here)).
 
 ## Moving a shipped rule back
 
@@ -504,8 +510,8 @@ The steps are [Merging (maintainers)](../CONTRIBUTING.md#merging-maintainers) an
 ## Who decides what ships
 
 A candidate ships when it passes every check and a reviewer agrees that its evidence is enough: the results against
-the tool's expected findings, the rename variants and samples, the divergences checked, and anything passing without
-evidence accounted for ([REVIEW.md](../REVIEW.md#what-blocks-a-merge-here)).
+the tool's expected findings, the rename variants and samples, the divergences checked, and any `rename_exempt`
+reason confirmed ([REVIEW.md](../REVIEW.md#what-blocks-a-merge-here)).
 
 Whether a shipped rule starts on is not a judgement call: `upstream-status` decides from `gates.yaml`'s declared facts,
 and a `pack.json` `on` that disagrees is reported.
