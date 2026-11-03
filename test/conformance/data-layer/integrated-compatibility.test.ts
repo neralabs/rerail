@@ -42,3 +42,17 @@ it("verifies detached signatures without treating malformed signatures as runtim
     expect(result.violations).toHaveLength(expected);
   }
 });
+
+it("retains declared diagnostic anchors on relational input rows", () => {
+  const policy = {
+    format: "rerail.policy/v1", id: "anchor-contract", revision: 1, mode: "block",
+    scope: { include: ["**/*.py"], exclude: [] }, clauses: [{ id: "file-diagnostic", relational: {
+      inputs: { functions: { evidence: { as: "function", query: { ast: { language: "python", rule: { kind: "function_definition" } } }, project: { path: "file.path" }, anchor: "file.start" } } },
+      query: "SELECT __path AS path,__start AS start_byte,__end AS end_byte FROM functions", key: ["path"],
+    }, violation: { code: "file-diagnostic", message: "File diagnostic", anchor: "witness.span" } }],
+  };
+  const compiled = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(policy)), "json", capabilitiesJson());
+  const result = JSON.parse(compiled.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 1, facts: [], files: [{ path: "example.py", language: "python", source: "\n\ndef f():\n    pass\n" }] }), "report"));
+  expect(result.failures).toEqual([]);
+  expect(result.violations).toMatchObject([{ span: { startByte: 0, startLine: 0 } }]);
+});
