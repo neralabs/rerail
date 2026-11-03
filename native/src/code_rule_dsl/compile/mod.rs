@@ -32,7 +32,7 @@ use super::language::adapter::{Refusal, gate};
 use super::language::{CodeRuleLanguage, Semantic, Support};
 use super::matcher::{
     AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, RequiredText,
-    UtilOrigin, UtilTable, collect_variables, reads_values,
+    UtilOrigin, UtilTable, collect_variables, reads_import_targets, reads_values,
 };
 use super::model::{
     Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexSource,
@@ -1002,6 +1002,7 @@ fn compile_query_as(
                         other_utils: others.iter().map(|(_, table)| Arc::clone(table)).collect(),
                         crosses,
                         sound_under_errors: sound_under_errors(&matcher),
+                        import_target: reads_import_targets(&matcher),
                         three_valued,
                         matcher,
                         anchors,
@@ -1308,7 +1309,7 @@ fn compile_query_as(
             }
             required_ast.insert((language_name.to_owned(), grammar));
             Ok(Query::Ast {
-                matchers,
+                matchers: matchers.into(),
                 calls: terms,
             })
         }

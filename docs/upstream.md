@@ -548,20 +548,25 @@ once the cause is fixed, or bump it by hand (`npm run upstream:bump`, then deriv
 - **Pack test data is in S3** (`test-data-in-s3`) runs `node scripts/s3/pack-fixtures.mjs check` under the read role: a
   `head-object` per archive every `test-data.lock` and `samples.lock` names, downloading nothing, failing with each
   missing key, its lock and its remedy. A pull request cannot merge with data S3 lacks.
-- **Scripts, reference examples, and conformance** (`tools`) runs the conformance check
-  (`conformance:languages -- --check`) over every pack, with `publish/` laid over the pulled data, and uploads its
-  summary and pull request comment as the `conformance-summary` artifact, which the `conformance-report` job posts on
-  the pull request ([conformance/README.md](../conformance/README.md#what-runs-on-a-pull-request)).
+- **Conformance** (`conformance`, a matrix of shards) and **Scripts, reference examples, and conformance** (`tools`) run
+  the conformance check over every pack, with `publish/` laid over the pulled data: each shard scores a share of every
+  pack (`conformance:languages:check -- --shard <k>/<n>`), and `tools` makes the reports from their results and judges
+  them (`-- --results <dir>`), then uploads the summary and pull request comment as the `conformance-summary` artifact,
+  which the `conformance-report` job posts on the pull request
+  ([conformance/README.md](../conformance/README.md#what-runs-on-a-pull-request)). On a pull request they run when it
+  changes what the check reads, which any change under `packs/` does; a change to none of it (docs, the dashboard, the
+  hosts) skips the shards, the comment and the `tools` job's conformance steps.
 - **Lint and type-check** (`lint`) runs structure metric #3, which fails while any `publish/` is tracked, a tool
   directory lacks its `test-data.lock`, a lock is malformed, or pack test data is tracked in the pulled layout
   ([repository-structure.md](repository-structure.md#3-fixture-data-outside-fixtures-and-packsupstream-pack-test-data-in-git-or-unpinned-or-pack-data-waiting-to-publish--target-0)).
 - **CI result** (`ci-result`) needs every other job and fails when any failed or was cancelled; it is the check the
-  ruleset requires, since GitHub counts a job skipped after a failed dependency as passing.
+  ruleset requires, since GitHub counts a job skipped after a failed dependency as passing. A job a path filter of the
+  `changes` job skips passes it, as a job skipped for a fork or Dependabot does.
 
 CI verifies the data by sha256 only: it never derives it again or asks upstream. Pack test data is a point-in-time
 artifact, and no CI job checks that it reproduces from the pins; the approving code owner checks that what a pull
 request publishes follows from it, and the conformance check judges the rules on it.
 
 A fork's pull request runs no CI: maintainers don't approve fork runs, and what goes in is ported to a branch here
-([Forks](#forks)). Dependabot gets no OIDC token, so `test-data`, `test-data-in-s3`, `tools` (and with it the
-conformance comment) and the other jobs that read pack data run only for pushes and same-repository pull requests.
+([Forks](#forks)). Dependabot gets no OIDC token, so `test-data`, `test-data-in-s3`, `conformance`, `tools` (and with it
+the conformance comment) and the other jobs that read pack data run only for pushes and same-repository pull requests.

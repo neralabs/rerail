@@ -379,12 +379,12 @@ These criteria are for reviewers and never block a merge: no check reads a messa
 
 ## The validation contract
 
-`validatePack(directory, { listed? })` in `conformance/pack-validation.ts` runs checks 1 to 8 over one pack and returns
-each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`). `test/engine/catalog/packs.test.ts`
-calls it for every directory under `packs/`, with one test per check and one per rule, and has the validator's own
-tests over the fixture packs in `fixtures/packs/`. It runs with the core in this repository: in `npm test`, and in
-`release-packs.yml` on a pull request from this repository that touches `packs/` and before each publish
-([release](#release)).
+`validatePack(directory, { listed?, fixtures? })` in `conformance/pack-validation.ts` runs checks 1 to 8 over one pack
+and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
+`test/engine/catalog/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per
+rule, and has the validator's own tests over the fixture packs in `fixtures/packs/`. It runs with the core in this
+repository: in `npm test`, and in `release-packs.yml` on a pull request from this repository that touches `packs/` and
+before each publish ([release](#release)).
 
 The contract is the floor every pack meets. A ported rule must also pass the [conformance check's gate](../conformance/README.md#the-gate)
 to ship: it judges the rule on upstream's cases and their rename variants (no unexplained false positive or miss), on
@@ -398,7 +398,10 @@ npx vitest run test/engine/catalog/packs.test.ts -t "pack python"        # one p
 
 Check 4 scores ported rules on the tools' fixtures. The rename variants and the real-code samples are scored by the
 conformance check (`npm run test:conformance`), not here. To see every false positive and false negative of one
-ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule <rule> --fixtures`.
+ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule <rule> --fixtures`. CI's unit tests set
+`RERAIL_PACK_FIXTURES_IN_CONFORMANCE=1`, which passes `fixtures: false`: check 4 then skips the scoring, which the
+conformance job does on the same fixtures with the same runner and fails on the same failures, so CI scores them once.
+The pack publish gate scores them in check 4 as `npm test` does.
 
 | # | Check | Fails when |
 |---|---|---|

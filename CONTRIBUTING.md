@@ -379,11 +379,11 @@ negative, add the code that triggers it with the fix, as a sample or an authored
 `npm run test:conformance`. Declare each intended disagreement with the tool in the pack's `divergences.json`, with the
 evidence you checked ([conformance/README.md, "Divergences"](conformance/README.md#divergences)).
 
-On a pull request from a branch here, CI keeps a **Conformance** comment. A shipped rule that fails a blocking check
-fails CI, and everything else in the comment is reported only
-([conformance/README.md, "The pull request comment"](conformance/README.md#the-pull-request-comment)). A pull request
-from a fork runs no CI: run `npm run test:conformance` yourself and say so in the pull request. "Ready to promote" is
-necessary, not sufficient, and the reviewer decides; the steps are in
+On a pull request from a branch here that changes what the check reads (any change under `packs/` does), CI keeps a
+**Conformance** comment. A shipped rule that fails a blocking check fails CI, and everything else in the comment is
+reported only ([conformance/README.md, "The pull request comment"](conformance/README.md#the-pull-request-comment)). A
+pull request from a fork runs no CI: run `npm run test:conformance` yourself and say so in the pull request. "Ready to
+promote" is necessary, not sufficient, and the reviewer decides; the steps are in
 [conformance/README.md, "Candidates and promotion"](conformance/README.md#candidates-and-promotion).
 
 **Test data.** You need no S3 credentials to change pack data. Pull, then write the cases in the pulled layout: a code

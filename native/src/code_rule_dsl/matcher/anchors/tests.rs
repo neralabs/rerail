@@ -480,7 +480,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             .clauses
             .iter()
             .find_map(|clause| match &clause.kind {
-                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers.as_slice()),
+                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(&matchers[..]),
                 _ => None,
             })
             .expect("an AST clause")
@@ -566,8 +566,10 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
         );
     }
     for (name, language, source) in fixtures {
+        // Compiling the queries is most of the test's work; each compiles alone.
+        use rayon::prelude::*;
         let compiled: Vec<_> = queries
-            .iter()
+            .par_iter()
             .filter(|(query, _)| query["language"] == name)
             .map(|(query, defines)| {
                 let mut clauses = defines.clone();
