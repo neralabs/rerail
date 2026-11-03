@@ -1655,9 +1655,9 @@ fn repository_index_reads_unlisted_text_files_only_for_code_rules_that_read_text
     }
 }
 
-/// An unlisted file named like a secret, by its own name or a folder on its path, is no source:
-/// a code rule that reads text neither indexes it nor reports it. A listed file is read whatever
-/// its name, and a pattern the index cannot compile fails the index.
+/// An unlisted file named like a secret, by its own name or a folder on its path, as the storage's
+/// secret names judge it, is no source: a code rule that reads text neither indexes it nor reports
+/// it. A listed file is read whatever its name.
 #[test]
 fn repository_index_skips_unlisted_files_named_like_secrets() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
@@ -1673,6 +1673,29 @@ fn repository_index_skips_unlisted_files_named_like_secrets() {
     ];
     let directory = committed_repository("sensitive-unlisted", files);
     let mut workspace = storage_workspace(&directory.0.join("repo"), directory.store());
+    workspace
+        .state
+        .lock()
+        .unwrap()
+        .storage
+        .as_mut()
+        .unwrap()
+        .secret_names = StdArc::new(
+        super::secret_names::SecretNames::compile(&super::secret_names::SecretNamePatterns {
+            files: [
+                ".env",
+                ".npmrc",
+                "id_rsa*",
+                "*.pem",
+                "*.tfstate",
+                "secrets.*",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            folders: vec![".ssh".to_owned()],
+        })
+        .unwrap(),
+    );
     let todo = compile(
         "todo",
         json!([{ "id": "todo", "violation": { "anchor": "witness.span", "code": "T",
@@ -1691,10 +1714,6 @@ fn repository_index_skips_unlisted_files_named_like_secrets() {
             .insert(".yaml".to_owned(), "yaml".to_owned());
         task
     };
-    let mut invalid = task();
-    invalid.options.sensitive_file_name = "^(?:".to_owned();
-    assert!(invalid.compute().is_err(), "an invalid pattern indexed");
-
     let mut failures = Vec::new();
     loop {
         let response: Value = serde_json::from_str(&task().compute().unwrap()).unwrap();

@@ -58,7 +58,7 @@ import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { binaryPrefix } from "./binary-prefix.js";
-import { checkoutPathBoundary, SENSITIVE_FILE_NAMES, SENSITIVE_FILE_PATTERN, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
+import { checkoutPathBoundary, SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
 
 export { SOURCE_LANGUAGES };
 
@@ -100,8 +100,6 @@ const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedChecko
   ignoredDirectories: [...IGNORED_DIRECTORIES],
   sourceLanguages: Object.fromEntries(SOURCE_LANGUAGES),
   sourceNames: Object.fromEntries(SOURCE_NAMES),
-  sensitiveFileName: SENSITIVE_FILE_PATTERN,
-  sensitiveFolderNames: [...SENSITIVE_FOLDER_NAMES],
 };
 const sourceSpanSchema = z.strictObject({
   startByte: z.number().int().nonnegative(),
