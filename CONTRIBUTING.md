@@ -392,16 +392,15 @@ is in [docs/upstream.md](docs/upstream.md).
 ### Getting the data
 
 ```sh
-aws sso login           # or any AWS credentials with read access to s3://nera-test-fixtures/rerail/archives/
 npm run fixtures:pull   # every tool-pack; -- --pack <id> [--tool <tool>] for some; -- --dry-run to see what it would fetch
 ```
 
-`fixtures:pull` keeps every archive it fetches in `.rerail/pack-data/archives/`, so it needs the
-[AWS CLI v2](https://aws.amazon.com/cli/) and read access to the bucket only for archives it has not fetched before;
-ask a maintainer for access. It verifies each archive against its lock before it extracts anything, puts the samples
-under `.rerail/pack-data/samples/`, and lays each tool-pack's `publish/` (below) over what it extracted, so the
-checkout holds what publishing would make. Pulled data is ignored by git. Pull again after a checkout or merge that
-changes a lock: without the data, the pack tests (`npm test`, `npm run test:conformance`, `cargo test`) and the
+`fixtures:pull` keeps every archive it fetches in `.rerail/pack-data/archives/`, so it needs read access to the
+bucket only for archives it has not fetched before; ask a maintainer for access. It verifies each archive against
+its lock before it extracts anything, puts the samples under `.rerail/pack-data/samples/`, and lays each
+tool-pack's `publish/` (below) over what it extracted, so the checkout holds what publishing would make. Pulled
+data is ignored by git. Pull again after a checkout or merge that changes a lock: without the data, the pack tests
+(`npm test`, `npm run test:conformance`, `cargo test`) and the
 generators fail, saying to pull. To see what any commit was judged on, check it out and pull
 ([docs/upstream.md, "Replay a commit"](docs/upstream.md#replay-a-commit)).
 
