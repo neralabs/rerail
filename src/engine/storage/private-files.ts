@@ -1,5 +1,6 @@
 import { chmodSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER } from "./rerail-home.js";
 
 /**
  * Takes group and other access away from a folder (to `0700`) or regular file (to `0600`) Rerail keeps private, when
@@ -42,9 +43,11 @@ export function keepFilesPrivate(folder: string, prefixes: readonly string[]): v
 
 /**
  * What the Rerail home holds that is the person's alone: the database and its WAL, journal and pre-update copies
- * (`rerail.sqlite*`), the coding-agent recovery database (`harness.sqlite*`), the daemon's state, capability and log.
+ * (`rerail.sqlite*`), the coding-agent recovery database (`harness.sqlite*`), the daemon's state, capability and log, and
+ * the remote sink's configuration, tokens, outbox and machine id (`remote.json`, `remote-tokens/`, `remote-outbox.sqlite*`, `machine-id`).
  */
-const PRIVATE_HOME_FILES: readonly string[] = ["rerail.sqlite", "harness.sqlite", "daemon.json", "access-token", "daemon.log"];
+const PRIVATE_HOME_FILES: readonly string[] = ["rerail.sqlite", "harness.sqlite", "daemon.json", "access-token", "daemon.log",
+  REMOTE_CONFIG_FILE, REMOTE_TOKENS_FOLDER, REMOTE_OUTBOX_FILE, MACHINE_ID_FILE];
 
 /** Creates the Rerail home (`0700`) when absent, and keeps it and the private files in it private ({@link keepPrivate}). */
 export function makeRerailHome(home: string): void {

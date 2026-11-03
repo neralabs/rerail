@@ -352,7 +352,9 @@ repository that is not set up. `/rerail` and `rerail status` report whether
 Rerail is on in this checkout.
 
 The terminal CLI retains `rerail scan` and `rerail settings` with flags. Outside
-the coding agent, select a session explicitly; Rerail never guesses the most recent:
+the coding agent, select a session explicitly; Rerail never guesses the most recent. `rerail scan` without
+`--session` is a different command, a scan of a checkout in its own process with no daemon or session:
+[Headless scan](headless-scan.md).
 
 ```sh
 rerail settings --session <session-id>

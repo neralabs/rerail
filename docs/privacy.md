@@ -7,8 +7,9 @@ your disk. It describes the code in this repository; the file named after each s
 
 - **No telemetry.** Rerail has no telemetry, analytics, crash reporting or usage metrics, and depends on no library
   that provides them (`package.json`).
-- **Never sends your work anywhere.** Rerail itself never transmits your source code, prompts, coding-agent
-  transcripts, rules or findings. Its only network traffic is listed below, and none of it carries them.
+- **Never sends your work anywhere you did not name.** Rerail itself never transmits your source code, prompts,
+  coding-agent transcripts, rules or findings, except to a [remote](remote-sink.md) you add yourself (in internal
+  testing; there is none until you add one). Its other network traffic is listed below, and none of it carries them.
 - **No hosted model.** Semantic matching uses an embedding model that ships inside the package
   (`model/`, `minishlab/potion-base-8M`), runs in-process, and is verified against its SHA-256 manifest before it
   loads. The engine is built with no HTTP or socket code (`native/Cargo.toml`, `native/src/model.rs`). Rerail calls no
@@ -34,6 +35,11 @@ only (`src/runtime/npm.ts`):
 | When the SQLite binding fails its load check | `npm rebuild better-sqlite3`, which may fetch a prebuilt binary or Node headers through that package's own tooling |
 
 Once installed, rules are evaluated without the network.
+
+The remote sink, in internal testing, sends to each remote **you** add with `rerail remote add` this machine's
+sessions, events (with their payloads, unless the remote was added with `--no-content`), audits, violations, the rules
+they ran and headless scans, except for repositories you exclude; with no remote, it sends nothing. What it sends,
+and where its token is kept, is in [Remote sink](remote-sink.md) (`src/runtime/remote-outbox.ts`).
 
 Signed customer profiles, which are in internal testing, add one more request: `rerail activate --code` sends the
 activation code, a device public key, your platform and architecture, and the Rerail version to the activation URL

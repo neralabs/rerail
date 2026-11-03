@@ -21,6 +21,10 @@
 - [privacy.md](privacy.md): what Rerail sends over the network, what it stores locally, and how to delete it
 - [internal-testing.md](internal-testing.md): features in the code that are not ready for public use, and where each
   surfaces
+- [headless-scan.md](headless-scan.md): `rerail scan` of a checkout with no daemon or session, for CI, and its
+  `rerail.scan/1` report (internal testing)
+- [remote-sink.md](remote-sink.md): sending this machine's Rerail data to a remote you add, its protocol, and what is
+  kept on disk (internal testing)
 
 ## Rules, packs and languages
 - [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, the shipped packs, and a worktree's own rules
