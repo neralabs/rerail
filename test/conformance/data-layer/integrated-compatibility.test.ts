@@ -95,3 +95,24 @@ it.each([false, true])("hydrates only admitted repository source (syntax: %s)", 
     }
   } finally { workspace.close(); }
 });
+
+it("completes the legacy query on the recorded large intent source", async () => {
+  // Reuse the complete pinned source already captured by the sixth-batch suite.
+  // The unchanged legacy reporter returns no findings on this source.
+  const recording = JSON.parse(readFileSync(fixturesPath("host", "data-layer-port", "batch-06-recording.json"), "utf8"));
+  const path = "impl/common/l2070_server_plan/steps/intent_versioning_extended.py";
+  const file = recording.events.flatMap((event: { files?: { path: string; source: string }[] }) => event.files ?? [])
+    .find((file: { path: string; source: string }) => file.path === path && file.source.length > 700_000);
+  expect(file).toBeDefined();
+  const policy = codeRuleSchema.parse(JSON.parse(readFileSync("packs/data-layer/candidates/rules/data-layer-legacy-execution-surfaces.json", "utf8")));
+  const native = loadNativeBinding();
+  const rule = native.CodeRuleDslRuntime.compile(JSON.stringify(policy), "json", capabilitiesJson());
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(rule);
+    await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 1, files: [{ ...file, language: "python" }], removed: [], quiet: true }));
+    const page = JSON.parse(await workspace.resultPageAsync(0, RESULT_PAGE_BYTES));
+    expect(page.failures).toEqual([]);
+    expect(page.violations).toEqual([]);
+  } finally { workspace.close(); }
+}, 30_000);
