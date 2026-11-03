@@ -959,7 +959,10 @@ fn compile_query_as(
                     None => {
                         // A utility's terms are ordered by what the utilities they call bind, and
                         // its `parse` exports what they export, so utilities that met one not
-                        // compiled yet are compiled again against this first compilation.
+                        // compiled yet are compiled again against this first compilation. Its gaps
+                        // and `all` order conflicts, met without those utilities, give way to the
+                        // second compilation's.
+                        let settled = conflicts.borrow().clone();
                         let mut first_gaps = Vec::new();
                         let mut compiled_utils = compile_utils(&scope, *language, &mut first_gaps)?;
                         let mut compiled_others = compile_others()?;
@@ -970,6 +973,7 @@ fn compile_query_as(
                             for ((_, table), compiled) in others.iter().zip(compiled_others) {
                                 table.draft_all(compiled);
                             }
+                            *conflicts.borrow_mut() = settled;
                             compiled_utils = compile_utils(&scope, *language, &mut gaps)?;
                             compiled_others = compile_others()?;
                         } else {

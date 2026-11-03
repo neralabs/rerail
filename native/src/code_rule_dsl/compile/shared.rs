@@ -113,7 +113,7 @@ impl<'a> SharedTables<'a> {
 
     /// The shared utilities `reached` (ids of `language`'s, in id order) compiled for `dialect` in
     /// `context`, in the document's table; `None` where they compile in a table of the query's
-    /// own: one was given up, or together they make more parameterized calls than a query may.
+    /// own, since the table was given up.
     pub(super) fn reach<'r>(
         &self,
         language: &str,
@@ -149,7 +149,10 @@ impl<'a> SharedTables<'a> {
             gap = gap.or_else(|| added.gap.clone());
             instances.extend(added.instances.iter().cloned());
         }
-        (instances.len() <= MAX_UTIL_INSTANCES).then(|| Reach {
+        // The define's check compiled all its utilities' calls in one table per grammar, within
+        // the limit, so the calls of any of them are too.
+        debug_assert!(instances.len() <= MAX_UTIL_INSTANCES);
+        Some(Reach {
             table: Arc::clone(&table.table),
             ids: &shared.ids,
             indices,
@@ -236,6 +239,8 @@ impl Table {
             for (&index, (rule, _)) in missing.iter().zip(compiled) {
                 self.table.draft(index, rule);
             }
+            // The first compilation's conflicts read utilities it could not; the second's stand.
+            conflicts.borrow_mut().clear();
             compiled = compile()?;
         }
         if !conflicts.borrow().is_empty() {
