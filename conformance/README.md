@@ -44,8 +44,8 @@ To run it locally, pull the data first (`npm run fixtures:pull`), then `npm run 
 ### What runs on a pull request
 
 On every push and every same-repository pull request, with the data the locks name and any `publish/` laid over it,
-the six `conformance` jobs of `ci.yml` each score a share of every pack
-(`npm run conformance:languages:check -- --shard <k>/6 --results-out <dir>`), and the `tools` job makes the reports
+the `conformance` jobs of `ci.yml`, a matrix of shards, each score a share of every pack
+(`npm run conformance:languages:check -- --shard <k>/<n> --results-out <dir>`), and the `tools` job makes the reports
 from all their results and judges them (`npm run conformance:languages:check -- --results <dir> --base <base> --out
 <dir>`). The reports are the ones one run scoring everything writes: each pack's scoring is a list of evaluations that
 any process can run, put back together in order (`conformance/languages/shards.ts`). On one machine, `--check` spreads
