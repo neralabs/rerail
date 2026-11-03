@@ -124,7 +124,7 @@ static void micro_walk(device const Node* nodes,device const uint* children,devi
 template<uint FRAMES,typename Stack>
 static void micro_from(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,MicroPass pass,device const uint* words,uint start,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack){
   device atomic_uint* bits=scratch+pass.target*shape.words;
-  uint depth=0u,steps=0u;
+  uint depth=0u,steps=0u,fired=0u;
   MicroFrame path={0u,start,0u,0u,0u,0u,{MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE},MICRO_NONE,MICRO_NONE,0u};
   #define MICRO_FAIL {atomic_fetch_or_explicit(&flags[0],2u,memory_order_relaxed);return;}
   while(true){
@@ -160,6 +160,15 @@ static void micro_from(device const Node* nodes,device const uint* children,devi
         case 64u:
           // As label_sink routes: 0 the start (once), 1 the captured nodes, 2 a tally by start,
           // 3 a tally by captured node, one each path.
+          // A pack (bit 2, `fusion::Fused`): the emit's row, by its label, follows the emit count
+          // after the words; the walk ends once every emit marked its start.
+          if((pass.targets&4u)!=0u){
+            uint members=words[pass.wordStart+pass.wordCount];
+            device atomic_uint* row=scratch+words[pass.wordStart+pass.wordCount+1u+arg]*shape.words;
+            if((pass.targets&3u)==0u){mark(row,start);fired|=1u<<arg;if(fired==(members>=32u?0xffffffffu:((1u<<members)-1u)))return;}
+            else{if(path.captured>0u)mark(row,path.capture0);if(path.captured>1u)mark(row,path.capture1);}
+            alive=false;break;
+          }
           if(pass.targets==0u){mark(bits,start);return;}
           if(pass.targets==1u){if(path.captured>0u)mark(bits,path.capture0);if(path.captured>1u)mark(bits,path.capture1);}
           else{device atomic_uint* tally=counts+pass.target*shape.nodeCount;
@@ -274,6 +283,8 @@ kernel void label_group_32(device const Node* nodes [[buffer(0)]],device const u
 // records, once to write them where one atomic per item reserved them (an item numbered from
 // its dispatch's `shape.round`) (`cursor[0]`; `cursor[1]`
 // the buffer was too small). A walk outgrowing its frames, captures or steps flags its program.
+// pad: 1 where the walk ends at its first emit (set mode, one label); 1 + its emit count for a
+// pack in set mode.
 struct RootPass { uint wordStart,wordCount,textStart,pad; };
 struct RootFrame { uint pc,node,resume,named,next,end,cursors[8],captured,caps[8],labs[8]; };
 // The 32-frame roots run as a pool of ROOT_POOL threads with device stacks (metal_label_passes.rs's ROOT_POOL).
@@ -288,7 +299,7 @@ static uint root_next(device const Node* nodes,device const uint* children,threa
 
 template<uint FRAMES,typename Stack>
 static bool root_walk(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,RootPass pass,device const uint* words,uint start,device const uint* texts,constant Shape& shape,Stack stack,device uint* out,uint capacity,uint item,uint at,thread uint& emitted){
-  uint depth=0u,steps=0u;
+  uint depth=0u,steps=0u,fired=0u;
   RootFrame path;
   path.pc=0u;path.node=start;path.resume=0u;path.named=0u;path.next=0u;path.end=0u;path.captured=0u;
   for(uint c=0u;c<8u;c++){path.cursors[c]=MICRO_NONE;path.caps[c]=MICRO_NONE;path.labs[c]=0u;}
@@ -323,12 +334,19 @@ static bool root_walk(device const Node* nodes,device const uint* children,devic
         case 48u:{if(depth==FRAMES)return false;RootFrame frame=path;frame.pc=arg;frame.resume=0u;stack[depth++]=frame;}break;
         case 49u:path.pc=arg;continue;
         case 64u:
+          // A pack in set mode (pad: 1 + its emit count, `fusion::Fused`): an emit whose label
+          // fired is dropped, and the walk ends once every label fired.
+          if(pass.pad>1u){uint bit=1u<<arg;if((fired&bit)!=0u){alive=false;break;}fired|=bit;}
           if(out!=nullptr&&at+emitted<capacity){
             device uint* record=out+(at+emitted)*ROOT_RECORD;
             record[0]=item;record[1]=emitted;record[2]=arg;record[3]=path.captured;
             for(uint c=0u;c<8u;c++){record[4u+c]=path.caps[c];record[12u+c]=path.labs[c];}
           }
-          emitted++;alive=false;break;
+          emitted++;alive=false;
+          // Set mode with one label (`Micro::key_stop`): the task's key is found.
+          if(pass.pad==1u)return true;
+          if(pass.pad>1u&&fired==(pass.pad-1u>=32u?0xffffffffu:((1u<<(pass.pad-1u))-1u)))return true;
+          break;
         default:return false;
       }
       if(alive){path.pc++;if(path.pc>=pass.wordCount)return false;}

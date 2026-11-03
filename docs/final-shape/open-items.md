@@ -33,6 +33,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | closed (2026-10-31, decision 0022): S7's engine-only footprint peak is 477 MB on Metal (was 0.99 GB) and 447 MB on the CPU backend (was 575–607), measured as `phys_footprint_peak` after the audit. Freed heap pages are returned at stage ends; SQLite allocates from jemalloc; the GPU's label prefix, scratch and counts are sized by the run; roots stream into rows with digested structure keys. Left: the driver's fixed ~170 MB per GPU execution, and sparse host labels if the corpus grows |
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
+| O33 | Phase 4 | G's grid executor (`ExecutionBackend::Metal`, not on the production path) exceeds the 99-launch bound on five parity tests | closed 2026-11-02: superseded by 0024 (decision 0028); kept as a copy until step 31 |
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
 | O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
@@ -403,6 +404,11 @@ abstract supertype kinds such as `expression` (N lowered them through tape class
 committed `source-partial` oracle. Closure: decide whether W adopts N's semantics (supertype
 lowering, error-region reporting), then re-enable or update the goldens. Also decide whether the
 relational lowering stays test-only or replaces `demand::vtab`'s lowering.
+
+**Closed (2026-11-02, user decisions).** 186 of 186 pass.
+- Supertypes: N's semantics. `kind: <supertype>` compiles to `AstMatcher::Supertype` (`matcher::Supertype`: the class and its transitive concrete kinds, `GrammarDialect::supertype_kinds`). It matches the nodes the parser reported as members, read from the tape (`TapeDoc::transducer_has_supertype`; a tree that is no tape's reads unknown). It lowers to `SUPERTYPE` in the packed runtime (`MatchTree::Supertype`), with the concrete kinds as its domain and anchor, and to N's class-membership terminal in the relational lowering. `slice::tests::a_supertype_rule_finds_the_same_members_on_every_backend` checks the CPU interpreter, JIT and both Metal bindings. The rule reference documents it.
+- Syntax errors: W's 50% unread rule stays. `clause-syntax-error-unknown` is re-blessed in `production_contracts_081_108.json` to W's `source-incomplete` ("error regions cover 91% of it").
+- The relational lowering stays test-only. Whether it replaces `demand::vtab`'s lowering is left to Phase 6.
 
 ## O18. P's relational stage, placed test-only
 
@@ -893,6 +899,36 @@ join scope and inner on their shared parent. On the 63 batches: 2.21 G → 0.091
 0.285 G), execute CPU 57 s → 2.3 s, rows identical (1,312,845);
 `the_sql_fallback_relates_on_the_tape_exactly` still holds the eleven relation rules to the matcher.
 
+## O33. G's grid executor and the launch bound
+
+List step 13 bounds an evaluation at 99 launches. G's grid executor (`metal_grid_backend`,
+`ExecutionBackend::Metal`) plans its stages with 16 checked frontier waves each
+(`CHECKED_FRONTIER_WAVES`), and on five of the packed runtime's parity tests it is refused with
+`BackendLaunchLimit`: `all_backends_execute_every_verified_instruction_and_mode`,
+`cpu_jit_compiles_general_scm_control_flow`, `scm_host_predicates_filter_text_kinds_lines_and_relations`,
+`scm_output_directives_transform_text_adjacency_and_language`, and
+`scm_quantified_runs_preserve_each_distinct_middle_capture`. These tests still assert the CPU
+interpreter's and JIT's parity. They skip the grid executor's comparison only where it refuses
+(`tests::grid`) and print `O33`. The production wave does not use this executor: its Metal work is the
+label passes (44 launches on S7) and the set steps (1).
+
+**Closure:** the grid executor's frontier waves planned from the batch (its plan counts its
+launches, as `label_passes` does), or run on list step 17's device work queue (decision 0027). Otherwise it is removed
+with the copies it belongs to (list step 31).
+
+**Closed (2026-11-02, user decision; decision 0028).** Superseded by 0024: the grid executor is neither ported to the work queue nor put on the audit path. The pack census finds that 71 of about 15,600 lowered programs need a general executor. Four of its ideas are kept, with file pointers, for a small work-queue executor if that share grows: digit-ordered terminals, exact duplicate removal of active states, bulk closure scans and exact page boundaries. The code stays as a copy until list step 31.
+
+## O34. Device rounds for groups whose members are other pipelines
+
+Decision 0027's device work queue runs only the code compiled into its kernel; file-local lattice
+FIX is its first user. A recursive label group whose members are interpreter tasks or per-clause
+pattern kernels (other pipelines) keeps host-planned rounds with device early exit and a rerun.
+On S7 there are none: 8 groups fused (`Runner::group`), 0 unfused. G's grid executor's frontier
+waves stay as O33 describes them. Widened or non-flat lattices run on the CPU.
+
+**Closure:** such groups' members lowered to micro walks (then they fuse), or run inside a queue
+kernel; or measured as rare enough on the full corpus that host rounds are the shape. G's executor
+goes with O33.
 ## O60. The matcher atom's captures
 
 The data-layer rules' relational inputs and budget evidence project captures (`capture.X`, `.startByte`, regex

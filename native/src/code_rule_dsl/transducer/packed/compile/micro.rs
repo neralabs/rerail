@@ -50,6 +50,9 @@ pub(in crate::code_rule_dsl) struct Micro {
     /// Each text test's value (an index into the program's values) and the kind its node has, where
     /// the test follows a kind test that no jump skips (its domain).
     pub(in crate::code_rule_dsl) texts: Vec<(u16, Option<u16>)>,
+    /// Set mode's reach (`set_mode::Reach`): a walk emits each label once and drops a frame that
+    /// can emit no label not yet fired; None for an exact program.
+    pub(in crate::code_rule_dsl) reach: Option<super::set_mode::Reach>,
 }
 
 #[derive(Clone, Copy)]
@@ -213,7 +216,14 @@ impl Micro {
             });
             words[pc] = u32::from(op) | u32::from(mode) << 8 | (slot as u32) << 16;
         }
-        Some(Self { words, texts })
+        let reach = if program.set_mode { super::set_mode::Reach::of(&words) } else { None };
+        Some(Self { words, texts, reach })
+    }
+
+    /// Whether a walk ends at its first emit: set mode with one label (the device's root walks
+    /// read this, `metal_label_passes`).
+    pub(in crate::code_rule_dsl) fn key_stop(&self) -> bool {
+        self.reach.as_ref().is_some_and(|reach| reach.labels().len() == 1)
     }
 
     /// The walk's words as (op, mode, arg), for diagnostics.
@@ -243,8 +253,49 @@ impl Micro {
         (0..self.texts.len()).map(|slot| self.slot(program, slot, tape)).collect()
     }
 
-    /// Slot `slot`'s bits on `tape` (`texts`).
+    /// Slot `slot`'s bits on `tape` (`texts`): the term index's row where the tape has it
+    /// (`R[tid]`, `prefilter::terms`), else each node's text tested.
     pub(in crate::code_rule_dsl) fn slot(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
+        if let Some(row) = tape.transducer_text_row(&self.slot_key(program, slot)) {
+            crate::code_rule_dsl::prof::count("texts.indexed", 1);
+            // `RERAIL_TEXTS_CHECK`: the index's row against the text's.
+            if std::env::var_os("RERAIL_TEXTS_CHECK").is_some() {
+                let scanned = self.scan(program, slot, tape);
+                if scanned.as_deref() != Some(&row[..]) {
+                    crate::code_rule_dsl::prof::count("texts.check_differ", 1);
+                    eprintln!("TEXTS differ: {}", self.slot_key(program, slot));
+                } else {
+                    crate::code_rule_dsl::prof::count("texts.check_same", 1);
+                }
+            }
+            return Some(row.to_vec());
+        }
+        crate::code_rule_dsl::prof::count("texts.scanned", 1);
+        self.scan(program, slot, tape)
+    }
+
+    /// Whether node `node`'s text passes slot `slot`'s test (its kind aside).
+    pub(in crate::code_rule_dsl) fn test(&self, program: &Program, slot: usize, tape: &TapeDoc, node: u32) -> Option<bool> {
+        let (value, _) = self.texts[slot];
+        let mut work = 0;
+        program.value_programs[usize::from(value)].is_match(tape.transducer_text(node), &program.strings, &mut work).ok()
+    }
+
+    /// Slot `slot`'s test as the vocabulary's predicate: (expression, literal) for an equality, a
+    /// prefix (an anchored regex) or a regex; None for a Lua pattern.
+    pub(in crate::code_rule_dsl) fn predicate(&self, program: &Program, slot: usize) -> Option<(String, bool)> {
+        let (value, _) = self.texts[slot];
+        let string = |index: u16| String::from_utf8(program.strings.get(usize::from(index))?.clone()).ok();
+        match &program.predicates[usize::from(value)] {
+            TextPredicate::Equal(index) => Some((string(*index)?, true)),
+            TextPredicate::Prefix(index) => Some((format!("^{}", regex_syntax::escape(&string(*index)?)), false)),
+            TextPredicate::Regex { source, .. } => Some((string(*source)?, false)),
+            TextPredicate::LuaPattern { .. } => None,
+        }
+    }
+
+    /// Slot `slot`'s bits on `tape`, each node's text tested.
+    fn scan(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
         let (value, kind) = self.texts[slot];
         let len = tape.transducer_len();
         let mut bits = vec![0_u64; len.div_ceil(64)];
@@ -328,6 +379,29 @@ impl Micro {
         })
     }
 
+    /// A fused program's walk (`fusion::Fused`) from `start`: `mark` called with each emit's label
+    /// (its member) and node, as `run` marks them. A start's walk does not end at its first emit,
+    /// which answers one member: in set mode each member's later emits are skipped instead.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn run_labelled(
+        &self,
+        tape: &TapeDoc,
+        labels: &[Vec<u64>],
+        texts: &[Vec<u64>],
+        start: u32,
+        emit: Emit,
+        frames: &mut Frames,
+        mark: &mut impl FnMut(u16, u32),
+    ) -> Result<(), Overflow> {
+        self.walk(tape, labels, texts, start, CAPTURES, frames, &mut |state: &State, label| {
+            match emit {
+                Emit::Start | Emit::EveryStart => mark(label, start),
+                Emit::Captures => state.captures[..usize::from(state.captured)].iter().for_each(|&node| mark(label, node)),
+            }
+            false
+        })
+    }
+
     /// A root program's walk from `start` on `tape` (labelled: `transducer_labels`), every path
     /// that emits appended to `out` as a record, in the walk's order.
     pub(in crate::code_rule_dsl) fn records(
@@ -382,6 +456,7 @@ impl Micro {
             captured: 0,
         };
         let mut steps = 0_u32;
+        let mut fired = 0_u64;
         let limit = self::steps(tape.transducer_len() as usize, self.words.len());
         loop {
             // The path from `state` until it ends.
@@ -457,12 +532,23 @@ impl Micro {
                         state.pc = arg;
                         continue;
                     }
-                    EMIT => {
-                        if emitted(&state, arg) {
-                            return Ok(());
+                    EMIT => match &self.reach {
+                        // Set mode: a label once; the walk ends once every label fired.
+                        Some(reach) if fired & reach.bit(arg) != 0 => false,
+                        Some(reach) => {
+                            fired |= reach.bit(arg);
+                            if emitted(&state, arg) || fired == reach.all() {
+                                return Ok(());
+                            }
+                            false
                         }
-                        false
-                    }
+                        None => {
+                            if emitted(&state, arg) {
+                                return Ok(());
+                            }
+                            false
+                        }
+                    },
                     _ => return Err(Overflow("operation")),
                 };
                 if !alive {
@@ -478,6 +564,11 @@ impl Micro {
                 let Some((frame, mut resume)) = stack.pop() else {
                     return Ok(());
                 };
+                if let Some(reach) = &self.reach
+                    && !reach.live(frame.pc, fired)
+                {
+                    continue;
+                }
                 if let Resume::Path = resume {
                     state = frame;
                     break;

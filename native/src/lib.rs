@@ -7,6 +7,8 @@ mod build_identity;
 #[cfg(test)]
 mod build_languages;
 mod code_rule_dsl;
+/// The engine's tools without Node (`rerail-engine dump` / `asm`).
+pub use code_rule_dsl::tools;
 pub mod content_store;
 pub mod git_ignore;
 pub mod git_workspace;

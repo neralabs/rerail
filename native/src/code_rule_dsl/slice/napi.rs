@@ -47,9 +47,10 @@ impl CodeRuleSlice {
     #[napi(constructor)]
     pub fn new(store_path: String, policies: Vec<SlicePolicy>, capabilities_json: String, backend: String) -> Result<Self> {
         let backend = match backend.as_str() {
-            "cpu" => ExecutionBackend::CpuJit,
+            // Interpreted first, the compiled binding swapped in once built (list step 16).
+            "cpu" => ExecutionBackend::CpuBackground,
             #[cfg(target_os = "macos")]
-            "metal" => ExecutionBackend::MetalJit,
+            "metal" => ExecutionBackend::MetalBackground,
             other => return Err(Error::from_reason(format!("unknown slice backend `{other}`"))),
         };
         let compiled = policies
@@ -65,6 +66,13 @@ impl CodeRuleSlice {
     #[napi]
     pub fn clauses(&self) -> u32 {
         self.rules.clauses() as u32
+    }
+
+    /// The lowered rules as `rir` (list step 18): programs and label tables, with `fused` the
+    /// packs and groups, with `setplan` the set plan.
+    #[napi]
+    pub fn dump(&self, fused: Option<bool>, setplan: Option<bool>) -> Result<String> {
+        self.rules.dump(fused.unwrap_or(false), setplan.unwrap_or(false)).map_err(failed)
     }
 
     /// A cold audit of `scope` at `directory`, as `observer` sees it: `"directory"` (the default,
@@ -85,6 +93,24 @@ impl CodeRuleSlice {
         let run = apply(&self.store, &scope, root, &mut self.rules).map_err(failed)?;
         Ok(report(&run))
     }
+}
+
+/// `policies` lowered and dumped as `rir` (list step 18, `rerail engine dump --rule <file>
+/// [--clause <id>] [--fused] [--setplan]`), without a store.
+#[napi]
+#[cfg_attr(test, allow(dead_code))]
+pub fn dump_rir(policies: Vec<SlicePolicy>, capabilities_json: String, clause: Option<String>, fused: Option<bool>, setplan: Option<bool>) -> Result<String> {
+    let policies: Vec<_> = policies.into_iter().map(|policy| (policy.name, policy.source, policy.format)).collect();
+    crate::code_rule_dsl::tools::dump(&policies, &capabilities_json, clause.as_deref(), fused.unwrap_or(false), setplan.unwrap_or(false))
+        .map_err(Error::from_reason)
+}
+
+/// `rir` assembled (`rerail-engine asm`): every `program` block of `text` through the verifier,
+/// returned as its dump, or the first refusal.
+#[napi]
+#[cfg_attr(test, allow(dead_code))]
+pub fn assemble_rir(text: String) -> Result<String> {
+    crate::code_rule_dsl::tools::assemble(&text).map_err(Error::from_reason)
 }
 
 impl CodeRuleSlice {

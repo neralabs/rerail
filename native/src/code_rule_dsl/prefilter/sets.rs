@@ -230,6 +230,38 @@ impl Program {
     }
 }
 
+/// The plans' set program as `rir` (list step 18; P `spec-tooling.md` §2.2.1, `setplan`): each
+/// operation `S<n>` on the earlier ones, then each plan's output.
+pub(in crate::code_rule_dsl) fn dump(plans: &[&AnchorPlan], grammar: Option<&crate::code_rule_dsl::transducer::packed::rir::Names>) -> String {
+    use std::fmt::Write as _;
+    let program = Program::lower(plans);
+    let sets = |ids: &[usize]| format!("[{}]", ids.iter().map(|id| format!("S{id}")).collect::<Vec<_>>().join(" "));
+    let mut out = String::new();
+    let _ = writeln!(out, "setplan ops={} outputs={}", program.ops.len(), program.outputs.len());
+    for (id, op) in program.ops.iter().enumerate() {
+        let body = match op {
+            Op::Empty => "empty".to_owned(),
+            Op::All => "all".to_owned(),
+            // A leaf's kinds are the grammar's (0 labels no node).
+            Op::Kinds(kinds) => format!("kinds {}", crate::code_rule_dsl::transducer::packed::rir::kinds(grammar, kinds)),
+            Op::Terms { expression, literal } => {
+                let quoted = crate::code_rule_dsl::transducer::packed::rir::quote(expression.as_bytes());
+                format!("terms {} {quoted}", if *literal { "literal" } else { "regex" })
+            }
+            Op::Uncovered => "uncovered".to_owned(),
+            Op::Union(ids) => format!("union {}", sets(ids)),
+            Op::Intersect(a, b) => format!("intersect S{a} S{b}"),
+            Op::Except(a, b) => format!("except S{a} S{b}"),
+            Op::Within(scope, tests) => format!("within S{scope} {}", sets(tests)),
+        };
+        let _ = writeln!(out, "  S{id} = {body}");
+    }
+    for (plan, id) in program.outputs.iter().enumerate() {
+        let _ = writeln!(out, "  output {plan} S{id}");
+    }
+    out
+}
+
 /// Each plan's candidates over `files` (tape rows, in the caller's order) of language `lang`: the
 /// space of their nodes (a file of another language, or without prefilter rows, has none) and
 /// one set per plan, the operations run on `device`.

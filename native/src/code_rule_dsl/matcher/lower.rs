@@ -9,6 +9,7 @@ use super::{AstMatcher, GrammarMatcher};
 use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::{Matcher, Pattern};
 use regex::Regex;
+use std::sync::Arc;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// How deep utilities may nest when inlined; deeper (or recursive) ones are refused.
@@ -16,6 +17,9 @@ const MAX_INLINED_UTIL_DEPTH: usize = 32;
 
 pub(in crate::code_rule_dsl) enum MatchTree {
     Kind(u16),
+    /// A grammar supertype's members, as the tape records them (`SUPERTYPE`), with the concrete
+    /// kinds they can have.
+    Supertype(u16, Arc<BTreeSet<u16>>),
     Pattern(Pattern),
     /// A pattern whose single-node captures must match these rules (`constraints`).
     Constrained(Pattern, Vec<(String, MatchTree)>),
@@ -67,6 +71,7 @@ impl MatchTree {
     pub(in crate::code_rule_dsl) fn walks(&self) -> bool {
         match self {
             Self::Kind(_)
+            | Self::Supertype(..)
             | Self::Pattern(_)
             | Self::Constrained(..)
             | Self::Regex(_)
@@ -87,6 +92,7 @@ impl MatchTree {
     pub(in crate::code_rule_dsl) fn kinds(&self) -> Option<BTreeSet<u16>> {
         match self {
             Self::Kind(kind) => Some(BTreeSet::from([*kind])),
+            Self::Supertype(_, kinds) => Some(kinds.as_ref().clone()),
             Self::Pattern(pattern) | Self::Constrained(pattern, _) => pattern
                 .potential_kinds()
                 .map(|kinds| kinds.iter().filter_map(|kind| u16::try_from(kind).ok()).collect()),
@@ -163,6 +169,7 @@ impl Lowering {
                     _ => return Err(Unsupported("kind")),
                 }
             }
+            AstMatcher::Supertype(supertype) => MatchTree::Supertype(supertype.class, Arc::clone(&supertype.kinds)),
             AstMatcher::Regex(regex) => MatchTree::Regex(regex.clone()),
             AstMatcher::All(matchers) => MatchTree::All(self.trees(matchers, shares)?),
             AstMatcher::Any(matchers) => MatchTree::Any(self.trees(matchers, shares)?),

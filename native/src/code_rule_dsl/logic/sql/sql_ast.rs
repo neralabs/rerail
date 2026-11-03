@@ -147,6 +147,26 @@ pub(in crate::code_rule_dsl) enum SqlExpression {
         branches: Vec<(SqlExpression, SqlExpression)>,
         fallback: Box<SqlExpression>,
     },
+    /// The planner's forms (`select`): a column of a FROM item by its alias, a built-in or
+    /// registered function by its bare name, a range test, and subqueries.
+    Qualified {
+        alias: String,
+        column: String,
+    },
+    Call {
+        name: &'static str,
+        arguments: Vec<SqlExpression>,
+    },
+    Between {
+        input: Box<SqlExpression>,
+        low: Box<SqlExpression>,
+        high: Box<SqlExpression>,
+    },
+    Exists {
+        negated: bool,
+        query: Box<super::select::Select>,
+    },
+    Scalar(Box<super::select::Select>),
 }
 
 fn quote_identifier(identifier: &str) -> String {
@@ -154,7 +174,7 @@ fn quote_identifier(identifier: &str) -> String {
 }
 
 impl SqlColumn {
-    fn render(&self) -> String {
+    pub(in crate::code_rule_dsl) fn render(&self) -> String {
         self.relation.as_ref().map_or_else(
             || quote_identifier(&self.name),
             |relation| {
@@ -169,7 +189,7 @@ impl SqlColumn {
 }
 
 impl SqlExpression {
-    fn render(&self) -> String {
+    pub(in crate::code_rule_dsl) fn render(&self) -> String {
         match self {
             Self::All => "*".to_owned(),
             Self::Column(column) => column.render(),
@@ -239,6 +259,47 @@ impl SqlExpression {
                     .join(" ");
                 format!("CASE {branches} ELSE {} END", fallback.render())
             }
+            Self::Qualified { alias, column } => format!("{alias}.{column}"),
+            Self::Call { name, arguments } => {
+                format!("{name}({})", arguments.iter().map(Self::render).collect::<Vec<_>>().join(", "))
+            }
+            Self::Between { input, low, high } => {
+                format!("{} BETWEEN {} AND {}", input.render(), low.render(), high.render())
+            }
+            Self::Exists { negated, query } => {
+                format!("{}EXISTS ({})", if *negated { "NOT " } else { "" }, query.render())
+            }
+            Self::Scalar(query) => format!("({})", query.render()),
+        }
+    }
+
+    /// Each subexpression, this one first (subqueries are not entered).
+    pub(in crate::code_rule_dsl) fn visit<'a>(&'a self, f: &mut dyn FnMut(&'a Self)) {
+        f(self);
+        match self {
+            Self::Binary { left, right, .. } => {
+                left.visit(f);
+                right.visit(f);
+            }
+            Self::Unary { input, .. } => input.visit(f),
+            Self::Function { arguments, .. } | Self::Call { arguments, .. } => arguments.iter().for_each(|argument| argument.visit(f)),
+            Self::In { input, values } => {
+                input.visit(f);
+                values.iter().for_each(|value| value.visit(f));
+            }
+            Self::Case { branches, fallback } => {
+                branches.iter().for_each(|(condition, result)| {
+                    condition.visit(f);
+                    result.visit(f);
+                });
+                fallback.visit(f);
+            }
+            Self::Between { input, low, high } => {
+                input.visit(f);
+                low.visit(f);
+                high.visit(f);
+            }
+            _ => {}
         }
     }
 }
@@ -256,7 +317,7 @@ pub(in crate::code_rule_dsl) struct SqlOrderTerm {
 }
 
 impl SqlProjection {
-    fn render(&self) -> String {
+    pub(in crate::code_rule_dsl) fn render(&self) -> String {
         self.alias.as_ref().map_or_else(
             || self.expression.render(),
             |alias| {
@@ -271,7 +332,7 @@ impl SqlProjection {
 }
 
 impl SqlOrderTerm {
-    fn render(&self) -> String {
+    pub(in crate::code_rule_dsl) fn render(&self) -> String {
         format!(
             "{} {}",
             self.expression.render(),
@@ -298,7 +359,7 @@ pub(in crate::code_rule_dsl) struct SqlAggregate {
 }
 
 impl SqlAggregate {
-    fn render(&self) -> String {
+    pub(in crate::code_rule_dsl) fn render(&self) -> String {
         let function = match self.function {
             SqlAggregateFunction::Count => "count",
             SqlAggregateFunction::Minimum => "min",
