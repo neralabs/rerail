@@ -548,3 +548,41 @@ fn findings_gate(store: &ContentStore, paths: &[String], policies: &[(String, cr
     assert_eq!(again.keys, findings.keys);
     assert!(outcome.changed.is_empty(), "{:?}", outcome.changed);
 }
+
+/// List step 20: the wave's planned program is kept in `compiled_plans` under a `CompiledPlanId`,
+/// reused while its decisions hold, and planned again in a store whose atom ids differ (its SQL
+/// holds them).
+#[test]
+fn the_wave_program_is_a_compiled_plan() {
+    let (clauses, _) = clauses();
+    let wave = Wave::new(&clauses, ExecutionBackend::CpuInterpreter).unwrap();
+    let rows = |store: &ContentStore| -> Vec<(Vec<u8>, String)> {
+        store
+            .candidate_transaction(false, |db| {
+                let mut statement = db.prepare("SELECT plan, decisions FROM compiled_plans WHERE compiler = 2 AND decisions <> '' ORDER BY plan")?;
+                let found = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>();
+                found
+            })
+            .unwrap()
+    };
+    let digest = |program: &Program| program.steps.iter().map(|step| step.sql.clone()).collect::<Vec<_>>();
+    let first = ContentStore::open(&temp("plans-a").with_extension("sqlite")).unwrap();
+    let planned = wave.kept_program(&first).unwrap();
+    let again = wave.kept_program(&first).unwrap();
+    assert_eq!(digest(&planned), digest(&again));
+    let kept = rows(&first);
+    assert_eq!(kept.len(), 1, "one wave plan");
+    // A store whose atoms were interned in another order: the same identity, other atom ids.
+    let second = ContentStore::open(&temp("plans-b").with_extension("sqlite")).unwrap();
+    second.intern_atoms(&["rerail-test-shift-0", "rerail-test-shift-1", "rerail-test-shift-2"]).unwrap();
+    let replanned = wave.kept_program(&second).unwrap();
+    let there = rows(&second);
+    assert_eq!(there.len(), 1);
+    assert_eq!(there[0].0, kept[0].0, "the plan's identity does not depend on the store");
+    let atoms = serde_json::from_str::<Vec<(String, u32)>>(&there[0].1).unwrap();
+    let names = atoms.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>();
+    assert!(!atoms.is_empty());
+    assert_eq!(second.intern_atoms(&names).unwrap(), atoms.iter().map(|(_, atom)| *atom).collect::<Vec<_>>(), "planned with this store's atoms");
+    assert_ne!(there[0].1, kept[0].1, "planned again: the first store's atom ids do not hold here");
+    assert_eq!(digest(&replanned).len(), digest(&planned).len());
+}

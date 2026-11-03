@@ -93,6 +93,10 @@ fn invalid(error: impl std::fmt::Debug) -> StoreError {
     StoreError::Invalid(format!("{error:?}"))
 }
 
+
+/// The process's planned wave programs, in memory before the store (`stats::plans`' bounded cache).
+static WAVE_PLANS: std::sync::LazyLock<std::sync::Mutex<crate::code_rule_dsl::stats::plans::Plans>> = std::sync::LazyLock::new(Default::default);
+
 impl Wave {
     pub(in crate::code_rule_dsl) fn new(clauses: &[Clause], backend: ExecutionBackend) -> StoreResult<Self> {
         #[cfg(target_os = "macos")]
@@ -142,7 +146,62 @@ impl Wave {
         self.emit(store, true)
     }
 
+    /// The planned program, from `compiled_plans` while its decisions hold (list step 20): it is
+    /// keyed by a `CompiledPlanId` over the planner's inputs, and it reads each batch input's row
+    /// estimate, valid while each stays in its log2 bucket. Otherwise it is planned and recorded.
     fn emit(&self, store: &ContentStore, kept: bool) -> StoreResult<Program> {
+        let (source, batch) = self.inputs(kept);
+        let mut identity = crate::code_rule_dsl::stats::identity::CompiledPlanId::builder()
+            .text("rerail.wave-program/v1")
+            .text(PROGRAM)
+            .text(&source)
+            .u64(crate::code_rule_dsl::stats::plans::COMPILER_VERSION as u64);
+        let mut inputs = batch.iter().collect::<Vec<_>>();
+        inputs.sort_by(|a, b| a.0.cmp(b.0));
+        let mut reads = std::collections::BTreeMap::new();
+        for (name, (from, estimate)) in &inputs {
+            identity = identity.text(name).text(from);
+            reads.insert(format!("batch.{name}"), *estimate as u64);
+        }
+        for name in &self.names {
+            identity = identity.text(name);
+        }
+        let id = *identity.finish().as_bytes();
+        let held = store.candidate_transaction(false, |db| WAVE_PLANS.lock().expect("wave plans mutex poisoned").valid(db, &[id], &reads))?;
+        if let Some(held) = held.get(&id) {
+            // The SQL holds this store's atom ids: a plan is reused only where the atoms it was
+            // planned with have the same ids here (its decisions record them).
+            let atoms = serde_json::from_str::<Vec<(String, u32)>>(&held.decisions).unwrap_or_default();
+            let names = atoms.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>();
+            let same = store.intern_atoms(&names)?.into_iter().eq(atoms.iter().map(|(_, atom)| *atom));
+            if let (true, Ok(program)) = (same, serde_json::from_slice::<Program>(&held.program)) {
+                crate::code_rule_dsl::prof::count("wave.plan.reused", 1);
+                return Ok(program);
+            }
+        }
+        let mut atoms = Vec::<(String, u32)>::new();
+        let intern = &mut |names: &[&str]| {
+            let found = store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()))?;
+            atoms.extend(names.iter().map(|name| (*name).to_owned()).zip(found.iter().copied()));
+            Ok(found)
+        };
+        let mut program = emit::emit_batch(&source, PROGRAM, &batch, intern).map_err(invalid)?.program;
+        program.file_local = true;
+        program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
+        let bytes = serde_json::to_vec(&program).map_err(|error| invalid(error.to_string()))?;
+        atoms.sort();
+        atoms.dedup();
+        let decisions = serde_json::to_string(&atoms).map_err(|error| invalid(error.to_string()))?;
+        store.candidate_transaction(true, |db| {
+            let compiled = crate::code_rule_dsl::stats::plans::Compiled { decisions: decisions.clone(), program: bytes.clone() };
+            WAVE_PLANS.lock().expect("wave plans mutex poisoned").put(db, id, compiled, &reads).map(|_| ())
+        })?;
+        crate::code_rule_dsl::prof::count("wave.plan.compiled", 1);
+        Ok(program)
+    }
+
+    /// The planner's source and the batch inputs it reads, each with its source and estimate.
+    fn inputs(&self, kept: bool) -> (String, HashMap<String, (String, f64)>) {
         let mut batch = HashMap::from([
             (
                 "terminal".to_owned(),
@@ -159,11 +218,7 @@ impl Wave {
             batch.insert("kept_match".to_owned(), (format!("(SELECT c0, c1, c2 FROM {KEPT_MATCH})"), 1000.0));
             batch.insert("kept_span".to_owned(), (format!("(SELECT c0, c1, c2, c3 FROM {KEPT_SPAN})"), 1000.0));
         }
-        let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
-        let mut program = emit::emit_batch(&source, PROGRAM, &batch, intern).map_err(invalid)?.program;
-        program.file_local = true;
-        program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
-        Ok(program)
+        (source, batch)
     }
 
     /// The chunk's batch: its documents' stored tapes, in order, labelled by every clause's

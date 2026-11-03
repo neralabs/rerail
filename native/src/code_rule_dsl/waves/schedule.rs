@@ -40,12 +40,12 @@ use crate::code_rule_dsl::facts::Graph;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::facts::vtab::syntax::{Document, fresh, sources};
 use crate::content_store::{DerivationInput, DerivationRecord, StoreError, StoreResult};
-use rusqlite::OptionalExtension as _;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// One statement of a wave program.
+#[derive(serde::Deserialize, serde::Serialize)]
 pub(in crate::code_rule_dsl) struct Step {
     pub output: String,
     pub stratum: u32,
@@ -55,6 +55,7 @@ pub(in crate::code_rule_dsl) struct Step {
     pub sql: String,
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
 pub(in crate::code_rule_dsl) struct Program {
     pub name: String,
     /// Derived relations and their arity. Every column is an integer (decision 0009), and the
@@ -383,29 +384,13 @@ pub(in crate::code_rule_dsl) fn run_over(
             for (name, source) in relations {
                 lease.bind(name, source).map_err(sql)?;
             }
-            let token = demand(&docs)?.map(|d| lease.registry.register(d));
-            let waves = waves(lease, program, token, limits.max_waves, docs.is_empty()).and_then(|waves| match token {
-                // A batch the steps read that did not complete fails its chunk: its relations
-                // would be silently short.
-                Some(token) if program.steps.iter().any(|step| step.sql.contains(":batch")) => {
-                    let failed: Option<String> = lease
-                        .query_row(
-                            "SELECT coalesce(error_code, 'incomplete') FROM rerail_batch_status WHERE batch = ?1 AND complete = 0",
-                            [token],
-                            |row| row.get(0),
-                        )
-                        .optional()?;
-                    match failed {
-                        Some(error) => Err(StoreError::Invalid(format!("{}: demand(batch) failed: {error}", program.name))),
-                        None => Ok(waves),
-                    }
-                }
-                _ => Ok(waves),
-            });
-            if let Some(token) = token {
-                lease.registry.remove_batch(token);
-            }
-            outcome.waves += waves?;
+            // The chunk's batch through the one driver (`demand::driver`, list step 20): a batch
+            // the steps read that did not complete fails its chunk.
+            let reads = program.steps.iter().any(|step| step.sql.contains(":batch"));
+            let status = reads.then_some((&**lease as &rusqlite::Connection, program.name.as_str()));
+            outcome.waves += crate::code_rule_dsl::demand::driver::with_batch(&lease.registry, demand(&docs)?, status, |token| {
+                waves(lease, program, token, limits.max_waves, docs.is_empty())
+            })?;
         }
         Ok(())
     })?;

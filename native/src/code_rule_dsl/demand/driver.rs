@@ -13,7 +13,7 @@
 use super::vtab::{HardPartition, MatchRegistry, PackedDemand, PackedRow, register_module};
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::content_store::{ContentStore, StoreResult};
-use rusqlite::{Connection, Row};
+use rusqlite::{Connection, OptionalExtension as _, Row};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
@@ -282,6 +282,39 @@ fn production_backend() -> ExecutionBackend {
     }
 }
 
+/// Runs `run` with `demand` registered on `registry` (its batch token; none without a batch):
+/// the one way a batch is driven, by the wave's chunks (`waves::schedule::run_over`) and by
+/// `drive`. With `status`, a batch that did not complete fails, since the relations the
+/// statements read of it would be silently short. The batch is removed however `run` ends.
+pub(in crate::code_rule_dsl) fn with_batch<T>(
+    registry: &MatchRegistry,
+    demand: Option<PackedDemand>,
+    status: Option<(&Connection, &str)>,
+    run: impl FnOnce(Option<i64>) -> StoreResult<T>,
+) -> StoreResult<T> {
+    let token = demand.map(|demand| registry.register(demand));
+    let result = run(token).and_then(|value| match (token, status) {
+        (Some(token), Some((db, name))) => {
+            let failed: Option<String> = db
+                .query_row(
+                    "SELECT coalesce(error_code, 'incomplete') FROM rerail_batch_status WHERE batch = ?1 AND complete = 0",
+                    [token],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match failed {
+                Some(error) => Err(crate::content_store::StoreError::Invalid(format!("{name}: demand(batch) failed: {error}"))),
+                None => Ok(value),
+            }
+        }
+        _ => Ok(value),
+    });
+    if let Some(token) = token {
+        registry.remove_batch(token);
+    }
+    result
+}
+
 /// Registers `demand` and runs `statements` over it in one transaction on `store`. Each
 /// statement either fills a temporary table (`materialization`) or returns output rows
 /// (`output_kind` 1: violation, 2: failure) or, failing those, relation rows.
@@ -291,21 +324,22 @@ pub(in crate::code_rule_dsl) fn drive(
     statements: &[ExecutionStatement],
     file_metadata: &str,
 ) -> StoreResult<QueryOutcome> {
-    let token = REGISTRY.register(demand);
-    let outcome = store.candidate_transaction(false, |db| {
-        // Registering again replaces the modules and re-reads their row estimates from
-        // `fact_stats`, which the previous batch may have changed.
-        register_module(db, Arc::clone(&REGISTRY))?;
-        let mut materialized = Vec::new();
-        let result = run(db, token, statements, file_metadata, &mut materialized);
-        db.flush_prepared_statement_cache();
-        for table in materialized.into_iter().rev() {
-            let _ = db.execute_batch(&format!("DROP TABLE IF EXISTS temp.\"{table}\""));
-        }
-        result
-    });
-    REGISTRY.remove_batch(token);
-    outcome
+    // Failures are rows here (`SqlFailureRow`), so the batch's status is the statements' to read.
+    with_batch(&REGISTRY, Some(demand), None, |token| {
+        let token = token.expect("a registered batch");
+        store.candidate_transaction(false, |db| {
+            // Registering again replaces the modules and re-reads their row estimates from
+            // `fact_stats`, which the previous batch may have changed.
+            register_module(db, Arc::clone(&REGISTRY))?;
+            let mut materialized = Vec::new();
+            let result = run(db, token, statements, file_metadata, &mut materialized);
+            db.flush_prepared_statement_cache();
+            for table in materialized.into_iter().rev() {
+                let _ = db.execute_batch(&format!("DROP TABLE IF EXISTS temp.\"{table}\""));
+            }
+            result
+        })
+    })
 }
 
 fn run(
