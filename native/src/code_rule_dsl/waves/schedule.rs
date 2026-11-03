@@ -75,6 +75,20 @@ pub(in crate::code_rule_dsl) struct Program {
 }
 
 impl Program {
+    /// The longest chain of strata its steps read through: the waves a chunk of a program without
+    /// recursion takes (independent strata share a wave).
+    pub(in crate::code_rule_dsl) fn strata(&self) -> u32 {
+        let mut depth = BTreeMap::<&str, u32>::new();
+        let mut steps = self.steps.iter().collect::<Vec<_>>();
+        steps.sort_by_key(|step| step.stratum);
+        for step in steps {
+            let below = step.reads.iter().filter_map(|read| depth.get(read.trim_start_matches("delta_"))).max().copied().unwrap_or(0);
+            let at = depth.entry(step.output.as_str()).or_insert(0);
+            *at = (*at).max(below + 1);
+        }
+        depth.values().max().copied().unwrap_or(1)
+    }
+
     /// The producer of the program's families: its relations and statements.
     fn digest(&self) -> [u8; 32] {
         let mut hash = Sha256::new();

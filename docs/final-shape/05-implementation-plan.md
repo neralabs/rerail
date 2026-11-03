@@ -346,6 +346,22 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 
 **Status (2026-10-27): rows 1 (steps 1–3), 2 and 4 adapted: `logic::native` (lattices, `widen`, store atoms), `logic::front`, and `logic::magic` (T's `magic_sets`, `magic_adorn` and `gate_negations`, matching T's transformed programs on its five programs in all three modes). Row 5 step 1: `logic::plan`, T's planner and SQL evaluation, choosing T's plans and deriving T's outputs on three of its programs over a nine-module fixture. Row 3: `logic::front::yaml`, every pack's `rerail.policy/v1` document round-tripping through the logic AST and Datalog text, forbid matchers as `violation(…) :- ast($D, $N, {…})` rules and the rest as `.policy {…}`. 2026-10-29: row 5's native strata ported (T's `RDL_NATIVE` modes: `native_stratum`, `native_fixpoint`, `native_set_fixpoint`, `join_spec`, `observe`, `live_stats`, `merge_upsert`, the `tape_nearest` climb), on T's extension and its own set engine (restored `d0a8636d`), every mode deriving T's outputs on its three programs. Outstanding: row 1 step 4 (after Phases 7–8), the native strata over atoms (O13), `sql_ast` lowering and `compiled_plans`; O11, O12, O13.**
 
+**List step 21 (2026-11-03): rules through the logic language** (`waves::policies`; user decisions: demand keyed by (clause, document), findings read `violation`).
+- **The round trip on the path.** `Rules::lower` reads each policy's canonical document into one logic program (`yaml::add`). The documents the program gives back must equal those read, or the policy is refused.
+- **The wave runs the rules.**
+  - Each `ast` atom whose Python matcher lowers is a wave clause `i`, and it reads `match(i, $D, $N)`. A rule whose atom does not lower is left out.
+  - The rewritten rules join the wave's source, so `violation(policy, clause, d, n)` is derived as written.
+  - The findings layer reads it as `forbidden`, mapping (policy, clause) atoms to its clause through `clause(c, p, k)`. Its own relation is renamed `reported`.
+  - The slice runs `Program::strata()` waves per chunk (two: the batch's outputs, then the rules).
+- **Magic sets per wave (C10).**
+  - Each lowered atom is a relation `ast_i(d, n)` under `.demand`. Each rule reading one starts with `wave($D)`, the chunk's documents. T's `magic_sets` gives the magic rules.
+  - What a magic rule cannot read before the batch is dropped, which widens demand. That means another atom, a relation derived from one, or an input the wave lacks.
+  - The rest is one statement (`emit::single`) deriving `demanded(i, d)`. Before each chunk's batch, `Wave::demand` runs it and keeps a clause's candidates only on its demanded documents.
+  - A demand program needing recursion or setup demands everything (`wave.demand.all`).
+  - For YAML rules every pair is demanded. Rules whose literals before an atom are available narrow it; `magic_sets_demand_each_clause_where_its_rules_read_it` gives demand (0,5), (0,7), (1,7), (2,5), (2,7) for a document filter and a widened atom.
+- **Measured** (load 43): `the_backends_find_the_same_keys_on_real_files` gives 710 keys on all four backends, CPU per audit 6.4/6.4/3.0/2.9 s, unchanged within noise. `waves::`, `slice::`, `logic::` and `tools::`: 150 passed.
+- **Not yet:** inputs a wave could read before its batch (the `py.*` families, list step 25) are what will narrow demand on the data-layer rules. Each forbid rule is one step, about 1,300 statements per chunk at data-layer scale; merging rules of one shape is open.
+
 Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust port on T's 574/331-file workloads; CPU and RSS ≤ T's numbers.
 
 ### Phase 7: SQL-driven waves (§4, §7; E1, E12, E14)

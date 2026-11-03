@@ -2,8 +2,9 @@
 //!
 //! A port of Typing-support's `rdl.py` (T) `magic_sets`, `magic_sets_once`, `magic_adorn`, `magic_adorn_once` and
 //! `gate_negations`, rule for rule: its transformed programs on T's five programs are the tests' goldens. T's
-//! environment switches are `Options`, with T's defaults. Outstanding (C10): demand is still whole-program; the
-//! waves (Phase 7) install each wave's magic relations as its demand batch.
+//! environment switches are `Options`, with T's defaults. Per wave (C10, list step 21): `waves::policies` demands each
+//! lowered `ast` atom by document, seeds the demand with each chunk's documents, and the magic rules decide which
+//! (clause, document) pairs the chunk's batch runs.
 //!
 //! - `.demand r, …` (`magic_sets`): each demanded relation restricted to the keys (first column) its consumers ask
 //!   for, with magic rules passing as many literals sideways as stay stratifiable.

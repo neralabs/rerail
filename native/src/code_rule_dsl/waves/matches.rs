@@ -64,6 +64,8 @@ pub(in crate::code_rule_dsl) const KEPT_SPAN: &str = "temp.wave_kept_span";
 /// and its lowered matcher.
 pub(in crate::code_rule_dsl) struct Clause {
     pub name: String,
+    /// Its policy's id and its own: the key of its violations (`violation("<policy>", "<clause>", …)`).
+    pub key: (String, String),
     pub plan: Arc<AnchorPlan>,
     pub matcher: LoweredMatcher,
 }
@@ -87,6 +89,10 @@ pub(in crate::code_rule_dsl) struct Wave {
     lang: u32,
     /// How the candidates are selected (`Candidates`).
     pub(in crate::code_rule_dsl) route: Candidates,
+    /// The policies' rules over the clauses, and their demand (`policies`, list step 21).
+    logic: super::policies::Logic,
+    /// The demand statement, planned on the run's store when its program is (`Logic::demand_sql`).
+    demand_sql: std::sync::Mutex<Option<Option<String>>>,
     /// Each chunk's candidates, in order.
     pub chunks: Vec<Chunk>,
 }
@@ -107,6 +113,18 @@ impl Candidates {
     }
 }
 
+/// Each clause's candidates kept only on the documents it is demanded on.
+fn restrict(candidates: &mut [Vec<Vec<u32>>], demanded: Option<&[Vec<bool>]>) {
+    let Some(demanded) = demanded else { return };
+    for (clause, on) in candidates.iter_mut().zip(demanded) {
+        for (nodes, &on) in clause.iter_mut().zip(on) {
+            if !on {
+                *nodes = Vec::new();
+            }
+        }
+    }
+}
+
 fn invalid(error: impl std::fmt::Debug) -> StoreError {
     StoreError::Invalid(format!("{error:?}"))
 }
@@ -116,7 +134,13 @@ fn invalid(error: impl std::fmt::Debug) -> StoreError {
 static WAVE_PLANS: std::sync::LazyLock<std::sync::Mutex<crate::code_rule_dsl::stats::plans::Plans>> = std::sync::LazyLock::new(Default::default);
 
 impl Wave {
+    /// The wave of `clauses`, each its own forbid rule demanded everywhere (`Logic::per_clause`).
     pub(in crate::code_rule_dsl) fn new(clauses: &[Clause], backend: ExecutionBackend) -> StoreResult<Self> {
+        Self::with_logic(clauses, super::policies::Logic::per_clause(clauses), backend)
+    }
+
+    /// The wave of `clauses` running the policies' rules `logic` (`policies::lower`).
+    pub(in crate::code_rule_dsl) fn with_logic(clauses: &[Clause], logic: super::policies::Logic, backend: ExecutionBackend) -> StoreResult<Self> {
         #[cfg(target_os = "macos")]
         if matches!(backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground) {
             LoweredWave::warm_metal();
@@ -131,6 +155,8 @@ impl Wave {
             lowered,
             lang: u32::from(tape_tag(GrammarDialect::Python).expect("Python has a tape")),
             route: Candidates::from_environment(),
+            logic,
+            demand_sql: std::sync::Mutex::new(None),
             chunks: Vec::new(),
         })
     }
@@ -169,6 +195,8 @@ impl Wave {
     /// keyed by a `CompiledPlanId` over the planner's inputs, and it reads each batch input's row
     /// estimate, valid while each stays in its log2 bucket. Otherwise it is planned and recorded.
     fn emit(&self, store: &ContentStore, kept: bool) -> StoreResult<Program> {
+        // The run's demand statement, its atoms this store's.
+        *self.demand_sql.lock().expect("demand statement mutex poisoned") = Some(self.logic.demand_sql(store)?);
         let (source, batch) = self.inputs(kept);
         let mut identity = crate::code_rule_dsl::stats::identity::CompiledPlanId::builder()
             .text("rerail.wave-program/v1")
@@ -219,6 +247,32 @@ impl Wave {
         Ok(program)
     }
 
+    /// Per clause, per document of the chunk: whether the policies' rules demand the clause there
+    /// (`policies`: the magic rules seeded by the chunk's documents in `temp.wave_document`, run
+    /// before the batch). `None`: every clause everywhere.
+    fn demanded(&self, lease: &Lease<'_>, store: &ContentStore, documents: &[Document]) -> StoreResult<Option<Vec<Vec<bool>>>> {
+        let sql = {
+            let mut held = self.demand_sql.lock().expect("demand statement mutex poisoned");
+            if held.is_none() {
+                *held = Some(self.logic.demand_sql(store)?);
+            }
+            held.clone().flatten()
+        };
+        let Some(sql) = sql else { return Ok(None) };
+        let position = documents.iter().enumerate().map(|(at, d)| (i64::from(d.key), at)).collect::<HashMap<_, _>>();
+        let mut demanded = vec![vec![false; documents.len()]; self.plans.len()];
+        let mut statement = lease.prepare_cached(&sql)?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let (clause, d): (i64, i64) = (row.get(0)?, row.get(1)?);
+            if let (Some(clause), Some(&file)) = (demanded.get_mut(clause as usize), position.get(&d)) {
+                clause[file] = true;
+            }
+        }
+        crate::code_rule_dsl::prof::count("demand.pairs", demanded.iter().flatten().filter(|&&on| on).count());
+        Ok(Some(demanded))
+    }
+
     /// The planner's source and the batch inputs it reads, each with its source and estimate.
     fn inputs(&self, kept: bool) -> (String, HashMap<String, (String, f64)>) {
         let mut batch = HashMap::from([
@@ -232,6 +286,7 @@ impl Wave {
             ("document".to_owned(), ("(SELECT position AS c0, d AS c1 FROM temp.wave_document)".to_owned(), 100.0)),
         ]);
         let mut source = SOURCE.to_owned();
+        source.push_str(&self.logic.rules);
         if kept {
             source.push_str(KEPT);
             batch.insert("kept_match".to_owned(), (format!("(SELECT c0, c1, c2 FROM {KEPT_MATCH})"), 1000.0));
@@ -245,6 +300,7 @@ impl Wave {
     /// kinds.
     pub(in crate::code_rule_dsl) fn demand(
         &mut self,
+        lease: &Lease<'_>,
         graph: &(impl Graph + ?Sized),
         scope: &str,
         documents: &[Document],
@@ -253,6 +309,7 @@ impl Wave {
         if documents.is_empty() {
             return Ok(None);
         }
+        let demanded = crate::code_rule_dsl::prof::time("demand.magic", || self.demanded(lease, graph.store(), documents))?;
         let tapes = crate::code_rule_dsl::prof::time("demand.tapes", || {
             documents
                 .iter()
@@ -275,7 +332,8 @@ impl Wave {
             // On Metal the candidates come first (set steps on the device, ~150 ms), then every
             // clause's labels and its roots from those candidates in one run: the roots read the
             // labels in place and come back as match records (decision 0024 §3).
-            let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
+            let mut candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
+            restrict(&mut candidates, demanded.as_deref());
             let active = vec![vec![true; docs.len()]; self.plans.len()];
             let views = crate::code_rule_dsl::prof::time("demand.labels", || {
                 #[cfg(target_os = "macos")]
@@ -290,7 +348,8 @@ impl Wave {
             })?;
             (candidates, views)
         } else {
-            let candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
+            let mut candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
+            restrict(&mut candidates, demanded.as_deref());
             crate::code_rule_dsl::prof::release();
             crate::code_rule_dsl::prof::peak("2.candidates");
             // A clause's labels are needed only where its root program starts.

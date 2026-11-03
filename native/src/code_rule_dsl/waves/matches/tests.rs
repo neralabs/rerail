@@ -93,7 +93,7 @@ fn shaped_from(policies: &[(String, crate::code_rule_dsl::CompiledCodeRuleDsl)])
                 }
                 let Ok(tree) = match_tree(grammar) else { continue };
                 let Ok(matcher) = LoweredMatcher::lower(&tree) else { continue };
-                clauses.push(Clause { name, plan: Arc::clone(&grammar.anchors), matcher });
+                clauses.push(Clause { name, key: (compiled.inner.id.clone(), clause.id.clone()), plan: Arc::clone(&grammar.anchors), matcher });
                 grammars.push(grammar.clone());
                 shapes.push(Shape { rule: Arc::clone(&compiled.inner), clause: at, grammar: index });
             }
@@ -242,18 +242,22 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
     let mut wave = Wave::new(&clauses, backend).unwrap();
     wave.route = route;
     let program = wave.program(&store).unwrap();
-    // One step per output (`match`, `span`), neither reading the other: they share the wave.
-    assert_eq!(program.steps.len(), 2, "{:?}", program.steps.iter().map(|s| &s.sql).collect::<Vec<_>>());
-    assert!(program.steps.iter().all(|s| s.reads.iter().all(|r| !program.relations.iter().any(|(rel, _)| r.ends_with(rel.as_str())))));
+    // One step per output of the batch (`match`, `span`), neither reading the other: they share
+    // the first wave. Then each clause's forbid rule over `match` (list step 21).
+    let first = program.steps.iter().filter(|s| s.output != "violation").collect::<Vec<_>>();
+    assert_eq!(first.len(), 2, "{:?}", first.iter().map(|s| &s.sql).collect::<Vec<_>>());
+    assert!(first.iter().all(|s| s.reads.iter().all(|r| !program.relations.iter().any(|(rel, _)| r.ends_with(rel.as_str())))));
+    assert_eq!(program.steps.len(), 2 + clauses.len());
+    assert_eq!(program.strata(), 2);
     let backing = Backing::default();
     let scope = backing.enter(&store);
     let lease = scope.pool().take().unwrap();
-    // A file-local program of one step: one wave per chunk.
-    let limits = Limits { max_waves: 1, ..limits };
+    // A file-local program of two strata: two waves per chunk.
+    let limits = Limits { max_waves: program.strata(), ..limits };
     let started = std::time::Instant::now();
-    let outcome = run(&lease, &store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(&store, WS, chunk)).unwrap();
+    let outcome = run(&lease, &store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(&lease, &store, WS, chunk)).unwrap();
     let elapsed = started.elapsed();
-    assert_eq!(outcome.waves as usize, outcome.chunks);
+    assert_eq!(outcome.waves as usize, 2 * outcome.chunks);
     wave.statistics(&lease, WS).unwrap();
 
     let position = documents.iter().enumerate().map(|(at, d)| (i64::from(d.key), at)).collect::<BTreeMap<_, _>>();
@@ -471,8 +475,8 @@ fn findings_gate(store: &ContentStore, paths: &[String], policies: &[(String, cr
     let backing = Backing::default();
     let scope = backing.enter(store);
     let lease = scope.pool().take().unwrap();
-    let limits = Limits { max_waves: 1, ..Limits::default() };
-    run(&lease, store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(store, WS, chunk)).unwrap();
+    let limits = Limits { max_waves: program.strata(), ..Limits::default() };
+    run(&lease, store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(&lease, store, WS, chunk)).unwrap();
     let layer = Layer::new(shapes).unwrap();
     let findings_program = layer.program(store).unwrap();
     assert_eq!(findings_program.program.steps.len(), 1, "the layer is one statement");

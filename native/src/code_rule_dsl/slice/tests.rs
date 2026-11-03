@@ -5,6 +5,8 @@
 
 use super::*;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::facts::observe::roots::directory_root;
 use crate::code_rule_dsl::findings::contract::Coverage;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
@@ -472,7 +474,7 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
         ("supertype".to_owned(), CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|error| panic!("{}", error.reason)))
     };
     let policies = vec![policy(serde_json::json!({ "kind": "expression", "has": { "kind": "identifier" } }))];
-    let (clauses, _) = lowered(&policies);
+    let (clauses, _) = lowered(&policies).unwrap();
     assert_eq!(clauses.len(), 1, "the supertype clause lowers");
     let dir = temp("supertype");
     std::fs::create_dir_all(&dir).unwrap();
@@ -548,7 +550,7 @@ fn the_slice_finds_ws_findings_on_real_files() {
     let (paths, repo) = sample(&dir);
     let sources = paths.iter().map(|p| (p.clone(), std::fs::read_to_string(dir.join(p)).unwrap())).collect::<Vec<_>>();
     let bytes = sources.iter().map(|(_, s)| s.len()).sum::<usize>();
-    let (clauses, _) = lowered(&policies);
+    let (clauses, _) = lowered(&policies).unwrap();
     let names = clauses.iter().map(|c| c.name.clone()).collect::<BTreeSet<_>>();
     let total = python_clauses(&policies);
 
@@ -737,7 +739,7 @@ fn a_recursive_label_settles_at_every_depth() {
     std::fs::create_dir_all(&dir).unwrap();
     let source = "X == 4 * 365 + 1\nX == [[1]]\nX == 1 + 2 + 3\nX == (4 + 1)\n4 * 365 + 1 == x\n";
     write(&dir, "a.py", source);
-    let (clauses, _) = lowered(&policies);
+    let (clauses, _) = lowered(&policies).unwrap();
     let names = clauses.iter().map(|c| c.name.clone()).collect::<BTreeSet<_>>();
     let (ws, failed) = ws_keys(&policies, &names, &[("a.py".to_owned(), source.to_owned())]);
     let run = cold(&dir, &policies);
