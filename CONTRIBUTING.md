@@ -458,10 +458,11 @@ with `npm run conformance:languages -- --pack <id>` (`--samples` adds the sample
 `divergences.json`, with the evidence you checked
 ([conformance/README.md, "Divergences"](conformance/README.md#divergences)).
 
-**The conformance comment.** On a pull request from a branch of this repository, CI keeps one comment headed
-**Conformance**: whether every shipped rule passes, the shipped rules' blocking failures, the candidates ready to
-promote, the shipped rules whose `pack.json` `on` disagrees with upstream-status, and where each other candidate
-stops. A rule whose findings the rename variants all lose (`holds-under-rename` with nothing surviving) fails: the
+**The conformance comment.** On a pull request from a branch of this repository that changes what the check reads
+(any change under `packs/` does), CI keeps one comment headed **Conformance**: whether every shipped rule passes, the
+shipped rules' blocking failures, the candidates ready to promote, the shipped rules whose `pack.json` `on` disagrees
+with upstream-status, and where each other candidate stops. A rule whose findings the rename variants all lose
+(`holds-under-rename` with nothing surviving) fails: the
 renamer keeps literals and the order of names, so such a rule matches the cases' names, not the construct. A shipped rule that fails a
 blocking check fails CI: fix it, or move it back to `candidates/`. Everything else in the comment is reported only. On
 a pull request from a fork no CI runs (below); run `npm run test:conformance` yourself and say so in the pull

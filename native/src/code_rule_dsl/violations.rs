@@ -399,7 +399,7 @@ pub(super) fn bind(
     match query {
         Some(Query::Ast { matchers, .. }) => {
             let mut analysis = CaptureAnalysis::default();
-            for grammar in matchers {
+            for grammar in matchers.iter() {
                 counted.extend(analysis.counts(&grammar.matcher));
                 ast_captures(
                     &grammar.matcher,
@@ -408,7 +408,7 @@ pub(super) fn bind(
                     &mut names,
                 );
             }
-            for grammar in matchers {
+            for grammar in matchers.iter() {
                 let mut regexes = Vec::new();
                 node_regexes(&grammar.matcher, &grammar.utils, &mut regexes);
                 for regex in &regexes {
