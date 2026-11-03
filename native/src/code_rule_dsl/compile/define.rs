@@ -7,6 +7,7 @@ use super::config::Options;
 use super::dialect::language_capability;
 use super::documents::{DocumentScopes, Side};
 use super::refuse_unavailable_semantics;
+use super::shared::SharedTables;
 use super::utils::{UtilDef, UtilIds, UtilScope, reject_util_cycles, util_map};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown, required_str};
 use crate::code_rule_dsl::language::{CodeRuleLanguage, GrammarDialect};
@@ -25,8 +26,10 @@ pub(super) type SharedUtils<'a> = BTreeMap<String, BTreeMap<String, UtilDef<'a>>
 
 /// What the document's defines hold: shared utilities and options.
 pub(super) struct Defines<'a> {
-    pub(super) utils: SharedUtils<'a>,
+    pub(super) utils: &'a SharedUtils<'a>,
     pub(super) options: Options,
+    /// The shared utilities' tables, which the queries that reach them fill.
+    pub(super) tables: SharedTables<'a>,
 }
 
 /// Whether a clause is a define.
@@ -197,6 +200,7 @@ fn check_dialects<'u>(
             captures: Default::default(),
             calls: Some(&calls),
             documents: documents.as_ref(),
+            instances: None,
             side: *side,
         };
         let compile = |gaps: &mut BTreeMap<&'u str, Vec<String>>| {
@@ -220,9 +224,7 @@ fn check_dialects<'u>(
         let mut gaps = BTreeMap::new();
         let compiled = compile(&mut gaps)?;
         if table.was_unfilled() {
-            if table.draft.set(compiled).is_err() {
-                unreachable!("a fresh table is drafted once");
-            }
+            table.draft_all(compiled);
             gaps.clear();
             compile(&mut gaps)?;
         }
@@ -320,6 +322,42 @@ mod tests {
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let result = evaluate_file(&compiled, "typescript", "a.ts", "window.x;\n");
         assert_eq!(clause_ids(&result), ["declared"], "{result}");
+    }
+
+    #[test]
+    fn queries_sharing_a_define_each_read_only_the_utilities_they_reach() {
+        let define = json!({ "id": "shared", "define": { "language": "typescript", "utils": {
+            "named": { "kind": "identifier", "pattern": "$NAME" },
+            "number": { "kind": "number" },
+        } } });
+        let named = query(
+            "named",
+            "typescript",
+            json!({ "rule": { "matches": "named" } }),
+        );
+        let compared = query(
+            "compared",
+            "typescript",
+            json!({ "rule": {
+            "kind": "binary_expression",
+            "has": { "matches": "number" },
+            "compare": { "left": "NAME", "op": "eq", "right": "NAME" },
+        } }),
+        );
+        // `named` binds `$NAME` for the query that reaches it, not for one compiled after it.
+        assert_eq!(
+            rejection(compile(json!([define, named, compared]))),
+            "/clauses/2/forbid/ast/rule/compare/left: `$NAME` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)"
+        );
+        let number = query(
+            "number",
+            "typescript",
+            json!({ "rule": { "matches": "number" } }),
+        );
+        let compiled = compile(json!([define, named, number]))
+            .unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&compiled, "typescript", "a.ts", "f(1);\n");
+        assert_eq!(clause_ids(&result), ["named", "number"], "{result}");
     }
 
     #[test]
@@ -460,7 +498,14 @@ mod tests {
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "async function f() { return ((await x)); }\n";
         assert_violations(&evaluate_file(&compiled, "typescript", "a.ts", source), 1);
-        let utils = &grammar_matchers(&compiled)[0].utils.names;
-        assert_eq!(utils, &["tail-await".to_owned()]);
+        let grammar = &grammar_matchers(&compiled)[0];
+        let names = &grammar.utils.names;
+        let reached = grammar.query_utils.iter().map(|&index| &names[index]);
+        assert_eq!(reached.collect::<Vec<_>>(), ["tail-await"]);
+        let filled = (0..names.len()).filter(|&index| grammar.utils.rule(index).is_some());
+        assert_eq!(
+            filled.map(|index| &names[index]).collect::<Vec<_>>(),
+            ["tail-await"]
+        );
     }
 }

@@ -1,0 +1,1 @@
+Code rules whose `define` shares utilities with many queries compile faster and in less memory: queries with the same `languageOptions` and no utilities, `transform` or embedded program of their own now share one compiled copy of the shared utilities they reach, instead of each compiling its own. What the rules report is unchanged.

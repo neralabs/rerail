@@ -28,6 +28,7 @@ fn compile_rule(
         captures: Default::default(),
         calls: None,
         documents: None,
+        instances: None,
         side: crate::code_rule_dsl::compile::documents::Side::Host,
     };
     crate::code_rule_dsl::compile::compile_ast_rule(rule, language, path, gaps, &utils)

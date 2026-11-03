@@ -153,7 +153,7 @@ fn utility_captures<'a>(
     utils: &'a UtilTable,
     summaries: &mut CaptureSummaries<'a>,
 ) -> BTreeSet<&'a str> {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule(index) else {
         return BTreeSet::new();
     };
     summaries.summarize(index, BTreeSet::new(), |summaries| {
@@ -243,7 +243,7 @@ fn utility_exports<'a>(
     utils: &'a UtilTable,
     summaries: &mut ExportSummaries<'_, 'a>,
 ) -> Exports<'a> {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule(index) else {
         return Exports::default();
     };
     let ExportSummaries {
@@ -352,7 +352,7 @@ fn node_regexes_utility<'a>(
     summaries: &mut UtilitySummary<usize, UtilityRegexes<'a>>,
     regexes: &mut Vec<&'a Regex>,
 ) {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule(index) else {
         return;
     };
     let summary = summaries.summarize(index, UtilityRegexes::default(), |summaries| {
@@ -688,7 +688,7 @@ fn check_each(
     let mut variables = BTreeMap::new();
     for grammar in matchers {
         collect_variables(&grammar.matcher, &mut variables);
-        for util in grammar.utils.shared_rules() {
+        for util in grammar.utils.shared_rules(&grammar.query_utils) {
             collect_variables(util, &mut variables);
         }
     }
