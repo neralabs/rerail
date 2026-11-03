@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { RerailHost } from "../engine/adapter-contract.js";
 import { listRepositories, lookupCheckout, repositoryHistoryIds } from "../engine/catalog/repository-registry.js";
-import { loadRulePacks, rulePackIdOf } from "../engine/catalog/rule-packs.js";
+import { activeCoreVersion, installedPackDirectories, readRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { events, libraryRules, rules, sessions, steerFeedback } from "../engine/storage/schema.js";
 
@@ -86,8 +86,10 @@ function record(database: RerailDatabase, ruleId: string, words: readonly string
   if (ruleId.length > RULE_ID_MAX) throw new Error(`A rule id is at most ${RULE_ID_MAX} characters`);
   if (CONTROL.test(ruleId)) throw new Error("A rule id holds no control characters; use the id in brackets at the end of the steer's line");
   const { repositoryId, session } = steeredHere(database, ruleId, context.cwd ?? process.cwd());
-  const packs = loadRulePacks();
-  const packId = rulePackIdOf(ruleId, packs);
+  // Which installed pack lists the rule, from the packs' manifests: a note needs no compiled rule, and compiling every
+  // installed pack's rules (`loadRulePacks`) would cost each `rerail feedback` seconds.
+  const catalog = readRuleCatalog(installedPackDirectories(), { coreVersion: activeCoreVersion() });
+  const packId = catalog.packOf.get(ruleId) ?? null;
   const known = session !== undefined || packId !== null
     || database.select({ id: rules.id }).from(rules).where(eq(rules.id, ruleId)).get() !== undefined
     || database.select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, ruleId)).get() !== undefined;
@@ -96,7 +98,7 @@ function record(database: RerailDatabase, ruleId: string, words: readonly string
     id: randomUUID(),
     ruleId,
     packId,
-    packVersion: packId === null ? null : packs.find(pack => pack.id === packId)?.version ?? null,
+    packVersion: packId === null ? null : catalog.packs.get(packId)?.version ?? null,
     host: session?.host ?? null,
     sessionId: session?.sessionId ?? null,
     repositoryId,
