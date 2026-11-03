@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RerailDaemon } from "../../src/daemon/index.js";
-import { addRemote, machineId } from "../../src/runtime/remote-config.js";
-import { SqliteSessionStore } from "../../src/runtime/session-store.js";
+import { addRemote, machineId, SqliteSessionStore } from "../../src/runtime/index.js";
 import { startFakeSink, storedRecords, type FakeSink } from "../support/fake-sink.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
