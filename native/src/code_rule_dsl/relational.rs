@@ -135,6 +135,7 @@ fn configure_in_place(db: &Database, max_pattern: usize, work: Arc<AtomicUsize>)
     functions::rebind(&db.regex_binding, max_pattern, Arc::clone(&work));
     if !db.regex_installed.get() {
         functions::install_bound(db, db.regex_binding.clone()).map_err(sql_error)?;
+        crate::code_rule_dsl::crypto::register(db).map_err(sql_error)?;
         db.regex_installed.set(true);
     }
     source::bind(db, None, work)?;

@@ -109,7 +109,7 @@ pub(super) fn install(db: &Connection, tables: &BTreeSet<String>) -> Result<Read
                         | "typeof"
                         | "unicode"
                         | "upper"
-                        | "rx_matches"
+                        | "verify_ed25519" | "rx_matches"
                         | "rx_extract"
                         | "rx_replace"
                         | "source_text"

@@ -8,7 +8,10 @@ export function replayExecution(): NativeCodeRuleDslExecution {
   // resident state on the workspace. This changes API plumbing, not scoring.
   return {
     createWorkspace: () => new native.CodeRuleDslWorkspace(),
-    evaluate: (rule, input, mode) => rule.evaluate(input, mode),
+    evaluate: (rule, input, mode) => {
+      if (mode !== "decision" && mode !== "report") throw new Error(`Unsupported evaluation mode: ${mode}`);
+      return rule.evaluate(input, mode);
+    },
     close: () => {},
   };
 }

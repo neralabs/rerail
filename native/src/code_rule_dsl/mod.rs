@@ -2,6 +2,7 @@ mod blade;
 mod budget;
 mod calls;
 mod compile;
+mod crypto;
 mod embed;
 mod eval;
 mod execution;
