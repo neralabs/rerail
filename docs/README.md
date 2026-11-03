@@ -34,6 +34,9 @@
 - [conformance/README.md](../conformance/README.md): the conformance check every shipped ported rule passes, its pull
   request comment, divergences, and promoting a candidate
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
+- [adding-rules-to-a-pack.md](adding-rules-to-a-pack.md): adding rules to a pack, written for Rerail or ported from
+  a tool: who does what, the steps for each kind, the Conformance comment, promotion and demotion, and the
+  maintainers' publish steps
 
 ## Release
 - [release.md](release.md): how core is built, versioned and published

@@ -45,6 +45,7 @@ const fetch = (input: string | URL, init: RequestInit & { headers?: Record<strin
 
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const { root, runtime, daemon } of fixtures.splice(0)) {
     await runtime.dispose();
     await daemon.close();
@@ -145,6 +146,7 @@ describe("rerail scan and settings CLI", () => {
   }, 60_000);
 
   it("runs one log-only repository audit for the workspace and exposes it to later sessions", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const automaticAuditRequests: Array<{ sessionId: string; scope: string; mode: string }> = [];
     const { root, runtime, daemon } = await fixture(options => ({
       openWorkspace: async () => undefined,
@@ -363,6 +365,7 @@ describe("rerail scan and settings CLI", () => {
   });
 
   it("applies saved log mode to new edits while an explicit audit is still running", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const gate = Promise.withResolvers<void>();
     const { root, database, runtime, daemon } = await fixture(options => {
       const auditor = new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT]), options);

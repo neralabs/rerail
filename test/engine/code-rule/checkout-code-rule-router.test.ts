@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
@@ -23,6 +23,7 @@ import { stopTestRepository } from "../../support/started-repository.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
@@ -440,6 +441,7 @@ describe("repository settings that reach evaluation", () => {
 
 describe("repository audit through the runtime", () => {
   it("records one repository audit per checkout that owns its files; a nested repository nobody set up, or a stray .git, is audited with the checkout around it", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
     const { parent, sub } = await withSubmodule(root);

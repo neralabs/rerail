@@ -354,15 +354,13 @@ sha256 in the tracked `test-data.lock`, and a samples archive when it has a `sam
 tests (`npm test`, `npm run test:conformance`, `cargo test`) and the generators fail, saying to pull:
 
 ```sh
-aws sso login           # or any AWS credentials with read access to s3://nera-test-fixtures/rerail/archives/
 npm run fixtures:pull   # every tool-pack; -- --pack <id> [--tool <tool>] for some; -- --dry-run to see what it would fetch
 ```
 
-`fixtures:pull` keeps every archive it fetches in `.rerail/pack-data/archives/`, so it needs the
-[AWS CLI v2](https://aws.amazon.com/cli/) and read access to the bucket only for an archive it has not fetched before;
-ask a maintainer for access. It verifies each archive against its lock before it extracts anything, and lays any
-staged `publish/` (below) over what it extracted. Pulled data is ignored by git. Pull again after a checkout or merge
-that changes a lock.
+`fixtures:pull` keeps every archive it fetches in `.rerail/pack-data/archives/`, so it needs read access to the
+bucket only for an archive it has not fetched before; ask a maintainer for access. It verifies each archive against
+its lock before it extracts anything, and lays any staged `publish/` (below) over what it extracted. Pulled data is
+ignored by git. Pull again after a checkout or merge that changes a lock.
 
 What the archives hold, how data is published and how to replay a CI run are in [docs/upstream.md](docs/upstream.md);
 the files and the lock format are in [docs/pack-format.md, "Pack data"](docs/pack-format.md#pack-data).
@@ -370,6 +368,8 @@ the files and the lock format are in [docs/pack-format.md, "Pack data"](docs/pac
 ### Adding or changing a pack
 
 Each change is one pull request, with a changeset for the pack ([.changeset/README.md](.changeset/README.md)).
+The steps for adding a rule, written for Rerail or ported from a tool, with what each has needed in practice, are
+[docs/adding-rules-to-a-pack.md](docs/adding-rules-to-a-pack.md).
 
 **A rule.** A pack ships the rules in `packs/<id>/rules/` that `pack.json` lists; `candidates/` holds ports under
 evaluation, which are scored and reported but never shipped. Start a new port as a candidate

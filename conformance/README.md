@@ -19,7 +19,9 @@ The generators that write the expected findings are outside this directory, on t
 the renamer `scripts/pack-data/rename/`). How the data is snapshotted and published is
 [docs/upstream.md](../docs/upstream.md).
 
-Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack).
+Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack); the contributor's steps for
+a rule, written for Rerail or ported, and a port's way from candidate to shipped, are
+[docs/adding-rules-to-a-pack.md](../docs/adding-rules-to-a-pack.md).
 
 ## The gate
 
