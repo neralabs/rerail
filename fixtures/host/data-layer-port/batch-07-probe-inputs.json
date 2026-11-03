@@ -1,0 +1,357 @@
+{
+  "format": "rerail.data-layer-probe-inputs/v1",
+  "cases": [
+    {
+      "check": "executor_publication_repairs",
+      "id": "text-lines-and-multiplicity",
+      "files": [
+        {
+          "path": "l2070_batching/executor.py",
+          "source": "_cte_output_columns _cte_output_columns\n_cte_column_type_hints _publication_contract_cache\u2028_cte_output_columns\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "executor_publication_repairs",
+      "id": "production-path-negative",
+      "files": [
+        {
+          "path": "l2070_batching/other.py",
+          "source": "_cte_output_columns\n"
+        }
+      ],
+      "production_scope": true
+    },
+    {
+      "check": "executor_publication_repairs",
+      "id": "production-path-positive",
+      "files": [
+        {
+          "path": "l2070_batching/executor.py",
+          "source": "_cte_output_columns\n"
+        }
+      ],
+      "production_scope": true
+    },
+    {
+      "check": "publication_registry_writes",
+      "id": "del-of-index-read",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "del mapping[ctx.cte_refs[\"x\"]]\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "publication_registry_writes",
+      "id": "multiple-delete-targets",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "del other, ctx.cte_refs[\"x\"]\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "publication_registry_writes",
+      "id": "production-scope",
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "ctx.cte_refs.clear()\n"
+        }
+      ],
+      "production_scope": true
+    },
+    {
+      "check": "publication_registry_writes",
+      "id": "production-excluded-tests",
+      "files": [
+        {
+          "path": "impl/tests/probe.py",
+          "source": "ctx.cte_refs.clear()\n"
+        }
+      ],
+      "production_scope": true
+    },
+    {
+      "check": "publication_registry_writes",
+      "id": "registry-owner",
+      "files": [
+        {
+          "path": "l2070_batching/compilation.py",
+          "source": "ctx.cte_refs.clear()\n"
+        }
+      ],
+      "production_scope": true
+    },
+    {
+      "check": "unknown_contract_defaults",
+      "id": "flattened-or",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "return_value = thing.source_tables or () or []\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "unknown_contract_defaults",
+      "id": "parenthesized-or",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "return_value = (thing.source_tables or ()) or []\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "unknown_contract_defaults",
+      "id": "empty-tuple-comments",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "x = thing.source_tables or (\n # empty\n)\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "unknown_contract_defaults",
+      "id": "bool-extra-keyword",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "bool(thing.source_tables, foo=True)\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "unknown_contract_defaults",
+      "id": "production-scope",
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "x = thing.source_tables or ()\n"
+        }
+      ],
+      "production_scope": true
+    },
+    {
+      "check": "declared_fact_interrogation",
+      "id": "mixed-comparison",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "type(obj).f is Base.f == other\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "declared_fact_interrogation",
+      "id": "chained-identity",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "other is type(obj).f is Base.f\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "declared_fact_interrogation",
+      "id": "self-on-other-side",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "type(obj).f is type(self).f\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "declared_fact_interrogation",
+      "id": "production-scope",
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "getattr(obj, \"source_tables\", None)\n"
+        }
+      ],
+      "production_scope": true
+    },
+    {
+      "check": "history_serverplan_projection",
+      "id": "multiline-return",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_history.py",
+          "source": "def tags():\n    return frozenset({\"history\",\n       \"runtime\"})\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "history_serverplan_projection",
+      "id": "non-history-path",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_plain.py",
+          "source": "def tags():\n    return frozenset({\"history\", \"runtime\"})\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "history_serverplan_projection",
+      "id": "test-path",
+      "files": [
+        {
+          "path": "impl/tests/probe.py",
+          "source": "from impl.common.l2070_server_plan.steps.history_runtime_projection import bad\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "revision_ancestry_invariants",
+      "id": "line-free-descriptor",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "\n\nclass SqlRevisionAncestryDefinition:\n    pass\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "revision_ancestry_invariants",
+      "id": "multiline-cast",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "sql = \"\"\"CAST(\n rp.revision_sys_id\n AS TEXT)\"\"\"\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "id": "clean-simple",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_runtime_builder(spec):\n    return spec.value\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "revision_ancestry_invariants",
+      "id": "production-descriptor-line",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/versioning/probe.py",
+          "source": "\n\nclass SqlRevisionAncestryDefinition:\n    pass\n"
+        }
+      ],
+      "production_scope": true
+    },
+    {
+      "check": "revision_ancestry_invariants",
+      "id": "production-removed-surface-line",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "\n\nstmt_ancestry_chain = None\n"
+        }
+      ],
+      "production_scope": true
+    },
+    {
+      "check": "history_serverplan_projection",
+      "id": "import-alias",
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "import impl.common.l2070_server_plan.steps.history_runtime_projection as helper\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "history_serverplan_projection",
+      "id": "multiple-imports",
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "import a.history_runtime_projection, b.history_runtime_projection as helper\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "history_serverplan_projection",
+      "id": "nested-history-path",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/inner/a_history.py",
+          "source": "def tags():\n    return {\"history\", \"runtime\"}\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "history_serverplan_projection",
+      "id": "frozenset-method-clean",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/a_history.py",
+          "source": "def tags():\n    return obj.frozenset({\"history\", \"runtime\"})\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "unknown_contract_defaults",
+      "id": "populated-container-clean",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "x = thing.source_tables or ((),)\ny = thing.source_tables or [False]\nz = thing.source_tables or {\"x\": 1}\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "declared_fact_interrogation",
+      "id": "distinct-methods-clean",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "type(obj).f is Base.g\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "declared_fact_interrogation",
+      "id": "late-matching-comparator",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "type(obj).f is Base.g is Base.f\n"
+        }
+      ],
+      "production_scope": false
+    }
+  ]
+}

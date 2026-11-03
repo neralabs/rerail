@@ -1,0 +1,1032 @@
+{
+  "format": "rerail.data-layer-recording/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "declared_fact_interrogation",
+    "executor_publication_repairs",
+    "history_serverplan_projection",
+    "post_op_no_internal_dispatch",
+    "publication_registry_writes",
+    "revision_ancestry_invariants",
+    "unknown_contract_defaults"
+  ],
+  "source_mismatches": [],
+  "pytest_exit_code": 0,
+  "collected_tests": 0,
+  "uncaptured_tests": [],
+  "loaded_source_files_checked": 123,
+  "events": [
+    {
+      "test": "probe:batch7:text-lines-and-multiplicity",
+      "check": "executor_publication_repairs",
+      "call": 1,
+      "entry": "violations",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l2070_batching/executor.py",
+          "source": "_cte_output_columns _cte_output_columns\n_cte_column_type_hints _publication_contract_cache\u2028_cte_output_columns\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "l2070_batching/executor.py",
+          "line": 1,
+          "column": null,
+          "code": "executor_publication_repair",
+          "message": "executor references producer-owned _cte_output_columns"
+        },
+        {
+          "path": "l2070_batching/executor.py",
+          "line": 2,
+          "column": null,
+          "code": "executor_publication_repair",
+          "message": "executor references producer-owned _cte_column_type_hints"
+        },
+        {
+          "path": "l2070_batching/executor.py",
+          "line": 2,
+          "column": null,
+          "code": "executor_publication_repair",
+          "message": "executor references producer-owned _publication_contract_cache"
+        },
+        {
+          "path": "l2070_batching/executor.py",
+          "line": 3,
+          "column": null,
+          "code": "executor_publication_repair",
+          "message": "executor references producer-owned _cte_output_columns"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:production-path-negative",
+      "check": "executor_publication_repairs",
+      "call": 1,
+      "entry": "plugin.reporter",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l2070_batching/other.py",
+          "source": "_cte_output_columns\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:production-path-positive",
+      "check": "executor_publication_repairs",
+      "call": 1,
+      "entry": "plugin.reporter",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l2070_batching/executor.py",
+          "source": "_cte_output_columns\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      },
+      "findings": [
+        {
+          "path": "l2070_batching/executor.py",
+          "line": 1,
+          "column": null,
+          "code": "executor_publication_repair",
+          "message": "executor references producer-owned _cte_output_columns"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:del-of-index-read",
+      "check": "publication_registry_writes",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "del mapping[ctx.cte_refs[\"x\"]]\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:multiple-delete-targets",
+      "check": "publication_registry_writes",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "del other, ctx.cte_refs[\"x\"]\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "REGISTRY_DIRECT_WRITE",
+          "message": "deletion writes cte_refs directly; publish through the registry so a binding that knows less cannot displace one that knows more"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:production-scope",
+      "check": "publication_registry_writes",
+      "call": 1,
+      "entry": "plugin.reporter",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "ctx.cte_refs.clear()\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "REGISTRY_DIRECT_WRITE",
+          "message": "clear() writes cte_refs directly; publish through the registry so a binding that knows less cannot displace one that knows more"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:production-excluded-tests",
+      "check": "publication_registry_writes",
+      "call": 1,
+      "entry": "plugin.reporter",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/tests/probe.py",
+          "source": "ctx.cte_refs.clear()\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:registry-owner",
+      "check": "publication_registry_writes",
+      "call": 1,
+      "entry": "plugin.reporter",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "l2070_batching/compilation.py",
+          "source": "ctx.cte_refs.clear()\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:flattened-or",
+      "check": "unknown_contract_defaults",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "return_value = thing.source_tables or () or []\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "UNKNOWN_DEFAULTED",
+          "message": "``or`` with an empty value treats an undeclared 'source_tables' as empty; branch on ``is None`` so nothing-declared stays distinguishable from nothing-there"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:parenthesized-or",
+      "check": "unknown_contract_defaults",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "return_value = (thing.source_tables or ()) or []\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "UNKNOWN_DEFAULTED",
+          "message": "``or`` with an empty value treats an undeclared 'source_tables' as empty; branch on ``is None`` so nothing-declared stays distinguishable from nothing-there"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:empty-tuple-comments",
+      "check": "unknown_contract_defaults",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "x = thing.source_tables or (\n # empty\n)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "UNKNOWN_DEFAULTED",
+          "message": "``or`` with an empty value treats an undeclared 'source_tables' as empty; branch on ``is None`` so nothing-declared stays distinguishable from nothing-there"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:bool-extra-keyword",
+      "check": "unknown_contract_defaults",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "bool(thing.source_tables, foo=True)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "UNKNOWN_AS_FALSY",
+          "message": "bool() treats an undeclared 'source_tables' as empty; branch on ``is None`` so nothing-declared stays distinguishable from nothing-there"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:production-scope",
+      "check": "unknown_contract_defaults",
+      "call": 1,
+      "entry": "plugin.reporter",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "x = thing.source_tables or ()\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "UNKNOWN_DEFAULTED",
+          "message": "``or`` with an empty value treats an undeclared 'source_tables' as empty; branch on ``is None`` so nothing-declared stays distinguishable from nothing-there"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:mixed-comparison",
+      "check": "declared_fact_interrogation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "type(obj).f is Base.f == other\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:chained-identity",
+      "check": "declared_fact_interrogation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "other is type(obj).f is Base.f\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:self-on-other-side",
+      "check": "declared_fact_interrogation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "type(obj).f is type(self).f\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "OVERRIDE_IDENTITY_PROBE",
+          "message": "whether 'f' was overridden is read as what 'f' answers; call it and use the answer"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:production-scope",
+      "check": "declared_fact_interrogation",
+      "call": 1,
+      "entry": "plugin.reporter",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "getattr(obj, \"source_tables\", None)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "CONTRACT_ATTR_PROBE",
+          "message": "getattr() probes declared contract attribute 'source_tables'; access it through the contract, or check for the protocol"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:multiline-return",
+      "check": "history_serverplan_projection",
+      "call": 1,
+      "entry": "check_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_history.py",
+          "source": "def tags():\n    return frozenset({\"history\",\n       \"runtime\"})\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_history.py",
+          "line": 2,
+          "column": null,
+          "code": "HSP-002",
+          "message": "history ServerPlan steps must not be tagged runtime"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:non-history-path",
+      "check": "history_serverplan_projection",
+      "call": 1,
+      "entry": "check_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_plain.py",
+          "source": "def tags():\n    return frozenset({\"history\", \"runtime\"})\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:test-path",
+      "check": "history_serverplan_projection",
+      "call": 1,
+      "entry": "check_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/tests/probe.py",
+          "source": "from impl.common.l2070_server_plan.steps.history_runtime_projection import bad\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:line-free-descriptor",
+      "check": "revision_ancestry_invariants",
+      "call": 1,
+      "entry": "violations",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "\n\nclass SqlRevisionAncestryDefinition:\n    pass\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 1,
+          "column": null,
+          "code": "forbidden_descriptor",
+          "message": "forbidden ancestry descriptor SqlRevisionAncestryDefinition"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:multiline-cast",
+      "check": "revision_ancestry_invariants",
+      "call": 1,
+      "entry": "violations",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "sql = \"\"\"CAST(\n rp.revision_sys_id\n AS TEXT)\"\"\"\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 1,
+          "column": null,
+          "code": "stored_revision_text_cast",
+          "message": "stored revision column cast to text"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:clean-simple",
+      "check": "post_op_no_internal_dispatch",
+      "call": 1,
+      "entry": "collect_violations_for_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_runtime_builder(spec):\n    return spec.value\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:production-descriptor-line",
+      "check": "revision_ancestry_invariants",
+      "call": 1,
+      "entry": "plugin.reporter",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/versioning/probe.py",
+          "source": "\n\nclass SqlRevisionAncestryDefinition:\n    pass\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:production-removed-surface-line",
+      "check": "revision_ancestry_invariants",
+      "call": 1,
+      "entry": "plugin.reporter",
+      "upstream_passed": true,
+      "production_scope": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "\n\nstmt_ancestry_chain = None\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "line": 3,
+          "column": null,
+          "code": "removed_surface",
+          "message": "imports removed stmt_ancestry_chain surface"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:import-alias",
+      "check": "history_serverplan_projection",
+      "call": 1,
+      "entry": "check_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "import impl.common.l2070_server_plan.steps.history_runtime_projection as helper\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "HSP-001",
+          "message": "production code must not import history runtime projection helpers"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:multiple-imports",
+      "check": "history_serverplan_projection",
+      "call": 1,
+      "entry": "check_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/probe.py",
+          "source": "import a.history_runtime_projection, b.history_runtime_projection as helper\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "HSP-001",
+          "message": "production code must not import history runtime projection helpers"
+        },
+        {
+          "path": "impl/probe.py",
+          "line": 1,
+          "column": null,
+          "code": "HSP-001",
+          "message": "production code must not import history runtime projection helpers"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:nested-history-path",
+      "check": "history_serverplan_projection",
+      "call": 1,
+      "entry": "check_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/inner/a_history.py",
+          "source": "def tags():\n    return {\"history\", \"runtime\"}\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/inner/a_history.py",
+          "line": 2,
+          "column": null,
+          "code": "HSP-002",
+          "message": "history ServerPlan steps must not be tagged runtime"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:frozenset-method-clean",
+      "check": "history_serverplan_projection",
+      "call": 1,
+      "entry": "check_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/a_history.py",
+          "source": "def tags():\n    return obj.frozenset({\"history\", \"runtime\"})\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:populated-container-clean",
+      "check": "unknown_contract_defaults",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "x = thing.source_tables or ((),)\ny = thing.source_tables or [False]\nz = thing.source_tables or {\"x\": 1}\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:distinct-methods-clean",
+      "check": "declared_fact_interrogation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "type(obj).f is Base.g\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:late-matching-comparator",
+      "check": "declared_fact_interrogation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "type(obj).f is Base.g is Base.f\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 1,
+          "column": 0,
+          "code": "OVERRIDE_IDENTITY_PROBE",
+          "message": "whether 'f' was overridden is read as what 'f' answers; call it and use the answer"
+        }
+      ]
+    }
+  ]
+}
