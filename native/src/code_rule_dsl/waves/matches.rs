@@ -85,8 +85,26 @@ pub(in crate::code_rule_dsl) struct Wave {
     /// The lowered wave's plan identity (`LoweredWave::identity`): its roots' batches are its parts.
     plan: PlanId,
     lang: u32,
+    /// How the candidates are selected (`Candidates`).
+    pub(in crate::code_rule_dsl) route: Candidates,
     /// Each chunk's candidates, in order.
     pub chunks: Vec<Chunk>,
+}
+
+/// How a wave selects its candidates: the plans' sets over the batch's node space on the wave's
+/// device (decision 0024 §2), or the pure-SQL fallback (03 §17, `prefilter::fallback`): the same
+/// plans lowered to SQLite over `nera_tree`, `RERAIL_CANDIDATES=sql`. Both are supersets of the
+/// roots, exact where the plans are; the walks confirm them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::code_rule_dsl) enum Candidates {
+    Sets,
+    Sql,
+}
+
+impl Candidates {
+    fn from_environment() -> Self {
+        if std::env::var("RERAIL_CANDIDATES").is_ok_and(|route| route == "sql") { Self::Sql } else { Self::Sets }
+    }
 }
 
 fn invalid(error: impl std::fmt::Debug) -> StoreError {
@@ -112,6 +130,7 @@ impl Wave {
             plan: lowered.identity(),
             lowered,
             lang: u32::from(tape_tag(GrammarDialect::Python).expect("Python has a tape")),
+            route: Candidates::from_environment(),
             chunks: Vec::new(),
         })
     }
@@ -342,6 +361,26 @@ impl Wave {
     ) -> StoreResult<Vec<Vec<Vec<u32>>>> {
         let ids = tapes.iter().map(|tape| tape.id).collect::<Vec<_>>();
         let plans = self.plans.iter().map(Arc::as_ref).collect::<Vec<_>>();
+        if self.route == Candidates::Sql {
+            let rows = crate::code_rule_dsl::prof::time("candidates.sql", || {
+                crate::code_rule_dsl::prefilter::fallback(graph.store(), self.lang, &plans, &ids)
+            })?;
+            // Rows are (file, preorder), ascending: each file's starts stay in order.
+            return Ok(rows
+                .into_iter()
+                .enumerate()
+                .map(|(clause, (rows, _exact))| {
+                    let mut out = vec![Vec::new(); tapes.len()];
+                    for (file, node) in rows {
+                        if self.lowered.starts(clause, &tapes[file as usize].doc, node) {
+                            out[file as usize].push(node);
+                        }
+                    }
+                    crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
+                    out
+                })
+                .collect());
+        }
         // The plans' sets over the batch's node space, on the wave's device (decision 0024 §2).
         use crate::code_rule_dsl::prefilter::sets::Device;
         let device = match self.backend {

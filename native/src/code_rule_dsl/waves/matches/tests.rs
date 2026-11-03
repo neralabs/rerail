@@ -224,11 +224,23 @@ fn the_wave_runs_chunk_by_chunk() {
 }
 
 fn gate(default: usize, limits: Limits, backend: ExecutionBackend) {
+    gate_by(default, limits, backend, Candidates::Sets);
+}
+
+/// The pure-SQL route (03 §17): the wave's candidates from `prefilter::fallback` over `nera_tree`,
+/// with W's matches.
+#[test]
+fn the_wave_finds_ws_matches_from_the_sql_fallback() {
+    gate_by(8, Limits::default(), ExecutionBackend::CpuJit, Candidates::Sql);
+}
+
+fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Candidates) {
     let (store, paths) = ingested(default);
     let (clauses, grammars) = clauses();
     let documents = documents(&store, WS, &paths).unwrap();
     assert_eq!(documents.len(), paths.len(), "every fixture has core facts");
     let mut wave = Wave::new(&clauses, backend).unwrap();
+    wave.route = route;
     let program = wave.program(&store).unwrap();
     // One step per output (`match`, `span`), neither reading the other: they share the wave.
     assert_eq!(program.steps.len(), 2, "{:?}", program.steps.iter().map(|s| &s.sql).collect::<Vec<_>>());
@@ -294,7 +306,7 @@ fn gate(default: usize, limits: Limits, backend: ExecutionBackend) {
     }
     let estimate: i64 = lease.query_row("SELECT rows FROM fact_stats WHERE tbl = 'rerail_terminal_match'", [], |row| row.get(0)).unwrap();
     eprintln!(
-        "S4 wave: {} clauses ({} passes) on {} fixtures in {} chunks, {:?}: {expected_nodes} matched nodes; \
+        "S4 wave ({route:?}): {} clauses ({} passes) on {} fixtures in {} chunks, {:?}: {expected_nodes} matched nodes; \
          candidates {candidate_nodes} of {all_nodes} clause-nodes; {} under-produced, {} differ; terminal estimate {estimate}",
         clauses.len(),
         wave.lowered().passes(),

@@ -230,7 +230,7 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
       - device root walks (`Runner::records`): the same packs, as passes after the programs' passes. `RootPass.pad` = 1 + emit count drops an emit whose label fired and ends the walk once all have; `decode_roots` routes the records.
     - **Measured** (S7, load 54): 710 keys = W on CPU and Metal; Metal 44 launches (planned 50), buffer peak 209 MB, audit CPU 2.3 s; the CPU backend's audit 6.1 s. Packed: 151 host label passes in 28 packs, 116 device label passes in 39, 1,828 host root walks in 493, 32 device root programs. `RERAIL_ROOTS_CHECK`: the fused host root walks equal the backend's on every (file, program), 0 differ. `fusion::tests`: the prefix, fork chain and emit table; a jump into the prefix stops it there.
     - No speedup measured: CPU time is flat within the load's noise (architecture first; the walks it saves are measured above).
-  - **The fused plan's cache key** (§4.9) is list step 16's plan identity (below); step 20's `stats::identity` keys stored plans by it. The wave is still lowered per audit.
+  - **The fused plan's cache key** (§4.9) is list step 16's plan identity (below); step 20's `stats::identity` keys stored plans by it. Since list step 20 the wave's planned SQL program is a compiled plan (below); its lowering (`LoweredWave`) is still built per audit.
 - **Interpreted first, the JIT swapped in (list step 16, 2026-11-02),** 03 §3 "Interpreted, then JIT"; decision 0012's background backends, now keyed by plan.
   - **One plan identity** (`compilation::PlanId`): a digest of what runs, independent of the binding.
     - A wave's is `LoweredWave::identity`: its labels by id (`Label::key`), its steps, recursive groups and borrowed labels, and each clause's root program and domain. Equal waves have equal identities, whichever backend binds them.
@@ -313,6 +313,22 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 
 - Batch vtab: `demand::vtab` on the packed runtime. The CPU `ast_grep` fact post-pass, the navigation producer and their relations are gone, which leaves batch status, producer status, terminal matches, captures and document maps. Row estimates come from `fact_stats` for each relation, which the driver fills when it merges match facts (row 2). Capture rows still compute N's `semanticPlain` structural key with the CPU value adapter; that moves to the findings layer's equality (Phase 8). Inputs from `prefilter/` candidate sets and the slab cache wait on Phases 7 and 9.
 - Driver: `demand::driver::drive(store, batch, statements, files)` runs lowered statements over a registered batch in one transaction on the content store and decodes violation and failure rows. N's catalog lowering (`SqlPlans::compile` over `relational_ir`) is not copied, per the table, so the driver takes statements from the logic planner (Phase 6). For the same reason N's two contract suites (`production_contract_tests.rs`, `policy_lowering_tests.rs`), which Phase 4's check names, cannot run until Phase 6 lowers rule catalogs; they stay outside the tree until then.
+- **Wired (list step 20, 2026-11-02):**
+  - **One batch driver.** `driver::with_batch` registers a `PackedDemand`, runs the statements, checks `rerail_batch_status` and always removes the batch. `driver::drive` and the wave's `schedule::run_over` both go through it.
+  - **`stats::identity` keys `compiled_plans`.**
+    - The wave's planned program (`Wave::emit`) is stored under a `CompiledPlanId`: the logic program, its source, the batch inputs and their sources, the clause names, and compiler version 2.
+    - It is reused only while the atoms it was planned with (`decisions`) re-intern to the same ids in this store. Its counters are `wave.plan.reused` and `wave.plan.compiled`.
+    - The prefilter gate's identity is a `CompiledPlanId` too.
+    - Test: `the_wave_program_is_a_compiled_plan` (one row per wave; a store with other atom ids plans again under the same identity).
+  - **The planner emits through `logic::sql`.**
+    - `Model::sql_select` builds a `select::Query`: SELECT blocks, CTEs and recursive walks over `sql_ast`'s expressions, with new forms for qualified columns, bare calls, `BETWEEN`, `EXISTS` and scalar subqueries.
+    - The query is checked before it is rendered. It may read only the program's relations (inputs, batch inputs, derived relations, and views the run planned from), CTEs once defined, and columns of FROM items in scope, correlated subqueries included.
+    - Every rule body of T's goldens passes the check. The check caught the native `kseed` mode's `rdl_kinds` view, which is now declared by its statistics.
+    - N's operator graph (`SqlAst`) is not used for these blocks: the planner's Selinger order needs flat `CROSS JOIN` blocks.
+  - **The fallback has a driver.**
+    - With `RERAIL_CANDIDATES=sql`, the wave's `Candidates::Sql` route selects candidates with `prefilter::fallback` over `nera_tree` instead of the sets.
+    - `the_wave_finds_ws_matches_from_the_sql_fallback` finds W's 164 matched nodes, 0 differing, from 3,696 candidates against the sets' 26,151 (8 fixtures, 87 clauses).
+  - **Not wired:** the rule catalog still does not reach the driver as logic programs (list step 21), and the findings layer's SQL is not yet typed (list step 27).
 - Gate: full `cargo test --lib`, run once: 1601 passed, 12 failed, 27 ignored; 139 s user + 12 s sys CPU (load average 21–28). The 12 failures are the environmental ones of Phases 1–3 (3 pack fixtures not in git, 9 `git_workspace` temp repos blocked by the agent git hook).
 
 ### Phase 6: the logic language (§12; B1, B3, B4, B10–B14, I9)
