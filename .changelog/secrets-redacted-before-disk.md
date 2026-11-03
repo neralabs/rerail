@@ -1,0 +1,1 @@
+Rerail redacts the secrets it recognizes (cloud and API keys, tokens, private keys, JWTs, URL passwords and `Authorization` credentials) before anything reaches disk: transcripts, findings, session ledgers and `daemon.log`. `rerail scrub` redacts the history an earlier version stored, and `rerail update` suggests it once.
