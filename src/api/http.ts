@@ -1,7 +1,8 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { zodToOpenAPIRegistry, type ZodOpenAPIMetadata } from "@asteasolutions/zod-to-openapi";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { duplicateJsonKeyError } from "../engine/json-duplicate-keys.js";
 import {
   codeRuleAstRelationSchema,
@@ -19,7 +20,7 @@ import { semanticSchemaComponents } from "../engine/code-rule/code-rule-schema-s
 
 import { conversationRuleSchema, matchConditionSchema, sampleSourceSchema } from "../engine/catalog/rule-schema.js";
 import { auditControlsSchema, auditRequestSchema } from "../engine/audit/audit-control-schema.js";
-import { DAEMON_ACCESS_HEADER } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_HEADER, sameSecret } from "../runtime/daemon-control.js";
 import { ApiError, invokeOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { eventRecordSchema, auditRecordSchema, presentationPreferenceSchema } from "./operations.js";
 import { deciderSchema, effectiveRuleSchema, libraryRuleRecordSchema, repositorySummarySchema } from "./repository-contracts.js";
@@ -173,13 +174,6 @@ export function hostAllowlist(publicHosts: PublicHosts): MiddlewareHandler {
   };
 }
 
-/** Whether `presented` is `token`, in time independent of where they differ. */
-export function sameSecret(presented: string | undefined, token: string): boolean {
-  if (presented === undefined) return false;
-  const digest = (text: string) => createHash("sha256").update(text).digest();
-  return timingSafeEqual(digest(presented), digest(token));
-}
-
 const ACCESS_REQUIRED = "Every request to the Rerail daemon needs its access capability. "
   + "Run rerail manage to open the dashboard with it, or send the x-rerail-access header with the accessToken in daemon.json.";
 
@@ -210,6 +204,17 @@ export function accessCapability(token: string): MiddlewareHandler {
     }
     return context.json({ error: "access-required", message: ACCESS_REQUIRED }, 401);
   };
+}
+
+/**
+ * 413 for a request whose body is longer than `maxBytes`, before any route reads it: a declared `Content-Length` is
+ * refused unread, and a chunked body is counted as it arrives and refused once it passes the limit.
+ */
+export function requestBodyLimit(maxBytes: number): MiddlewareHandler {
+  return bodyLimit({
+    maxSize: maxBytes,
+    onError: context => context.json({ error: "request-too-large", message: `The request body is larger than the ${maxBytes} bytes this route takes.` }, 413),
+  });
 }
 
 /**

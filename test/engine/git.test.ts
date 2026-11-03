@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -46,33 +46,95 @@ describe("readGitBlobs", () => {
 });
 
 describe("gitCandidates", () => {
-  it("looks in the per-user installs too, never on PATH or anywhere the environment points", () => {
-    // A repository's environment (direnv, a devcontainer) can set these as easily as PATH.
+  const disk = (files: readonly string[], links: Record<string, string> = {}) => ({
+    exists: (path: string) => files.includes(path),
+    realpath: (path: string) => Object.entries(links).reduce((real, [link, target]) => real.startsWith(link) ? target + real.slice(link.length) : real, path),
+  });
+
+  it("tries PATH first, in its order, then the usual install locations, each once", () => {
+    const search = { platform: "linux" as const, home: "/home/me", path: "/home/me/.local/share/mise/shims:/opt/local/bin:/usr/bin", cwd: "/tmp" };
+    expect(gitCandidates(search, disk([]))).toEqual([
+      "/home/me/.local/share/mise/shims/git",
+      "/opt/local/bin/git",
+      "/usr/bin/git",
+      "/usr/local/bin/git",
+      "/opt/homebrew/bin/git",
+      "/home/linuxbrew/.linuxbrew/bin/git",
+      "/run/current-system/sw/bin/git",
+      "/home/me/.nix-profile/bin/git",
+    ]);
+  });
+
+  it("skips PATH entries a repository could control: relative, inside the repository it runs in, or in node_modules", () => {
+    const search = {
+      platform: "darwin" as const,
+      home: "/Users/me",
+      // Empty and `.` mean the current folder; bin is direnv's PATH_add from the repository's .envrc.
+      path: ":.:bin:/Users/me/code/app/bin:/Users/me/code/app/node_modules/.bin:/Users/me/code/node_modules/.bin:/Users/me/code/app-tools/bin:/opt/homebrew/bin",
+      cwd: "/Users/me/code/app/src",
+    };
+    expect(gitCandidates(search, disk(["/Users/me/code/app/.git"])).slice(0, 2)).toEqual([
+      "/Users/me/code/app-tools/bin/git",
+      "/opt/homebrew/bin/git",
+    ]);
+  });
+
+  it("skips an entry that reaches the repository through a symlink, either way round", () => {
+    // macOS's /var is /private/var: the folder Rerail runs in reads as /private/var, PATH as /var.
+    const search = { platform: "darwin" as const, home: "/Users/me", path: "/var/t/app/bin:/Users/me/tools:/usr/bin", cwd: "/private/var/t/app" };
+    const links = { "/var/": "/private/var/", "/Users/me/tools": "/private/var/t/app/bin" };
+    expect(gitCandidates(search, disk(["/private/var/t/app/.git"], links))[0]).toBe("/usr/bin/git");
+  });
+
+  it("on Windows takes git.exe from absolute entries only, unquoted, with the same skips in any case", () => {
+    // A repository's environment (direnv, a devcontainer) can set LOCALAPPDATA as easily as PATH.
     vi.stubEnv("LOCALAPPDATA", String.raw`C:\repo\evil`);
-    vi.stubEnv("PATH", "/home/me/repo/bin");
     try {
-      expect(gitCandidates("win32", String.raw`C:\Users\me`)).toEqual([
+      const search = {
+        platform: "win32" as const,
+        home: String.raw`C:\Users\me`,
+        path: String.raw`"C:\Program Files\Git\cmd";.;\tools;C:\Code\App\Bin;C:\code\web\NODE_MODULES\.bin;D:\scoop\shims`,
+        cwd: String.raw`c:\code\app`,
+      };
+      expect(gitCandidates(search, disk([String.raw`c:\code\app\.git`]))).toEqual([
         String.raw`C:\Program Files\Git\cmd\git.exe`,
+        String.raw`D:\scoop\shims\git.exe`,
         String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
         String.raw`C:\Users\me\AppData\Local\Programs\Git\cmd\git.exe`,
         String.raw`C:\Users\me\scoop\apps\git\current\cmd\git.exe`,
-      ]);
-      expect(gitCandidates("linux", "/home/me")).toEqual([
-        "/usr/bin/git",
-        "/usr/local/bin/git",
-        "/opt/homebrew/bin/git",
-        "/home/linuxbrew/.linuxbrew/bin/git",
-        "/run/current-system/sw/bin/git",
-        "/home/me/.nix-profile/bin/git",
       ]);
     } finally {
       vi.unstubAllEnvs();
     }
   });
+
+  it("keeps every absolute entry outside node_modules when the folder it runs in is in no repository", () => {
+    const search = { platform: "linux" as const, home: "/home/me", path: "/home/me/bin", cwd: "/home/me" };
+    expect(gitCandidates(search, disk([]))[0]).toBe("/home/me/bin/git");
+  });
+
+  it("still lists PATH and the install locations from a working folder that was deleted", async () => {
+    const gone = await mkdtemp(join(tmpdir(), "rerail-git-gone-"));
+    const before = process.cwd();
+    process.chdir(gone);
+    try {
+      await rm(gone, { recursive: true });
+      expect(() => process.cwd()).toThrow();
+      vi.stubEnv("PATH", "/opt/local/bin");
+      expect(gitCandidates()).toContain("/opt/local/bin/git");
+    } finally {
+      vi.unstubAllEnvs();
+      process.chdir(before);
+    }
+  });
 });
 
 describe("gitInstalled", () => {
-  const probe = (files: readonly string[], developerDir?: string) => ({ exists: (path: string) => files.includes(path), developerDir: () => developerDir });
+  const probe = (files: readonly string[], developerDir?: string) => ({
+    exists: (path: string) => files.includes(path),
+    runnable: (path: string) => files.includes(path),
+    developerDir: () => developerDir,
+  });
 
   it("takes macOS's /usr/bin/git, always present as a stub, only with Apple's developer tools that carry Git", () => {
     // No Command Line Tools and no Xcode: the stub would open the installer, so Rerail says Git is missing.
@@ -87,5 +149,20 @@ describe("gitInstalled", () => {
     expect(gitInstalled("/opt/homebrew/bin/git", "darwin", probe(["/opt/homebrew/bin/git"]))).toBe(true);
     expect(gitInstalled("/usr/bin/git", "linux", probe(["/usr/bin/git"]))).toBe(true);
     expect(gitInstalled("/usr/local/bin/git", "linux", probe([]))).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("passes over a folder named git and a git without its execute bit, as a shell does", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-git-runnable-"));
+    roots.push(root);
+    await mkdir(join(root, "folder", "git"), { recursive: true });
+    await mkdir(join(root, "plain"));
+    await writeFile(join(root, "plain", "git"), "#!/bin/sh\n");
+    await mkdir(join(root, "runs"));
+    await writeFile(join(root, "runs", "git"), "#!/bin/sh\n");
+    await chmod(join(root, "runs", "git"), 0o755);
+
+    expect(gitInstalled(join(root, "folder", "git"), "linux")).toBe(false);
+    expect(gitInstalled(join(root, "plain", "git"), "linux")).toBe(false);
+    expect(gitInstalled(join(root, "runs", "git"), "linux")).toBe(true);
   });
 });

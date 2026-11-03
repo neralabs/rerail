@@ -34,6 +34,7 @@ use crate::code_rule_dsl::model::{
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
 use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading, UNREAD};
+use crate::code_rule_dsl::value::names;
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
 use crate::content_store::HashKey;
@@ -324,12 +325,31 @@ pub(super) fn evaluate_file(
     for &id in &file.candidates.regex {
         let code_rule = &code_rules[id.0];
         let clause = &code_rule.clauses[id.1];
-        let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind else {
-            unreachable!()
-        };
         let witnesses = file.witnesses.entry(id).or_default();
         witnesses.clear();
         let limits = &code_rule.capabilities.limits;
+        let (regex, source) = match &clause.kind {
+            ClauseKind::Forbid(Query::Regex { regex, source }) => (regex, source),
+            // The file itself is the witness: no content is read, so no source cap applies.
+            ClauseKind::Forbid(Query::File) => {
+                if limits.max_files == 0 {
+                    file.failures
+                        .insert(id, (INPUT_LIMIT, "file input budget exceeded"));
+                } else if !file.failures.contains_key(&id) {
+                    witnesses.push(Witness {
+                        path: file.input.path.clone(),
+                        span: None,
+                        captures: Captures::default(),
+                        message: None,
+                        fix: None,
+                        ignored: false,
+                    });
+                    metrics.witnesses += 1;
+                }
+                continue;
+            }
+            _ => unreachable!("a regex candidate is a regex or file forbid"),
+        };
         if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
             file.failures
                 .insert(id, (INPUT_LIMIT, "file input budget exceeded"));
@@ -339,18 +359,25 @@ pub(super) fn evaluate_file(
             continue;
         }
         let (haystack, offset) = query::regex_haystack(source, &file.input);
-        let path_lines = LineTable::new(&file.input.path, Terminators::Eslint);
+        // A path match lies in no source text: its witness has no span.
         let span = |start: usize, end: usize| match source {
-            RegexSource::Content => lines
-                .as_ref()
-                .expect("eligible content has line table")
-                .span(start + offset, end + offset),
-            RegexSource::Path => path_lines.span(start, end),
+            RegexSource::Content => Some(
+                lines
+                    .as_ref()
+                    .expect("eligible content has line table")
+                    .span(start + offset, end + offset),
+            ),
+            RegexSource::Path => None,
         };
         // Each clause scans under its own allowance, so one clause's matches spend none of
         // another's; the file's clause-work ceiling bounds them together.
         let Some(((matches, complete), ran)) = work.run(haystack.len(), || {
-            query::regex_matches(regex, haystack, limits.max_witnesses.saturating_add(1))
+            query::regex_matches(
+                regex,
+                source,
+                haystack,
+                limits.max_witnesses.saturating_add(1),
+            )
         }) else {
             file.failures
                 .insert(id, (FILE_BUDGET_EXCEEDED, FILE_CLAUSE_WORK_EXCEEDED));
@@ -1025,6 +1052,7 @@ fn evaluate_clauses(
             // a `rerail-ignore` naming the code rule always does.
             let honour_suppressions = code_rule.scope.honours_suppressions_at(&file.input.path);
             let ignorable = violations::names_rerail_ignore(violation, &target.root());
+            names::take_unavailable();
             let Some((result, ran)) = work.run(file.input.source.len(), || {
                 let roots = select(position);
                 // An anchor selection of no roots leaves nothing for the clause to match.
@@ -1175,6 +1203,13 @@ fn evaluate_clauses(
                         .entry(id)
                         .or_insert(("budget-exceeded", CLAUSE_WORK_BUDGET_EXCEEDED));
                 }
+            }
+            // A `\N{...}` escape the malformed names table could not answer read as unknown: the
+            // clause has no verdict of its own, and the engine's build is at fault, not the file.
+            if names::take_unavailable() {
+                file.failures
+                    .insert(id, ("adapter-error", names::TABLE_UNAVAILABLE));
+                file.unstored.insert(id);
             }
         }
         Ok(())

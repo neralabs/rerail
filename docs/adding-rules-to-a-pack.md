@@ -21,7 +21,7 @@ The reference documents define the files and their schemas; this guide only orde
 | --- | --- |
 | [pack-format.md](pack-format.md) | The pack layout, every file's schema, pack data, provenance, and the validation contract (checks 1 to 8) |
 | [conformance/README.md](../conformance/README.md) | The conformance check, its pull request comment, divergences, candidates and promotion |
-| [CONTRIBUTING.md, "Pack test data"](../CONTRIBUTING.md#pack-test-data) | Getting the data, publishing it, and the maintainers' steps |
+| [CONTRIBUTING.md, "Pack test data"](../CONTRIBUTING.md#pack-test-data) | Getting the data, and adding or changing a pack |
 | [language-packs.md, "Start a pack"](language-packs.md#start-a-pack) | A new pack's skeleton, with a complete example, and what a ported pack adds |
 | [upstream.md](upstream.md) | Upstream snapshots, the generators, samples, the publish workflow |
 | [writing-rules.md](writing-rules.md), [code-rule DSL reference](code-rule-dsl-reference.html) | How a rule document is written |
@@ -67,7 +67,7 @@ the pull request which cases you checked and how.
 
    Archives cache in `.rerail/pack-data/archives/`; copy that directory into a fresh worktree to skip the download. A
    fresh worktree also needs `npm ci` and `npm run build:native`
-   ([Getting the data](../CONTRIBUTING.md#getting-the-data)).
+   ([Pack test data](../CONTRIBUTING.md#pack-test-data)).
 
 3. **Check for another open pull request on the same pack.** Two that both change the pack's listing, its README or
    the native anchors pin conflict. Land the smaller first, then merge `main` into the other.
@@ -384,8 +384,8 @@ In the pull request body:
 
 ## For maintainers: publishing and merging
 
-The steps are [Merging (maintainers)](../CONTRIBUTING.md#merging-maintainers) and
-[Approving a data upload](../CONTRIBUTING.md#approving-a-data-upload-code-owners).
+The steps are [Merging (maintainers)](upstream.md#merging-maintainers) and
+[Approving a data upload](upstream.md#approving-a-data-upload-code-owners).
 
 1. **A one-rule pull request needs its data derived.** The document, port entry, test list line and suppression case
    are in the pull request; the expected findings are not. In a sandbox, on the pull request's branch (or the branch

@@ -30,9 +30,14 @@ pub(crate) fn suppresses<D: Doc>(
     let Some(file) = InFile::of(node) else {
         return false;
     };
-    let anchored = anchored_span(&violation.anchor, witness).0;
+    // An AST witness has a span, and so has its anchor.
+    let (Some(span), (Some(anchored), _)) =
+        (witness.span, anchored_span(&violation.anchor, witness))
+    else {
+        return false;
+    };
     // Compiling checked that the query's family honours each linter `suppress` names.
-    let span = (witness.span.start_byte, witness.span.end_byte);
+    let span = (span.start_byte, span.end_byte);
     with_adapter!(Family::of(file.dialect()), A => A::suppresses(violation, suppress, node, file.source(), file.lines(), anchored.start_byte..anchored.end_byte, span))
 }
 
@@ -50,10 +55,17 @@ pub(crate) fn rerail_ignores<D: Doc>(
     else {
         return false;
     };
-    let span = witness.span;
+    let Some(span) = witness.span else {
+        return false;
+    };
     let at = match violation.anchor {
         Anchor::End if span.start_byte < span.end_byte => span.end_byte - 1,
-        _ => anchored_span(&violation.anchor, witness).0.start_byte,
+        _ => {
+            anchored_span(&violation.anchor, witness)
+                .0
+                .unwrap_or(span)
+                .start_byte
+        }
     };
     file_ignores(node).is_some_and(|ignores| ignores.ignores(rule, at))
 }

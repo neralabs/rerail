@@ -150,7 +150,9 @@ const typedWords = (agent: CommandFileAgent, name: RerailCommandName): string =>
 function createBody(agent: CommandFileAgent, { cli, packageRoot }: CommandFileContext): CommandBody {
   return {
     text: createRuleInstructions({ cli, packageRoot, request: typedWords(agent, "rerail-create") }),
-    // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or add a rule.
+    // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or propose a
+    // rule. `rules approve` and `rules import` (whose `--approve` approves a whole dump) are never pre-approved: the host
+    // asks the person, whose approval it is, before it runs.
     allowed: [`${cli} rules evidence *`, `${cli} rules test *`, `${cli} rules add *`],
   };
 }

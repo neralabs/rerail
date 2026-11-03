@@ -26,6 +26,28 @@ A repository is **Not set up** until its first configuration. Starting Rerail in
 
 A repository that is set up runs only what is attached to it, and each checkout also runs its own rules, the rule documents in its `.rerail/rules/` folder ([a worktree's own rules](rule-packs.md#a-worktrees-own-rules)). The rules of the installed rule packs run only in repositories that add them. Nothing else runs: no other rule file in the working tree is read.
 
+### The repository's own lint config
+
+So Rerail does not steer against what a repository deliberately configured, set-up reads its lint config at the repository root, as data, and gives the rules of the packs it adds matching settings, owned by the repository. Nothing is executed or imported.
+
+| Linter | Read | Not read |
+|---|---|---|
+| ESLint | the config ESLint itself would use: the first flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`), parsed and never run, when it is data throughout; else `.eslintrc.json`, or `.eslintrc` when it is JSON, or else `package.json`'s `eslintConfig`, JSON with comments and trailing commas, its own `rules` and its `overrides`' `rules` | a flat config that runs code (a function, a statement that changes something, a namespace, a loop), and in a flat config a value Rerail would have to run code for (an imported config such as `js.configs.recommended`, a call's result, an imported variable); `.eslintrc.{js,cjs,yaml,yml}`; `extends` and plugins' presets of an `.eslintrc` |
+| oxlint | `.oxlintrc.json`, top-level `rules`; each key resolved to a built-in rule as oxlint 1.88.0 resolves it, and a rule's last key applies | `extends`, `overrides`, `categories`, `plugins` (a key for a plugin the config leaves off still counts); rule options |
+| Ruff | `select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores` and `extend-per-file-ignores` (each from `[lint]` where it is set there, else the top level) of the file Ruff uses (`.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`) and of the configs its `extend` names inside the repository | a config `extend` names outside the repository; per-file ignores of an extended config in another folder; Bandit config |
+
+What set-up does with what it reads:
+
+- **Nothing runs.** Rerail parses each config as data and never runs or imports it. It never turns a rule on.
+- **Off.** A rule the config turns off for every file (`"off"`, `0`, oxlint's `"allow"`, a Ruff ignore that wins over its selects) starts off. When one config turns a rule off and another keeps it on, it starts off and set-up says so.
+- **Options.** ESLint options become the port's options (`config`) when every value maps onto an option the port declares. Otherwise the port keeps its defaults, and set-up adds a note.
+- **Some files only.** An entry limited to some files (ESLint's `files: ["scripts/**"]`, a Ruff per-file ignore of `tests/**`) turns a rule off only in a folder it covers whole. For narrower files (`**/test_*.py`) the rule stays on, with a note.
+- **A flat config Rerail cannot read.** When an ESLint flat config is more than data (it defines a function, runs a loop, changes something), is a symlink or is larger than 1 MiB, Rerail cannot tell what it turns off. Every rule Rerail ports from ESLint then starts off, with no options, and set-up says why first. A single rule entry whose value needs the config run (a call's result, an imported variable) turns only that port off; a shared config the file imports (`js.configs.recommended`) is named as not read.
+- **Configs not read.** An `.eslintrc.js`, `.eslintrc.cjs` or YAML config is named as not read and changes nothing.
+- **Your choices win.** A rule you already set in the dashboard's review, in that folder, keeps your setting. "Skip, I'll pick packs" takes nothing from the lint config, even for the packs you then pick.
+
+A port matches an upstream rule by the names its document honours suppression comments for, so `custom/no-console` (another plugin's rule) leaves the port of ESLint's `no-console` alone. The exact reading rules (what counts as data in a flat config, the order ESLint applies entries in, how Ruff's selectors resolve) are in the header comments of `src/engine/catalog/lint-config/`.
+
 ## Rules: attachments and settings
 
 Rules come from three places:
@@ -70,7 +92,7 @@ A rule Rerail did not publish runs in Log, whatever its settings say, until a pe
 
 An approval is of content, on this machine: a rule by its id and the digest of its document, a pack by its package name and the digest of its version, what it says of itself (`name`, `category`, `covers`, `reason`), `honourSuppressionComments` and every rule document it lists. An edit, or a new version of a pack, is new content and waits again; going back to approved content needs no second approval. A library rule a person writes through the dashboard or HTTP API is approved with the write; one a coding agent writes, or `rerail rules add` adds, waits. Library rules stored before approvals existed count as approved.
 
-A person approves with `rerail rules approve <id | package>` (no name lists what waits), the Approve button on the rule's page or the pack's sheet in the dashboard, or `rule_approvals_set`. The session footer counts what waits (`2 to approve`) and Overview lists it. An approval changes the configuration signature, so a running session picks it up at its next event.
+A person approves with `rerail rules approve <id | package>` (no name lists what waits), the Approve button on the rule's page or the pack's sheet in the dashboard, or `rule_approvals_set`. `rerail rules approve` prints what it approves first: a rule's JSON in full with invisible characters written as escapes, or a pack's rule ids; Rerail's command files never pre-approve it, so a coding agent's host asks the person before it runs. The session footer counts what waits (`2 to approve`), as does `/rerail`, and Overview lists it. An approval changes the configuration signature, so a running session picks it up at its next event.
 
 `rule_approvals_set` refuses a coding agent, but `rerail rules approve` cannot tell who runs it: a coding agent with a shell can run it as well as a person can. That the agent runs it only after the person says yes is the `/rerail-create` skill's instruction, not something Rerail enforces, as with the rest of the line between people and coding agents ([coding agents](#coding-agents)). Approval keeps a rule a person never read from steering by default; it does not stop an agent set on approving one.
 
@@ -88,7 +110,7 @@ The HTTP API (`/api`) is for people; MCP callers (`/mcp`) are coding agents. The
 
 Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, starts and stops a whole repository, or approves a rule's content ([approval](#approval)); a rule a coding agent writes runs in Log until then.
 
-**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library (`<id>-copy`, `-copy-2`, …) instead. The copy is attached wherever the original is present in the target repository, at the same folders, and a repository setting switches the original off there. The original stays a reference to its installed pack.
+**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library (`<id>-copy`, `-copy-2`, …) instead. The copy is attached wherever the original is present in the target repository, at the same folders. Its first approval switches the original off there with a repository setting: at once for a person's write, which is approved as it is saved, and for a coding agent's copy when a person approves it. Until then the original keeps running beside the copy, which runs in Log, so writing a copy never weakens a rule. The original stays a reference to its installed pack.
 
 ## Management surfaces
 
@@ -117,6 +139,6 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 
 ## Export and import
 
-`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings, start state and approvals belong to this machine and are not exported, so an imported library rule runs in Log until a person approves it. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings, start state and approvals belong to this machine and are not exported, so an imported library rule whose content was not approved here runs in Log until a person approves it, and the command says how many do. `rerail rules import <file> --approve` approves each imported rule as it is imported, for a dump of your own rules, and prints each id; Rerail's command files never pre-approve it, so a coding agent's host asks first. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
 
 Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array with `on`, `mode`, `suppressions`, `onFrom`, `modeFrom` and `suppressionsFrom` for each folder (audits recorded before `suppressions` existed lack those two). Later edits don't rewrite past audits.

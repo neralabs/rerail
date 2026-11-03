@@ -10,11 +10,15 @@ export interface DeviceSecretStore {
   remove(profileName: string): Promise<void>;
 }
 
-interface ProcessResult {
+export interface ProcessResult {
   code: number;
   stdout: string;
   stderr: string;
 }
+
+/** Runs `command` with `args`, writing `input` to its stdin; the system store takes one so tests need no keychain. */
+export type ProcessRunner = (command: string, args: readonly string[], input?: string) => Promise<ProcessResult>;
+
 const WINDOWS_CREDENTIAL_SCRIPT = `
 $ErrorActionPreference = "Stop"
 Add-Type -TypeDefinition @"
@@ -166,12 +170,38 @@ function assertProfileName(profileName: string): void {
   }
 }
 
+/**
+ * `security -i` reads each command line into a fixed buffer of about 4 KiB: on macOS 26 a 4,090-byte line worked and a
+ * 4,100-byte one failed. A line must stay below it, or `security` cuts the command short.
+ */
+const SECURITY_LINE_LIMIT = 4_000;
+
+/**
+ * The `security -i` command that stores `value` for `profileName`. `security` reads it from stdin, so the secret is
+ * never in an argv: any local user can read every process's argv with `ps`. Inside double quotes `security` takes
+ * `\"` and `\\` as escapes; a line break would end the command, so a value holding one is refused.
+ */
+function keychainWriteCommand(profileName: string, value: string): string {
+  if (/[\r\n\0]/u.test(value)) throw new Error("macOS Keychain write failed: the secret holds a line break or NUL");
+  const quoted = `"${value.replace(/[\\"]/gu, "\\$&")}"`;
+  const line = `add-generic-password -U -a ${profileName} -s com.neralabs.rerail.device -w ${quoted}\n`;
+  if (Buffer.byteLength(line) > SECURITY_LINE_LIMIT) {
+    throw new Error(`macOS Keychain write failed: the secret is too long for security -i (${Buffer.byteLength(line)} of ${SECURITY_LINE_LIMIT} bytes)`);
+  }
+  return line;
+}
+
 export class SystemDeviceSecretStore implements DeviceSecretStore {
+  constructor(
+    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly run: ProcessRunner = execute,
+  ) {}
+
   async read(profileName: string): Promise<string | undefined> {
     assertProfileName(profileName);
-    if (process.platform === "win32") return await executeWindowsCredential("read", profileName);
-    if (process.platform === "darwin") {
-      const result = await execute("security", [
+    if (this.platform === "win32") return await executeWindowsCredential("read", profileName);
+    if (this.platform === "darwin") {
+      const result = await this.run("security", [
         "find-generic-password",
         "-a",
         profileName,
@@ -183,8 +213,8 @@ export class SystemDeviceSecretStore implements DeviceSecretStore {
       if (result.code !== 0) throw new Error(`macOS Keychain lookup failed: ${result.stderr.trim()}`);
       return result.stdout.replace(/\r?\n$/u, "");
     }
-    if (process.platform === "linux") {
-      const result = await execute("secret-tool", ["lookup", "application", "rerail", "profile", profileName]);
+    if (this.platform === "linux") {
+      const result = await this.run("secret-tool", ["lookup", "application", "rerail", "profile", profileName]);
       if (result.code === 1) return undefined;
       if (result.code !== 0) throw new Error(`Secret Service lookup failed: ${result.stderr.trim()}`);
       const value = result.stdout.replace(/\r?\n$/u, "");
@@ -195,26 +225,17 @@ export class SystemDeviceSecretStore implements DeviceSecretStore {
 
   async write(profileName: string, value: string): Promise<void> {
     assertProfileName(profileName);
-    if (process.platform === "win32") {
+    if (this.platform === "win32") {
       await executeWindowsCredential("write", profileName, value);
       return;
     }
-    if (process.platform === "darwin") {
-      const result = await execute("security", [
-        "add-generic-password",
-        "-U",
-        "-a",
-        profileName,
-        "-s",
-        "com.neralabs.rerail.device",
-        "-w",
-        value,
-      ]);
+    if (this.platform === "darwin") {
+      const result = await this.run("security", ["-i"], keychainWriteCommand(profileName, value));
       if (result.code !== 0) throw new Error(`macOS Keychain write failed: ${result.stderr.trim()}`);
       return;
     }
-    if (process.platform === "linux") {
-      const result = await execute(
+    if (this.platform === "linux") {
+      const result = await this.run(
         "secret-tool",
         ["store", "--label", `Rerail device identity (${profileName})`, "application", "rerail", "profile", profileName],
         value,
@@ -227,12 +248,12 @@ export class SystemDeviceSecretStore implements DeviceSecretStore {
 
   async remove(profileName: string): Promise<void> {
     assertProfileName(profileName);
-    if (process.platform === "win32") {
+    if (this.platform === "win32") {
       await executeWindowsCredential("remove", profileName);
       return;
     }
-    if (process.platform === "darwin") {
-      const result = await execute("security", [
+    if (this.platform === "darwin") {
+      const result = await this.run("security", [
         "delete-generic-password",
         "-a",
         profileName,
@@ -244,8 +265,8 @@ export class SystemDeviceSecretStore implements DeviceSecretStore {
       }
       return;
     }
-    if (process.platform === "linux") {
-      const result = await execute("secret-tool", ["clear", "application", "rerail", "profile", profileName]);
+    if (this.platform === "linux") {
+      const result = await this.run("secret-tool", ["clear", "application", "rerail", "profile", profileName]);
       if (result.code !== 0) throw new Error(`Secret Service removal failed: ${result.stderr.trim()}`);
       return;
     }

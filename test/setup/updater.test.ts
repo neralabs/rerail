@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   ManagedUpdater,
+  NpmPackageRegistry,
   compareSemver,
   gitBashShim,
   launcherShim,
@@ -12,6 +13,8 @@ import {
   type Installation,
   type PackageRegistry,
 } from "../../src/setup/updater.js";
+import { ENTRY_POINTS } from "../../src/engine/index.js";
+import type { NpmRunner } from "../../src/runtime/index.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 
 const temporaryDirectories: string[] = [];
@@ -508,6 +511,92 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     });
     await expect(updater.install()).rejects.toThrow("native health failed");
     expect(await readdir(home)).toEqual(["keep.json"]);
+  });
+});
+
+describe("NpmPackageRegistry", () => {
+  interface NpmCall { args: readonly string[]; cwd: string | undefined; projectConfig: boolean }
+
+  /**
+   * An npm whose registry has `@neralabs/rerail@1.1.0` at https://mirror.example/npm and whose `audit signatures`
+   * does what `audit` does. It notes, per call, whether the folder it ran in had a project `.npmrc` or `package.json`.
+   */
+  function fakeNpm(audit: () => Promise<void>): { npm: NpmRunner; calls: NpmCall[] } {
+    const calls: NpmCall[] = [];
+    const npm: NpmRunner = async (args, options = {}) => {
+      const cwd = options.cwd ?? process.cwd();
+      calls.push({ args, cwd: options.cwd, projectConfig: existsSync(join(cwd, ".npmrc")) || existsSync(join(cwd, "package.json")) });
+      if (args[0] === "view") return { stdout: JSON.stringify("1.1.0"), stderr: "" };
+      if (args[0] === "audit") {
+        await audit();
+        return { stdout: "", stderr: "" };
+      }
+      const prefix = args[args.indexOf("--prefix") + 1]!;
+      const packageRoot = join(prefix, "node_modules", "@neralabs", "rerail");
+      await mkdir(packageRoot, { recursive: true });
+      await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.1.0" }));
+      await writeFile(join(prefix, "node_modules", ".package-lock.json"), JSON.stringify({
+        packages: { "node_modules/@neralabs/rerail": { resolved: "https://mirror.example/npm/@neralabs/rerail/-/rerail-1.1.0.tgz" } },
+      }));
+      return { stdout: "", stderr: "" };
+    };
+    return { npm, calls };
+  }
+
+  async function updaterWith(npm: NpmRunner, validateInstallation: (installation: Installation) => Promise<void>): Promise<ManagedUpdater> {
+    const { home, packageRoot } = await fixture();
+    return new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new NpmPackageRegistry(npm), validateInstallation });
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("installs without install scripts and asks the registry from a folder no repository configures", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { npm, calls } = fakeNpm(async () => {});
+    const updater = await updaterWith(npm, async () => {});
+    await expect(updater.update()).resolves.toMatchObject({ changed: true, current: { version: "1.1.0" } });
+
+    const install = calls.find(call => call.args[0] === "install");
+    expect(install?.args).toContain("--ignore-scripts");
+    const views = calls.filter(call => call.args[0] === "view");
+    expect(views.length).toBeGreaterThan(0);
+    for (const view of views) {
+      expect(view.cwd).toBeDefined();
+      expect(view.cwd).not.toBe(process.cwd());
+      expect(view.projectConfig).toBe(false);
+    }
+  });
+
+  it("refuses the update before running any staged code when a signature does not verify", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { npm, calls } = fakeNpm(async () => {
+      throw new Error("npm failed (1): 1 package has an invalid registry signature:\n\nevil@1.0.0 (https://registry.npmjs.org/)");
+    });
+    const validate = vi.fn(async (_installation: Installation) => {});
+    const updater = await updaterWith(npm, validate);
+
+    await expect(updater.update()).rejects.toThrow("invalid registry signature");
+    expect(calls.map(call => call.args[0])).toContain("audit");
+    expect(validate).not.toHaveBeenCalled();
+    expect((await updater.status()).current.version).toBe("1.0.0");
+    expect(existsSync(join(updater.versionsRoot, "1.1.0"))).toBe(false);
+    expect((await readdir(updater.versionsRoot)).filter(entry => entry.endsWith(".staging"))).toEqual([]);
+  });
+
+  it("installs with a warning naming the registry when that registry publishes no signing keys", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { npm } = fakeNpm(async () => {
+      throw new Error("npm failed (1): npm error found no dependencies to audit that were installed from a supported registry");
+    });
+    const validate = vi.fn(async (_installation: Installation) => {});
+    const updater = await updaterWith(npm, validate);
+
+    await expect(updater.update()).resolves.toMatchObject({ changed: true, current: { version: "1.1.0" } });
+    expect(validate).toHaveBeenCalled();
+    const written = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+    expect(written).toContain("warning: https://mirror.example/npm ");
   });
 });
 

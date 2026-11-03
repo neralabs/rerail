@@ -122,11 +122,11 @@ rerail update status
 rerail events          # internal testing
 ```
 
-Updates are explicit. `rerail events` ([internal testing](../README.md#internal-testing)), the coding agent hooks, and the daemon run the active version and never contact a registry; a new version arrives only when a person runs `rerail update` (or `/rerail-update` inside OMP, Pi, Claude Code, and Cursor, `$rerail-update` in Codex). Auto-updating a machine's global package without consent is out of scope. A successful update becomes active only for newly started coding agent sessions; an already running event-loop process continues on its original version, but it evaluates nothing itself: like every managed client it sends events to the machine's one main daemon, which the first hook or session of the new version replaces (see "One main instance" in `docs/installation.md`).
+Updates are explicit. `rerail events` ([internal testing](../README.md#internal-testing)), the coding agent hooks, and the daemon run the active version and never contact a registry; a new version arrives only when a person runs `rerail update` (or `/rerail-update` inside OMP, Pi, Claude Code, and Cursor, `$rerail-update` in Codex). Auto-updating a machine's global package without consent is out of scope. A successful update becomes active only for newly started coding agent sessions; an already running event-loop process continues on its original version, but it evaluates nothing itself: like every managed client it sends events to the machine's one main daemon, which the first hook or session of the new version replaces (see [One main instance](how-setup-works.md#one-main-instance)).
 
 An update:
 
-1. Copies the Rerail database to `$RERAIL_HOME/rerail.sqlite.pre-update`, so every rule and repository's history can be put back by hand after an update that changed the file (see `docs/installation.md`).
+1. Copies the Rerail database to `$RERAIL_HOME/rerail.sqlite.pre-update`, so every rule and repository's history can be put back by hand after an update that changed the file (see [Database compatibility](how-setup-works.md#database-compatibility)).
 2. Resolves the exact version behind the configured npm dist-tag.
 3. Compares it with the active semantic version.
 4. Acquires a machine-wide update lock.
@@ -269,7 +269,13 @@ Nera release root
    `- Globex policy key
 ```
 
-A customer policy server cannot sign executable updates. A compromised customer policy key cannot sign another customer's policies. Executable updates always require a Nera software-update signature, including when downloaded through a dedicated customer instance.
+A customer policy server cannot sign executable updates. A compromised customer policy key cannot sign another customer's policies.
+
+The software update signing key is planned, not built: no Rerail code verifies a Nera signature on an update today.
+What `rerail update` verifies now is npm's: before it runs a staged version, it checks the registry signatures and
+provenance attestations of everything it installed with `npm audit signatures`, and it installs with no install scripts
+([installation.md](installation.md#registry-access)). Those attestations come from Nera's trusted-publisher release
+workflow, so they bind a version to that workflow, not to a key Nera holds offline.
 
 ## Local operation
 

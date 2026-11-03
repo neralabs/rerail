@@ -250,6 +250,7 @@ const ruleActivitySchema = z.object({
   loggedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those recorded in Log mode at the time, whatever the rule's mode is now."),
   rerails: z.number().int().nonnegative(),
   ...inactiveField,
+  removed: z.literal(true).optional().describe("Set on a rule no longer among the rules reported (taken out of the repository, or no longer installed or in the library) that has violations in range: listed for its history, with nothing to turn off."),
 }).strict();
 
 const violationRecordSchema = z.object({
@@ -280,6 +281,10 @@ const codingAgentSchema = z.object({
   found: z.boolean().describe("The coding agent's config folder exists on this computer."),
   connected: z.boolean().describe("Rerail's hooks and commands are in place for it."),
   problem: z.string().nullable().describe("Why the connection could not be checked, such as a config file that is not valid JSON."),
+  rerailData: z.object({
+    access: z.enum(["kept-out", "file-tools", "open"]).describe("kept-out: neither its commands nor its file tools can read Rerail's data; file-tools: its file tools cannot, its shell commands can; open: nothing keeps it out."),
+    why: z.string().describe("One sentence for a person saying why."),
+  }).strict().describe("Whether this coding agent's own tools can read Rerail's data (the Rerail home and the content cache), as far as its configuration on this computer shows. Rerail never changes it."),
 }).strict();
 
 export const operations: readonly Operation[] = [
@@ -361,7 +366,7 @@ export const operations: readonly Operation[] = [
     id: "rules_activity",
     method: "GET",
     path: "/api/rules/activity",
-    summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many audits evaluated it, and how many steering deliveries it drove. Use it to find rules worth disabling or rules that never fire.",
+    summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many audits evaluated it, and how many steering deliveries it drove. A rule taken out of the repository is listed, with `removed: true`, while it has violations in range. Use it to find rules worth disabling or rules that never fire.",
     query: z.object({ since: sinceParameter, ...repositoryFilter }).strict(),
     output: z.object({
       since: z.number().int().nonnegative(),
@@ -391,6 +396,11 @@ export const operations: readonly Operation[] = [
           rerails: kind === "conversation" ? 0 : rerails.get(id) ?? 0,
           ...(inactive === undefined ? {} : { inactive }),
         };
+      }
+      // A rule taken out since keeps its violations: History still lists it, marked removed.
+      for (const [id, totals] of activity) {
+        if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
+        rules[id] = { measured: true, ...totals, rerails: rerails.get(id) ?? 0, removed: true };
       }
       return {
         since: input.since,
@@ -432,7 +442,7 @@ export const operations: readonly Operation[] = [
     id: "coding_agents_list",
     method: "GET",
     path: "/api/coding-agents",
-    summary: "List the coding agents Rerail works with: whether each is on this computer and whether Rerail is connected to it. Changes nothing.",
+    summary: "List the coding agents Rerail works with: whether each is on this computer, whether Rerail is connected to it, and whether its tools can read Rerail's data. Changes nothing.",
     output: z.object({ agents: z.array(codingAgentSchema) }),
     handler: async (stores) => {
       const agents = stores.codingAgents();
@@ -648,8 +658,10 @@ export const operations: readonly Operation[] = [
         ...(input.limit === undefined ? {} : { limit: input.limit }),
       });
       const last = page.at(-1);
+      // A call's paths are judged in the session's folder too, where a file that links to a secret counts as one.
+      const cwd = caller.kind === "person" ? undefined : stores.reader.session(input.sessionId)?.cwd;
       return {
-        events: caller.kind === "person" ? [...page] : page.map(event => ({ ...event, payload: agentTranscriptPayload(event.kind, event.payload) })),
+        events: caller.kind === "person" ? [...page] : page.map(event => ({ ...event, payload: agentTranscriptPayload(event.kind, event.payload, cwd) })),
         nextAfter: last === undefined ? input.after ?? 0 : last.sequence,
         pageLimit: SESSION_EVENT_PAGE_LIMIT as typeof SESSION_EVENT_PAGE_LIMIT,
       };

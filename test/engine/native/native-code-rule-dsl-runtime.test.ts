@@ -604,7 +604,7 @@ clauses:
       expect(result.status).toBe("completed");
       expect(result.violations.map((item) => item.span?.startByte)).toEqual([0, source.lastIndexOf("execute_async()")]);
     });
-    it("matches file paths without inspecting file contents", () => {
+    it("matches file paths without inspecting file contents, naming the file with no span", () => {
       const compiled = compileJson([
         {
           violation: violation("REQUIRED_FILE"),
@@ -621,11 +621,8 @@ clauses:
       );
 
       expect(result.violations).toHaveLength(1);
-      expect(result.violations[0]).toMatchObject({
-        code: "REQUIRED_FILE",
-        path: ".required.json",
-        span: { startLine: 0 },
-      });
+      expect(result.violations[0]).toMatchObject({ code: "REQUIRED_FILE", path: ".required.json" });
+      expect(result.violations[0]).not.toHaveProperty("span");
     });
     it("selects repository witnesses only when another query has evidence", () => {
       const compiled = compileJson([
@@ -652,7 +649,8 @@ clauses:
       );
 
       expect(violating.violations).toHaveLength(1);
-      expect(violating.violations[0]).toMatchObject({ path: ".baseline.json", span: { startLine: 0 } });
+      expect(violating.violations[0]).toMatchObject({ path: ".baseline.json" });
+      expect(violating.violations[0]).not.toHaveProperty("span");
       expect(compliant).toMatchObject({ violations: [], status: "completed" });
     });
     it("applies portable include and exclude scopes before matching", () => {

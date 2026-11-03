@@ -136,7 +136,7 @@ pub struct GitIgnoreMatcher {
 impl GitIgnoreMatcher {
     /// Whether Git ignores `relative_path` (to the root the matcher was opened for, `/`-separated);
     /// `is_directory` lets directory-only patterns (`build/`) match.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ignored(&self, relative_path: String, is_directory: bool) -> Result<bool> {
         let mut inner = self
             .inner
@@ -149,7 +149,7 @@ impl GitIgnoreMatcher {
 }
 
 /// The Git exclude stack for paths below `root`; null when `root` is in no Git worktree.
-#[napi]
+#[napi(catch_unwind)]
 pub fn open_git_ignore_matcher(root: String) -> Result<Option<GitIgnoreMatcher>> {
     GitIgnore::open(Path::new(&root))
         .map(|opened| {

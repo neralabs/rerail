@@ -6,7 +6,7 @@
  */
 import { h, setContent, icon, searchIcon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { awaitingApproval, categoryLabel, inPack, isRerailPack, isWorktreePack, packSuppressions, publisherLabel } from "../derive.js";
+import { awaitingApproval, categoryLabel, inPack, isRerailPack, isWorktreePack, MODE_LABEL, packSuppressions, publisherLabel } from "../derive.js";
 import { data, ui, isAttached, keptPacks, reviewing, repoName } from "../state.js";
 import { SHEET_FILTER_AT, sheetRules } from "../pack-model.js";
 import { changeOwner } from "../shell.js";
@@ -16,9 +16,9 @@ const packOn = pack => (reviewing() ? keptPacks().includes(pack.id) : isAttached
 
 /** Remove pack's question, in place: the whole pack goes, its history stays. */
 function removeQuestion(pack) {
-  const n = pack.rules.length, repo = repoName() || "this repo";
+  const repo = repoName() || "this repo";
   return h("span.rmask", { role: "alertdialog", "aria-label": `Remove ${pack.name}?` },
-    h("span", null, `Remove ${n === 1 ? "the 1 rule" : `all ${fmt(n)} rules`} in ${pack.name} from ${repo}? ${n === 1 ? "It goes" : "They go"} off and the pack returns to Rule packs. History is kept.`),
+    h("span", null, `Remove ${pack.name} from ${repo}? History is kept.`),
     h("button.btn.sm.danger", { "data-act": "removepack", "data-i": pack.id }, "Remove"),
     h("button.btn.sm.ghost.link", { "data-act": "cancelremove" }, "Cancel"));
 }
@@ -31,7 +31,7 @@ function removeQuestion(pack) {
 export function removePackControl(pack, quiet = false) {
   if (isWorktreePack(pack)) return null;
   if (ui.removeAsk === pack.id) return removeQuestion(pack);
-  return h(`button.btn.sm.danger${quiet ? ".quiet" : ""}`, { "data-act": "removepack", "data-i": pack.id, title: "Its rules go off and the pack returns to Rule packs" }, "Remove pack");
+  return h(`button.btn.sm.danger${quiet ? ".quiet" : ""}`, { "data-act": "removepack", "data-i": pack.id }, "Remove pack");
 }
 
 /** Add pack while the pack is not on here; else Remove pack (`removePackControl`). */
@@ -54,9 +54,8 @@ const monogram = pack => PACK_LETTERS[pack.id] ?? pack.id.replace(/[^a-z0-9]/giu
 
 export const packIcon = pack => h("span.picon", { "aria-hidden": "true" }, h(`span.ltr${monogram(pack).length > 2 ? ".l3" : ""}`, null, monogram(pack)));
 
-const MODE_NAME = { log: "Log", steer: "Steer", block: "Block" };
 /** How a pack rule starts once added: its mode, and "off" for a rule the pack adds switched off. */
-const startsAs = rule => `${MODE_NAME[rule.mode] ?? rule.mode}${rule.on ? "" : " · off"}`;
+const startsAs = rule => `${MODE_LABEL[rule.mode] ?? rule.mode}${rule.on ? "" : " · off"}`;
 
 /** Once the pack is added: whether its rules here honour suppression comments, and the pack's switch for them. */
 function suppressionsLine(pack, suppressions) {

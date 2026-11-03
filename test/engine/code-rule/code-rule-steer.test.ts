@@ -1,5 +1,9 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildSteer, type CodeRuleViolation, renderSteer, SECRET_FILE_FINDING_MESSAGE, STEER_FIX_CHARS } from "../../../src/engine/code-rule/code-rule.js";
+import { checkoutPathBoundary } from "../../../src/engine/path-boundary.js";
 
 const span = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({
   startByte: 0, endByte: 0, startLine, startColumn, endLine, endColumn,
@@ -91,6 +95,12 @@ describe("renderSteer", () => {
     expect(fix("a ``` b")).toBe("  Suggested fix: replace 1:1–1:4 with ````a ``` b````");
   });
 
+  it("keeps control and bidi characters of the code a fix quotes out of it, and a carriage return from breaking its line", () => {
+    const fix = (text: string) => renderSteer([violation({ fix: { span: span(0, 0, 0, 3), text } })]).split("\n").slice(2, -1);
+    expect(fix("a\u202eb\rc\u0000")).toEqual(["  Suggested fix: replace 1:1–1:4 with `ab c`"]);
+    expect(fix("a\r\nb")).toEqual(["  Suggested fix, replacing 1:1–1:4:", "  ~~~", "  a", "  b", "  ~~~"]);
+  });
+
   it("renders an empty fix as a deletion", () => {
     const deletion = violation({ fix: { span: span(0, 0, 0, 3), text: "" } });
     expect(renderSteer([deletion])).toContain("  Suggested fix: delete 1:1–1:4");
@@ -121,5 +131,25 @@ describe("buildSteer", () => {
       { id: "acme:no-print", state: "logged", origin: "From your rule library." },
     ]);
     expect(steer.content).toBe(renderSteer([violation(), other, violation()]));
+  });
+
+  it("withholds the message and fix of a finding in a file that links to a secret, judged in its checkout", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-steer-link-")));
+    try {
+      writeFileSync(join(root, ".env"), "API_KEY=hunter2\n");
+      mkdirSync(join(root, "docs"));
+      symlinkSync("../.env", join(root, "docs", "a.md"));
+      const linked = violation({ path: "docs/a.md", message: "`API_KEY=hunter2` is plaintext", fix: { span: span(0, 0, 0, 7), text: "API_KEY=" } });
+      expect(renderSteer([linked])).toContain("`API_KEY=hunter2` is plaintext");
+      const steer = buildSteer([linked, violation()], { kind: "edit" }, undefined, checkoutPathBoundary(root).sensitive);
+      expect(steer.content).toBe([
+        "Rerail found 2 problems in your last edit:",
+        `- docs/a.md:3:15 — ${SECRET_FILE_FINDING_MESSAGE} [p]`,
+        "- src/a.ts:3:15 — log of user [p]",
+        FIX_THESE,
+      ].join("\n"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

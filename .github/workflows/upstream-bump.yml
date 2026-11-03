@@ -106,7 +106,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -135,7 +135,7 @@ jobs:
         include: ${{ fromJSON(needs.scope.outputs.tool-packs) }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -210,7 +210,7 @@ jobs:
           echo "staged in publish/: $(git diff --cached --name-only -- 'packs/*/upstream/*/publish/**' | wc -l) file(s)"
 
       - name: Upload the bump
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bump-${{ matrix.pack }}--${{ matrix.tool }}
           path: ${{ runner.temp }}/bump/

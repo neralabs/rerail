@@ -43,12 +43,13 @@ example on this page is a complete draft for `rerail rules test`, and Rerail's t
 
 | Use | When | Cost |
 |---|---|---|
-| `regex` over `file.content` | the thing is a token, an import line, a path, or a comment marker; any file type | cheapest; it can match inside strings and comments |
+| `regex` over `file.content` | the thing is a token, an import line, a path, or a comment marker, in any text file, named by suffix or not (`Justfile`, `LICENSE`, `*.lock`) | cheapest; it can match inside strings and comments |
+| `regex` over `file.path`, or `{ "file": {} }` | the file itself is wrong: its name or place (`*.orig` left behind), or, with `file`, every file the scope holds should not exist | never reads the file; a match is the file's path, with no line, so no `fix` and no `capture.*` anchor |
 | `ast` with `pattern` | a call, an expression or a statement in Python, JavaScript, TypeScript, PHP or Blade | needs the file to parse; ignores strings and comments |
 | `ast` with `inside` / `has` / `not` | the thing is wrong only in some context: inside an `async def`, a loop, or a component | as above; the clearest way to state an exception |
 
-Rerail parses Python, JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.tsx`), PHP and Blade. It reads other text
-files for `regex` clauses only.
+Rerail parses Python, JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.tsx`), PHP and Blade. It reads every other
+text file, whatever its name, for `regex` and `file` clauses only, and never reads a binary file (one holding a NUL byte).
 
 ### Regex
 

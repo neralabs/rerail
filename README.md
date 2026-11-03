@@ -21,14 +21,15 @@ Rule checking runs on your machine and makes no network requests. No account or 
 
 You need Node.js 24 or later and Git, on macOS, Linux with glibc 2.28 or later (not Alpine or other musl Linux), or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine. If set-up or Rerail goes wrong, see [Troubleshooting](docs/troubleshooting.md).
 
+In your repository, run this to install Rerail under `~/.rerail`, connect your coding agents and start Rerail there:
+
 ```sh
-cd your-repo
-npx @neralabs/rerail setup   # install under ~/.rerail, connect your coding agents, start Rerail here
+npx @neralabs/rerail setup
 ```
 
 Then, in a new terminal, which has `rerail` on its `PATH`, open the dashboard with `rerail manage`.
 
-Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) lists everything set-up writes and how to remove it.
+Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) says what set-up changes on your machine and how to update and remove Rerail.
 
 Then start a new Claude Code, Codex, Cursor, OMP or Pi session in the repository. To watch Rerail catch a broken rule and steer the fix, run:
 
@@ -75,12 +76,22 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 
 Core ships no rules. A rule pack is a set of rules published as its own npm package: Rerail's are `@neralabs/rerail-pack-<id>`, and anyone can publish one as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, which Rerail has not reviewed ([rule packs](docs/rule-packs.md#third-parties-packs)). Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend`.
 
-To add a pack after set-up:
+To add a pack after set-up, first see the packs that fit this repository, and why:
 
 ```sh
-rerail packs recommend        # the packs that fit this repository, and why
-rerail packs add complexity   # install it into ~/.rerail/packs
-rerail manage                 # Rule packs page: add it to this repository
+rerail packs recommend
+```
+
+Install one into `~/.rerail/packs`:
+
+```sh
+rerail packs add complexity
+```
+
+Then open the dashboard and add it to this repository on the **Rule packs** page:
+
+```sh
+rerail manage
 ```
 
 `rerail packs add` installs a pack but turns it on nowhere; it runs only in the repositories you add it to.
@@ -104,7 +115,7 @@ A ported rule ships only once it passes the conformance check: it is scored agai
 
 A worktree can also carry rules of its own: each rule document in its `.rerail/rules/` folder runs in that worktree only, with nothing to install or add, and `rerail packs list` there shows what loaded ([a rule for one worktree only](docs/writing-rules.md#a-rule-for-one-worktree-only)). `/rerail-create` writes a rule there when you ask for this worktree only.
 
-Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex clauses work on any file. Move your own rules between machines with `rerail rules export` and `rerail rules import`.
+Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
 
 ## Supported coding agents
 
@@ -180,7 +191,7 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 ### Good places to start
 
 - [CONTEXT.md](CONTEXT.md): the vocabulary used across the codebase. Read it first.
-- [docs/installation.md](docs/installation.md): what set-up writes to your machine and how to remove it.
+- [docs/installation.md](docs/installation.md): what you need, how to install, update and remove Rerail, and what set-up changes on your machine; [docs/how-setup-works.md](docs/how-setup-works.md) has every step and file in detail.
 - [docs/reference.md](docs/reference.md): rules and their configuration, the database, updates, the daemon and its API.
 - [docs/code-rule-dsl-reference.html](docs/code-rule-dsl-reference.html): every construct of the `rerail.policy/v1` rule language.
 - [docs/rule-packs.md](docs/rule-packs.md) and [docs/pack-format.md](docs/pack-format.md): how packs work and what each must prove.
@@ -195,8 +206,23 @@ To build from a checkout you need Node.js 24+, npm, Rust (pinned in `rust-toolch
 
 ```sh
 git lfs install
+```
+
+Then, in the checkout, install the dependencies and build:
+
+```sh
 npm ci && npm run build
+```
+
+Run the checks:
+
+```sh
 npm run check:all
+```
+
+Run the tests:
+
+```sh
 npm run test:all
 ```
 
