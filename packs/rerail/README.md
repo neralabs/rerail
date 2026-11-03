@@ -66,7 +66,8 @@ flag. A Log rule's gaps say what is still on `main` today.
 Flags conformance code that starts a program with `child_process` instead of its command runner
 (`conformance/process.ts`), imports from the pack-data, upstream or pack-generator scripts, holds a recorder, or writes
 expected findings. It runs on TypeScript and JavaScript under `conformance/` and on anything under a `recorders/` folder
-there; `conformance/process.ts` and generated files are out of scope. Type-only `child_process` imports and JSON or YAML
+there; `conformance/process.ts`, the check's worker pool `conformance/languages/shards.ts` (it forks its own worker
+script, not a program) and generated files are out of scope. Type-only `child_process` imports and JSON or YAML
 data under a pack's `upstream/` pass; type imports from the authoring path are caught.
 
 History: Built on #85's three direct `git` calls and #177's runner bypasses and nine authoring-path imports; it caught the

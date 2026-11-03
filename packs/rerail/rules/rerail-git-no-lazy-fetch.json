@@ -448,7 +448,7 @@
       "violation": {
         "code": "GIT_OUTSIDE_GIT_MODULE",
         "anchor": "witness.span",
-        "message": "Run Git through runGit, gitText or readGitBlobs in src/engine/git.ts, adding a helper there if none fits: they find Git without PATH and turn off hooks, fsmonitor and lazy fetch."
+        "message": "Run Git through runGit, gitText or readGitBlobs in src/engine/git.ts, adding a helper there if none fits: they find Git on a trusted PATH entry or a usual install location and turn off hooks, fsmonitor and lazy fetch."
       }
     }
   ]

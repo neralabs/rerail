@@ -109,6 +109,10 @@
     {
       "path": "conformance/languages/expected-read.ts",
       "content": "import { readFile } from \"node:fs/promises\";\nimport { fixturesExpectedPath, type LoadedPack } from \"./pack.js\";\nexport async function expected(loaded: LoadedPack, tool: string) {\n  return JSON.parse(await readFile(fixturesExpectedPath(loaded, tool), \"utf8\"));\n}\nexport async function writeSummary(path: string, text: string) {\n  const { writeFile } = await import(\"node:fs/promises\");\n  await writeFile(path, text);\n}\n"
+    },
+    {
+      "path": "conformance/languages/shards.ts",
+      "content": "import { fork, type ChildProcess } from \"node:child_process\";\n\nexport function startWorker(script: string): ChildProcess {\n  return fork(script, [], { serialization: \"advanced\" });\n}\n"
     }
   ]
 }

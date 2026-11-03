@@ -18,6 +18,7 @@
     ],
     "exclude": [
       "conformance/process.ts",
+      "conformance/languages/shards.ts",
       "conformance/**/*.generated.ts"
     ]
   },
