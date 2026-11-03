@@ -1,6 +1,6 @@
 # SQLFluff 4.4.0: cases Rerail wrote
 
-The fixtures listed below were written by Rerail for the pinned SQLFluff to score, beside the cases copied from upstream (`licenses/sqlfluff/UPSTREAM.md`): inputs the ports once misread. `sqlfluff/generate.py` holds them (`RERAIL_CASES`), writes them here and records SQLFluff's findings on them in `fixtures.expected.json`, checking each case's expected positions against the pinned SQLFluff. They are Rerail's (Apache-2.0, the pack's licence), so nothing goes under `licenses/`. Paths are relative to the pack directory.
+The fixtures listed below were written by Rerail for the pinned SQLFluff to score, beside the cases copied from upstream (`licenses/sqlfluff/UPSTREAM.md`): inputs the ports once misread. `sqlfluff/generate.py` holds them (`RERAIL_CASES`), writes them here and records SQLFluff's findings on them in `fixtures.expected.json`, checking each case's expected positions against the pinned SQLFluff. They are Rerail's (Apache-2.0, the pack's licence), so nothing goes under `licenses/`. Every path is relative to the pack directory.
 
 | File | Origin |
 |---|---|
