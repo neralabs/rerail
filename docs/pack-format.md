@@ -109,6 +109,8 @@ packs/<id>/
 - A private pack: npm refuses to publish it, Changesets never versions it, the release scripts leave it out, and the
   pack list does not name it, so set-up never fetches it. It still passes every check, and is installed from a
   checkout with `rerail packs add packs/<id>`.
+  The conformance gate's not-gated list leaves it out ([conformance/README.md](../conformance/README.md#packs-not-gated)):
+  its rules are proven by their examples and tests, not by an upstream tool.
 - The schema is `rulePackPackageSchema` in `src/engine/catalog/rule-packs.ts`.
 
 </details>
