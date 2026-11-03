@@ -1,0 +1,50 @@
+# Which labels a pull request gets from the paths it changes (.github/workflows/pr-labels.yml). A label not listed here
+# is never added or removed by that workflow: intent and triage labels (bug, needs-triage) stay manual, and Dependabot
+# keeps its own (dependencies, javascript).
+#
+# Markdown doesn't count towards an area, so a README beside the code doesn't label a pull request with that code's area.
+# all-globs-to-any-file: one changed file must match every glob, so the paths go in one brace glob.
+
+engine:
+  - changed-files:
+      - all-globs-to-any-file:
+          - "{src/engine,test/engine,native,model,benchmark,fixtures}/**"
+          - "!fixtures/{host,packs}/**"
+          - "!**/*.md"
+
+dashboard:
+  - changed-files:
+      - all-globs-to-any-file:
+          - "{ui,e2e,test/ui,src/api,test/api,src/presentation,test/presentation}/**"
+          - "!**/*.md"
+
+integration:
+  - changed-files:
+      - all-globs-to-any-file:
+          - "{src/hosts,test/hosts,src/harness,test/harness,fixtures/host,plugins,hooks,languages,scripts/host,.claude-plugin,.codex-plugin,.cursor-plugin}/**"
+          - "!**/*.md"
+
+rule-pack:
+  - changed-files:
+      - all-globs-to-any-file:
+          - "packs/**"
+          - "!**/*.md"
+
+rust:
+  - changed-files:
+      - all-globs-to-any-file:
+          - "{native/**,Cargo.toml,Cargo.lock,rust-toolchain.toml}"
+          - "!**/*.md"
+
+github_actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/{workflows,actions}/**"
+
+# Only a pull request that is all documentation. Most pull requests update a doc alongside the code, so counting any doc
+# would put this label on two in three of them. any-glob-to-all-files: one glob must match every changed file, so the
+# paths go in one brace glob here too.
+documentation:
+  - changed-files:
+      - any-glob-to-all-files:
+          - "{docs/**,**/*.md}"
