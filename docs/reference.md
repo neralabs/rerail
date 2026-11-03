@@ -106,7 +106,7 @@ The daemon serves every repository on the machine. Its listings — sessions, au
 
 ### Steer feedback
 
-A steer ends by asking the coding agent to fix the problem, or to tell the user in one line why it won't and record that line with `rerail feedback <rule-id> '<that line>'` (the rule's id is put in the command only when it is a plain word a shell reads as one; a line with a `'` in it goes on stdin, `rerail feedback <rule-id> - <<'LINE'`). The note is kept in `steer_feedback` with the rule's pack and version, the repository, and the coding agent and session the rule last steered in this repository, so pushback on a rule can be read back when tuning it. A rule id or reason holding control characters is refused.
+A steer ends by asking the coding agent to fix the problem, or to tell the user in one line why it won't and record that line with `rerail feedback <rule-id> '<that line>'` (the rule's id is put in the command only when it is a plain word a shell reads as one; a line with a `'` in it goes on stdin, `rerail feedback <rule-id> - <<'LINE'`). The note is kept in `steer_feedback` with the rule's pack and version, the repository, and the coding agent and session the rule last steered in this repository, so pushback on a rule can be read back when tuning it. A rule id or reason holding control characters, or invisible ones such as a bidi override or a zero-width space, is refused, so a pasted note reads as what it holds.
 
 ```sh
 rerail feedback <rule-id> <reason>       # keep the note on this computer

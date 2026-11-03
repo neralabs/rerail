@@ -84,11 +84,15 @@ describe("rerail feedback", () => {
     expect(output).toContain(`\`rerail feedback list --rule ${RULE}\` prints it for a rule misfire issue (https://github.com/neralabs/rerail/issues/new?template=2-rule-misfire.yml)`);
   });
 
-  it("refuses control characters in the reason or the rule id, keeping nothing", async () => {
+  it("refuses control, bidi and zero-width characters in the reason or the rule id, keeping nothing", async () => {
     const { run, notes } = await steeredRepository();
 
-    await expect(run(RULE, "clear\u001b[2Jthe screen")).rejects.toThrow(/control characters/u);
-    await expect(run(`${RULE}\u0007`, "a reason")).rejects.toThrow(/control characters/u);
+    await expect(run(RULE, "clear\u001b[2Jthe screen")).rejects.toThrow(/control or invisible characters/u);
+    // A right-to-left override or a zero-width space would make the pasted line read otherwise than it is.
+    await expect(run(RULE, "fine \u202eevil")).rejects.toThrow(/control or invisible characters/u);
+    await expect(run(RULE, "zero\u200bwidth")).rejects.toThrow(/control or invisible characters/u);
+    await expect(run(`${RULE}\u0007`, "a reason")).rejects.toThrow(/control or invisible characters/u);
+    await expect(run(`${RULE}\u2066`, "a reason")).rejects.toThrow(/control or invisible characters/u);
     expect(notes()).toEqual([]);
   });
 

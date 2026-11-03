@@ -19,8 +19,11 @@ export const RULE_MISFIRE_ISSUE_URL = "https://github.com/neralabs/rerail/issues
 const RULE_ID_MAX = 200;
 const REASON_MAX = 1000;
 
-/** Control characters, which have no place in a rule id or a one-line reason and would drive a terminal that prints them. */
-const CONTROL = /[\p{Cc}]/u;
+/**
+ * Control and format characters: a terminal escape would drive the terminal that prints the note, and a bidi override
+ * or a zero-width character would make the line read differently from what it holds once pasted into an issue.
+ */
+const CONTROL = /[\p{Cc}\p{Cf}]/u;
 
 export interface FeedbackContext {
   packageVersion: string;
@@ -56,7 +59,7 @@ const write = (context: FeedbackContext, text: string): void => {
 function oneLine(words: readonly string[]): string {
   const reason = words.join(" ").replace(/\s+/gu, " ").trim();
   if (reason === "") throw new Error("rerail feedback needs your reason: the one line you gave the user");
-  if (CONTROL.test(reason)) throw new Error("The reason holds control characters; give the plain line you gave the user");
+  if (CONTROL.test(reason)) throw new Error("The reason holds control or invisible characters; give the plain line you gave the user");
   if (reason.length > REASON_MAX) throw new Error(`Keep the reason to one line of at most ${REASON_MAX} characters (this one has ${reason.length})`);
   return reason;
 }
@@ -84,7 +87,7 @@ function steeredHere(database: RerailDatabase, ruleId: string, cwd: string): {
 function record(database: RerailDatabase, ruleId: string, words: readonly string[], context: FeedbackContext): number {
   const reason = oneLine(words);
   if (ruleId.length > RULE_ID_MAX) throw new Error(`A rule id is at most ${RULE_ID_MAX} characters`);
-  if (CONTROL.test(ruleId)) throw new Error("A rule id holds no control characters; use the id in brackets at the end of the steer's line");
+  if (CONTROL.test(ruleId)) throw new Error("A rule id holds no control or invisible characters; use the id in brackets at the end of the steer's line");
   const { repositoryId, session } = steeredHere(database, ruleId, context.cwd ?? process.cwd());
   // Which installed pack lists the rule, from the packs' manifests: a note needs no compiled rule, and compiling every
   // installed pack's rules (`loadRulePacks`) would cost each `rerail feedback` seconds.
