@@ -280,6 +280,10 @@ impl Constrained {
 pub(super) enum AstMatcher {
     Pattern(Pattern),
     Kind(KindMatcher),
+    /// `kind` naming a grammar supertype (`expression`): the nodes the parser reported as its
+    /// members, which the tape stores per node (decision 0025). Membership is contextual (an
+    /// `identifier` assigned to is a `pattern`, not an `expression`), not a function of the kind.
+    Supertype(Supertype),
     Regex(Regex),
     All(Vec<AstMatcher>),
     Any(Vec<AstMatcher>),
@@ -310,6 +314,19 @@ pub(super) enum AstMatcher {
     TestUnknown(Regex),
 }
 
+/// A grammar supertype's id and the concrete kinds its members can have (`AstMatcher::Supertype`).
+#[derive(Clone, Debug)]
+pub(super) struct Supertype {
+    pub(super) class: u16,
+    pub(super) kinds: Arc<std::collections::BTreeSet<u16>>,
+}
+
+impl Supertype {
+    pub(super) fn new(class: u16, language: GrammarDialect) -> Self {
+        Self { class, kinds: Arc::new(language.supertype_kinds(class)) }
+    }
+}
+
 /// The matcher: production matches every AST rule with it (`run_clause`).
 impl Matcher for AstMatcher {
     fn match_node_with_env<'tree, D: Doc>(
@@ -323,6 +340,14 @@ impl Matcher for AstMatcher {
         match self {
             Self::Pattern(pattern) => pattern.match_node_with_env(node, env),
             Self::Kind(kind) => kind.match_node_with_env(node, env),
+            // Memberships are the tape's; a tree that is no tape's has none to read.
+            Self::Supertype(supertype) => match crate::code_rule_dsl::tape::tape_doc(&node) {
+                Some(tape) => tape.transducer_has_supertype(node.node_id() as u32, supertype.class).then_some(node),
+                None => {
+                    UNKNOWN.set(true);
+                    None
+                }
+            },
             // RegexMatcher uses exactly this engine and node-text operation.
             Self::Regex(regex) => regex.is_match(&node.text()).then_some(node),
             Self::All(matchers) => Self::match_all(matchers, node, env),
@@ -518,7 +543,7 @@ impl AstMatcher {
     fn binds_nothing(&self) -> bool {
         match self {
             Self::Semantic(semantic) => semantic.binds_nothing(),
-            Self::Kind(_) | Self::Regex(_) | Self::Not(_) | Self::Compare(_) | Self::Never => true,
+            Self::Kind(_) | Self::Supertype(_) | Self::Regex(_) | Self::Not(_) | Self::Compare(_) | Self::Never => true,
             // A count binds its value under `as`.
             Self::Count(count) => count.binding.is_none(),
             #[cfg(test)]
@@ -593,9 +618,11 @@ pub(super) fn reads_values(
                     .as_ref()
                     .is_some_and(|transform| transform.reads_values())
         }
-        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
-            false
-        }
+        AstMatcher::Pattern(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
+        | AstMatcher::Regex(_)
+        | AstMatcher::Never => false,
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             items.iter().any(|item| reads_values(item, seen))
         }

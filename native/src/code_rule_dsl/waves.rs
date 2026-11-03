@@ -13,3 +13,5 @@ pub(in crate::code_rule_dsl) mod findings;
 /// The frontier loop; `logic::plan::emit` gives it the planner's programs (O14).
 pub(in crate::code_rule_dsl) mod schedule;
 mod storage;
+/// The policies through the logic language: the wave's clauses, rules and demand (list step 21).
+pub(in crate::code_rule_dsl) mod policies;

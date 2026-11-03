@@ -490,7 +490,7 @@ fn context_free(matcher: &AstMatcher, read: &mut BTreeMap<(usize, usize), Option
         super::StopBy::Neighbor | super::StopBy::End => true,
     };
     match matcher {
-        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
+        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
             true
         }
         AstMatcher::All(items) | AstMatcher::Any(items) => {

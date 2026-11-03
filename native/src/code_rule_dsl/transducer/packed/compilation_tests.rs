@@ -2,7 +2,7 @@ use super::super::{
     CAPTURE, EMIT, ExecutionBackend, Program, SUPERTYPE, execute_with_backend,
     execute_with_backend_packed_result_limits, word,
 };
-use super::{resolve, settle};
+use super::{PlanId, resolve, resolve_plan, settle};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::tape::{DERIVED_CLASS_BASE, Grammar, TapeDoc, TapeImage};
 use std::sync::Arc;
@@ -85,4 +85,30 @@ fn the_cpu_runs_the_interpreter_until_its_programs_compile() {
 #[test]
 fn metal_runs_its_interpreter_until_its_kernel_compiles() {
     background(ExecutionBackend::MetalBackground, ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit, "compilation metal");
+}
+
+/// One plan, two bindings (list step 16): the interpreter until the plan's compiled binding is
+/// ready, then the compiled one, each binding requested once under the plan's identity; a part of
+/// a plan is its own plan.
+#[test]
+fn a_plan_runs_interpreted_until_its_binding_is_compiled() {
+    let programs = programs("compilation plan", 3);
+    let plan = PlanId::of_programs(&programs);
+    assert_eq!(plan, PlanId::of_programs(&programs.clone()), "an identity of what runs");
+    assert_ne!(plan.part(0, 1), plan.part(0, 2));
+    let (tapes, anchors) = tapes();
+    assert_eq!(resolve_plan(ExecutionBackend::CpuBackground, plan, &programs).unwrap(), ExecutionBackend::CpuInterpreter);
+    let interpreted = super::super::execute_planned(ExecutionBackend::CpuBackground, plan, &programs, &tapes, &anchors, None)
+        .unwrap()
+        .into_outcome()
+        .unwrap()
+        .outputs;
+    settle();
+    assert_eq!(resolve_plan(ExecutionBackend::CpuBackground, plan, &programs).unwrap(), ExecutionBackend::CpuJit, "swapped once built");
+    let compiled = super::super::execute_planned(ExecutionBackend::CpuBackground, plan, &programs, &tapes, &anchors, None)
+        .unwrap()
+        .into_outcome()
+        .unwrap()
+        .outputs;
+    assert_eq!(compiled, interpreted, "the two bindings' outputs");
 }

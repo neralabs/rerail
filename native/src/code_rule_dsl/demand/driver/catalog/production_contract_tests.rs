@@ -586,7 +586,6 @@ fn production_contract_phase_one_distinct_count_uses_related_capture() {
 }
 
 #[test]
-#[ignore = "open item O17: W's syntax-error failure for clause-syntax-error-unknown differs from N's committed oracle"]
 fn production_contract_phase_one_oracles_match_committed_results() {
     let mut differences = Vec::new();
     for case in cases() {
@@ -594,13 +593,20 @@ fn production_contract_phase_one_oracles_match_committed_results() {
         if result["violations"].as_array() != Some(&case.expected.oracle.violations)
             || result["failures"].as_array() != Some(&case.expected.oracle.failures)
         {
-            differences.push(case.name);
+            differences.push(format!(
+                "{}: got violations {} failures {}, expected violations {} failures {}",
+                case.name,
+                result["violations"],
+                result["failures"],
+                Value::from(case.expected.oracle.violations.clone()),
+                Value::from(case.expected.oracle.failures.clone())
+            ));
         }
     }
     assert!(
         differences.is_empty(),
-        "oracle results differ for: {}",
-        differences.join(", ")
+        "oracle results differ for:\n{}",
+        differences.join("\n")
     );
 }
 

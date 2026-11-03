@@ -93,7 +93,7 @@ fn shaped_from(policies: &[(String, crate::code_rule_dsl::CompiledCodeRuleDsl)])
                 }
                 let Ok(tree) = match_tree(grammar) else { continue };
                 let Ok(matcher) = LoweredMatcher::lower(&tree) else { continue };
-                clauses.push(Clause { name, plan: Arc::clone(&grammar.anchors), matcher });
+                clauses.push(Clause { name, key: (compiled.inner.id.clone(), clause.id.clone()), plan: Arc::clone(&grammar.anchors), matcher });
                 grammars.push(grammar.clone());
                 shapes.push(Shape { rule: Arc::clone(&compiled.inner), clause: at, grammar: index });
             }
@@ -162,6 +162,61 @@ fn the_wave_runs_while_its_programs_compile() {
     gate(4, Limits { chunk_bytes: 1, ..Limits::default() }, ExecutionBackend::CpuBackground);
 }
 
+/// One plan for every binding (list step 16): a wave's identity is its lowered plan's, the same
+/// whichever backend binds it and however often its clauses are lowered.
+#[test]
+fn the_wave_has_one_plan_identity_for_every_binding() {
+    let (clauses, _) = clauses();
+    let plans = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit, ExecutionBackend::CpuBackground]
+        .into_iter()
+        .map(|backend| Wave::new(&clauses, backend).unwrap().plan)
+        .collect::<Vec<_>>();
+    assert!(plans.windows(2).all(|pair| pair[0] == pair[1]), "{plans:?}");
+    let fewer = Wave::new(&clauses[..clauses.len() - 1], ExecutionBackend::CpuBackground).unwrap().plan;
+    assert_ne!(fewer, plans[0], "a different wave is a different plan");
+}
+
+/// The wave as `rir` (list step 18, `rerail engine dump --fused --setplan`): every program block
+/// of its dump assembles back through the verifier to the digest it is printed with, with the
+/// grammar's names; the dump does not depend on the binding; without `--fused` and `--setplan`
+/// it is the label tables and programs only; and it is the golden (`wave.rir`; `RERAIL_BLESS=1`
+/// rewrites it, deliberately).
+#[test]
+fn the_wave_dumps_as_rir_and_assembles_back() {
+    use crate::code_rule_dsl::transducer::packed::rir::{assemble_all, disassemble};
+    let (clauses, _) = clauses();
+    let wave = Wave::new(&clauses, ExecutionBackend::CpuInterpreter).unwrap();
+    let dump = wave.dump(true, true).unwrap();
+    let programs = assemble_all(&dump).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(programs.len(), dump.lines().filter(|line| line.starts_with("program ")).count());
+    assert!(programs.iter().all(|(program, grammar)| grammar.is_some() && dump.contains(&disassemble(program, grammar.as_ref()))), "each block is its program's dump");
+    assert_eq!(dump, Wave::new(&clauses, ExecutionBackend::CpuJit).unwrap().dump(true, true).unwrap(), "one dump for every binding");
+    for section in ["wave sha256:", "\nclause 0 ", "\nplan\n", "      pack ", "\ngroup members=", " entry=kind:", "\nsetplan ops=", " grammar=python@"] {
+        assert!(dump.contains(section), "{section}");
+    }
+    let tables = wave.dump(false, false).unwrap();
+    assert!(!tables.contains("\nplan\n") && !tables.contains("\ngroup ") && !tables.contains("\nsetplan") && tables.contains("\nprogram "));
+    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/waves/matches/wave.rir");
+    if std::env::var_os("RERAIL_BLESS").is_some() {
+        std::fs::write(&golden, &dump).unwrap();
+    }
+    let expected = std::fs::read_to_string(&golden).unwrap_or_default();
+    assert!(expected == dump, "the dump differs from {} (RERAIL_BLESS=1 to accept it)", golden.display());
+}
+
+/// `rerail engine dump --rule … --clause <id>`: one clause's wave, by its name or its id.
+#[test]
+fn a_dump_names_one_clause() {
+    let policies = policies();
+    let all = crate::code_rule_dsl::slice::dump(&policies, None, false, false).unwrap();
+    let first = all.lines().find(|line| line.starts_with("clause 0 ")).unwrap().split('"').nth(1).unwrap().to_owned();
+    let one = crate::code_rule_dsl::slice::dump(&policies, Some(&first), false, false).unwrap();
+    assert!(one.contains("clauses=1") && one.contains(&first), "{}", &one[..200.min(one.len())]);
+    let id = first.rsplit('/').next().unwrap();
+    assert!(crate::code_rule_dsl::slice::dump(&policies, Some(id), false, false).unwrap().contains(&first));
+    assert!(crate::code_rule_dsl::slice::dump(&policies, Some("no-such-clause"), false, false).is_err());
+}
+
 /// Chunks of one document each: a chunk's batch maps its files to its own documents.
 #[test]
 fn the_wave_runs_chunk_by_chunk() {
@@ -169,24 +224,40 @@ fn the_wave_runs_chunk_by_chunk() {
 }
 
 fn gate(default: usize, limits: Limits, backend: ExecutionBackend) {
+    gate_by(default, limits, backend, Candidates::Sets);
+}
+
+/// The pure-SQL route (03 §17): the wave's candidates from `prefilter::fallback` over `nera_tree`,
+/// with W's matches.
+#[test]
+fn the_wave_finds_ws_matches_from_the_sql_fallback() {
+    gate_by(8, Limits::default(), ExecutionBackend::CpuJit, Candidates::Sql);
+}
+
+fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Candidates) {
     let (store, paths) = ingested(default);
     let (clauses, grammars) = clauses();
     let documents = documents(&store, WS, &paths).unwrap();
     assert_eq!(documents.len(), paths.len(), "every fixture has core facts");
     let mut wave = Wave::new(&clauses, backend).unwrap();
+    wave.route = route;
     let program = wave.program(&store).unwrap();
-    // One step per output (`match`, `span`), neither reading the other: they share the wave.
-    assert_eq!(program.steps.len(), 2, "{:?}", program.steps.iter().map(|s| &s.sql).collect::<Vec<_>>());
-    assert!(program.steps.iter().all(|s| s.reads.iter().all(|r| !program.relations.iter().any(|(rel, _)| r.ends_with(rel.as_str())))));
+    // One step per output of the batch (`match`, `span`), neither reading the other: they share
+    // the first wave. Then each clause's forbid rule over `match` (list step 21).
+    let first = program.steps.iter().filter(|s| s.output != "violation").collect::<Vec<_>>();
+    assert_eq!(first.len(), 2, "{:?}", first.iter().map(|s| &s.sql).collect::<Vec<_>>());
+    assert!(first.iter().all(|s| s.reads.iter().all(|r| !program.relations.iter().any(|(rel, _)| r.ends_with(rel.as_str())))));
+    assert_eq!(program.steps.len(), 2 + clauses.len());
+    assert_eq!(program.strata(), 2);
     let backing = Backing::default();
     let scope = backing.enter(&store);
     let lease = scope.pool().take().unwrap();
-    // A file-local program of one step: one wave per chunk.
-    let limits = Limits { max_waves: 1, ..limits };
+    // A file-local program of two strata: two waves per chunk.
+    let limits = Limits { max_waves: program.strata(), ..limits };
     let started = std::time::Instant::now();
-    let outcome = run(&lease, &store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(&store, WS, chunk)).unwrap();
+    let outcome = run(&lease, &store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(&lease, &store, WS, chunk)).unwrap();
     let elapsed = started.elapsed();
-    assert_eq!(outcome.waves as usize, outcome.chunks);
+    assert_eq!(outcome.waves as usize, 2 * outcome.chunks);
     wave.statistics(&lease, WS).unwrap();
 
     let position = documents.iter().enumerate().map(|(at, d)| (i64::from(d.key), at)).collect::<BTreeMap<_, _>>();
@@ -239,7 +310,7 @@ fn gate(default: usize, limits: Limits, backend: ExecutionBackend) {
     }
     let estimate: i64 = lease.query_row("SELECT rows FROM fact_stats WHERE tbl = 'rerail_terminal_match'", [], |row| row.get(0)).unwrap();
     eprintln!(
-        "S4 wave: {} clauses ({} passes) on {} fixtures in {} chunks, {:?}: {expected_nodes} matched nodes; \
+        "S4 wave ({route:?}): {} clauses ({} passes) on {} fixtures in {} chunks, {:?}: {expected_nodes} matched nodes; \
          candidates {candidate_nodes} of {all_nodes} clause-nodes; {} under-produced, {} differ; terminal estimate {estimate}",
         clauses.len(),
         wave.lowered().passes(),
@@ -404,8 +475,8 @@ fn findings_gate(store: &ContentStore, paths: &[String], policies: &[(String, cr
     let backing = Backing::default();
     let scope = backing.enter(store);
     let lease = scope.pool().take().unwrap();
-    let limits = Limits { max_waves: 1, ..Limits::default() };
-    run(&lease, store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(store, WS, chunk)).unwrap();
+    let limits = Limits { max_waves: program.strata(), ..Limits::default() };
+    run(&lease, store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(&lease, store, WS, chunk)).unwrap();
     let layer = Layer::new(shapes).unwrap();
     let findings_program = layer.program(store).unwrap();
     assert_eq!(findings_program.program.steps.len(), 1, "the layer is one statement");
@@ -492,4 +563,42 @@ fn findings_gate(store: &ContentStore, paths: &[String], policies: &[(String, cr
     let (again, outcome) = layer.findings(&lease, store, WS, &documents, &findings_program).unwrap();
     assert_eq!(again.keys, findings.keys);
     assert!(outcome.changed.is_empty(), "{:?}", outcome.changed);
+}
+
+/// List step 20: the wave's planned program is kept in `compiled_plans` under a `CompiledPlanId`,
+/// reused while its decisions hold, and planned again in a store whose atom ids differ (its SQL
+/// holds them).
+#[test]
+fn the_wave_program_is_a_compiled_plan() {
+    let (clauses, _) = clauses();
+    let wave = Wave::new(&clauses, ExecutionBackend::CpuInterpreter).unwrap();
+    let rows = |store: &ContentStore| -> Vec<(Vec<u8>, String)> {
+        store
+            .candidate_transaction(false, |db| {
+                let mut statement = db.prepare("SELECT plan, decisions FROM compiled_plans WHERE compiler = 2 AND decisions <> '' ORDER BY plan")?;
+                let found = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>();
+                found
+            })
+            .unwrap()
+    };
+    let digest = |program: &Program| program.steps.iter().map(|step| step.sql.clone()).collect::<Vec<_>>();
+    let first = ContentStore::open(&temp("plans-a").with_extension("sqlite")).unwrap();
+    let planned = wave.kept_program(&first).unwrap();
+    let again = wave.kept_program(&first).unwrap();
+    assert_eq!(digest(&planned), digest(&again));
+    let kept = rows(&first);
+    assert_eq!(kept.len(), 1, "one wave plan");
+    // A store whose atoms were interned in another order: the same identity, other atom ids.
+    let second = ContentStore::open(&temp("plans-b").with_extension("sqlite")).unwrap();
+    second.intern_atoms(&["rerail-test-shift-0", "rerail-test-shift-1", "rerail-test-shift-2"]).unwrap();
+    let replanned = wave.kept_program(&second).unwrap();
+    let there = rows(&second);
+    assert_eq!(there.len(), 1);
+    assert_eq!(there[0].0, kept[0].0, "the plan's identity does not depend on the store");
+    let atoms = serde_json::from_str::<Vec<(String, u32)>>(&there[0].1).unwrap();
+    let names = atoms.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>();
+    assert!(!atoms.is_empty());
+    assert_eq!(second.intern_atoms(&names).unwrap(), atoms.iter().map(|(_, atom)| *atom).collect::<Vec<_>>(), "planned with this store's atoms");
+    assert_ne!(there[0].1, kept[0].1, "planned again: the first store's atom ids do not hold here");
+    assert_eq!(digest(&replanned).len(), digest(&planned).len());
 }

@@ -2299,7 +2299,18 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
                         status,
                         mem::offset_of!(TaskStatus, result_count) as i32,
                     );
-                    function.ins().jump(resume, &[]);
+                    if native.key_stop {
+                        // Set mode with one label: the task's key is found; its pending paths go.
+                        function.ins().store(
+                            flags,
+                            zero,
+                            task,
+                            mem::offset_of!(NativeTaskContext, pending_count) as i32,
+                        );
+                        function.ins().jump(done, &[]);
+                    } else {
+                        function.ins().jump(resume, &[]);
+                    }
                 }
                 _ => unreachable!("unsupported operations were rejected before code generation"),
             }

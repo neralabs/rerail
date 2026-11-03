@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 /// The version of the decisions and programs `compiled_plans` holds; a plan compiled by another is
 /// not read.
-pub(in crate::code_rule_dsl) const COMPILER_VERSION: i64 = 1;
+pub(in crate::code_rule_dsl) const COMPILER_VERSION: i64 = 2;
 /// Bytes of compiled programs kept in memory.
 const MEMORY: usize = 16 * 1024 * 1024;
 /// Weight of the newest observation in `plan_feedback`.

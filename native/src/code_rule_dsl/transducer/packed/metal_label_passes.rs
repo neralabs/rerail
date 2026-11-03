@@ -110,12 +110,25 @@ const GROUP_STACK_WORDS: usize = 32 * 17;
 
 /// The flushed roots as `RootsFound`: each record to its item's (program, file, task), its
 /// nodes back to the file's, sorted by task and the walk's order.
+/// Root programs walked as one (`Runner::records`).
+struct RootsPack {
+    /// The member programs, by index in the jobs.
+    members: Vec<usize>,
+    /// By the fused emit label: the member and its own label (`fusion::Fused::emits`).
+    emits: Vec<(usize, u16)>,
+    /// Per member, where its capture labels start.
+    captures: Vec<u16>,
+    /// Per member, per file, its task by (file-local) start.
+    tasks: Vec<Vec<std::collections::HashMap<u32, u32>>>,
+}
+
 fn decode_roots(roots: RootsEncoded, files: &[TapeDoc]) -> RootsFound {
     use super::super::RootRecord;
     let read = |buffer: &MappedBuffer, count: usize| unsafe { std::slice::from_raw_parts(buffer.buffer.contents().cast::<u32>(), count) };
     let cursor = read(&roots.cursor, 2);
     let (written, overflow) = (cursor[0] as usize, cursor[1] != 0);
-    let failures = read(&roots.failures, roots.walked.len().max(1));
+    let programs = roots.walked.len();
+    let failures = read(&roots.failures, (programs + roots.packs.len()).max(1));
     if overflow || written > roots.capacity {
         crate::code_rule_dsl::prof::count("gpu.root_overflow", 1);
         return vec![None; roots.walked.len()];
@@ -135,19 +148,34 @@ fn decode_roots(roots: RootsEncoded, files: &[TapeDoc]) -> RootsFound {
         .enumerate()
         .map(|(program, &walked)| (walked && failures[program] == 0).then(|| vec![Vec::new(); files.len()]))
         .collect();
+    // A pack that failed anywhere: its members run on the CPU.
+    for (index, pack) in roots.packs.iter().enumerate() {
+        if failures[programs + index] != 0 {
+            pack.members.iter().for_each(|&member| found[member] = None);
+        }
+    }
     let mut sorted = Vec::<()>::with_capacity(written);
     let words = read(&roots.records, written * ROOT_RECORD);
     for record in words.chunks_exact(ROOT_RECORD) {
-        let [program, file, task, start] = roots.items[record[0] as usize];
-        let Some(per_file) = found[program as usize].as_mut() else { continue };
+        let [pass, file, task, start] = roots.items[record[0] as usize];
         let base = bases[file as usize];
+        // A pack's record: its member's program, task, label and capture labels.
+        let (program, task, label, capture_base) = match roots.packs.get((pass as usize).wrapping_sub(programs)) {
+            Some(pack) if pass as usize >= programs => {
+                let (member, label) = pack.emits[record[2] as usize];
+                let Some(&task) = pack.tasks[member][file as usize].get(&(start - base)) else { continue };
+                (pack.members[member], task, label, pack.captures[member])
+            }
+            _ => (pass as usize, task, record[2] as u16, 0),
+        };
+        let Some(per_file) = found[program].as_mut() else { continue };
         let captured = record[3].min(8) as u8;
         let mut captures = [(0_u16, u32::MAX); 8];
         for at in 0..usize::from(captured) {
-            captures[at] = (record[12 + at] as u16, record[4 + at] - base);
+            captures[at] = (record[12 + at] as u16 - capture_base, record[4 + at] - base);
         }
         sorted.push(());
-        per_file[file as usize].push(((task, record[1]), RootRecord { start: start - base, label: record[2] as u16, captured, captures }));
+        per_file[file as usize].push(((task, record[1]), RootRecord { start: start - base, label, captured, captures }));
     }
     crate::code_rule_dsl::prof::count("gpu.root_records", sorted.len());
     found
@@ -170,6 +198,8 @@ fn decode_roots(roots: RootsEncoded, files: &[TapeDoc]) -> RootsFound {
 struct RootsEncoded {
     /// Per program whether it runs on the device.
     walked: Vec<bool>,
+    /// The packs, whose passes follow the programs'.
+    packs: Vec<RootsPack>,
     /// Per item (program, file, task, global start).
     items: Vec<[u32; 4]>,
     records: MappedBuffer,
@@ -678,6 +708,8 @@ struct Walks {
     /// Every walk's record and static depth, for a recursive group fused into one dispatch
     /// (`Runner::group`).
     fused: Vec<([u32; 8], Option<usize>)>,
+    /// How many of the level's passes these walks run (a pack runs several).
+    walked: usize,
 }
 
 /// A workspace lease with what it was sized for.
@@ -1379,7 +1411,34 @@ impl Runner<'_> {
                 // Threads: a pass's from its own start, over its (shared) item range.
                 let mut threads = [0_u32; 3];
                 let mut fused = Vec::new();
-                passes.retain(|&(program, roots, mode, target)| {
+                // Passes walked from one shared root list, marking roots or captures, as one
+                // walk (multi-target packing, t1 spec-fusion §2.6, §4.3, §4.4; the host's
+                // `matcher::Packs`): an emit marks its member's row (by emit label, `rows`).
+                let packs = {
+                    let mut by = std::collections::BTreeMap::<(usize, u32), Vec<usize>>::new();
+                    for (at, &(program, roots, mode, _)) in passes.iter().enumerate() {
+                        if mode <= 1 && Micro::of(program).is_some() {
+                            by.entry((std::sync::Arc::as_ptr(roots) as usize, mode)).or_default().push(at);
+                        }
+                    }
+                    let mut packs = Vec::new();
+                    for members in by.into_values() {
+                        for chunk in members.chunks(super::fusion::MEMBERS).filter(|chunk| chunk.len() > 1) {
+                            let programs = chunk.iter().map(|&at| passes[at].0).collect::<Vec<_>>();
+                            // In its members' deepest tier: the launch plan counts a level's
+                            // tiers from its passes' walks (`plan_rounds`).
+                            let deepest = programs.iter().filter_map(|program| Micro::of(program)).map(|walk| tier(walk.depth())).max();
+                            if let Some(packed) = super::fusion::Fused::of(&programs)
+                                && Micro::of(&packed.program).map(|walk| tier(walk.depth())) <= deepest
+                            {
+                                let rows = packed.emits.iter().map(|&(member, _)| passes[chunk[member]].3).collect::<Vec<_>>();
+                                packs.push((packed.program, chunk.to_vec(), rows));
+                            }
+                        }
+                    }
+                    packs
+                };
+                let mut place = |program: &Program, roots: &std::sync::Arc<Vec<Vec<u32>>>, mode: u32, target: u32, table: Option<Vec<u32>>| -> bool {
                     let Some(walk) = Micro::of(program) else { return true };
                     if crate::code_rule_dsl::prof::on() {
                         let depth = walk.depth().map_or("loop".to_owned(), |depth| format!("{:02}", depth.min(64)));
@@ -1434,6 +1493,8 @@ impl Runner<'_> {
                         (start, items.len() as u32 - start)
                     });
                     let tier = tier(walk.depth());
+                    // A pack's route has bit 2, its emit count and rows after its words.
+                    let mode = if table.is_some() { mode | 4 } else { mode };
                     fused.push(([words.len() as u32, walk.words.len() as u32, target, mode, start, count, text_start, 0], walk.depth()));
                     records[tier].push([words.len() as u32, walk.words.len() as u32, target, mode, start, count, text_start, threads[tier]]);
                     threads[tier] += count;
@@ -1451,7 +1512,36 @@ impl Runner<'_> {
                             }
                         })),
                     }
+                    if let Some(table) = table {
+                        words.push(table.len() as u32);
+                        words.extend(table);
+                    }
                     false
+                };
+                let mut unpacked = vec![false; passes.len()];
+                let mut placed = 0_usize;
+                for (program, members, rows) in &packs {
+                    let (_, roots, mode, target) = passes[members[0]];
+                    if place(program, roots, mode, target, Some(rows.clone())) {
+                        // Its walk did not place (a text slot failed): its members run alone.
+                        continue;
+                    }
+                    crate::code_rule_dsl::prof::count("size.packed", members.len());
+                    crate::code_rule_dsl::prof::count("size.packs", 1);
+                    for &at in members {
+                        unpacked[at] = true;
+                    }
+                    placed += members.len();
+                }
+                let mut at = 0;
+                passes.retain(|&(program, roots, mode, target)| {
+                    at += 1;
+                    if unpacked[at - 1] {
+                        return false;
+                    }
+                    let alone = place(program, roots, mode, target, None);
+                    placed += usize::from(!alone);
+                    alone
                 });
                 crate::code_rule_dsl::prof::count("size.walks", items.len());
                 if !items.is_empty() {
@@ -1469,6 +1559,7 @@ impl Runner<'_> {
                         steps: super::super::micro_steps(largest, longest),
                         tiers,
                         fused,
+                        walked: placed,
                         words: MappedBuffer::from_slice(self.device, &words)?,
                         items: MappedBuffer::from_slice(self.device, &items)?,
                     };
@@ -1829,7 +1920,7 @@ impl Runner<'_> {
             }
             let walked = programs_of(level, true).len();
             let walks = self.walks.get(&key);
-            if walks.map_or(0, |walks| walks.fused.len()) != walked {
+            if walks.map_or(0, |walks| walks.walked) != walked {
                 return unfused("unwalked");
             }
             let (pass_start, op_start) = (records.len() as u32, ops.len() as u32);
@@ -1930,7 +2021,53 @@ impl Runner<'_> {
         let (largest, mut longest) = (self.files.iter().map(TapeDoc::transducer_len).max().unwrap_or(0), 0);
         let (mut passes, mut words, mut texts, mut walked) = (Vec::<[u32; 4]>::new(), Vec::<u32>::new(), Vec::<u32>::new(), Vec::new());
         let mut tiers: [Vec<[u32; 4]>; 2] = Default::default();
+        // Root programs of one entry test as one walk (t1 spec-fusion §4.3, §4.4; the host's
+        // `PackedDemand::packs`): a pack's passes follow the programs', its items are the union of
+        // its members' starts, and `decode_roots` routes each record to its member.
+        let walkable = |program: &Program| {
+            let walk = Micro::of(program).filter(|walk| walk.depth().is_some_and(|depth| depth <= 32))?;
+            let rows = (0..walk.texts.len()).map(|slot| text_row(&walk, program, slot, self.files, &bases, self.words)).collect::<Option<Vec<_>>>()?;
+            Some((walk, rows))
+        };
+        let mut packs = Vec::<(RootsPack, Micro, Vec<std::sync::Arc<Vec<u32>>>, bool)>::new();
+        let mut packed = vec![false; jobs.programs.len()];
+        {
+            let mut by = std::collections::BTreeMap::<u32, Vec<usize>>::new();
+            for (at, program) in jobs.programs.iter().enumerate() {
+                if let Some(key) = super::fusion::entry_key(program) {
+                    by.entry(key).or_default().push(at);
+                }
+            }
+            for members in by.into_values() {
+                for chunk in members.chunks(super::fusion::MEMBERS).filter(|chunk| chunk.len() > 1) {
+                    let programs = chunk.iter().map(|&at| jobs.programs[at]).collect::<Vec<_>>();
+                    let Some(fused) = super::fusion::Fused::of(&programs) else { continue };
+                    let Some((walk, rows)) = walkable(&fused.program) else { continue };
+                    // In its members' deepest tier, as the launch plan counts them.
+                    let root_tier = |walk: &Micro| walk.depth().is_some_and(|depth| depth > 8);
+                    if root_tier(&walk) && !programs.iter().filter_map(|program| Micro::of(program)).any(|walk| root_tier(&walk)) {
+                        continue;
+                    }
+                    let set = fused.program.set_mode();
+                    for &at in chunk {
+                        packed[at] = true;
+                    }
+                    let tasks = chunk
+                        .iter()
+                        .map(|&at| jobs.starts[at].iter().map(|starts| starts.iter().enumerate().map(|(task, &start)| (start, task as u32)).collect()).collect())
+                        .collect();
+                    crate::code_rule_dsl::prof::count("gpu.root_packed", chunk.len());
+                    packs.push((RootsPack { members: chunk.to_vec(), emits: fused.emits, captures: fused.captures, tasks }, walk, rows, set));
+                }
+            }
+        }
         for (at, program) in jobs.programs.iter().enumerate() {
+            if packed[at] {
+                // Walked in its pack.
+                passes.push([0; 4]);
+                walked.push(true);
+                continue;
+            }
             let walk = Micro::of(program).filter(|walk| walk.depth().is_some_and(|depth| depth <= 32));
             let rows = walk.as_ref().and_then(|walk| {
                 (0..walk.texts.len()).map(|slot| text_row(walk, program, slot, self.files, &bases, self.words)).collect::<Option<Vec<_>>>()
@@ -1942,7 +2079,8 @@ impl Runner<'_> {
             };
             let text_start = (texts.len() / self.words) as u32;
             rows.iter().for_each(|row| texts.extend_from_slice(row));
-            passes.push([words.len() as u32, walk.words.len() as u32, text_start, 0]);
+            // The fourth word: set mode with one label, so the walk ends at its first emit.
+            passes.push([words.len() as u32, walk.words.len() as u32, text_start, u32::from(walk.key_stop())]);
             longest = longest.max(walk.words.len());
             match &self.label_rows {
                 None => words.extend_from_slice(&walk.words),
@@ -1961,6 +2099,33 @@ impl Runner<'_> {
                 tiers[tier].extend(starts.iter().enumerate().map(|(task, &start)| [at as u32, file as u32, task as u32, bases[file] + start]));
             }
         }
+        for (index, (pack, walk, rows, set)) in packs.iter().enumerate() {
+            let pass = (jobs.programs.len() + index) as u32;
+            let text_start = (texts.len() / self.words) as u32;
+            rows.iter().for_each(|row| texts.extend_from_slice(row));
+            let pad = if *set { 1 + pack.emits.len() as u32 } else { 0 };
+            passes.push([words.len() as u32, walk.words.len() as u32, text_start, pad]);
+            longest = longest.max(walk.words.len());
+            match &self.label_rows {
+                None => words.extend_from_slice(&walk.words),
+                Some(row_of) => words.extend(walk.words.iter().map(|&word| {
+                    let (op, mode, arg) = super::super::split(word);
+                    if op == super::super::SUPERTYPE && arg >= DERIVED_CLASS_BASE {
+                        super::super::word(op, mode, DERIVED_CLASS_BASE + row_of[usize::from(arg - DERIVED_CLASS_BASE)] as u16)
+                    } else {
+                        word
+                    }
+                })),
+            }
+            let tier = usize::from(walk.depth().is_some_and(|depth| depth > 8));
+            for file in 0..self.files.len() {
+                let mut starts = pack.tasks.iter().flat_map(|tasks: &Vec<std::collections::HashMap<u32, u32>>| tasks[file].keys().copied()).collect::<Vec<_>>();
+                starts.sort_unstable();
+                starts.dedup();
+                tiers[tier].extend(starts.iter().map(|&start| [pass, file as u32, u32::MAX, bases[file] + start]));
+            }
+        }
+        let packs = packs.into_iter().map(|(pack, ..)| pack).collect::<Vec<_>>();
         let items = tiers.iter().flatten().copied().collect::<Vec<_>>();
         crate::code_rule_dsl::prof::count("gpu.root_items", items.len());
         // Plan-sized (list step 13): a record per 16 roots, where a root's matches are a few per
@@ -1969,7 +2134,7 @@ impl Runner<'_> {
         let capacity = items.len() / 16 + 4096;
         let records = MappedBuffer::untouched::<u32>(self.device, capacity * ROOT_RECORD)?;
         let cursor = MappedBuffer::zeroed::<u32>(self.device, 2)?;
-        let failures = MappedBuffer::zeroed::<u32>(self.device, jobs.programs.len().max(1))?;
+        let failures = MappedBuffer::zeroed::<u32>(self.device, (jobs.programs.len() + packs.len()).max(1))?;
         let steps = super::super::micro_steps(largest, longest.max(1));
         let (passes, words) = (self.upload(&passes)?, self.upload(&words)?);
         let texts = if texts.is_empty() { self.upload(&[0_u32])? } else { self.upload(&texts)? };
@@ -2025,7 +2190,7 @@ impl Runner<'_> {
             }
             offset += tier_items.len() as u64;
         }
-        self.roots = Some(RootsEncoded { walked, items, records, cursor, failures, capacity });
+        self.roots = Some(RootsEncoded { walked, packs, items, records, cursor, failures, capacity });
         Ok(())
     }
 
