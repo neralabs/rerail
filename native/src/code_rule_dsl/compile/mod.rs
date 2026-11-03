@@ -394,11 +394,7 @@ fn compile_clause(
     let clause = object(value, path)?;
     reject_unknown(
         clause,
-        if cfg!(test) {
-            &["id", "forbid", "require_each", "budget", "relational", "llm", "violation"]
-        } else {
-            &["id", "forbid", "require_each", "budget", "llm", "violation"]
-        },
+        &["id", "forbid", "require_each", "budget", "relational", "llm", "violation"],
         path,
     )?;
     let id = required_str(value, "id", path)?.to_owned();
@@ -538,7 +534,6 @@ fn compile_clause(
                 distinct,
             }
         }
-        #[cfg(test)]
         "relational" => ClauseKind::Relational(
             crate::code_rule_dsl::residency::admission::relational::compile::compile(
                 &clause["relational"],

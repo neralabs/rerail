@@ -189,6 +189,7 @@ fn configure(db: Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result
         })
         .map_err(sql_error)?;
     }
+    crate::code_rule_dsl::crypto::register(&db).map_err(sql_error)?;
     source::install(&db, None, work)?;
     Ok(db)
 }
@@ -493,7 +494,6 @@ impl<'a> Session<'a> {
         let rows = match inputs.rows {
             Some(rows) => rows,
             None => {
-                let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
                 let _calls = if inputs.file_local {
                     crate::code_rule_dsl::eval::stateless_calls(
                         code_rule,

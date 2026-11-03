@@ -102,6 +102,7 @@ pub(in crate::code_rule_dsl) fn install(db: &Connection, tables: &BTreeSet<Strin
                         | "typeof"
                         | "unicode"
                         | "upper"
+                        | "verify_ed25519"
                         | "rx_matches"
                         | "rx_extract"
                         | "rx_replace"

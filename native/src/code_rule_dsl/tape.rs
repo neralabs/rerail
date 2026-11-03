@@ -144,16 +144,14 @@ impl Grammar {
 
     /// The tree-sitter language of this grammar's dialect (Tempo's accessor; the packed runtime's
     /// Metal tests compile queries against it).
-    #[cfg(all(test, feature = "metal-tests"))]
+    #[cfg(test)]
     pub(super) fn language(&self) -> Language {
         self.lang.get_ts_language()
     }
 
-    #[cfg(test)]
     pub(super) fn field_code(&self, name: &str) -> Option<u16> {
         self.kinds.field_id(name)
     }
-    #[cfg(test)]
     pub(super) fn has_field(&self, name: &str) -> bool {
         self.kinds.field_id(name).is_some()
     }

@@ -4,7 +4,6 @@
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
-#[cfg(test)]
 use super::global::evaluate_batched_relations;
 use super::global::{compile_query_plan, compile_relation_producer, evaluate_global};
 use super::index::{RepositoryIndexOptions, WorkspaceIndexTask, reusable_directories};
@@ -202,7 +201,6 @@ impl CodeRuleDslWorkspace {
                             .insert((index, clause.id.clone()), vec![id]);
                     }
                     // P's relational producers (test-only, open item O18).
-                    #[cfg(test)]
                     ClauseKind::Relational(plan) => {
                         let ids = plan
                             .inputs
@@ -594,7 +592,6 @@ fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
         }
         ClauseKind::Budget { query, .. } => in_manifest_family(&query.ast.query),
         ClauseKind::Llm => false,
-        #[cfg(test)]
         ClauseKind::Relational(plan) => plan
             .inputs
             .iter()
@@ -1140,13 +1137,9 @@ impl WorkspaceApplyTask {
                 files: Vec::new(),
             };
             let dirty = std::mem::take(&mut state.dirty_globals);
-            // P's relational clauses, batched across rules (test-only, open item O18).
-            #[cfg(test)]
+            // Compatibility relational clauses remain batched across dirty rules.
             let mut relational =
                 evaluate_batched_relations(&mut state, &dirty, &snapshot, &self.closed)?;
-            #[cfg(not(test))]
-            let mut relational =
-                std::collections::BTreeMap::<usize, std::collections::BTreeMap<String, Evaluation>>::new();
             for index in dirty {
                 check_closed(&self.closed)?;
                 let budget = MatchBudget::work(&self.closed, CLAUSE_WORK_BUDGET);

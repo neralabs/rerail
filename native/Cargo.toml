@@ -18,6 +18,8 @@ p-anchor-corpus = []
 # time; they run as their own gate: `cargo test --lib --features metal-tests -- transducer::`.
 metal-tests = []
 [dependencies]
+base64 = "=0.22.1"
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.50.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md), and no second

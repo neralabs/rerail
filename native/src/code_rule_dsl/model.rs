@@ -681,9 +681,8 @@ pub(super) enum ClauseKind {
         distinct: Vec<String>,
     },
     Llm,
-    /// P's relational clause, compiled only under test (`residency::admission::relational`,
-    /// open item O18).
-    #[cfg(test)]
+    /// Compatibility for the recorded data-layer relational policies. New rules
+    /// use declarative evidence and composition operators.
     Relational(crate::code_rule_dsl::residency::admission::relational::Plan),
 }
 
@@ -693,7 +692,6 @@ impl ClauseKind {
     pub(super) fn calls_query(&self) -> Option<&Query> {
         match self {
             Self::Forbid(query) => Some(query),
-            #[cfg(test)]
             Self::Relational(plan) => plan.references.as_ref().map(|reference| &reference.query),
             _ => None,
         }
@@ -764,7 +762,6 @@ impl CompiledCodeRule {
             }
             ClauseKind::Budget { query, .. } => query.ast.query.reads_server_graph(),
             ClauseKind::Llm => false,
-            #[cfg(test)]
             ClauseKind::Relational(plan) => plan
                 .inputs
                 .iter()

@@ -17,11 +17,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-/// The constraint forms a clause other than a define holds.
-#[cfg(not(test))]
-pub(super) const CLAUSE_KINDS: [&str; 4] = ["forbid", "require_each", "budget", "llm"];
-/// Tests also compile P's relational clauses (`residency::admission::relational`, open item O18).
-#[cfg(test)]
+/// Constraint forms, including the compatibility surface used by recorded data-layer policies.
 pub(super) const CLAUSE_KINDS: [&str; 5] = ["forbid", "require_each", "budget", "relational", "llm"];
 
 /// Each language's shared utilities, by id.

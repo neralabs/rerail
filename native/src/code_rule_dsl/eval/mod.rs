@@ -266,7 +266,6 @@ pub(super) fn evaluate_clauses(
     let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
     let _tapes = TapeCacheSlot::install();
     // P's syntax facts, shared by P's relational inputs (test-only, open item O18).
-    #[cfg(test)]
     let _syntax = super::relational::syntax::Pool::install();
     if mode != "decision" && mode != "report" {
         return Err(invalid(format!("unsupported evaluation mode `{mode}`")));
@@ -304,7 +303,6 @@ pub(super) fn evaluate_clauses(
     #[cfg(all(test, feature = "p-anchor-corpus"))]
     prepare_candidates(code_rule, snapshot);
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
-    #[cfg(test)]
     let mut relational_jobs = Vec::new();
     for clause in clauses {
         match &clause.kind {
@@ -413,7 +411,6 @@ pub(super) fn evaluate_clauses(
                 );
             }
             // P's relational clauses (test-only, open item O18): one job per file where per-file.
-            #[cfg(test)]
             ClauseKind::Relational(plan) => {
                 let partitions = if plan.per_file {
                     snapshot
@@ -452,7 +449,6 @@ pub(super) fn evaluate_clauses(
             )),
         }
     }
-    #[cfg(test)]
     for result in crate::code_rule_dsl::residency::admission::relational::evaluate_batch(relational_jobs) {
         merge(&mut evaluation, result);
     }

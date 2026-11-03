@@ -2,6 +2,7 @@ mod blade;
 mod budget;
 mod calls;
 mod compile;
+mod crypto;
 mod demand;
 mod embed;
 mod eval;
@@ -47,7 +48,6 @@ mod query;
 #[allow(dead_code)]
 mod residency;
 // P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
-#[cfg(test)]
 use residency::admission::relational;
 mod scope;
 mod semver;
