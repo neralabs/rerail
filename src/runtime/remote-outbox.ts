@@ -30,7 +30,9 @@ import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { keepFilesPrivate } from "../engine/storage/private-files.js";
 import { defaultRerailHome, REMOTE_OUTBOX_FILE } from "../engine/storage/rerail-home.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
-import { machineId, machineLabel, readRemoteConfig, readRemoteToken, type RemoteEntry } from "./remote-config.js";
+import {
+  excludedAt, machineId, machineLabel, readRemoteConfig, readRemoteToken, remoteStateKey, type RemoteEntry, type RepositoryExclusion,
+} from "./remote-config.js";
 
 export const SINK_PROTOCOL = 1;
 /** C1: one batch is at most 5 MB uncompressed. */
@@ -81,7 +83,7 @@ export interface SyncResult {
   /** Set when the last attempt failed; the remote is retried after `nextAttemptAt`. */
   readonly error?: string;
   /** Nothing was attempted: another process holds this remote's lock, or its backoff has not passed. */
-  readonly skipped?: "locked" | "backoff" | "no-token";
+  readonly skipped?: "locked" | "backoff" | "no-token" | "removed";
 }
 
 export interface SyncOptions {
@@ -212,6 +214,45 @@ class BatchBuilder {
   }
 }
 
+/**
+ * Which records are opted out (`rerail remote exclude`), by when they were recorded: a repository's exclusions apply to
+ * every key it has had (its aliases: an older clone id, a remote it used to have), and a session with no repository
+ * is placed by its folder's recorded checkout. One that cannot be placed is held back while any exclusion is open.
+ */
+class Exclusions {
+  readonly #byKey = new Map<string, RepositoryExclusion[]>();
+  readonly #all: readonly RepositoryExclusion[];
+  readonly #checkouts: Array<{ path: string; key: string }>;
+
+  constructor(exclusions: readonly RepositoryExclusion[], rerail: Database.Database | undefined) {
+    this.#all = exclusions;
+    const repositories = rerail === undefined ? [] : rerail.prepare("SELECT repository_key AS key, aliases_json AS aliases FROM repositories").all() as Array<{ key: string; aliases: string }>;
+    const names = repositories.map(row => {
+      const aliases = parse(row.aliases);
+      return new Set([row.key, ...(Array.isArray(aliases) ? aliases.filter((alias): alias is string => typeof alias === "string") : [])]);
+    });
+    for (const exclusion of exclusions) {
+      const keys = new Set([exclusion.repositoryKey]);
+      for (const repository of names) if (repository.has(exclusion.repositoryKey)) for (const name of repository) keys.add(name);
+      for (const key of keys) this.#byKey.set(key, [...this.#byKey.get(key) ?? [], exclusion]);
+    }
+    this.#checkouts = exclusions.length === 0 || rerail === undefined ? [] : (rerail.prepare("SELECT checkout_path AS path, repository_key AS key FROM checkouts").all() as Array<{ path: string; key: string }>)
+      .sort((left, right) => right.path.length - left.path.length);
+  }
+
+  /** The repository of the recorded checkout holding `folder`, the innermost; null when none does. */
+  repositoryOfFolder(folder: string): string | null {
+    return this.#checkouts.find(checkout => folder === checkout.path || folder.startsWith(`${checkout.path}/`))?.key ?? null;
+  }
+
+  /** Whether something of `repositoryKey` (null: not known) recorded at `at` is opted out. */
+  at(repositoryKey: string | null, at: number): boolean {
+    if (this.#all.length === 0) return false;
+    if (repositoryKey === null) return this.#all.some(exclusion => exclusion.from <= at && (exclusion.to === null || at < exclusion.to));
+    return (this.#byKey.get(repositoryKey) ?? []).some(exclusion => exclusion.from <= at && (exclusion.to === null || at < exclusion.to));
+  }
+}
+
 export class RemoteOutbox {
   readonly #home: string;
   readonly #fetch: typeof fetch;
@@ -231,7 +272,7 @@ export class RemoteOutbox {
     documents: ReadonlyMap<string, RuleDocument> = new Map(),
   ): boolean {
     const config = readRemoteConfig(this.#home);
-    if (config.remotes.length === 0 || config.excludedRepositories.includes(report.repository.key)) return false;
+    if (config.remotes.length === 0 || excludedAt(config.exclusions, report.repository.key, this.#now())) return false;
     const rules = report.rules.map(rule => ({
       ruleId: rule.ruleId, payloadHash: rule.payloadHash, checkoutPath: report.checkout.path,
       ...(documents.has(rule.payloadHash) ? { document: documents.get(rule.payloadHash) } : {}),
@@ -255,9 +296,10 @@ export class RemoteOutbox {
     try {
       const maxSequence = (rerail?.prepare("SELECT max(sequence) AS value FROM events").get() as { value: number | null } | undefined)?.value ?? 0;
       return config.remotes.map(remote => {
-        const row = state.prepare("SELECT * FROM status WHERE remote = ?").get(remote.name) as Record<string, number | string | null> | undefined;
-        const cursor = (state.prepare("SELECT value FROM cursors WHERE remote = ? AND stream = 'event'").get(remote.name) as { value: number } | undefined)?.value ?? 0;
-        const sentScans = state.prepare("SELECT count(*) AS n FROM scans WHERE scan_id NOT IN (SELECT id FROM sent WHERE remote = ? AND stream = 'scan')").get(remote.name) as { n: number };
+        const key = remoteStateKey(remote);
+        const row = state.prepare("SELECT * FROM status WHERE remote = ?").get(key) as Record<string, number | string | null> | undefined;
+        const cursor = (state.prepare("SELECT value FROM cursors WHERE remote = ? AND stream = 'event'").get(key) as { value: number } | undefined)?.value ?? 0;
+        const sentScans = state.prepare("SELECT count(*) AS n FROM scans WHERE scan_id NOT IN (SELECT id FROM sent WHERE remote = ? AND stream = 'scan')").get(key) as { n: number };
         return {
           name: remote.name,
           url: remote.url,
@@ -289,18 +331,21 @@ export class RemoteOutbox {
     const results: SyncResult[] = [];
     for (const remote of config.remotes) {
       if (options.signal?.aborted === true) break;
-      results.push(await this.#syncRemote(remote, config.excludedRepositories, options));
+      results.push(await this.#syncRemote(remote, config.exclusions, options));
     }
-    this.#pruneScans(config.remotes.map(remote => remote.name));
+    this.#pruneScans(config.remotes.map(remoteStateKey));
     return results;
   }
 
-  /** Drops the outbox's state for a remote that was removed, so one added later under its name starts from nothing. */
-  forget(name: string): void {
+  /**
+   * Drops the outbox's state for a removed remote (by {@link remoteStateKey}). A sync still running for it writes
+   * nothing more: every write checks the remote is still configured under that key first.
+   */
+  forget(key: string): void {
     const state = openState(this.#home);
     try {
       state.transaction(() => {
-        for (const table of ["cursors", "sent", "pending_gaps", "status", "locks"]) state.prepare(`DELETE FROM ${table} WHERE remote = ?`).run(name);
+        for (const table of ["cursors", "sent", "pending_gaps", "status", "locks"]) state.prepare(`DELETE FROM ${table} WHERE remote = ?`).run(key);
       })();
     } finally {
       state.close();
@@ -327,17 +372,18 @@ export class RemoteOutbox {
     return database;
   }
 
-  async #syncRemote(remote: RemoteEntry, excluded: readonly string[], options: SyncOptions): Promise<SyncResult> {
+  async #syncRemote(remote: RemoteEntry, exclusions: readonly RepositoryExclusion[], options: SyncOptions): Promise<SyncResult> {
+    const key = remoteStateKey(remote);
     const token = readRemoteToken(remote.name, this.#home);
     if (token === undefined) return { remote: remote.name, batches: 0, records: 0, skipped: "no-token" };
     const state = openState(this.#home);
     try {
-      const configHash = hashOf([remote, excluded]);
-      const row = state.prepare("SELECT next_attempt_at, config_hash FROM status WHERE remote = ?").get(remote.name) as { next_attempt_at: number | null; config_hash: string | null } | undefined;
+      const configHash = hashOf([remote, exclusions]);
+      const row = state.prepare("SELECT next_attempt_at, config_hash FROM status WHERE remote = ?").get(key) as { next_attempt_at: number | null; config_hash: string | null } | undefined;
       // A changed configuration (a new token, a URL) is tried at once.
       const backingOff = row?.next_attempt_at != null && row.next_attempt_at > this.#now() && row.config_hash === configHash;
       if (backingOff && options.force !== true) return { remote: remote.name, batches: 0, records: 0, skipped: "backoff" };
-      if (!this.#lock(state, remote.name)) return { remote: remote.name, batches: 0, records: 0, skipped: "locked" };
+      if (!this.#lock(state, key)) return { remote: remote.name, batches: 0, records: 0, skipped: "locked" };
       try {
         let batches = 0;
         let records = 0;
@@ -349,23 +395,25 @@ export class RemoteOutbox {
           let skipped = 0;
           for (let index = 0; index < (options.maxBatches ?? 50); index += 1) {
             if (options.signal?.aborted === true) break;
-            const batch = this.#collect(state, rerail, rules, remote, excluded, budget, maxSendable);
+            const batch = this.#collect(state, rerail, rules, remote, exclusions, budget, maxSendable);
             if (batch.records.length === 0 && batch.oversized.length === 0) break;
             const sendable = batch.records.filter(item => item.line !== "").length;
             if (sendable === 0) {
               // Only opted-out events and records too large to send: nothing goes out, the cursor moves past them.
-              this.#acknowledge(state, remote.name, batch.records, batch.oversized, undefined);
+              this.#acknowledge(state, key, batch.records, batch.oversized, undefined);
               continue;
             }
             const outcome = await this.#post(remote, token, batch.records, options.signal);
-            if (!this.#lock(state, remote.name)) return { remote: remote.name, batches, records, skipped: "locked" };
+            if (!this.#lock(state, key)) return { remote: remote.name, batches, records, skipped: "locked" };
+            // Removed (or removed and added again) while the batch was out: nothing more is sent or recorded for it.
+            if (!this.#configured(key)) return { remote: remote.name, batches, records, skipped: "removed" };
             if (outcome.kind === "rejected" && sendable > 1) {
               // Find the record the remote refuses before giving anything up: halve the batch and send again.
               maxSendable = Math.max(1, Math.floor(sendable / 2));
               continue;
             }
             if (outcome.kind === "accepted" || outcome.kind === "rejected") {
-              this.#acknowledge(state, remote.name, batch.records, batch.oversized, outcome.kind === "rejected" ? outcome.error : undefined);
+              this.#acknowledge(state, key, batch.records, batch.oversized, outcome.kind === "rejected" ? outcome.error : undefined);
               batches += 1;
               records += batch.records.length;
               maxSendable = Number.POSITIVE_INFINITY;
@@ -373,23 +421,23 @@ export class RemoteOutbox {
                 skipped += 1;
                 // A remote that refuses record after record is broken, not this data: stop, and try again later.
                 if (skipped >= MAX_SKIPPED_RECORDS_PER_SYNC) {
-                  this.#recordFailure(state, remote.name, configHash, outcome.error, false);
+                  this.#recordFailure(state, key, configHash, outcome.error, false);
                   return { remote: remote.name, batches, records, error: outcome.error };
                 }
               }
-              this.#recordSuccess(state, remote.name, configHash, batch.records.length, outcome.kind === "rejected" ? outcome.error : null);
+              this.#recordSuccess(state, key, configHash, batch.records.length, outcome.kind === "rejected" ? outcome.error : null);
               continue;
             }
-            this.#recordFailure(state, remote.name, configHash, outcome.error, outcome.kind === "unauthorized");
+            this.#recordFailure(state, key, configHash, outcome.error, outcome.kind === "unauthorized");
             return { remote: remote.name, batches, records, error: outcome.error };
           }
-          if (batches === 0) this.#recordSuccess(state, remote.name, configHash, 0, null);
+          if (batches === 0) this.#recordSuccess(state, key, configHash, 0, null);
           return { remote: remote.name, batches, records };
         } finally {
           rerail?.close();
         }
       } finally {
-        state.prepare("DELETE FROM locks WHERE remote = ? AND holder = ?").run(remote.name, this.#holder);
+        state.prepare("DELETE FROM locks WHERE remote = ? AND holder = ?").run(key, this.#holder);
       }
     } catch (error) {
       return { remote: remote.name, batches: 0, records: 0, error: error instanceof Error ? error.message : String(error) };
@@ -408,44 +456,54 @@ export class RemoteOutbox {
   }
 
   #collect(
-    state: Database.Database, rerail: Database.Database | undefined, rules: RuleDocuments, remote: RemoteEntry, excluded: readonly string[],
-    budget: number, maxSendable: number,
+    state: Database.Database, rerail: Database.Database | undefined, rules: RuleDocuments, remote: RemoteEntry,
+    exclusions: readonly RepositoryExclusion[], budget: number, maxSendable: number,
   ): BatchBuilder {
+    const key = remoteStateKey(remote);
     const batch = new BatchBuilder(budget - 1024, maxSendable);
     const sent = new Map<string, string>();
-    for (const row of state.prepare("SELECT stream, id, hash FROM sent WHERE remote = ?").all(remote.name) as Array<{ stream: string; id: string; hash: string }>)
+    for (const row of state.prepare("SELECT stream, id, hash FROM sent WHERE remote = ?").all(key) as Array<{ stream: string; id: string; hash: string }>)
       sent.set(`${row.stream}\0${row.id}`, row.hash);
     const unsent = (item: OutboxRecord): boolean => item.hash === undefined || sent.get(`${item.stream}\0${item.id}`) !== item.hash;
-    const isExcluded = (key: string | null): boolean => key !== null && excluded.includes(key);
     const addSnapshot = (item: OutboxRecord): boolean => (unsent(item) ? batch.add(item) : true);
+    const excluded = new Exclusions(exclusions, rerail);
+    const now = this.#now();
 
-    for (const gap of state.prepare("SELECT id, record_json FROM pending_gaps WHERE remote = ?").all(remote.name) as Array<{ id: string; record_json: string }>)
+    for (const gap of state.prepare("SELECT id, record_json FROM pending_gaps WHERE remote = ?").all(key) as Array<{ id: string; record_json: string }>)
       if (!batch.add({ line: gap.record_json, stream: "gap", id: gap.id })) return batch;
 
     if (rerail !== undefined) {
       const repositories = rerail.prepare("SELECT repository_key, display_name, aliases_json FROM repositories").all() as Array<{ repository_key: string; display_name: string; aliases_json: string }>;
       for (const row of repositories) {
-        if (isExcluded(row.repository_key)) continue;
+        if (excluded.at(row.repository_key, now)) continue;
         const fields = { displayName: row.display_name, aliases: parse(row.aliases_json) };
         if (!addSnapshot(record("repository", row.repository_key, fields, { hash: hashOf(fields) }))) return batch;
       }
 
       const sessions = rerail.prepare("SELECT session_id, host, cwd, repository_id, started_at, ended_at FROM sessions ORDER BY started_at").all() as Array<{ session_id: string; host: string; cwd: string; repository_id: string | null; started_at: number; ended_at: number | null }>;
       const sessionRepository = new Map<string, string | null>();
+      const excludedSessions = new Set<string>();
       for (const row of sessions) {
-        sessionRepository.set(row.session_id, row.repository_id);
-        if (isExcluded(row.repository_id)) continue;
+        const repository = row.repository_id ?? excluded.repositoryOfFolder(row.cwd);
+        sessionRepository.set(row.session_id, repository);
+        // A session that started while its repository was excluded stays unsent, every event and audit of it too.
+        if (excluded.at(repository, row.started_at)) {
+          excludedSessions.add(row.session_id);
+          continue;
+        }
         const fields = { host: row.host, cwd: row.cwd, repositoryKey: row.repository_id, startedAt: row.started_at, endedAt: row.ended_at };
         if (!addSnapshot(record("session", row.session_id, fields, { hash: hashOf(fields) }))) return batch;
       }
 
-      if (!this.#collectEvents(state, rerail, remote, batch, sessionRepository, isExcluded)) return batch;
-      if (!this.#collectAudits(rerail, rules, batch, sessionRepository, isExcluded, addSnapshot, unsent)) return batch;
+      const isExcluded = (sessionId: string, at: number): boolean =>
+        excludedSessions.has(sessionId) || excluded.at(sessionRepository.get(sessionId) ?? null, at);
+      if (!this.#collectEvents(state, rerail, remote, batch, isExcluded)) return batch;
+      if (!this.#collectAudits(rerail, rules, batch, isExcluded, addSnapshot, unsent)) return batch;
     }
 
-    const scans = state.prepare("SELECT scan_id, repository_key, document_json, rules_json FROM scans ORDER BY queued_at").all() as Array<{ scan_id: string; repository_key: string; document_json: string; rules_json: string }>;
+    const scans = state.prepare("SELECT scan_id, repository_key, document_json, rules_json, queued_at FROM scans ORDER BY queued_at").all() as Array<{ scan_id: string; repository_key: string; document_json: string; rules_json: string; queued_at: number }>;
     for (const scan of scans) {
-      if (isExcluded(scan.repository_key)) continue;
+      if (excluded.at(scan.repository_key, scan.queued_at)) continue;
       const item: OutboxRecord = { line: JSON.stringify({ type: "scan", id: scan.scan_id, ...(JSON.parse(scan.document_json) as Json) }), stream: "scan", id: scan.scan_id, hash: "queued" };
       if (!unsent(item)) continue;
       for (const rule of JSON.parse(scan.rules_json) as Array<{ ruleId: string; payloadHash: string; checkoutPath: string; document?: RuleDocument }>) {
@@ -457,9 +515,9 @@ export class RemoteOutbox {
   }
 
   /** Events after the remote's cursor, a `gap` for every hole in the sequence; false once the batch is full. */
-  #collectEvents(state: Database.Database, rerail: Database.Database, remote: RemoteEntry, batch: BatchBuilder, sessionRepository: ReadonlyMap<string, string | null>, isExcluded: (key: string | null) => boolean): boolean {
+  #collectEvents(state: Database.Database, rerail: Database.Database, remote: RemoteEntry, batch: BatchBuilder, isExcluded: (sessionId: string, at: number) => boolean): boolean {
     const machine = machineId(this.#home);
-    let cursor = (state.prepare("SELECT value FROM cursors WHERE remote = ? AND stream = 'event'").get(remote.name) as { value: number } | undefined)?.value ?? 0;
+    let cursor = (state.prepare("SELECT value FROM cursors WHERE remote = ? AND stream = 'event'").get(remoteStateKey(remote)) as { value: number } | undefined)?.value ?? 0;
     for (;;) {
       const rows = rerail.prepare("SELECT sequence, session_id, event_id, kind, observed_at, payload_json FROM events WHERE sequence > ? ORDER BY sequence LIMIT ?")
         .all(cursor, MAX_EVENTS_PER_READ) as Array<{ sequence: number; session_id: string; event_id: string; kind: string; observed_at: number; payload_json: string }>;
@@ -471,8 +529,8 @@ export class RemoteOutbox {
         }
         cursor = row.sequence;
         const id = `${machine}:${row.sequence}`;
-        if (isExcluded(sessionRepository.get(row.session_id) ?? null)) {
-          // Opted out: the cursor passes it with the next record sent; nothing of it is.
+        if (isExcluded(row.session_id, row.observed_at)) {
+          // Opted out: the cursor passes it for good with the next record sent, so `include` never sends it later.
           if (!batch.add({ line: "", stream: "skip", id, sequence: row.sequence })) return false;
           continue;
         }
@@ -489,16 +547,15 @@ export class RemoteOutbox {
     rerail: Database.Database,
     rules: RuleDocuments,
     batch: BatchBuilder,
-    sessionRepository: ReadonlyMap<string, string | null>,
-    isExcluded: (key: string | null) => boolean,
+    isExcluded: (sessionId: string, at: number) => boolean,
     addSnapshot: (item: OutboxRecord) => boolean,
     unsent: (item: OutboxRecord) => boolean,
   ): boolean {
-    const rows = rerail.prepare("SELECT audit_id, session_id, status, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as Array<{ audit_id: string; session_id: string; status: string; finished_at: number; size: number }>;
+    const rows = rerail.prepare("SELECT audit_id, session_id, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as Array<{ audit_id: string; session_id: string; status: string; started_at: number; finished_at: number; size: number }>;
     let reader: SqliteAuditReader | undefined;
     try {
       for (const row of rows) {
-        if (isExcluded(sessionRepository.get(row.session_id) ?? null)) continue;
+        if (isExcluded(row.session_id, row.started_at)) continue;
         const hash = hashOf([row.status, row.finished_at, row.size]);
         if (!unsent({ line: "", stream: "audit", id: row.audit_id, hash })) continue;
         reader ??= new SqliteAuditReader(join(this.#home, RERAIL_DATABASE_FILE));
@@ -573,6 +630,8 @@ export class RemoteOutbox {
   /** The remote holds `records` (or refused them for good, `rejected`): cursors and hashes move past them. */
   #acknowledge(state: Database.Database, remote: string, records: readonly OutboxRecord[], oversized: readonly OutboxRecord[], rejected: string | undefined): void {
     state.transaction(() => {
+      // Removed, or removed and added again, while this batch was out: its answer belongs to no remote now.
+      if (!this.#configured(remote)) return;
       const machine = machineId(this.#home);
       const sequence = [...records, ...oversized].reduce((max, item) => Math.max(max, item.sequence ?? 0), 0);
       if (sequence > 0) state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, 'event', ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)").run(remote, sequence);
@@ -606,7 +665,13 @@ export class RemoteOutbox {
     })();
   }
 
+  /** Whether a remote is configured under this state key now: the guard on every write of a sync's result. */
+  #configured(key: string): boolean {
+    return readRemoteConfig(this.#home).remotes.some(remote => remoteStateKey(remote) === key);
+  }
+
   #recordSuccess(state: Database.Database, remote: string, configHash: string, records: number, warning: string | null): void {
+    if (!this.#configured(remote)) return;
     const now = this.#now();
     state.prepare(`INSERT INTO status (remote, last_attempt_at, last_success_at, last_error, consecutive_failures, next_attempt_at, config_hash, sent_batches, sent_records)
       VALUES (?, ?, ?, ?, 0, NULL, ?, ?, ?)
@@ -617,6 +682,7 @@ export class RemoteOutbox {
   }
 
   #recordFailure(state: Database.Database, remote: string, configHash: string, error: string, unauthorized: boolean): void {
+    if (!this.#configured(remote)) return;
     const now = this.#now();
     const failures = ((state.prepare("SELECT consecutive_failures AS n FROM status WHERE remote = ?").get(remote) as { n: number } | undefined)?.n ?? 0) + 1;
     const delay = unauthorized ? MAX_BACKOFF_MS : backoffMs(failures);

@@ -8,7 +8,7 @@ import { parseArguments } from "../daemon/daemon.js";
 import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 import { readCloneId, readRemoteAddress, repositoryIdentityLocation, repositoryKeyOf } from "../engine/catalog/repository-identity.js";
 import { openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
-import { addRemote, readRemoteConfig, removeRemote, setRepositoryExcluded } from "../runtime/remote-config.js";
+import { addRemote, readRemoteConfig, remoteStateKey, removeRemote, setRepositoryExcluded } from "../runtime/remote-config.js";
 import { RemoteOutbox, type RemoteStatus } from "../runtime/remote-outbox.js";
 
 export interface RemoteCliOptions {
@@ -99,7 +99,7 @@ export async function runRemoteCommand(args: readonly string[], options: RemoteC
     if (target === undefined || extra.length > 0) throw new Error(`rerail remote remove takes one name or URL\nUsage: ${USAGE}`);
     const removed = removeRemote(target, options.home);
     if (removed === undefined) throw new Error(`No remote named ${target}`);
-    outbox.forget(removed.name);
+    outbox.forget(remoteStateKey(removed));
     out.write(`Removed remote ${removed.name}; its token is deleted.\n`);
     return 0;
   }
@@ -119,6 +119,7 @@ export async function runRemoteCommand(args: readonly string[], options: RemoteC
     else for (const result of results) {
       const outcome = result.skipped === "locked" ? "skipped: another Rerail process is sending to it"
         : result.skipped === "no-token" ? "skipped: its token file is missing; remove and add it again"
+          : result.skipped === "removed" ? "stopped: it was removed while sending"
           : `${result.batches} batches, ${result.records} records sent${result.error === undefined ? "" : `; failed: ${result.error}`}`;
       out.write(`Remote ${result.remote}: ${outcome}\n`);
     }

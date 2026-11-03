@@ -19,6 +19,8 @@ export interface FakeSink {
   respondWith(status: number): void;
   /** Answers 400 to any batch for which `refuse` is true (a record the remote cannot take). */
   refuseWhen(refuse: ((records: SinkRequest["records"]) => boolean) | undefined): void;
+  /** Runs once, while the next request is in flight, before it is answered. */
+  duringNextRequest(action: () => void): void;
   close(): Promise<void>;
 }
 
@@ -28,6 +30,7 @@ export async function startFakeSink(token = "test-token"): Promise<FakeSink> {
   const stored = new Map<string, SinkRequest>();
   let status = 200;
   let refuse: ((records: SinkRequest["records"]) => boolean) | undefined;
+  let during: (() => void) | undefined;
   const server: Server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += String(chunk);
@@ -45,6 +48,9 @@ export async function startFakeSink(token = "test-token"): Promise<FakeSink> {
       records,
     };
     requests.push(received);
+    const action = during;
+    during = undefined;
+    action?.();
     if (request.headers.authorization !== `Bearer ${token}`) {
       response.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: "unauthorized" }));
       return;
@@ -69,6 +75,7 @@ export async function startFakeSink(token = "test-token"): Promise<FakeSink> {
     stored,
     respondWith(next) { status = next; },
     refuseWhen(next) { refuse = next; },
+    duringNextRequest(action) { during = action; },
     close: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
 }

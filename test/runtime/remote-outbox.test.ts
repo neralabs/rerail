@@ -170,6 +170,63 @@ describe("remote sink outbox", () => {
     expect(outbox().status()[0]!.pendingEvents).toBe(0);
   });
 
+  it("excludes a repository under every key it has had, and a session placed in it only by its folder", async () => {
+    seed();
+    const database = new Database(databasePath());
+    // The repository was known by a clone id before it had a remote: sessions from then carry the old key.
+    database.prepare("UPDATE repositories SET aliases_json = ? WHERE repository_key = ?").run(JSON.stringify(["clone:old"]), REPOSITORY);
+    database.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, created_at, last_seen_at) VALUES ('/work/app', ?, 'c', 1, 1)").run(REPOSITORY);
+    database.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at) VALUES ('old-key', 'omp', '/elsewhere', 'clone:old', 1)").run();
+    database.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at) VALUES ('by-folder', 'omp', '/work/app/sub', NULL, 1)").run();
+    database.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at) VALUES ('unplaced', 'omp', '/nowhere', NULL, 1)").run();
+    database.close();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    setRepositoryExcluded(REPOSITORY, true, home);
+    await outbox().sync({ force: true });
+    // A session no checkout places is held back while any repository is excluded.
+    expect(storedRecords(sink).filter(item => item.type === "session")).toEqual([]);
+    setRepositoryExcluded(REPOSITORY, false, home, 450_000);
+    const later = new Database(databasePath());
+    later.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at) VALUES ('unplaced-later', 'omp', '/nowhere', NULL, 460000)").run();
+    later.close();
+    await outbox().sync({ force: true });
+    expect(storedRecords(sink).filter(item => item.type === "session").map(item => item.id)).toEqual(["unplaced-later"]);
+  });
+
+  it("never sends what a repository recorded while excluded, even when no sync ran until after include", async () => {
+    const { sessionId } = seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    setRepositoryExcluded(REPOSITORY, true, home);
+    addEvent(sessionId, "while-excluded");
+    setRepositoryExcluded(REPOSITORY, false, home, 650_000);
+    const store = new SqliteSessionStore(databasePath(), { repositoryId: REPOSITORY });
+    store.openSession({ host: "omp", sessionId: "after", cwd: "/work/app" }, 700_000);
+    store.append({ sessionId: "after", eventId: "a1", kind: "user-prompt", observedAt: 700_001, payload: { text: "new" } });
+    store.close();
+    await outbox().sync({ force: true });
+    const stored = storedRecords(sink);
+    expect(stored.filter(item => item.type === "session").map(item => item.id)).toEqual(["after"]);
+    expect(stored.filter(item => item.type === "event").map(item => item.eventId)).toEqual(["a1"]);
+    expect(stored.filter(item => item.type === "audit")).toEqual([]);
+    expect(outbox().status()[0]!.pendingEvents).toBe(0);
+  });
+
+  it("lets a sync that was running when its remote was removed write nothing, so the remote added again starts from nothing", async () => {
+    seed();
+    const quiet = { stdout: { write: () => true } };
+    addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    sink.duringNextRequest(() => {
+      void runRemoteCommand(["remove", "team"], { home, ...quiet });
+      addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    });
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    expect(sink.requests[1]!.records.filter(item => item.type === "event")).toHaveLength(4);
+    expect(outbox().status()[0]).toMatchObject({ sentBatches: 1, pendingEvents: 0 });
+  });
+
   it("reports events deleted before they were sent as a gap", async () => {
     seed();
     const database = new Database(databasePath());

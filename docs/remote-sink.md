@@ -20,15 +20,22 @@ rerail remote include [--repo <dir>]
 ```
 
 - **`remove`** deletes the remote's token and what the outbox knew of it: a remote added later under the same name
-  starts from nothing and receives everything again.
+  starts from nothing and receives everything again. A send already under way when the remote is removed records
+  nothing and stops; every `add` gives the remote a new id, which the outbox keeps its progress under.
 - **`add`** takes the URL (HTTPS; plain HTTP only to `localhost`) and the bearer token the service gave this machine,
   from standard input or a file, never on the command line. The name defaults to the URL's host. A new remote
   receives what the database already holds first, then everything new.
 - **`--no-content`** sends events without their payloads (prompts, tool input and output): each event says
   `"content":"omitted"`. Everything else is sent.
-- **`exclude`** opts a repository (the one at `--repo`, or the current folder's) out of every remote: none of its
-  sessions, events, audits or scans are sent from then on; `include` opts it back in. Events recorded while it was
-  excluded are not sent later.
+- **`exclude`** opts a repository (the one at `--repo`, or the current folder's) out of every remote: nothing of it
+  that a remote does not have yet is sent, whether it was recorded before the `exclude` or after. `include` opts it
+  back in **from that moment**: only what the repository records after `include` is sent. What it recorded until then
+  is never sent, even if no send ran while it was excluded; a session that started then stays unsent with all its
+  events and audits. Exclusions are kept, with when `include` ended them, in `remote.json`.
+  - A repository is matched under every key it has had: its current key and its aliases (an older clone id, a remote
+    it used to have).
+  - A session recorded with no repository is placed by its folder's recorded checkout. One that no checkout places
+    is held back while any repository is excluded, and sent once none is.
 - **`status`** (and a line per remote in `rerail status`) shows when the remote last took a batch, what is waiting and
   the last error. It exits 1 while a remote is failing.
 - **`push`** sends everything waiting now, in this process, without the daemon and without waiting for a retry: for
@@ -44,7 +51,7 @@ session. `rerail remote add` and `remove` take effect without a restart.
 
 | File in the Rerail home | Holds |
 | --- | --- |
-| `remote.json` | The remotes (name, URL, whether content is sent) and the excluded repositories. |
+| `remote.json` | The remotes (name, id, URL, whether content is sent, label), and the repositories' exclusions. |
 | `remote-tokens/<name>` | That remote's token, alone. Never in the database, which support bundles and `rerail scrub` read, and never printed. |
 | `remote-outbox.sqlite` | What each remote has acknowledged (an event cursor, a hash per sent record), retry state, and queued scans. Deleting it makes every remote receive everything again. |
 | `machine-id` | A random UUID made once, which names this machine to every remote. |
