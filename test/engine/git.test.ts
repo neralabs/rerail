@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { gitCandidates, gitInstalled, readGitBlobs } from "../../src/engine/git.js";
+import { gitCandidates, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobs } from "../../src/engine/git.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -42,6 +42,38 @@ describe("readGitBlobs", () => {
     expect(await readGitBlobs(clone, ["HEAD:./a.py"], { maxBlobBytes: 1_000 })).toEqual(new Map());
     // Still missing: asking for it fetched nothing from the remote.
     expect(() => execFileSync("git", ["cat-file", "-e", oid], { cwd: clone, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" }, stdio: "ignore" })).toThrow();
+  });
+});
+
+describe("gitHead and headMovedOnlyByCommits", () => {
+  it("names no commit outside a repository, or where nothing is committed yet", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-git-head-"));
+    roots.push(root);
+    await expect(gitHead(root)).resolves.toBeUndefined();
+    git(root, "init", "--quiet");
+    await expect(gitHead(root)).resolves.toBeUndefined();
+  });
+
+  it("tells commits from anything else that moved HEAD since a commit", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const seed = (await gitHead(root))!;
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
+    git(root, "commit", "--quiet", "--allow-empty", "--amend", "-m", "two again");
+    expect(await headMovedOnlyByCommits(root, seed)).toBe(true);
+    const committed = (await gitHead(root))!;
+    git(root, "reset", "--quiet", "--hard", seed);
+    expect(await headMovedOnlyByCommits(root, committed)).toBe(false);
+    // A commit after the move does not hide it.
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "three");
+    expect(await headMovedOnlyByCommits(root, committed)).toBe(false);
+  });
+
+  it("goes by HEAD's newest move for a checkout not seen before, and takes a commit it cannot find as moved", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    expect(await headMovedOnlyByCommits(root, undefined)).toBe(true);
+    git(root, "switch", "--quiet", "-c", "other");
+    expect(await headMovedOnlyByCommits(root, undefined)).toBe(false);
+    expect(await headMovedOnlyByCommits(root, "0".repeat(40))).toBe(false);
   });
 });
 
