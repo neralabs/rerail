@@ -69,7 +69,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 |
 
 `ecma` is shared by JavaScript and TypeScript. The rule packs (python, php, blade, typescript, react, node, next, vue,
-complexity, sql, rust) live in `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)): their
+complexity, sql, rust) live in `packs/<id>/` ([pack format](../docs/pack-format.md#layout)): their
 upstream tools' copied tests and expected findings, their candidates and their licence records.
 `../scripts/pack-data/eslint-expected.mjs` is the expected-findings helper the ESLint-based generators share.
 

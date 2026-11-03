@@ -26,6 +26,28 @@ A repository is **Not set up** until its first configuration. Starting Rerail in
 
 A repository that is set up runs only what is attached to it, and each checkout also runs its own rules, the rule documents in its `.rerail/rules/` folder ([a worktree's own rules](rule-packs.md#a-worktrees-own-rules)). The rules of the installed rule packs run only in repositories that add them. Nothing else runs: no other rule file in the working tree is read.
 
+### The repository's own lint config
+
+So Rerail does not steer against what a repository deliberately configured, set-up reads its lint config at the repository root, as data, and gives the rules of the packs it adds matching settings, owned by the repository. Nothing is executed or imported.
+
+| Linter | Read | Not read |
+|---|---|---|
+| ESLint | the config ESLint itself would use: the first flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`), parsed and never run, when it is data throughout; else `.eslintrc.json`, or `.eslintrc` when it is JSON, or else `package.json`'s `eslintConfig`, JSON with comments and trailing commas, its own `rules` and its `overrides`' `rules` | a flat config that runs code (a function, a statement that changes something, a namespace, a loop), and in a flat config a value Rerail would have to run code for (an imported config such as `js.configs.recommended`, a call's result, an imported variable); `.eslintrc.{js,cjs,yaml,yml}`; `extends` and plugins' presets of an `.eslintrc` |
+| oxlint | `.oxlintrc.json`, top-level `rules`; each key resolved to a built-in rule as oxlint 1.88.0 resolves it, and a rule's last key applies | `extends`, `overrides`, `categories`, `plugins` (a key for a plugin the config leaves off still counts); rule options |
+| Ruff | `select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores` and `extend-per-file-ignores` (each from `[lint]` where it is set there, else the top level) of the file Ruff uses (`.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`) and of the configs its `extend` names inside the repository | a config `extend` names outside the repository; per-file ignores of an extended config in another folder; Bandit config |
+
+What set-up does with what it reads:
+
+- **Nothing runs.** Rerail parses each config as data and never runs or imports it. It never turns a rule on.
+- **Off.** A rule the config turns off for every file (`"off"`, `0`, oxlint's `"allow"`, a Ruff ignore that wins over its selects) starts off. When one config turns a rule off and another keeps it on, it starts off and set-up says so.
+- **Options.** ESLint options become the port's options (`config`) when every value maps onto an option the port declares. Otherwise the port keeps its defaults, and set-up adds a note.
+- **Some files only.** An entry limited to some files (ESLint's `files: ["scripts/**"]`, a Ruff per-file ignore of `tests/**`) turns a rule off only in a folder it covers whole. For narrower files (`**/test_*.py`) the rule stays on, with a note.
+- **A flat config Rerail cannot read.** When an ESLint flat config is more than data (it defines a function, runs a loop, changes something), is a symlink or is larger than 1 MiB, Rerail cannot tell what it turns off. Every rule Rerail ports from ESLint then starts off, with no options, and set-up says why first. A single rule entry whose value needs the config run (a call's result, an imported variable) turns only that port off; a shared config the file imports (`js.configs.recommended`) is named as not read.
+- **Configs not read.** An `.eslintrc.js`, `.eslintrc.cjs` or YAML config is named as not read and changes nothing.
+- **Your choices win.** A rule you already set in the dashboard's review, in that folder, keeps your setting. "Skip, I'll pick packs" takes nothing from the lint config, even for the packs you then pick.
+
+A port matches an upstream rule by the names its document honours suppression comments for, so `custom/no-console` (another plugin's rule) leaves the port of ESLint's `no-console` alone. The exact reading rules (what counts as data in a flat config, the order ESLint applies entries in, how Ruff's selectors resolve) are in the header comments of `src/engine/catalog/lint-config/`.
+
 ## Rules: attachments and settings
 
 Rules come from three places:

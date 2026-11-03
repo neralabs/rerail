@@ -55,13 +55,19 @@ fn python_pack_code_rule(rule: &str) -> CompiledCodeRuleDsl {
     .unwrap_or_else(|error| panic!("{}: {}", path.display(), error.reason))
 }
 
-/// A code rule's result on one file, compiled and evaluated with the work-skipping shortcuts on and
-/// off (`set_shortcuts_off`): they must agree, violations and failures alike.
-fn agreeing(compile: &dyn Fn() -> CompiledCodeRuleDsl, path: &str, source: &str) -> Value {
+/// A code rule's result on one file, evaluated with the work-skipping shortcuts on (`with`) and off
+/// (`without`, `set_shortcuts_off`): they must agree, violations and failures alike. Each mode has
+/// its own compiled copy of the rule, as a workspace keeps one compiled rule for every file.
+fn agreeing(
+    with: &CompiledCodeRuleDsl,
+    without: &CompiledCodeRuleDsl,
+    path: &str,
+    source: &str,
+) -> Value {
     set_shortcuts_off(true);
-    let without = evaluate_file(&compile(), "python", path, source);
+    let without = evaluate_file(without, "python", path, source);
     set_shortcuts_off(false);
-    let with = evaluate_file(&compile(), "python", path, source);
+    let with = evaluate_file(with, "python", path, source);
     assert_eq!(with, without, "{path}: the shortcuts changed the result");
     with
 }
@@ -116,24 +122,30 @@ class C:
     import sys
     z = sys
 ";
-    for rule in [
-        "candidates/rules/ruff-f811-redefined-while-unused.json",
-        "candidates/rules/ruff-f821-undefined-name.json",
-        "candidates/rules/ruff-f841-unused-variable.json",
-    ] {
-        let compile = || python_pack_code_rule(rule);
-        for file in &files {
-            let source = std::fs::read_to_string(file).expect("fixture");
-            let path = if file.extension().is_some_and(|extension| extension == "pyi") {
-                "fixture.pyi"
-            } else {
-                "fixture.py"
-            };
-            agreeing(&compile, path, &source);
+    // Each rule on a thread of its own: the shortcuts are switched per thread.
+    std::thread::scope(|scope| {
+        for rule in [
+            "candidates/rules/ruff-f811-redefined-while-unused.json",
+            "candidates/rules/ruff-f821-undefined-name.json",
+            "candidates/rules/ruff-f841-unused-variable.json",
+        ] {
+            let files = &files;
+            scope.spawn(move || {
+                let (with, without) = (python_pack_code_rule(rule), python_pack_code_rule(rule));
+                for file in files {
+                    let source = std::fs::read_to_string(file).expect("fixture");
+                    let path = if file.extension().is_some_and(|extension| extension == "pyi") {
+                        "fixture.pyi"
+                    } else {
+                        "fixture.py"
+                    };
+                    agreeing(&with, &without, path, &source);
+                }
+                let result = agreeing(&with, &without, "mixed.py", mixed);
+                assert_eq!(result["failures"], json!([]), "{rule}: {result}");
+            });
         }
-        let result = agreeing(&compile, "mixed.py", mixed);
-        assert_eq!(result["failures"], json!([]), "{rule}: {result}");
-    }
+    });
 }
 
 /// F841's work grows linearly with a function's assignments, each an unpacked chain whose

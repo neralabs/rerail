@@ -1042,7 +1042,7 @@ function publishedTestData(root, toolPack) {
 
 /**
  * One line per archive a run used, `<pack> <tool> <kind> <sha256>` (kind `test-data` or `samples`, by the tar's
- * sha256), sorted: what replaying the run fetches again (CONTRIBUTING.md, "Pack test data").
+ * sha256), sorted: what replaying the run fetches again (docs/upstream.md, "Replay a commit").
  */
 export function archiveLines(archives) {
   return archives.map(({ toolPack, kind, sha256: digest }) => `${toolPack.pack} ${toolPack.tool} ${kind} ${digest}`).sort(byBytes);

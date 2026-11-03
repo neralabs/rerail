@@ -1,7 +1,10 @@
 # Documentation
 
 ## Using Rerail
-- [installation.md](installation.md): what `rerail setup` writes, removal, and the managed-installation layout
+- [installation.md](installation.md): installing Rerail: requirements, what set-up asks and changes, updating,
+  starting and stopping, removal, and what Rerail runs on
+- [how-setup-works.md](how-setup-works.md): each set-up step and what it writes, the managed-installation layout, the
+  database, updates, and removal in detail
 - [troubleshooting.md](troubleshooting.md): what you see when set-up or Rerail goes wrong, and what to do
 - [reference.md](reference.md): how rules and their configuration work, the database, updates, the daemon and its API,
   and audits
@@ -27,6 +30,9 @@
 - [conformance/README.md](../conformance/README.md): the conformance check every shipped ported rule passes, its pull
   request comment, divergences, and promoting a candidate
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
+- [adding-rules-to-a-pack.md](adding-rules-to-a-pack.md): adding rules to a pack, written for Rerail or ported from
+  a tool: who does what, the steps for each kind, the Conformance comment, promotion and demotion, and the
+  maintainers' publish steps
 
 ## Release
 - [release.md](release.md): how core is built, versioned and published
@@ -39,8 +45,6 @@
   (`npm run check:structure`) that enforces them
 
 ## Design notes
-- [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
-  [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store
-- [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md) and
-  [transducer-design.md](transducer-design.md): the tape transducer language
-- [in-session-status-line-prd.md](in-session-status-line-prd.md): requirements for in-session visibility
+- [content-addressed-workspace-store.md](content-addressed-workspace-store.md): how the machine-wide content store
+  works
+- [transducer-design.md](transducer-design.md): the tape transducer language, which tests and benchmarks use

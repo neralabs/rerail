@@ -29,7 +29,7 @@ npx @neralabs/rerail setup
 
 Then, in a new terminal, which has `rerail` on its `PATH`, open the dashboard with `rerail manage`.
 
-Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) lists everything set-up writes and how to remove it.
+Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) says what set-up changes on your machine and how to update and remove Rerail.
 
 Then start a new Claude Code, Codex, Cursor, OMP or Pi session in the repository. To watch Rerail catch a broken rule and steer the fix, run:
 
@@ -145,6 +145,8 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 
 Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 
+When the agent decides not to follow a steer, it records its one-line reason with `rerail feedback`. Rerail keeps the note on your machine and sends it nowhere; to tell us a rule keeps getting pushed back on, attach the output of `rerail feedback list --rule <rule-id>` to a [Rule misfire](https://github.com/neralabs/rerail/issues/new?template=2-rule-misfire.yml) issue. See [Steer feedback](docs/reference.md#steer-feedback).
+
 ## Internal testing
 
 > [!WARNING]
@@ -191,7 +193,7 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 ### Good places to start
 
 - [CONTEXT.md](CONTEXT.md): the vocabulary used across the codebase. Read it first.
-- [docs/installation.md](docs/installation.md): what set-up writes to your machine and how to remove it.
+- [docs/installation.md](docs/installation.md): what you need, how to install, update and remove Rerail, and what set-up changes on your machine; [docs/how-setup-works.md](docs/how-setup-works.md) has every step and file in detail.
 - [docs/reference.md](docs/reference.md): rules and their configuration, the database, updates, the daemon and its API.
 - [docs/code-rule-dsl-reference.html](docs/code-rule-dsl-reference.html): every construct of the `rerail.policy/v1` rule language.
 - [docs/rule-packs.md](docs/rule-packs.md) and [docs/pack-format.md](docs/pack-format.md): how packs work and what each must prove.

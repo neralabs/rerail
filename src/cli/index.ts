@@ -27,5 +27,5 @@ export {
   SHOW_ME_VIOLATING,
   runShowMeCommand,
 } from "./show-me.js";
-export { type DashboardPage, type SetupEnvironment, startRerail } from "./repository-setup.js";
+export { type DashboardPage, type SetupEnvironment, type SetupRequest, startRerail } from "./repository-setup.js";
 export { type SetupContext, runSetupCommand, runSetupStepArgs, setupAnswerCommand } from "./setup-cli.js";

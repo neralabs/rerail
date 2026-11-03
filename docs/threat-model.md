@@ -187,7 +187,11 @@ This boundary holds only for an agent that reaches Rerail through MCP. See T1.
   recheck. Directory walks skip symlinks. `#writeSource` (rewind) writes with `O_EXCL|O_NOFOLLOW`
   (`src/engine/code-rule/code-rule-bridge.ts`).
 - **Git.** `src/engine/git.ts`:
-  - It calls git by a fixed absolute path and never looks it up on `PATH`.
+  - It runs the first `git` on `PATH` that is a regular file it may execute, resolved to an absolute path by Rerail
+    itself (so Windows never looks in the current folder first), skipping relative entries, entries inside the
+    repository it runs in (the nearest folder above its working folder with a `.git`) and entries inside a
+    `node_modules` folder; then the usual install locations. This keeps a repository's own `bin/` or
+    `node_modules/.bin` from going first; it does not cover every route (T11).
   - Every call sets `core.fsmonitor=false` and `core.hooksPath=/dev/null`, with `GIT_TERMINAL_PROMPT=0` and
     `GIT_NO_LAZY_FETCH=1` where relevant, and a 10 s timeout.
   - It uses no network commands. `cat-file --batch` does not run textconv.
@@ -289,8 +293,8 @@ Two controls now narrow this.
 These entries take effect only when the host's sandbox is on, and Claude Code's is opt-in. Rerail does not turn a
 sandbox on or change a host's permission settings. Settings → Coding agents in the dashboard and `rerail status` say,
 for each connected coding agent, whether its tools can read Rerail's data on this computer
-(`codingAgentStates` in `src/setup/coding-agents.ts`). [installation.md](installation.md) says, for each host, what is
-isolated and what is not.
+(`codingAgentStates` in `src/setup/coding-agents.ts`). [Sandbox and permission entries](how-setup-works.md#sandbox-and-permission-entries)
+says, for each host, what is isolated and what is not.
 
 **Rule approval.** A rule Rerail did not publish steers only with content a person approved; until then it runs in Log,
 recorded and sent to no one (`src/engine/catalog/rule-approval.ts`):
@@ -543,7 +547,10 @@ in two ways:
 - `RERAIL_ENGINE_PATH` is `require`d as a native addon (`src/engine/native/native.ts`).
 - `RERAIL_ENGINE_SOCKET` names where hooks send full events.
 - `RERAIL_HOME`, `RERAIL_STORAGE_ROOT`, `RERAIL_DATABASE` and `RERAIL_CONTENT_STORE_PATH` move data.
-- Git calls inherit `GIT_*` from the environment.
+- Git calls inherit `GIT_*` from the environment, and an absolute `PATH` entry outside the repository decides which
+  `git` runs. "The repository" is only the nearest one above the process's working folder, so these entries are not
+  skipped: one inside an outer checkout around a nested worktree or submodule, and any repository's when the process
+  started outside it. The daemon finds Git once, from the folder and `PATH` it started with, and keeps it.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).

@@ -1,7 +1,8 @@
 /**
  * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 8, one test per
  * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
- * ported rules on the tools' fixtures.
+ * ported rules on the tools' fixtures, unless `RERAIL_PACK_FIXTURES_IN_CONFORMANCE=1`: CI's unit tests set it, since
+ * the conformance job scores the same fixtures and fails on the same failures, so the fixtures are scored once.
  *
  * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
  * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
@@ -27,6 +28,7 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal =>
 const PACKS = fileURLToPath(new URL("../../../packs/", import.meta.url));
 const FIXTURES = fixturesPath("packs");
 const TIMEOUT = 600_000;
+const FIXTURES_IN_CONFORMANCE = process.env.RERAIL_PACK_FIXTURES_IN_CONFORMANCE === "1";
 
 const packs = existsSync(PACKS)
   ? readdirSync(PACKS, { withFileTypes: true })
@@ -47,7 +49,7 @@ function listedRules(id: string): string[] {
 
 describe.each(packs)("pack %s", id => {
   let validation: Promise<PackValidation> | undefined;
-  const validated = (): Promise<PackValidation> => (validation ??= validatePack(join(PACKS, id)));
+  const validated = (): Promise<PackValidation> => (validation ??= validatePack(join(PACKS, id), { fixtures: !FIXTURES_IN_CONFORMANCE }));
 
   it.each(PACK_CHECKS)("check $number: $name", { timeout: TIMEOUT }, async ({ name }) => {
     expect((await validated()).checks[name]).toEqual([]);

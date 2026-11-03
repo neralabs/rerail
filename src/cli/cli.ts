@@ -69,6 +69,7 @@ import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
+import { runFeedbackCommand } from "./feedback-cli.js";
 import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
@@ -174,6 +175,8 @@ function usage(): string {
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
+    "  rerail feedback <rule-id> <reason>",
+    "  rerail feedback list [--rule <rule-id>]",
     "  rerail support-bundle [--session <id>] [--repo <dir>] [--output <file>] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
     "  rerail update",
@@ -602,9 +605,9 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, `show-me`, `reset` and `scrub` write the Rerail database with the invoking package's schema (a checkout build, say).
+  // `seed`, `rules`, `show-me`, `reset`, `scrub` and `feedback` write the Rerail database with the invoking package's schema (a checkout build, say).
   // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle"].includes(command ?? "")) return true;
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle", "feedback"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && commandArgs[1] === "status";
 }
@@ -710,6 +713,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "support-bundle") return await runSupportBundleCommand(args, usage, { packageVersion: context.packageVersion });
   if (command === "packs") return await runPacksCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
+  if (command === "feedback") return await runFeedbackCommand(args, usage, { packageVersion: context.packageVersion });
   if (command === "scrub") return await runScrubCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;
