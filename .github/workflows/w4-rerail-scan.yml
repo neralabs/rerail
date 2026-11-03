@@ -1,0 +1,21 @@
+# Reviewer test (W4): the scheduled Rerail scan, run once on push to this throwaway branch. Do not merge.
+name: w4-rerail-scan
+
+on:
+  push:
+    branches: [reviewer-test/w4-base]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    uses: neralabs/reviewer/.github/workflows/scan.yml@10399ce1666cc7a4bc3f66fe5c6761908e529f66
+    with:
+      reviewer_ref: 10399ce1666cc7a4bc3f66fe5c6761908e529f66
+      rerail_package: remote:0.1.1-w2.0
+      rerail_packs: complexity
+      send_results: true
+    secrets:
+      RERAIL_REMOTE_URL: ${{ secrets.RERAIL_REMOTE_URL }}
+      RERAIL_REMOTE_TOKEN: ${{ secrets.RERAIL_REMOTE_TOKEN }}
