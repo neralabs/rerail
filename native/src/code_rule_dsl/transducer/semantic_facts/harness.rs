@@ -143,6 +143,7 @@ fn children(matcher: &AstMatcher) -> Vec<&AstMatcher> {
         },
         AstMatcher::Pattern(_)
         | AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Never
         | AstMatcher::Compare(_)
