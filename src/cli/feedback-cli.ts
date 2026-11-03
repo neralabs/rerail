@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { RerailHost } from "../engine/adapter-contract.js";
 import { listRepositories, lookupCheckout, repositoryHistoryIds } from "../engine/catalog/repository-registry.js";
+import { gitExecutable } from "../engine/git.js";
 import { activeCoreVersion, installedPackDirectories, readRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -73,6 +74,8 @@ function steeredHere(database: RerailDatabase, ruleId: string, cwd: string): {
   repositoryId: string;
   session: { sessionId: string; host: RerailHost } | undefined;
 } {
+  // Without Git no checkout is found at all: say that, not that this is no repository.
+  gitExecutable();
   const checkout = lookupCheckout(database, cwd);
   if (checkout === undefined) {
     throw new Error(`Rerail knows no repository at ${cwd}; run rerail feedback in the repository the steer came from`);
