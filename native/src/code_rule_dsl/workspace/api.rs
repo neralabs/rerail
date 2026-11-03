@@ -56,7 +56,9 @@ static WORKSPACE_INSTANCES: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 #[napi]
 pub struct CodeRuleDslWorkspace {
     pub(super) state: Arc<Mutex<WorkspaceState>>,
-    pub(super) scopes: Mutex<Vec<CodeRuleScope>>,
+    /// Each registered code rule's scope, and whether the code rule reads text
+    /// (`CompiledCodeRule::reads_text`), answered without the state lock.
+    pub(super) scopes: Mutex<Vec<(CodeRuleScope, bool)>>,
     /// Whether a code rule reads `file.package.serverGraph`, answered without the state lock.
     pub(super) server_graph: AtomicBool,
     /// Whether a code rule has an AST clause in a family whose files read their nearest
@@ -221,7 +223,7 @@ impl CodeRuleDslWorkspace {
         self.scopes
             .lock()
             .map_err(|_| invalid("policy workspace is unavailable"))?
-            .push(resident.scope.clone());
+            .push((resident.scope.clone(), resident.reads_text()));
         if resident.reads_server_graph() {
             self.server_graph.store(true, Ordering::Release);
         }
@@ -269,11 +271,25 @@ impl CodeRuleDslWorkspace {
 
     #[napi]
     pub fn accepts_path(&self, path: String) -> bool {
+        self.scope_holds(&path, false)
+    }
+
+    /// `accepts_path` over the code rules that read text alone: whether a file no code-rule
+    /// language lists is read, as `text`.
+    #[napi]
+    pub fn accepts_text_path(&self, path: String) -> bool {
+        self.scope_holds(&path, true)
+    }
+
+    /// Whether an open workspace's code rule has `path` in scope; with `text`, a code rule that
+    /// reads text.
+    fn scope_holds(&self, path: &str, text: bool) -> bool {
         !self.closed.load(Ordering::Acquire)
-            && self
-                .scopes
-                .lock()
-                .is_ok_and(|scopes| scopes.iter().any(|scope| scope.matches(&path)))
+            && self.scopes.lock().is_ok_and(|scopes| {
+                scopes
+                    .iter()
+                    .any(|(scope, reads_text)| (!text || *reads_text) && scope.matches(path))
+            })
     }
 
     /// Whether a code rule reads `file.package.serverGraph`: a host then sends each file of a
@@ -599,7 +615,7 @@ fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
             Query::SelectWhen { select, exists } => {
                 in_manifest_family(select) || in_manifest_family(exists)
             }
-            Query::Regex { .. } => false,
+            Query::Regex { .. } | Query::File => false,
         }
     }
     code_rule.clauses.iter().any(|clause| match &clause.kind {

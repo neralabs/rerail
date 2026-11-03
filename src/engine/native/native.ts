@@ -97,6 +97,8 @@ export interface NativeCompiledCodeRuleDsl {
   openEditor(snapshotJson: string): NativeCodeRuleDslEditor;
   /** Whether the code rule reads `file.package.serverGraph`, so hosts send `package.serverGraph`. */
   readsServerGraph(): boolean;
+  /** Whether the code rule reads text: some clause, however nested, is a `regex` or `file` query, so files no language lists are read for it. */
+  readsText(): boolean;
 }
 
 export interface NativeCodeRuleDslEditor {
@@ -149,6 +151,8 @@ export interface NativeCodeRuleDslWorkspace {
    */
   addCodeRule(compiled: NativeCompiledCodeRuleDsl, placement?: string): void;
   acceptsPath(path: string): boolean;
+  /** Whether `path` is in the scope of a code rule that reads text (as `acceptsPath`, over those rules only): an unlisted file is read only then. */
+  acceptsTextPath(path: string): boolean;
   /** Whether a code rule reads `file.package.serverGraph`, so hosts send `package.serverGraph`. */
   readsServerGraph(): boolean;
   /**

@@ -181,14 +181,23 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
 export type CodeRuleDslQuery =
   | CodeRuleDslRegexQuery
   | CodeRuleDslAstQuery
-  | CodeRuleDslSelectWhenQuery;
+  | CodeRuleDslSelectWhenQuery
+  | CodeRuleDslFileQuery;
 
 export interface CodeRuleDslRegexQuery {
   regex: {
     source: "file.content" | "file.path";
-    /** Named groups (`(?<NAME>…)`) become the witness's captures. */
+    /** Named groups (`(?<NAME>…)`) become the witness's captures; a `file.path` match's groups are text for the message, never an anchor. */
     pattern: string;
   };
+}
+
+/**
+ * Each file in the rule's scope, whatever its type, without reading it: one witness per file, at the file's path with
+ * no line. In a `select_when.exists` it always holds.
+ */
+export interface CodeRuleDslFileQuery {
+  file: Record<string, never>;
 }
 
 export interface CodeRuleDslAstQuery {

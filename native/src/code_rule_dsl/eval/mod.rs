@@ -669,7 +669,9 @@ fn stateless_calls(
                         && seed_metrics.witnesses <= limits.max_witnesses =>
                 {
                     let starts = calls::seed_starts(
-                        witnesses.iter().map(|witness| &witness.span),
+                        witnesses.iter().map(|witness| {
+                            witness.span.as_ref().expect("an ast witness has a span")
+                        }),
                         term.seed_scope,
                         Some(summary.as_ref()),
                     )

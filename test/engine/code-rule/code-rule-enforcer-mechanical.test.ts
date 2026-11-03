@@ -1532,7 +1532,7 @@ const completedApply = JSON.stringify({
 /** A native workspace double that serves result pages from `page` and reports each apply to `onApply`. */
 function pagingWorkspace(page: (cursor: number) => string, onApply: () => void = () => undefined): NativeCodeRuleDslWorkspace {
   return {
-    enableStorageAsync: async () => ({ attached: true, discoveryMilliseconds: 0, publicationMilliseconds: 0 }), addCodeRule: () => undefined, acceptsPath: () => true, readsServerGraph: () => false, readsPackageManifests: () => false,
+    enableStorageAsync: async () => ({ attached: true, discoveryMilliseconds: 0, publicationMilliseconds: 0 }), addCodeRule: () => undefined, acceptsPath: () => true, acceptsTextPath: () => false, readsServerGraph: () => false, readsPackageManifests: () => false,
     tryApply: () => null,
     applyAsync: async () => { onApply(); return completedApply; },
     applyBufferAsync: async () => { onApply(); return completedApply; },

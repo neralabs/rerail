@@ -1,5 +1,6 @@
 use super::regex_matches;
 use crate::code_rule_dsl::budget::{MatchBudget, set_shortcuts_off};
+use crate::code_rule_dsl::model::RegexSource;
 use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file, pack_test_data};
 use crate::code_rule_dsl::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use regex::Regex;
@@ -12,10 +13,21 @@ use std::sync::atomic::AtomicBool;
 #[test]
 fn regex_matches_keep_byte_ranges_and_stop_past_the_limit() {
     let regex = Regex::new("é").unwrap();
-    let (first, finished) = regex_matches(&regex, "éxé.ts", 1);
+    let (first, finished) = regex_matches(&regex, &RegexSource::Content, "éxé.ts", 1);
     assert_eq!((first.len(), first[0].clone(), finished), (1, 0..2, false));
-    let all = regex_matches(&regex, "éxé.ts", 2);
+    let all = regex_matches(&regex, &RegexSource::Content, "éxé.ts", 2);
     assert_eq!((all.0.as_slice(), all.1), (&[0..2, 3..5][..], true));
+}
+
+/// A path matches once: its first match, a finished scan, whatever the limit.
+#[test]
+fn a_path_regex_keeps_its_first_match() {
+    let regex = Regex::new("é").unwrap();
+    let (matches, finished) = regex_matches(&regex, &RegexSource::Path, "éxé.ts", 10);
+    assert_eq!(
+        (matches.len(), matches[0].clone(), finished),
+        (1, 0..2, true)
+    );
 }
 
 /// An exhausted match deadline leaves the scan unfinished before it keeps any match.
@@ -23,7 +35,10 @@ fn regex_matches_keep_byte_ranges_and_stop_past_the_limit() {
 fn regex_matches_stop_at_the_deadline() {
     let _budget = crate::code_rule_dsl::budget::MatchBudget::expired_for_test();
     let regex = Regex::new("needle").unwrap();
-    assert_eq!(regex_matches(&regex, "needle\n", 2), (Vec::new(), false));
+    assert_eq!(
+        regex_matches(&regex, &RegexSource::Content, "needle\n", 2),
+        (Vec::new(), false)
+    );
 }
 
 /// A Python pack code rule (a path under `packs/python/`: `rules/` or `candidates/rules/`), as
