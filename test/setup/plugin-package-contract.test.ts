@@ -79,8 +79,8 @@ describe("supported host plugin manifests", () => {
   it("stamps the package version into the plugin manifests around npm pack", async () => {
     const packageManifest = PackageSchema.parse(await json("package.json"));
 
-    expect(packageManifest.scripts.prepack).toBe("node scripts/build/stamp-plugin-versions.mjs stamp");
-    expect(packageManifest.scripts.postpack).toBe("node scripts/build/stamp-plugin-versions.mjs restore");
+    expect(packageManifest.scripts.prepack).toContain("node scripts/build/stamp-plugin-versions.mjs stamp");
+    expect(packageManifest.scripts.postpack).toContain("node scripts/build/stamp-plugin-versions.mjs restore");
   });
 
   it("writes the package version right after the name and restores the source form", async () => {

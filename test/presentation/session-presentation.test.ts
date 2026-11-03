@@ -114,6 +114,31 @@ describe("installed session presentation", () => {
     expect((await read()).text).toBe("R E R A I L ● 3 rules · engine unavailable");
   });
 
+  it("names each rule overlay in force after the rule count, linked to its pack page in the checkout's repository", async () => {
+    response.context!.session!.hud.overlays = ["worktree"];
+    response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
+    const result = await read();
+
+    expect(result.text).toBe("R E R A I L ● 3 rules · worktree · steered 2×");
+    const pack = new URL(result.parts[2]!.url!);
+    expect(Object.fromEntries(pack.searchParams)).toEqual({ repository: "remote:github.com/acme/app", checkout: cwd });
+    expect(pack.hash).toBe("#pack/worktree");
+    // A daemon from before overlays sends none, and the footer reads as it did.
+    delete response.context!.session!.hud.overlays;
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2×");
+  });
+
+  it("counts what waits for a person's approval after the overlays, linked to the repository's rules", async () => {
+    response.context!.session!.hud.awaitingApproval = 2;
+    response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
+    const result = await read();
+
+    expect(result.text).toBe("R E R A I L ● 3 rules · 2 to approve · steered 2×");
+    expect(result.parts[2]!.url).toBe(result.parts[1]!.url);
+    response.context!.session!.hud.awaitingApproval = 0;
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2×");
+  });
+
   it("counts every failure of a failed audit, those its list leaves out included", async () => {
     response.context!.session!.hud.steeringCount = 0;
     response.context!.session!.audit = {

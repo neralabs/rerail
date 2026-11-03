@@ -56,7 +56,9 @@ import { compareDeterministicStrings } from "../stable-json.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
-import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath } from "./code-rule-languages.js";
+import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
+import { binaryPrefix } from "./binary-prefix.js";
+import { checkoutPathBoundary, SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
 
 export { SOURCE_LANGUAGES };
 
@@ -87,7 +89,10 @@ export const IGNORED_DIRECTORIES = new Set([
   "target",
   "vendor",
 ]);
-/** A repository index honours the walk's bounds, ignored directories and source languages; the lane adds Git's ignores. */
+/**
+ * A repository index honours the walk's bounds, ignored directories and source languages, and skips an unlisted file
+ * named like a secret as `workspaceLanguage` does; the lane adds Git's ignores.
+ */
 const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedCheckouts" | "followGitignore"> = {
   maxFiles: AUDIT_MAX_FILES,
   maxSourceBytes: AUDIT_MAX_SOURCE_BYTES,
@@ -195,7 +200,7 @@ const repositoryIndexChunkSchema = z.strictObject({
 });
 const storedEditSchema = z.object({
   path: z.string(),
-  language: z.enum([...new Set(SOURCE_LANGUAGES.values())] as [CodeRuleSourceLanguage, ...CodeRuleSourceLanguage[]]),
+  language: z.enum([...new Set([...SOURCE_LANGUAGES.values(), ...SOURCE_NAMES.values(), UNLISTED_TEXT_LANGUAGE])] as [CodeRuleSourceLanguage, ...CodeRuleSourceLanguage[]]),
   generatedText: z.string().optional(),
   previousText: z.string().optional(),
   previousReadError: z.string().optional(),
@@ -270,16 +275,32 @@ function generatedRanges(previousText: string, generatedText: string): ByteRange
   return ranges;
 }
 
-function intersectsGeneratedRange(violation: CodeRuleViolation, ranges: readonly ByteRange[]): boolean {
-  if (violation.span === undefined) return false;
+/**
+ * Whether an ai-output edit generated `violation`: its span meets a generated range. A violation with no span is about
+ * the whole file (a `file.path` match, a `file` query), which the edit generated only by creating the file.
+ */
+function generatedBy(violation: CodeRuleViolation, ranges: readonly ByteRange[], created: boolean): boolean {
+  if (violation.span === undefined) return created;
   const { startByte, endByte } = violation.span;
   return ranges.some(({ start, end }) =>
     startByte === endByte ? start <= startByte && startByte <= end : startByte < end && start < endByte,
   );
 }
 
+/** The label of a listed file (`sourceLanguageOfPath`); undefined for an unlisted one, which only text-reading rules read. */
 export function languageFor(path: string): CodeRuleSourceLanguage | undefined {
   return sourceLanguageOfPath(path);
+}
+
+/**
+ * The label `workspace` reads `path` with: a listed file's own where some code rule's scope holds it, an unlisted
+ * file's `UNLISTED_TEXT_LANGUAGE` where a code rule that reads text has it in scope; undefined where no rule reads it.
+ * An unlisted file named like a secret (`sensitiveByName`) is no source at all, read by no rule, as if binary.
+ */
+function workspaceLanguage(workspace: NativeCodeRuleDslWorkspace, path: string): CodeRuleSourceLanguage | undefined {
+  const language = languageFor(path);
+  if (language !== undefined) return workspace.acceptsPath(path) ? language : undefined;
+  return workspace.acceptsTextPath(path) && !sensitiveByName(path) ? UNLISTED_TEXT_LANGUAGE : undefined;
 }
 
 /**
@@ -629,14 +650,17 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * `jsxImportSource` and import aliases (`paths`, `baseUrl`) those `package` facts read, and, where a code rule reads
    * Next server module graphs, any source a manifest reads, since its imports move other sources in or out of a graph,
    * and any file in an `app/` folder, which may make a root `app/` (hiding `src/app/`) present. Without such a rule,
-   * the scopes alone decide. Whatever they say, a path Git ignores is refused while the lane follows `.gitignore`.
+   * the scopes alone decide. An unlisted file (no `languageFor`) is accepted only in the scope of a code rule that reads
+   * text, never when it is named like a secret (`sensitiveByName`), and never before the workspace opens. Whatever they
+   * say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
     const language = languageFor(path);
     const workspace = (this.#replacement ?? this.#workspace)?.workspace;
-    const graphInput = language !== undefined && (loadNativeBinding().readsPackageManifests(language) || inAppFolder(path));
+    if (language === undefined)
+      return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path) && !this.ignoresPath(path, false);
+    const graphInput = loadNativeBinding().readsPackageManifests(language) || inAppFolder(path);
     return (
-      language !== undefined &&
       (((manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path)) &&
         (workspace?.readsPackageManifests() ?? true)) ||
         (workspace?.readsServerGraph() === true && graphInput) ||
@@ -952,7 +976,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       // Import targets resolve against the files below the workspace root that the workspace does not hold.
       workspace.setRoot(this.#workspaceRoot);
       const attachStartedAt = performance.now();
-      storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath).then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
+      // The store is a cache every checkout shares, kept on disk: a file named like one holding secrets never goes into it.
+      const secretNames = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
+      storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames).then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
         this.#timingLog?.(
           `rerail: repository storage ${attached ? "attached" : "not attached"} in ${Math.round(performance.now() - attachStartedAt)} ms (discovery ${Math.round(discoveryMilliseconds)} ms, publication ${Math.round(publicationMilliseconds)} ms)\n`,
         );
@@ -1227,7 +1253,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (scope === "touched-files" || edit.deleted || edit.generatedText === undefined || base.previousReadError !== undefined)
       return pathViolations;
     const ranges = generatedRanges(base.previousText ?? "", edit.generatedText);
-    return pathViolations.filter((violation) => intersectsGeneratedRange(violation, ranges));
+    // A new file has no earlier text and no error reading one.
+    const created = base.previousText === undefined;
+    return pathViolations.filter((violation) => generatedBy(violation, ranges, created));
   }
   /**
    * A repository-scope audit of a Git checkout runs the native repository index on the audit
@@ -1594,7 +1622,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       nested.reached.push(path);
       return false;
     }
-    return entry.isFile() && languageFor(path) !== undefined && workspace.acceptsPath(path);
+    return entry.isFile() && workspaceLanguage(workspace, path) !== undefined;
   }
 
   async #readAuditFile(
@@ -1606,18 +1634,20 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     failures: AuditFailure[],
     facts: SourceFactsCache,
   ): Promise<WorkspaceFile | undefined> {
-    const language = languageFor(path);
-    if (!info.isFile() || language === undefined || !workspace.acceptsPath(path) || seen.has(path) || this.ignoresPath(path, false))
-      return undefined;
+    const language = workspaceLanguage(workspace, path);
+    if (!info.isFile() || language === undefined || seen.has(path) || this.ignoresPath(path, false)) return undefined;
     seen.add(path);
     if (info.size > MAX_SOURCE_BYTES) {
+      // An oversize unlisted file is binary, skipped without a failure, when its first bytes hold a NUL byte.
+      if (languageFor(path) === undefined && await binaryPrefix(absolute)) return undefined;
       failures.push(failure("source", "budget-exceeded", "Source exceeds the per-file byte budget", path, "read"));
       return undefined;
     }
     const source = await readFile(absolute);
     if (this.#closing) return undefined;
     if (source.includes(0)) {
-      failures.push(failure("source", "source-incomplete", BINARY_SOURCE_MESSAGE, path, "read"));
+      // An unlisted file holding a NUL byte is binary, no text file: skipped without a failure.
+      if (languageFor(path) !== undefined) failures.push(failure("source", "source-incomplete", BINARY_SOURCE_MESSAGE, path, "read"));
       return undefined;
     }
     return {
@@ -1897,7 +1927,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const recorded = provenance.find(entry => entry.ruleId === ruleId);
       return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
     };
-    const steer = buildSteer(steerable, trigger, sourceOf);
+    // Paths are judged in the workspace they are relative to, so a file that links to a secret is judged as one.
+    const boundary = checkoutPathBoundary(this.#workspaceRoot);
+    const secret = new Set(violations.flatMap(({ path, mode }) =>
+      path !== undefined && steers(mode) && boundary.sensitive(path) ? [this.#presentPath(path)] : []));
+    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path));
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,

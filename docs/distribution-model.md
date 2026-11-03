@@ -85,6 +85,11 @@ holds it there. Both use npm trusted publishing, so no one needs an npm login. T
 channels. Every publish from CI carries an npm provenance attestation: both workflows pass `--provenance`, so a publish
 npm cannot attest fails instead of going out without one.
 
+Every released version, core's and each pack's, also gets a GitHub Release on its tag, whose notes are that version's
+section of its `CHANGELOG.md`: release notes are written once, in the changelog, in words for the people who upgrade.
+Core's `latest` release is the repository's latest; its `next` and `beta` releases are pre-releases
+([release](release.md#release)).
+
 ## npm-backed explicit updates
 
 npm is the authenticated artifact transport for updates. Rerail uses the machine's existing npm configuration and authentication to resolve and install the package; it never copies, logs, or sends npm credentials to a control plane.
@@ -98,12 +103,13 @@ Coding-agent configurations invoke the stable `rerail` launcher rather than a ve
 |- bin/rerail
 |- daemon.json
 |- packs/node_modules/@neralabs/rerail-pack-<id>/
+|- packs/node_modules/[@<scope>/]rerail-pack-<id>/
 `- versions/
    |- 0.2.0/node_modules/@neralabs/rerail/
    `- 0.2.1/node_modules/@neralabs/rerail/
 ```
 
-Rule packs are npm packages too, installed with the same npm configuration into `packs/`, beside the versions rather than inside one, so `rerail update` keeps them. A pack names the core versions it works with (`peerDependencies["@neralabs/rerail"]`); after an update the catalog leaves out, and `rerail packs list` reports, any installed pack whose range excludes the new version until a newer pack is installed.
+Rule packs are npm packages too, Rerail's under `@neralabs` and a third party's as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` ([rule packs](rule-packs.md#third-parties-packs)), installed with the same npm configuration into `packs/`, beside the versions rather than inside one, so `rerail update` keeps them. A pack names the core versions it works with (`peerDependencies["@neralabs/rerail"]`); after an update the catalog leaves out, and `rerail packs list` reports, any installed pack whose range excludes the new version until a newer pack is installed.
 
 The state file is the active-version pointer. It records the selected npm dist-tag, current installation, previous known-good installation, and the last explicit check. State updates use a temporary file and atomic rename.
 
@@ -263,7 +269,13 @@ Nera release root
    `- Globex policy key
 ```
 
-A customer policy server cannot sign executable updates. A compromised customer policy key cannot sign another customer's policies. Executable updates always require a Nera software-update signature, including when downloaded through a dedicated customer instance.
+A customer policy server cannot sign executable updates. A compromised customer policy key cannot sign another customer's policies.
+
+The software update signing key is planned, not built: no Rerail code verifies a Nera signature on an update today.
+What `rerail update` verifies now is npm's: before it runs a staged version, it checks the registry signatures and
+provenance attestations of everything it installed with `npm audit signatures`, and it installs with no install scripts
+([installation.md](installation.md#registry-access)). Those attestations come from Nera's trusted-publisher release
+workflow, so they bind a version to that workflow, not to a key Nera holds offline.
 
 ## Local operation
 

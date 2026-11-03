@@ -11,7 +11,7 @@ export const needs = [];
 export function render(root) {
   const target = ui.scope.repository ?? ui.scope.checkout;
   setContent(root, `missing|${target}`, () => h("div.list.missing", null,
-    h("div.empty", null, h("h3", null, "Rerail does not know this repo"),
+    h("div.empty", null, h("h3", null, "Rerail doesn’t know this repo."),
       h("p", null, h("span.mono", null, target), ". Type ", h("span.mono", null, "/rerail-start"),
         " in a coding agent session there to set it up, or pick a repo Rerail has seen."),
       h("p.acts", null, h("button.btn.sm.solid", { "data-act": "pickother" }, "Pick another repo")))));

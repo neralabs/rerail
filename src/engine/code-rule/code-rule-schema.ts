@@ -403,6 +403,18 @@ export const codeRuleTransformationSchema = z.union([
     .strict(),
   z.object({ lines: z.object({ source: transformSource, default: z.string().optional() }).strict() }).strict(),
   z.object({ count: z.object({ source: transformSource, default: z.string().optional() }).strict() }).strict(),
+  z
+    .object({
+      toPrecision: z
+        .object({
+          source: transformSource,
+          default: z.string().optional(),
+          value: z.boolean().optional(),
+          digits: z.union([z.number().int().min(1).max(100), z.string().regex(/^\$[A-Z0-9_]+$/, "toPrecision digits are a number from 1 to 100 or a $NAME variable.")]),
+        })
+        .strict(),
+    })
+    .strict(),
 ]) as unknown as z.ZodType<CodeRuleDslTransformation>;
 
 /** The transformation's body: its source and settings. */
@@ -412,6 +424,7 @@ function transformBody(transformation: CodeRuleDslTransformation): { source: str
   if ("convert" in transformation) return transformation.convert;
   if ("line" in transformation) return transformation.line;
   if ("lines" in transformation) return transformation.lines;
+  if ("toPrecision" in transformation) return transformation.toPrecision;
   return transformation.count;
 }
 
@@ -438,9 +451,14 @@ export const codeRuleValueTestSchema = z
     le: z.number().optional(),
     truthy: z.boolean().optional(),
     follow: z.boolean().optional(),
+    name: z.boolean().optional(),
   })
   .strict()
-  .refine(value => Object.keys(value).some(key => key !== "follow"), "value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy.") as unknown as z.ZodType<CodeRuleDslValueTest>;
+  .refine(value => Object.keys(value).some(key => key !== "follow" && key !== "name"), "value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy.")
+  .refine(
+    value => value.name !== true || Object.keys(value).every(key => ["eq", "startsWith", "regex", "name"].includes(key)),
+    "name: true reads a name, a string, which only eq, startsWith and regex test.",
+  ) as unknown as z.ZodType<CodeRuleDslValueTest>;
 
 /** A signature entry: a slot name (an identifier), `/` or `*`. */
 const signatureEntry = z.string().max(256).regex(/^(?:[A-Za-z_$][A-Za-z0-9_$]*|\/|\*)$/, "Must be a slot name (an identifier), / or *.");
@@ -1297,11 +1315,12 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
         })
         .optional(),
       select_when: z.object({ select: codeRuleQuerySchema, exists: codeRuleQuerySchema }).strict().optional(),
+      file: z.strictObject({}).optional(),
     })
     .strict()
     .refine(
-      query => (["regex", "ast", "select_when"] as const).filter(key => query[key] !== undefined).length === 1,
-      "A query must contain exactly one source: regex, ast, or select_when.",
+      query => (["regex", "ast", "select_when", "file"] as const).filter(key => query[key] !== undefined).length === 1,
+      "A query must contain exactly one source: regex, ast, select_when, or file.",
     ) as unknown as z.ZodType<CodeRuleDslQuery>,
 );
 
@@ -1369,26 +1388,35 @@ const FIX_NEEDS_SOURCE_TEXT = "Only forbid clauses over an ast or file.content r
 
 type ViolationIssue = (path: string, message: string) => void;
 
-/** Anchors and fixes the emitting query's matches cannot carry: no query, a fact, or a file.path regex. */
+/** Whether the query's matches are a file's path, with no source location: a `file` query or a file.path regex. */
+function matchesPath(query: CodeRuleDslQuery): boolean {
+  if ("file" in query && query.file !== undefined) return true;
+  return "regex" in query && query.regex !== undefined && query.regex.source === "file.path";
+}
+
+/** Anchors and fixes the emitting query's matches cannot carry: no query, a fact, a file query, or a file.path regex. */
 function checkViolationSource(query: CodeRuleDslQuery | undefined, violation: CodeRuleDslReportingClause["violation"], issue: ViolationIssue): void {
   if (query === undefined) {
     if (violation.anchor !== "witness.span") issue("anchor", "require_each, budget, and llm violations support only witness.span.");
     if (violation.fix !== undefined) issue("fix", FIX_NEEDS_SOURCE_TEXT);
     return;
   }
+  if (matchesPath(query) && violation.anchor.startsWith("capture.")) {
+    issue("anchor", "A file query or file.path regex matches a file's path, which has no source location a capture can anchor.");
+  }
   if (violation.fix === undefined) return;
   if ("fact" in query && query.fact !== undefined) issue("fix", FIX_NEEDS_SOURCE_TEXT);
-  else if ("regex" in query && query.regex !== undefined && query.regex.source === "file.path") {
-    issue("fix", "A file.path regex match is not source text a fix can replace.");
-  }
+  else if ("file" in query && query.file !== undefined) issue("fix", FIX_NEEDS_SOURCE_TEXT);
+  else if (matchesPath(query)) issue("fix", "A file.path regex match is not source text a fix can replace.");
 }
 
-/** A non-ast violation's anchor and message may name only the regex's named groups. */
+/** A non-ast violation's anchor and message may name only the regex's named groups; a path match is anchored by no group. */
 function checkViolationCaptures(query: CodeRuleDslQuery | undefined, violation: CodeRuleDslReportingClause["violation"], issue: ViolationIssue): void {
   const regex = query !== undefined && "regex" in query ? query.regex : undefined;
   const groups = regex === undefined ? new Set<string>() : regexGroupNames(regex.pattern);
   const capture = /^capture\.(\w+)$/.exec(violation.anchor)?.[1];
-  if (capture !== undefined && !groups.has(capture)) issue("anchor", `capture.${capture} names no capture of the query.`);
+  const pathMatch = query !== undefined && matchesPath(query);
+  if (capture !== undefined && !pathMatch && !groups.has(capture)) issue("anchor", `capture.${capture} names no capture of the query.`);
   for (const name of codeRuleMessageVariables(violation.message)) {
     if (!groups.has(name)) issue("message", `$${name} names no capture of the query; write \\$${name} for literal text.`);
   }

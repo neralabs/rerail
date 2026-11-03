@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +9,7 @@ import {
   CodeRuleBridge,
   generatedEditPaths,
   isCommandTool,
+  ledgerPreimage,
   type SourceObservationCache,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
@@ -117,10 +119,12 @@ function response(batch: CodeRuleEditBatch) {
 }
 
 describe("CodeRuleBridge", () => {
-  it("extracts supported generated file paths", () => {
+  it("extracts the paths an edit tool names, any file, leaving out multi-line strings", () => {
     expect(generatedEditPaths("write", { path: "src/a.py", content: "pass" })).toEqual(["src/a.py"]);
     expect(generatedEditPaths("edit", { patch: "[src/a.ts#A1B2]\nPUT 1.=1:\n+pass\n" })).toEqual(["src/a.ts"]);
     expect(generatedEditPaths("ast_edit", { paths: ["src/a.rs", "docs/policy.md"] })).toEqual(["src/a.rs", "docs/policy.md"]);
+    expect(generatedEditPaths("write", { path: "Justfile", content: "build:\n" })).toEqual(["Justfile"]);
+    expect(generatedEditPaths("apply_patch", { input: "patch body\nwith no file header\n" })).toEqual([]);
     expect(generatedEditPaths("read", { path: "src/a.py" })).toEqual([]);
   });
 
@@ -163,6 +167,19 @@ describe("CodeRuleBridge", () => {
       await capture;
       await audit;
     }
+  });
+
+  it("captures only the digest and size of a secret-like file as its preimage, never its text", async () => {
+    const root = await workspace();
+    const text = "TOKEN = 'sk-live-0123456789'\n";
+    await writeFile(join(root, "src", "secrets.py"), text);
+    await writeFile(join(root, "src", "a.py"), "before\n");
+    const bridge = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await bridge.openWorkspace("session-1");
+    await expect(bridge.begin("edit-1", "write", { path: ["src/secrets.py", "src/a.py"] })).resolves.toEqual({
+      "src/secrets.py": { withheld: { sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) } },
+      "src/a.py": { text: "before\n" },
+    });
   });
 
   it("opens and checks tool edits while a stale baseline read is stalled", async () => {
@@ -532,7 +549,7 @@ describe("CodeRuleBridge", () => {
     }));
   });
 
-  it("labels Blade templates with the blade language, not php, and suffix-only basenames by their extname", async () => {
+  it("labels Blade templates with the blade language, not php, suffix-only basenames by their extname, and an unlisted name as text", async () => {
     const root = await workspace();
     const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
     const bridge = new CodeRuleBridge(root, auditor(auditGeneratedEdits));
@@ -549,6 +566,7 @@ describe("CodeRuleBridge", () => {
     expect(auditGeneratedEdits).toHaveBeenCalledWith("session-1", expect.objectContaining({
       edits: [
         { path: "src/.blade.php", language: "php", generatedText: "<?php\necho 2;\n" },
+        { path: "src/.php", language: "text", generatedText: "<?php\necho 3;\n" },
         { path: "src/Kernel.php", language: "php", generatedText: "<?php\necho 1;\n" },
         { path: "src/page.blade.php", language: "blade", generatedText: "{{ $title }}\n" },
       ],
@@ -754,5 +772,16 @@ describe("CodeRuleBridge", () => {
     await bridge.finish("call-1");
 
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([]);
+  });
+});
+
+describe("ledgerPreimage", () => {
+  it("keeps the text of a source that only names a token, and withholds one that assigns one", () => {
+    const source = "import { getAuthTokenFromHeader } from './auth';\n\nconst token = getAuthTokenFromHeader;\nexport default token;\n";
+    expect(ledgerPreimage({ text: source })).toEqual({ text: source });
+    const leaky = "const token = 'Zk9xQ2mP7vLw8s';\n";
+    expect(ledgerPreimage({ text: leaky })).toEqual({
+      withheld: { sha256: createHash("sha256").update(leaky).digest("hex"), bytes: Buffer.byteLength(leaky) },
+    });
   });
 });

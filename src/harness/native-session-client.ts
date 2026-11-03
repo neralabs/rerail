@@ -4,17 +4,21 @@ import superjson from "superjson";
 import type { AdapterDelivery, AdapterEvent, AdapterSession } from "../engine/adapter-contract.js";
 import type { NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "../engine/native/semantic-types.js";
-import { daemonAccessHeaders, startDaemonForPackage } from "../runtime/daemon-control.js";
+import { daemonAccessHeaders, daemonFetch, startDaemonForPackage } from "../runtime/daemon-control.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { EVENTS_DROPPED_ENTRY_TYPE, type DroppedEvents } from "../runtime/session-state.js";
 
-/** The daemon a client talks to: its URL, the checkout its native sessions address, and its access capability if any. */
+/**
+ * The daemon a client talks to: its URL, the checkout its native sessions address, its access capability if any, and
+ * the certificate fingerprint an https daemon is pinned to.
+ */
 interface NativeSessionEndpoint {
   workspaceRoot: string;
   url: URL;
   accessToken?: string;
+  tlsFingerprint256?: string;
 }
 
 const POLL_INTERVAL_MS = 100;
@@ -146,6 +150,7 @@ export async function createNativeSession<Context>(
     workspaceRoot: daemon.health.workspaceRoot,
     url: new URL(daemon.state.url),
     ...(daemon.state.accessToken === undefined ? {} : { accessToken: daemon.state.accessToken }),
+    ...(daemon.state.tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: daemon.state.tlsFingerprint256 }),
   };
   const token = daemon.state.nativeToken;
   if (token === undefined) throw new Error("Rerail daemon lacks native session support; run rerail daemon stop and retry.");
@@ -219,7 +224,9 @@ export class NativeSessionClient implements NativeSemanticToolRuntime {
   }
 
   matches(instance: NativeSessionEndpoint, token: string): boolean {
-    return instance.url.href === this.#options.instance.url.href && instance.workspaceRoot === this.#options.instance.workspaceRoot && token === this.#options.token;
+    const current = this.#options.instance;
+    return instance.url.href === current.url.href && instance.workspaceRoot === current.workspaceRoot
+      && instance.tlsFingerprint256 === current.tlsFingerprint256 && token === this.#options.token;
   }
 
   setEntries(entries: () => readonly unknown[]): void {
@@ -557,7 +564,7 @@ export class NativeSessionClient implements NativeSemanticToolRuntime {
 
   async #post(request: Record<string, unknown>): Promise<NativeSessionReply> {
     const { instance, sessionId, host } = this.#options;
-    const response = await fetch(new URL("/native/session", instance.url), {
+    const response = await daemonFetch({ ...instance, url: instance.url.href })(new URL("/native/session", instance.url), {
       method: "POST",
       headers: { ...daemonAccessHeaders(instance), "content-type": "application/json", authorization: `Bearer ${this.#options.token}` },
       body: JSON.stringify({ workspaceRoot: instance.workspaceRoot, sessionId, host, ...request }),

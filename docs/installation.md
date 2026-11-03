@@ -27,13 +27,16 @@ Pi's [package gallery](https://pi.dev/packages) lists Rerail, and
 says to start it with `/rerail-start`. `/rerail-start` then finishes set-up,
 and in `~/.pi/agent/settings.json` it swaps that `npm:@neralabs/rerail` entry
 for the managed install, `~/.rerail/current`, in the same place. Pi then loads
-one copy, and `rerail update` governs the version, not `pi update`.
+one copy, and `rerail update` governs the version, not `pi update`. A gallery
+install made after set-up is swapped the same way, by `/rerail-start` run again
+or by the next `rerail update`.
 
 `omp plugin install @neralabs/rerail` works the same way to begin with, but
 set-up cannot swap OMP's plugin install: OMP keeps it in its own plugin folder
 (`~/.omp/plugins`), removed through `omp plugin uninstall`, and loads it beside
-the extension link set-up makes, so two copies run. Set-up's summary says so;
-run `omp plugin uninstall @neralabs/rerail` and restart OMP.
+the extension link set-up makes, so two copies run. Set-up's summary says so,
+and so does every `rerail update` while it stays; run
+`omp plugin uninstall @neralabs/rerail` and restart OMP.
 
 ## What setup does
 
@@ -49,7 +52,8 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 ├── daemon.json / daemon.log                           the running daemon
 ├── daemon-port.json                                   the port the daemon comes back on after a restart
 ├── coding-agents.json                                 the coding agents set-up and `rerail install` have seen
-├── packs/node_modules/@neralabs/rerail-pack-<id>/     the rule packs you installed (`rerail packs`)
+├── packs/node_modules/@neralabs/rerail-pack-<id>/     Rerail's rule packs you installed (`rerail packs`)
+├── packs/node_modules/[@<scope>/]rerail-pack-<id>/    third parties' rule packs you installed
 └── versions/<older>/…                                 the versions `rerail update` replaced
 ```
 
@@ -117,10 +121,10 @@ person says yes.
    `~/.rerail/current`, so hooks follow an update without being rewritten; `rerail update` registers the new version
    again only with the coding agents already connected, to bring its new commands and skills:
    - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`. When OMP also has its own plugin install of Rerail (`omp plugin install @neralabs/rerail`), set-up changes nothing of it and its summary says to run `omp plugin uninstall @neralabs/rerail`
-   - Pi: `packages` entry in `~/.pi/agent/settings.json`. An `npm:@neralabs/rerail` entry, at any version, as Pi's gallery writes it, is replaced by this one in its place; in the `{ "source": … }` form only its `source` changes, so its filters stay. Other `npm:` entries, rule packs included, stay
-   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-manage`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-uninstall`, `/rerail-help`, `/rerail-show-me`) under `~/.claude/commands/` (`/rerail-manage` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
+   - Pi: `packages` entry in `~/.pi/agent/settings.json`. An `npm:@neralabs/rerail` entry, at any version, as Pi's gallery writes it, is replaced by this one in its place; in the `{ "source": … }` form only its `source` changes, so its filters stay. When an entry for this install is there already, it keeps its place and filters and the npm entry is removed. Other `npm:` entries, rule packs included, stay
+   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), sandbox and permission denies that keep the agent out of Rerail's data (see [What a coding agent can reach](#what-a-coding-agent-can-reach)), and the Rerail commands (`/rerail`, `/rerail-manage`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-uninstall`, `/rerail-help`, `/rerail-show-me`) under `~/.claude/commands/` (`/rerail-manage` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
    - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage`, and so on
-   - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-manage` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
+   - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-manage` opens the dashboard as a tab in the Cursor window before falling back to the system browser), and, when the Cursor CLI has written `~/.cursor/cli-config.json`, permission denies for Rerail's data in it
 
    Existing entries from other tools are kept, with their content unchanged,
    but the file is written back as JSON indented by two spaces, so its
@@ -313,7 +317,8 @@ agent to relay, as written, with one command per answer, and exits 0. The
 coding agent runs set-up again with the person's answer: `--answer <allow|decline|yes|other-folder|pick-myself|start|choose|not-now|folder|skip>`,
 `--repo <folder>`, `--agents <ids>` (`omp,pi,claude-code,codex,cursor`; it
 works on its own, with any answer, and no question asks for it) and
-`--packs <id@version,…>` (the exact versions an answer installs; `none` for
+`--packs <id@version,…>` (the exact versions an answer installs, a third
+party's pack by its package name, `@acme/rerail-pack-sql@1.0.0`; `none` for
 none).
 Each answer run starts from what it is told, so running one twice repeats no
 earlier step's side effect. Claude Code's, Cursor's and Codex's `/rerail-start`
@@ -390,6 +395,15 @@ credentials are missing or expired; sign in again with `npm login`, or remove
 the token. Rerail redacts `_authToken` and `_password` values from any npm
 output it prints.
 
+`rerail update` asks the registry for the latest version from an empty temporary
+folder, so a repository's own `.npmrc` cannot choose the registry; your
+`~/.npmrc` still applies. It installs without running any package's install
+scripts, then checks the registry signatures and provenance attestations of
+everything it installed with `npm audit signatures` before running any of it.
+A signature that does not verify stops the update, and nothing is installed. A
+registry that publishes no signing keys, as some private mirrors do, gets a
+warning naming it, and the update goes on.
+
 ## Supported and not supported
 
 Supported:
@@ -431,6 +445,50 @@ Not supported:
 - A coding agent on Windows with Rerail in WSL, or the other way round.
 - Installing offline: set-up, `rerail update` and rule packs need the npm registry.
 
+## What a coding agent can reach
+
+Rerail's data sits in two folders: the Rerail home (`~/.rerail`, or `RERAIL_HOME`), with the access token, the
+database of every repository's history and the installed package, and the content cache (`~/.cache/rerail`). A
+coding agent that can run commands runs them as you, so only the agent's own sandbox can keep it out of these. Set-up
+adds denies for both folders where the agent's user settings have a documented place for them. It never turns a
+sandbox on or off, and changes no other sandbox or permission setting. `rerail install --remove` takes out exactly
+what it added; an entry you had already stays. Running set-up again with another `RERAIL_HOME` moves the denies to it.
+
+A Rerail home that is your home folder, or a folder above it, is left out, since denying it would deny every
+project. The cache is still denied.
+
+Settings → Coding agents in the dashboard and `rerail status` show, for each connected coding agent, whether its
+tools can read Rerail's data on this computer, from its settings as they are now (for Claude Code, whether
+`sandbox.enabled` is on in your user settings or in managed settings).
+
+- **Claude Code** (`~/.claude/settings.json`):
+  - The sandbox's `filesystem.denyRead` and `filesystem.denyWrite` name both folders. `filesystem.allowRead` opens
+    `current` and `versions` in the Rerail home again, so commands can read the installed package but no data.
+  - `permissions.deny` covers the file tools, which the sandbox does not: `Edit(...)` for both folders, `Read(...)`
+    for the whole cache and for the Rerail home's data files (`*.json*`, `*.sqlite*`, `*.log*`, `*.lock`,
+    `access-token*`, `active-profile*`, `device-secrets/`, `profiles/`). The installed package, `bin/` and `packs/`
+    stay readable: `/rerail-create` reads its skill there, and a deny cannot be reopened for one folder.
+  - `sandbox.excludedCommands` holds Rerail's CLI as the Rerail commands run it (`<node> <root>/dist/cli/cli.js *`),
+    the launcher (`~/.rerail/bin/rerail *`) and `rerail *`. These run outside the sandbox and go through your normal
+    permission rules there: what a Rerail command pre-approves runs, and anything else asks you. A Rerail command
+    with a redirect, a `cd` or a `$(...)` stays sandboxed and cannot read Rerail's files.
+  - Hooks, the status line and MCP servers run outside the sandbox, so Rerail's hooks are not affected.
+  - The sandbox is off unless you turn it on (`/sandbox`). With it off, only the file-tool denies apply, and the
+    agent's shell commands can read and change Rerail's data. On native Windows Claude Code has no sandbox, and set-up
+    writes only the file-tool denies.
+- **Codex**: no stable user setting denies a path. Permission profiles can, but they are in beta and replace the
+  `sandbox_mode` settings, so set-up does not write them. The default `workspace-write` sandbox lets commands write
+  only to the workspace and temporary folders and turns network access off, so a sandboxed command cannot change
+  Rerail's data. It can still read it, the access token included.
+- **Cursor**: `sandbox.json` can only add paths, and the editor's agent has no path deny, so the editor gets no
+  entries. By default its sandboxed commands write only to the workspace and temporary folders, and loopback
+  addresses are blocked, but they can read Rerail's data. "Read Access: Workspace" in Cursor's settings makes the
+  agent ask before it reads outside the workspace; it applies to every path, so set-up does not set it. The Cursor
+  CLI (`cursor-agent`) gets `Write(...)` denies for both folders and the same `Read(...)` denies as Claude Code in
+  `~/.cursor/cli-config.json`, for its file tools only. Set-up adds them only when the CLI has written that file, and
+  not on Windows.
+- **OMP and Pi** have no sandbox. Their agents' commands and tools can read and change all of Rerail's data.
+
 ## After setup
 
 The following commands describe the managed installation, from a terminal
@@ -450,13 +508,18 @@ rerail settings --session ID --mode log             # save this workspace's defa
 rerail update check      # is a newer version on the channel?
 rerail update            # install it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
+rerail scrub             # redact secrets from history earlier versions stored (database, ledgers, held steers, daemon.log)
+rerail rules approve     # list the rules and packs that run in Log, waiting for your approval
+rerail rules approve ID  # print a waiting rule's content and approve it so it steers
 rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
+rerail support-bundle    # write a file of diagnostics to attach to an issue, to ~/rerail-support-bundle.json
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database, delete the install
+rerail install --remove --delete-data  # the same, deleting the database, backups, cache and checkouts' session ledgers instead
 ```
 
 Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
 `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`,
-`/rerail-uninstall`, `/rerail-help` and `/rerail-show-me` (`$rerail`,
+`/rerail-uninstall`, `/rerail-help`, `/rerail-show-me` and `/rerail-bug-report` (`$rerail`,
 `$rerail-manage`, and so on in Codex). `rerail install` also removes the
 `rerail-ui` and `rerail-rage-quit` files an earlier build wrote. `rerail update`
 then runs `rerail install --refresh` from the version it activated: every coding
@@ -490,8 +553,9 @@ in repositories that add them (see [Rule scoping](rule-scoping.md)).
 the version now active, to put back by hand if you need it (see
 [Database compatibility](#database-compatibility));
 `rerail rules export [--output <file>]` and `rerail rules import <file>` move
-your rules and each repository's configuration by hand. `rerail seed` fills the
-database with mock rules to work against.
+your rules and each repository's configuration by hand; `--approve` approves the
+imported rules as they are imported, so a dump of your own rules runs at once.
+`rerail seed` fills the database with mock rules to work against.
 
 Policy evaluation caches parsed files and results in a content store. Which
 one a Rerail uses depends on where its package lives, not on a flag: the
@@ -606,6 +670,38 @@ It deletes that repository's ended sessions and every session's events, work
 links, audits, and audit requests in one transaction. Rules, settings, and
 other repositories are untouched; the file is never unlinked, so open daemons
 and harness sessions keep working, and running sessions keep recording.
+It then rewrites the database in place (a WAL checkpoint, `VACUUM`, and a
+second checkpoint that empties `rerail.sqlite-wal`), so the deleted history
+cannot be read back from the file's bytes; every writer also runs with
+`secure_delete` on, which zeroes what any delete frees. When another Rerail
+process is reading the database at that moment, `rerail reset` says the
+`-wal` file may still hold deleted history. When the rewrite itself fails (the
+database stays busy, or the disk has no room for `VACUUM`'s second copy of
+the file), the history is still deleted and `rerail reset` says what may
+remain. Either way it exits 1; run it again once Rerail is idle. The
+`.rerail/sessions` ledgers in your checkouts are not touched by
+`rerail reset`.
+
+### Redacting secrets from stored history
+
+Rerail redacts secrets it recognizes (provider API keys and tokens, private
+keys, JWTs, the password of a URL, `Authorization` credentials, and a value
+assigned to a key such as `password` or `api_key`) from everything it writes
+to disk: stored session events, session ledgers, audit findings and
+`daemon.log`. Rules and steers still read the original text in memory. A
+secret becomes `[redacted:<kind>:<hash>]`, the hash the first six hex digits
+of its SHA-256, or `[redacted:<kind>]` for a value under a secret-like key.
+
+History stored before that is redacted by `rerail scrub` (safe to repeat;
+`rerail update` suggests it once). It rewrites the database's events, audit
+findings and audit errors in batches, then the file in place as `rerail reset`
+does; the session ledgers and held steers of every checkout the database
+records, never through a link; and `daemon.log`. It prints how many of each it
+changed. The daemon and running sessions carry on meanwhile: a line they
+append to a ledger or `daemon.log` during the scrub is kept, and a held steer
+is rewritten under the same lock its hook takes. A step that fails is reported
+and the others still run; the command then exits 1, and running it again
+finishes the job.
 
 ### Removing Rerail
 
@@ -614,13 +710,15 @@ To take Rerail off a machine:
 ```sh
 rerail rules export --output ~/rerail-rules.json   # optional: a portable copy of your rules
 rerail install --remove --dry-run                  # print what would change
-rerail install --remove
+rerail install --remove                            # or: --remove --delete-data, keeping nothing
 ```
 
 `rerail install --remove` takes out every registration that names this
 installation — harness hooks, the Claude Code status line and commands, the
-Cursor commands, the Codex skill, the OMP extension symlink and MCP entry, and
-the Pi package entry, an `npm:@neralabs/rerail` one included — and leaves other tools' entries alone, writing a
+sandbox and permission denies set-up added to `~/.claude/settings.json` and
+`~/.cursor/cli-config.json`, the Cursor commands, the Codex skill, the OMP
+extension symlink and MCP entry, and the Pi package entry (an
+`npm:@neralabs/rerail` one too, when it removes the managed install) — and leaves other tools' entries alone, writing a
 `<file>.<timestamp>.bak` beside every file it changes. A folder that held only
 what it removed goes too: each `~/.codex/skills/rerail*` (and `~/.codex/skills`
 when those were all it held), and `~/.omp/agent/extensions` when the link was
@@ -649,6 +747,30 @@ closed (`Remove-Item -LiteralPath '<path>' -Recurse -Force` in PowerShell, and
 `[System.IO.Directory]::Delete('<path>')` for the `current` link, which removes the link and not
 what it points at; `rm -rf <path>` elsewhere); the rest of the uninstall has
 happened, so it still exits 0.
+
+#### Removing everything, data included
+
+`rerail install --remove --delete-data` does all of the above, but deletes
+instead of backing up, and prints each path it deleted:
+
+- `rerail.sqlite` and `harness.sqlite` in the Rerail home, with every file named
+  after them (`-wal`, `-shm`, journals);
+- every earlier backup, `~/.rerail-clean-*`;
+- the session ledgers, `<checkout>/.rerail/sessions`, of every checkout the
+  database recorded (read before the database goes); the checkout's `.rerail`
+  goes too when the ledgers were all it held. A checkout that no longer exists
+  is skipped. A link is never followed: a `.rerail` that is a link is left alone,
+  and a `sessions` that is a link is removed as a link, never what it points
+  at. Ledgers written elsewhere with `RERAIL_STORAGE_ROOT` are not found;
+- the content cache: `~/.cache/rerail` (as above, kept while another Rerail
+  home's daemon holds it), and the file `RERAIL_CONTENT_STORE_PATH` names, with
+  its sidecars, when it is set.
+
+`rerail install --remove --delete-data --dry-run` lists what it would delete.
+`--delete-data` only goes with the whole uninstall: with `--agents`, or with
+`--root` naming a checkout other than the active install, it refuses before
+changing anything. Nothing it deletes can be restored, so export your rules
+first if you may want them back.
 
 ## Developing from a checkout
 

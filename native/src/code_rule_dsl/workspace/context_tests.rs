@@ -254,6 +254,7 @@ fn stored_workspace(
         workspace_id,
         snapshot_id: snapshot,
         owner,
+        secret_names: Default::default(),
         _maintenance: None,
     });
     workspace.add_code_rule(code_rule, None).unwrap();
@@ -1594,6 +1595,206 @@ fn repository_index_reports_unreadable_sources_as_failures() {
     assert_eq!(
         located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES)),
         vec![("ok.py".to_owned(), "print".to_owned(), 0)]
+    );
+    workspace.close();
+}
+
+/// A file the host lists no language for is read as `text` for a code rule that reads text and
+/// left unread for an AST-only one; one holding a NUL is binary and dropped without a failure.
+#[test]
+fn repository_index_reads_unlisted_text_files_only_for_code_rules_that_read_text() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let files: &[(&str, &[u8])] = &[
+        ("Justfile", b"build:\n\techo TODO\n"),
+        ("logo.bin", b"TODO\0\x01"),
+        ("ok.py", b"print(1)\n"),
+    ];
+    let todo = compile(
+        "todo",
+        json!([{ "id": "todo", "violation": { "anchor": "witness.span", "code": "T",
+            "message": "todo" },
+          "forbid": { "regex": { "source": "file.content", "pattern": "TODO" } } }]),
+    );
+    for (tag, code_rule, indexed, violations) in [
+        (
+            "unlisted-ast",
+            print_code_rule(),
+            vec!["ok.py"],
+            vec![("ok.py".to_owned(), "print".to_owned(), 0)],
+        ),
+        (
+            "unlisted-text",
+            todo,
+            vec!["Justfile", "ok.py"],
+            vec![("Justfile".to_owned(), "todo".to_owned(), 13)],
+        ),
+    ] {
+        let directory = committed_repository(tag, files);
+        let mut workspace = storage_workspace(&directory.0.join("repo"), directory.store());
+        workspace.add_code_rule(&code_rule, None).unwrap();
+        let failures = index_until_done(&workspace, u32::MAX)
+            .iter()
+            .flat_map(|response| response["failures"].as_array().cloned().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(failures, Vec::<Value>::new(), "{tag}");
+        {
+            let state = workspace.state.lock().unwrap();
+            let mut paths = state.files.keys().map(String::as_str).collect::<Vec<_>>();
+            paths.sort_unstable();
+            assert_eq!(paths, indexed, "{tag}");
+            if let Some(justfile) = state.files.get("Justfile") {
+                assert_eq!(justfile.input.language, "text");
+            }
+        }
+        assert_eq!(
+            located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES)),
+            violations,
+            "{tag}"
+        );
+        workspace.close();
+    }
+}
+
+/// An unlisted file named like a secret, by its own name or a folder on its path, as the storage's
+/// secret names judge it, is no source: a code rule that reads text neither indexes it nor reports
+/// it. A listed file is read whatever its name.
+#[test]
+fn repository_index_skips_unlisted_files_named_like_secrets() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let files: &[(&str, &[u8])] = &[
+        (".env", b"TOKEN=TODO\n"),
+        (".NPMRC", b"//registry/:_authToken=TODO\n"),
+        (".ssh/config", b"Host TODO\n"),
+        ("Justfile", b"build:\n\techo TODO\n"),
+        ("config/secrets.yaml", b"token: TODO\n"),
+        ("infra/terraform.tfstate", b"{\"TODO\": 1}\n"),
+        ("keys/server.pem", b"-----BEGIN TODO-----\n"),
+        ("secrets/id_rsa", b"TODO\n"),
+    ];
+    let directory = committed_repository("sensitive-unlisted", files);
+    let mut workspace = storage_workspace(&directory.0.join("repo"), directory.store());
+    workspace
+        .state
+        .lock()
+        .unwrap()
+        .storage
+        .as_mut()
+        .unwrap()
+        .secret_names = StdArc::new(
+        super::secret_names::SecretNames::compile(&super::secret_names::SecretNamePatterns {
+            files: [
+                ".env",
+                ".npmrc",
+                "id_rsa*",
+                "*.pem",
+                "*.tfstate",
+                "secrets.*",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            folders: vec![".ssh".to_owned()],
+        })
+        .unwrap(),
+    );
+    let todo = compile(
+        "todo",
+        json!([{ "id": "todo", "violation": { "anchor": "witness.span", "code": "T",
+            "message": "todo" },
+          "forbid": { "regex": { "source": "file.content", "pattern": "TODO" } } }]),
+    );
+    workspace.add_code_rule(&todo, None).unwrap();
+    let task = || {
+        let mut task = WorkspaceIndexTask::for_test(
+            Arc::clone(&workspace.state),
+            Arc::clone(&workspace.closed),
+            u32::MAX,
+        );
+        task.options
+            .source_languages
+            .insert(".yaml".to_owned(), "yaml".to_owned());
+        task
+    };
+    let mut failures = Vec::new();
+    loop {
+        let response: Value = serde_json::from_str(&task().compute().unwrap()).unwrap();
+        failures.extend(response["failures"].as_array().cloned().unwrap_or_default());
+        if response["done"] != json!(false) {
+            break;
+        }
+    }
+    assert_eq!(failures, Vec::<Value>::new());
+    {
+        let state = workspace.state.lock().unwrap();
+        let mut paths = state.files.keys().map(String::as_str).collect::<Vec<_>>();
+        paths.sort_unstable();
+        assert_eq!(paths, vec!["Justfile", "config/secrets.yaml"]);
+    }
+    assert_eq!(
+        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES)),
+        vec![
+            ("Justfile".to_owned(), "todo".to_owned(), 13),
+            ("config/secrets.yaml".to_owned(), "todo".to_owned(), 7),
+        ]
+    );
+    workspace.close();
+}
+
+/// An unlisted file over the per-file budget is binary, and dropped without a failure, where its
+/// first 8000 bytes hold a NUL (Git's test); otherwise, and for any listed file, it is reported
+/// over budget.
+#[test]
+fn repository_index_drops_oversized_unlisted_binaries_and_reports_oversized_text() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let text = "TODO\n".repeat(40);
+    let mut binary = b"TODO\0".to_vec();
+    binary.extend_from_slice(text.as_bytes());
+    let mut late_binary = vec![b'a'; 8000];
+    late_binary.extend_from_slice(b"\0TODO\n");
+    let files: &[(&str, &[u8])] = &[
+        ("Justfile", b"build:\n\techo TODO\n"),
+        ("NOTES", text.as_bytes()),
+        ("late.bin", &late_binary),
+        ("listed.py", &binary),
+        ("video.bin", &binary),
+    ];
+    let directory = committed_repository("oversized-unlisted", files);
+    let mut workspace = storage_workspace(&directory.0.join("repo"), directory.store());
+    let todo = compile(
+        "todo",
+        json!([{ "id": "todo", "violation": { "anchor": "witness.span", "code": "T",
+            "message": "todo" },
+          "forbid": { "regex": { "source": "file.content", "pattern": "TODO" } } }]),
+    );
+    workspace.add_code_rule(&todo, None).unwrap();
+    let mut failures = index_until_done(&workspace, 64)
+        .iter()
+        .flat_map(|response| response["failures"].as_array().cloned().unwrap_or_default())
+        .map(|failure| {
+            (
+                failure["path"].as_str().unwrap().to_owned(),
+                failure["code"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    failures.sort();
+    assert_eq!(
+        failures,
+        vec![
+            ("NOTES".to_owned(), "budget-exceeded".to_owned()),
+            ("late.bin".to_owned(), "budget-exceeded".to_owned()),
+            ("listed.py".to_owned(), "budget-exceeded".to_owned()),
+        ],
+        "only an oversized unlisted file with a NUL in its first 8000 bytes is dropped silently"
+    );
+    {
+        let state = workspace.state.lock().unwrap();
+        let mut paths = state.files.keys().map(String::as_str).collect::<Vec<_>>();
+        paths.sort_unstable();
+        assert_eq!(paths, vec!["Justfile"]);
+    }
+    assert_eq!(
+        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES)),
+        vec![("Justfile".to_owned(), "todo".to_owned(), 13)]
     );
     workspace.close();
 }
@@ -2970,7 +3171,7 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
             bytes,
             "{path} {clause}"
         );
-        assert_eq!(value["version"], 3, "{path} {clause}");
+        assert_eq!(value["version"], 4, "{path} {clause}");
     }
 
     for revision in 2..=3 {

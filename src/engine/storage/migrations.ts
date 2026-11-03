@@ -97,7 +97,24 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       addColumn(database, "repositories", "follow_gitignore", "integer DEFAULT true NOT NULL");
     },
   },
+  {
+    // Rules created by you, and packs Rerail does not publish, run in Log only until a person approves their content
+    // (`rule-approval.ts`). The library rules a file already holds were in force before approvals existed, so each is
+    // recorded approved at the content it has; only new rules and later edits wait. Steps run before the DDL, so the
+    // table is created here as this step introduced it. No floor: an older build never reads the table, and runs
+    // every rule as before.
+    id: "rule-approvals",
+    up(database) {
+      database.run(sql.raw(RULE_APPROVALS_TABLE));
+      if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'library_rules'`).length === 0) return;
+      database.run(sql.raw(`INSERT OR IGNORE INTO rule_approvals (subject_kind, subject_id, digest, approved_at)
+        SELECT 'rule', rule_id, payload_hash, updated_at FROM library_rules`));
+    },
+  },
 ];
+
+/** `rule_approvals` as `rule-approvals` introduced it. */
+const RULE_APPROVALS_TABLE = "CREATE TABLE IF NOT EXISTS `rule_approvals` (\n\t`subject_kind` text NOT NULL,\n\t`subject_id` text NOT NULL,\n\t`digest` text NOT NULL,\n\t`approved_at` integer NOT NULL,\n\tPRIMARY KEY(`subject_kind`, `subject_id`, `digest`),\n\tCONSTRAINT \"rule_approvals_subject_kind\" CHECK(\"rule_approvals\".\"subject_kind\" IN ('rule', 'pack'))\n)";
 
 /** The derived audit history tables as `audit-history-derived-tables` introduced them. */
 const AUDIT_HISTORY_TABLES: readonly string[] = [

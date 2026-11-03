@@ -8,9 +8,10 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   (`check-boundaries.mjs`), the Windows checkout check (`check-windows-paths.mjs`: every tracked path short
   enough and named so Windows can check it out), the internal reference check (`check-internal-refs.mjs`: no
   internal ticket ID in a tracked path or text) and the licence allowlist.
-- `deps/`: pins that follow a dependency's version (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release
-  digests follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI.
-  `.github/workflows/dependabot-pins.yml` runs it on Dependabot's pull requests; `npm run check` fails on drift.
+- `deps/`: pins that follow a dependency (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release digests
+  follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI, and `reviewer.yml`'s
+  `reviewer_ref` follows the commit its `uses:` pins. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's
+  npm pull requests; `npm run check` fails on drift.
 - `dev/`: a development install from this checkout (`just rerail-dev`), its restore, nuke and smoke runs, and the
   dashboard scenario launcher for design review (`ui-scenario.ts`, `just ui-scenario <scenario>`).
 - `dsl/`: the code-rule DSL benchmark.
@@ -27,7 +28,11 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `release/`: the release. The Release pull request (`.github/workflows/release-pr.yml`): every package's version,
   core's when what it ships changed, and core's tag on merge. The rule packs' release
   (`.github/workflows/release-packs.yml`): which packs to publish, the publish gate and packing, publishing under
-  `latest`, putting a pack back, and the lockfile sync after `changeset version`. The dist-tag check after a publish.
+  `latest`, putting a pack back, and the lockfile sync after `changeset version`. The dist-tag check after a publish,
+  and the GitHub Release of each released version from its changelog section. The release notes: the changelog
+  generator changesets write each pack's entries with, core's section written from the entries pending in
+  `.changelog/`, and the check that an entry or changeset a pull request adds is written for the person upgrading,
+  that no entry is written into `CHANGELOG.md` by hand, and that a release's section leads with a paragraph.
 - `review/`: the guidance review (`just rerail-guidance-review`): every rule pack rule run on its examples and upstream
   fixtures, with the steer the coding agent reads, in a local page where each rule's guidance is approved or sent back
   with comments.

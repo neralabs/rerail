@@ -40,6 +40,7 @@ import {
   stopDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
+import { otherUserPid } from "../support/other-user-pid.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
@@ -104,6 +105,22 @@ describe("Rerail daemon control", () => {
     expect(await findRunningDaemon(home)).toBeUndefined();
     expect(existsSync(stateFile)).toBe(false);
     expect(await stopDaemon(home)).toBe("not-running");
+  });
+
+  const foreignPid = otherUserPid();
+  it.runIf(foreignPid !== undefined)("treats a state file whose pid another OS user runs as stale, and never sends it the capability", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    await writeFile(stateFile, JSON.stringify(stateFor({ pid: foreignPid!, accessToken: "secret-capability" })));
+    const probe = vi.fn(async () => Response.json({ status: "ok", pid: foreignPid }));
+    vi.stubGlobal("fetch", probe);
+    try {
+      expect(processAlive(foreignPid!)).toBe(true);
+      expect(await lookupDaemon(home)).toEqual({ status: "absent" });
+      expect(probe).not.toHaveBeenCalled();
+      expect(existsSync(stateFile)).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("ignores a state file whose listener belongs to a different process", async () => {

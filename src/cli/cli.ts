@@ -22,14 +22,23 @@ import {
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "../activation/customer-profile.js";
 import {
-  readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
+  checkoutRuleCounts, readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { gitExecutable, GitUnavailableError } from "../engine/git.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
 import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
-import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
+import {
+  assertHostBindable,
+  DAEMON_TRANSPORT_FLAGS,
+  DAEMON_TRANSPORT_OPTIONS,
+  DEFAULT_DAEMON_HOST,
+  parseArguments,
+  parseDaemonTransport,
+  parsePort,
+  parsePublicHosts,
+} from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
   accessTokenKept,
@@ -42,11 +51,13 @@ import {
   stopDaemon,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
+  type DaemonLookup,
   type RunningDaemon,
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
 import { runRerailMcpBridge } from "../api/mcp-bridge.js";
 import { runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
+import { runScrubCommand } from "./scrub-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -54,10 +65,14 @@ import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./
 import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
+import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
+import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
 import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
+import { modelStatusLine } from "../engine/native/model-status.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
@@ -118,7 +133,7 @@ function printUpdateResult(result: UpdateResult, home: string): void {
   process.stdout.write([
     `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    "Install a version that fits with `rerail packs add <id>`.",
+    "Install a version that fits with `rerail packs add <package>`.",
   ].join("\n") + "\n");
 }
 
@@ -134,29 +149,32 @@ function usage(): string {
   return [
     "Usage:",
     "  rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--relay] [--database <file>]",
-    "  rerail install [--root <package>] [--agents <list>] [--remove] [--dry-run]",
+    "  rerail install [--root <package>] [--agents <list>] [--remove [--delete-data]] [--dry-run]",
     "  rerail install --refresh",
     "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--relay] [--database <file>]",
     "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
     "  rerail version",
-    "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
+    "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--tls-cert <pem> --tls-key <pem>] [--insecure-http] [--open]",
     "  rerail daemon stop",
     "  rerail session [<host> [<session-id>]] [--open]",
     "  rerail manage [--print]",
     "  rerail seed",
     "  rerail reset",
+    "  rerail scrub",
     "  rerail packs [list]",
-    "  rerail packs add <id[@version] | package | tarball | folder>...",
-    "  rerail packs remove <id>...",
+    "  rerail packs add <id[@version] | package[@version] | tarball | folder>...",
+    "  rerail packs remove <id | package>...",
     "  rerail packs recommend [--repo <dir>]",
     "  rerail rules export [--output <rules.json>]",
-    "  rerail rules import <rules.json>",
-    "  rerail rules test <draft.json> [--repo <dir>] [--json]",
+    "  rerail rules import <rules.json> [--approve]",
+    "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
+    "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
+    "  rerail support-bundle [--session <id>] [--repo <dir>] [--output <file>] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
     "  rerail update",
     "  rerail update check [--channel <tag>]",
@@ -182,24 +200,27 @@ function printDaemon(daemon: RunningDaemon): void {
   process.stdout.write(health.native.ok
     ? `Engine: ok (version ${health.native.kernelVersion})\n`
     : `Engine: unavailable: ${health.native.error}\n`);
+  process.stdout.write(`${modelStatusLine(health.model)}\n`);
 }
 
 async function runDaemonStartCommand(args: readonly string[], home: string): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: ["--dev", "--open", "--allow-remote"], options: ["--port", "--host", "--public-host"] },
+    { flags: ["--dev", "--open", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--port", "--host", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
   const port = options.get("--port");
   const host = options.get("--host");
   if (host !== undefined) assertHostBindable(host, flags.has("--allow-remote"));
   const publicHosts = parsePublicHosts(options.get("--public-host"));
+  const transport = parseDaemonTransport({ flags, options }, host ?? DEFAULT_DAEMON_HOST, publicHosts);
   const result = await startDaemon({ home, packageRoot }, {
     dev: flags.has("--dev"),
     ...(host === undefined ? {} : { host }),
     ...(flags.has("--allow-remote") ? { allowRemote: true } : {}),
     ...(publicHosts.length === 0 ? {} : { publicHosts }),
     ...(port === undefined ? {} : { port: parsePort(port) }),
+    ...transport,
   });
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
@@ -251,6 +272,17 @@ async function runStatusCommand(home: string): Promise<number> {
   } else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
   else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
   else process.stdout.write(`Rerail is on in ${name}.\n`);
+  const code = printDaemonStatus(lookup);
+  // Last, for each connected coding agent, whether its tools can read Rerail's data on this computer.
+  for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
+    // Each sentence names its coding agent.
+    if (agent.connected) process.stdout.write(`${agent.rerailData.why}\n`);
+  }
+  return code;
+}
+
+/** What `rerail status` says of the daemon, and the exit code that goes with it. */
+function printDaemonStatus(lookup: DaemonLookup): number {
   if (lookup.status === "absent") {
     process.stdout.write("The Rerail daemon is not running. Start it with rerail daemon start.\n");
     return 3;
@@ -264,7 +296,7 @@ async function runStatusCommand(home: string): Promise<number> {
     return 4;
   }
   printDaemon({ state: lookup.state, health: lookup.health });
-  return 0;
+  return lookup.health.healthy === false ? 5 : 0;
 }
 
 /**
@@ -369,11 +401,12 @@ async function runUpdateCommand(
 }
 
 /**
- * Rules on in `workspace`'s checkout, from its repository's configuration, for `/rerail` where the coding agent
- * cannot name its session. A status read: it never writes, and where the configuration cannot be read (busy, or
- * the checkout not recorded) the summary drops the count line rather than failing.
+ * Rules on in `workspace`'s checkout, and how many of them run in Log waiting for a person's approval, from its
+ * repository's configuration, for `/rerail` where the coding agent cannot name its session. A status read: it never
+ * writes, and where the configuration cannot be read (busy, or the checkout not recorded) the summary drops the count
+ * lines rather than failing.
  */
-function enabledRuleCount(workspace: string): number | null {
+function repositoryRuleCounts(workspace: string): { on: number; awaitingApproval: number } | null {
   const databasePath = defaultRerailDatabasePath();
   if (!existsSync(databasePath)) return null;
   let database;
@@ -381,9 +414,7 @@ function enabledRuleCount(workspace: string): number | null {
     database = openRerailDatabase(databasePath, { readonly: true });
     const checkout = lookupCheckout(database, workspace);
     if (checkout === undefined) return null;
-    const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
-    return listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
-      .rules.filter(rule => rule.on).length;
+    return checkoutRuleCounts(database, checkout);
   } catch (error) {
     process.stderr.write(`rerail: could not count this repo's rules: ${error instanceof Error ? error.message : String(error)}\n`);
     return null;
@@ -415,10 +446,12 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
     : await readPresentation({ host: host as RerailHost, sessionId, cwd, onDemand: true, startState });
   const repositoryState = presentation === null ? await readSummaryState(cwd, host as RerailHost, startState) : presentation.repositoryState;
   const rulesUrl = (await readRulesDashboard({ cwd })).url;
+  const counts = presentation === null && repositoryState === "started" ? repositoryRuleCounts(cwd) : null;
   process.stdout.write(`${renderRerailSummary({
     presentation,
     repositoryState,
-    ruleCount: presentation === null && repositoryState === "started" ? enabledRuleCount(cwd) : null,
+    ruleCount: counts?.on ?? null,
+    awaitingApproval: counts?.awaitingApproval ?? null,
     rulesUrl,
     repositoryName: repositoryName(cwd),
     sigil: host === "codex" ? "$" : "/",
@@ -569,8 +602,9 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
+  // `seed`, `rules`, `show-me`, `reset` and `scrub` write the Rerail database with the invoking package's schema (a checkout build, say).
+  // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && commandArgs[1] === "status";
 }
@@ -670,10 +704,13 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "seed") return runSeedCommand(args);
   if (command === "rules" && (args[0] === "test" || args[0] === "add")) return await runRuleDraftCommand(args[0], args.slice(1), usage);
   if (command === "rules" && args[0] === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
+  if (command === "rules" && args[0] === "approve") return runRuleApproveCommand(args.slice(1), usage);
   if (command === "rules") return runRulesCommand(args, usage);
   if (command === "show-me") return runShowMeCommand(args, usage);
+  if (command === "support-bundle") return await runSupportBundleCommand(args, usage, { packageVersion: context.packageVersion });
   if (command === "packs") return await runPacksCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
+  if (command === "scrub") return await runScrubCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });

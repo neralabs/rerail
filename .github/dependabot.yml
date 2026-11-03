@@ -43,11 +43,19 @@ updates:
         patterns: ["ast-grep-*"]
       cargo-minor-patch:
         update-types: [minor, patch]
+  # Every action and reusable workflow is pinned to a commit SHA with its release as a `# vX.Y.Z` comment; Dependabot
+  # moves both. `/.github/actions/*` covers the composite actions, which `/` alone does not scan.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: weekly
     open-pull-requests-limit: 2
     groups:
+      # A pull request of its own: reviewer.yml's `reviewer_ref` must follow the `uses:` commit, and `npm run check`
+      # fails until `npm run deps:sync` brings it along (scripts/deps/sync-pins.mjs).
+      reviewer:
+        patterns: ["neralabs/reviewer*"]
       actions:
         patterns: ["*"]
