@@ -715,7 +715,8 @@ function planFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], log
       log.push({ job });
       jobs.push({
         source: "fixtures",
-        weight: covering.length * (1 + [...manifests, ...files].reduce((bytes, file) => bytes + file.source.length, 0) / 1024),
+        // The covering rules' documents stand for their clauses' work; the unit's own bytes add a little to each.
+        weight: covering.reduce((size, entry) => size + entry.document.length, 0) * (1 + [...manifests, ...files].reduce((bytes, file) => bytes + file.source.length, 0) / 1024),
         group: origin?.languageOptions === undefined ? "" : JSON.stringify(origin.languageOptions),
         run: async () => {
           const errors: string[] = [];
@@ -906,8 +907,8 @@ function planSamples(
       log.push({ job });
       jobs.push({
         source: SAMPLES_SOURCE,
-        // The applicability probe evaluates the same files again.
-        weight: (clean.length > 0 ? 2 : 1) * all.reduce((bytes, file) => bytes + file.source.length, 0),
+        // The rule's document stands for its clauses' work over the files; its applicability probe reads them again.
+        weight: (clean.length > 0 ? 2 : 1) * entry.document.length * all.reduce((bytes, file) => bytes + file.source.length, 0),
         group: "",
         run: async () => {
           const errors: string[] = [];

@@ -64,10 +64,14 @@ export function parseShard(text: string): Shard {
 /** What the parent knows of a job, to share jobs out: everything but running it. */
 export type JobOutline = Pick<Job, "source" | "weight" | "group">;
 
+/** Runs of jobs each shard takes of each source, dealt in turn, so work clustered in a source spreads over the shards. */
+const STRIPES = 4;
+
 /**
  * The jobs of `shard`: in each run of consecutive jobs of one source, its jobs grouped by `group` (groups in order of
- * first appearance, jobs in order within them), then the shard's share of about equal weight, a job going to the share
- * its weight's midpoint falls in. A shard so runs few groups, and compiles little for them.
+ * first appearance, jobs in order within them), cut into `count × STRIPES` stripes of about equal weight (a job going to
+ * the stripe its weight's midpoint falls in), dealt to the shards in turn. A shard so runs few groups, and compiles
+ * little for them.
  */
 export function shardJobs(jobs: readonly JobOutline[], shard: Shard): number[][] {
   const blocks: number[][] = [];
@@ -75,6 +79,7 @@ export function shardJobs(jobs: readonly JobOutline[], shard: Shard): number[][]
     if (index === 0 || jobs[index - 1]!.source !== job.source) blocks.push([]);
     blocks.at(-1)!.push(index);
   }
+  const stripes = shard.count * STRIPES;
   return blocks.map(block => {
     const groups = new Map<string, number[]>();
     for (const index of block) {
@@ -87,9 +92,9 @@ export function shardJobs(jobs: readonly JobOutline[], shard: Shard): number[][]
     let before = 0;
     return grouped.filter(index => {
       const weight = jobs[index]!.weight;
-      const share = total === 0 ? 0 : Math.min(shard.count - 1, Math.floor(((before + weight / 2) / total) * shard.count));
+      const stripe = total === 0 ? 0 : Math.min(stripes - 1, Math.floor(((before + weight / 2) / total) * stripes));
       before += weight;
-      return share === shard.index - 1;
+      return stripe % shard.count === shard.index - 1;
     });
   });
 }
