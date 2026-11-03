@@ -616,7 +616,7 @@ jobs:
   # pack's evaluations on a runner of its own (conformance/languages/shards.ts); the tools job makes the reports from
   # all their results, as one run evaluating everything would, and judges them.
   conformance:
-    name: Conformance (${{ matrix.shard }}/4)
+    name: Conformance (${{ matrix.shard }}/6)
     needs: [build, test-data]
     if: >-
       ${{
@@ -627,10 +627,12 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    # Six shards of three workers each (the runner's 16 GB hold three; conformance/languages/shards.ts): the scoring
+    # takes two to three minutes on each.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -648,14 +650,10 @@ jobs:
         with:
           built: "true"
 
-      - name: Score shard ${{ matrix.shard }} of 4
+      - name: Score shard ${{ matrix.shard }} of 6
         env:
           SHARD: ${{ matrix.shard }}
-        run: |
-          nproc; free -m; lscpu | grep -E 'Model name|Thread|Core|Socket'
-          vmstat 5 > "$RUNNER_TEMP/vmstat.log" &
-          npm run conformance:languages:check -- --shard "$SHARD/4" --results-out "$RUNNER_TEMP/conformance-results"
-          cat "$RUNNER_TEMP/vmstat.log"
+        run: npm run conformance:languages:check -- --shard "$SHARD/6" --results-out "$RUNNER_TEMP/conformance-results"
 
       - name: Upload the shard's results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
