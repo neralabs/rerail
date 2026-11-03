@@ -137,6 +137,8 @@ pub(super) struct NativeModule {
     pub value_functions: u16,
     pub capture_functions: u16,
     pub tree_sitter_query: bool,
+    /// Set mode with one emitted label (`set_mode`): a task ends at its first emit.
+    pub key_stop: bool,
     pub has_repeats: bool,
     pub maximum_cursor_slot: u32,
     pub reservation_sites: Vec<ReservationSite>,
@@ -356,6 +358,8 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
         value_functions,
         capture_functions,
         tree_sitter_query: program.tree_sitter_query,
+        key_stop: program.set_mode
+            && super::set_mode::Reach::of(&program.words).is_some_and(|reach| reach.labels().len() == 1),
         has_repeats,
         maximum_cursor_slot,
         reservation_sites,

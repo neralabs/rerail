@@ -146,7 +146,10 @@ fn identity(plan: &AnchorPlan, lang: u32) -> PlanId {
     hash.update(b"rerail.prefilter-gate/v1\0");
     hash.update(lang.to_le_bytes());
     walk(plan, &mut hash, &mut HashSet::new());
-    hash.finalize().into()
+    let structure: [u8; 32] = hash.finalize().into();
+    // `compiled_plans` is keyed by `CompiledPlanId`s (list step 20): domain-separated from every
+    // other identity, so a gate's key never equals a wave program's.
+    *crate::code_rule_dsl::stats::identity::CompiledPlanId::builder().text("rerail.prefilter-gate").bytes(&structure).finish().as_bytes()
 }
 
 /// The process's compiled gates, in memory before the store (`stats::plans`' bounded cache).

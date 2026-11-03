@@ -25,3 +25,5 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0024 | A wave's execution shape: one node space, sets as bitmaps evaluated natively from SQL's plan, labels and roots as device micro walks, integer match records, a RAM working set written back | accepted |
 | 0025 | The tape format becomes v9np: random access for anchor indexing (O8's measurements on Rerail's grammars) | accepted |
 | 0026 | Nodes live in tapes: no per-node structure beside a tape; how each node attribute is read from the tape or a bare index; enforced by `check-node-structures` | accepted |
+| 0027 | Device-side enqueue is a work queue inside a persistent dispatch: workers push the items their work creates and idle workers take them, with no unbounded wait; first used by file-local lattice FIX | accepted |
+| 0028 | G's grid executor is superseded by 0024: not ported to the work queue; its digit-ordered terminals, exact state dedupe, bulk closure and exact pages kept for a small general executor if the census's 71 of ~15,600 general programs grow | accepted |

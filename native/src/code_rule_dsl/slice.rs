@@ -18,17 +18,13 @@ use crate::code_rule_dsl::facts::families::{Families, Ingested};
 use crate::code_rule_dsl::facts::observe::tree_name;
 use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::findings::contract::Findings;
-use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::matcher::match_tree;
-use crate::code_rule_dsl::model::{ClauseKind, Query};
-use crate::code_rule_dsl::transducer::packed::{ExecutionBackend, LoweredMatcher};
+use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::code_rule_dsl::waves::findings::{Layer, Shape};
 use crate::code_rule_dsl::waves::matches::{self, Clause, KEPT_MATCH, KEPT_SPAN, Wave};
 use crate::code_rule_dsl::waves::owner::{Backing, Lease};
 use crate::code_rule_dsl::waves::schedule::{self, Limits};
 use crate::content_store::{ContentStore, DerivationInput, HashKey, StoreResult};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 /// Waves a push may take (S3's tape; core and prefilter; kinds, with room for readers).
 const PUSH_WAVES: u32 = 8;
@@ -58,9 +54,16 @@ pub(in crate::code_rule_dsl) struct Rules {
 impl Rules {
     /// The clauses of `policies` (each by its file stem) that lower (S1), with their shapes.
     pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)], backend: ExecutionBackend) -> StoreResult<Self> {
-        let (clauses, shapes) = lowered(policies);
-        let layer = Layer::new(shapes)?;
-        Ok(Self { wave: Wave::new(&clauses, backend)?, digest: layer.digest(), layer, backing: Backing::default() })
+        let lowered = crate::code_rule_dsl::waves::policies::lower(policies)?;
+        let layer = Layer::new(lowered.shapes)?;
+        let wave = Wave::with_logic(&lowered.clauses, lowered.logic, backend)?;
+        Ok(Self { wave, digest: layer.digest(), layer, backing: Backing::default() })
+    }
+
+    /// The lowered rules as `rir` (list step 18): the wave's programs and label tables, with
+    /// `fused` its packs and groups, with `setplan` its set plan.
+    pub(in crate::code_rule_dsl) fn dump(&self, fused: bool, setplan: bool) -> StoreResult<String> {
+        self.wave.dump(fused, setplan)
     }
 
     /// How many clauses lowered.
@@ -69,22 +72,25 @@ impl Rules {
     }
 }
 
-/// The Python `forbid` clauses of `policies` whose `ast` matcher lowers, with each one's shape.
-pub(in crate::code_rule_dsl) fn lowered(policies: &[(String, CompiledCodeRuleDsl)]) -> (Vec<Clause>, Vec<Shape>) {
-    let mut clauses = Vec::new();
-    let mut shapes = Vec::new();
-    for (policy, compiled) in policies {
-        for (at, clause) in compiled.inner.clauses.iter().enumerate() {
-            let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
-            for (index, grammar) in matchers.iter().enumerate().filter(|(_, matcher)| matcher.language == GrammarDialect::Python) {
-                let Ok(tree) = match_tree(grammar) else { continue };
-                let Ok(matcher) = LoweredMatcher::lower(&tree) else { continue };
-                clauses.push(Clause { name: format!("{policy}/{}", clause.id), plan: Arc::clone(&grammar.anchors), matcher });
-                shapes.push(Shape { rule: Arc::clone(&compiled.inner), clause: at, grammar: index });
-            }
+/// `policies` lowered and dumped as `rir` (list step 18, `rerail engine dump --rule …`): the
+/// wave of their clauses, or of the one named `clause` (its `policy/clause` name, or its clause
+/// id), with `fused` and `setplan` as `Wave::dump`'s. No store: a dump reads only the rules.
+pub(in crate::code_rule_dsl) fn dump(policies: &[(String, CompiledCodeRuleDsl)], clause: Option<&str>, fused: bool, setplan: bool) -> StoreResult<String> {
+    let (mut clauses, _) = lowered(policies)?;
+    if let Some(name) = clause {
+        clauses.retain(|clause| clause.name == name || clause.name.rsplit('/').next() == Some(name));
+        if clauses.is_empty() {
+            return Err(crate::content_store::StoreError::Invalid(format!("no lowered clause `{name}`")));
         }
     }
-    (clauses, shapes)
+    Wave::new(&clauses, ExecutionBackend::CpuInterpreter)?.dump(fused, setplan)
+}
+
+/// The Python `forbid` clauses of `policies` whose `ast` matcher lowers, with each one's shape,
+/// as the policies' logic program has them (`waves::policies`, list step 21).
+pub(in crate::code_rule_dsl) fn lowered(policies: &[(String, CompiledCodeRuleDsl)]) -> StoreResult<(Vec<Clause>, Vec<Shape>)> {
+    let lowered = crate::code_rule_dsl::waves::policies::lower(policies)?;
+    Ok((lowered.clauses, lowered.shapes))
 }
 
 /// What one run did and found.
@@ -187,11 +193,12 @@ fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold
 
     let program = rules.wave.kept_program(store)?;
     let inputs = documents.iter().map(|d| DerivationInput { name: Some(d.core.clone()), digest: d.digest }).collect();
-    let limits = Limits { max_waves: 1, ..Limits::default() };
+    // A file-local program without recursion: one wave per stratum and chunk.
+    let limits = Limits { max_waves: program.strata(), ..Limits::default() };
     let wave = &mut rules.wave;
     let evaluated = evaluate.iter().map(|d| d.path.clone()).collect();
     let memoised = evaluate.clone();
-    let outcome = prof::time("slice.wave", || schedule::run_over(&lease, store, &program, scope, evaluate, inputs, &limits, &mut |chunk| wave.demand(store, scope, chunk)))?;
+    let outcome = prof::time("slice.wave", || schedule::run_over(&lease, store, &program, scope, evaluate, inputs, &limits, &mut |chunk| wave.demand(&lease, store, scope, chunk)))?;
     prof::time("slice.remember", || -> StoreResult<()> {
         wave.statistics(&lease, scope)?;
         memo::remember(&lease, store, scope, &rules.digest, &memoised)?;

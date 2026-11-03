@@ -798,7 +798,7 @@ fn utility_references(matcher: &AstMatcher, references: &mut Vec<UtilRef>) {
         AstMatcher::Util(util) => references.push(util.clone()),
         AstMatcher::Call(call) => references.push(call.util.clone()),
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Semantic(_)
@@ -1120,7 +1120,7 @@ impl Builder {
                 AstMatcher::All(items) => items
                     .iter()
                     .all(|item| candidate_shape(item, target, export, host)),
-                AstMatcher::Kind(_) => one_kind(matcher)
+                AstMatcher::Kind(_) | AstMatcher::Supertype(_) => one_kind(matcher)
                     .filter(|kind| target.replace(*kind).is_none())
                     .is_some(),
                 AstMatcher::Semantic(Semantic::Capture(label)) => {
@@ -1427,6 +1427,14 @@ impl Builder {
         ir: &mut RelationalIr,
     ) {
         match matcher {
+            AstMatcher::Supertype(supertype) => {
+                let id = self.kind_terminal(language, supertype.class);
+                if !terminals.contains(&id) {
+                    terminals.push(id);
+                }
+                ir.terminal_spec(TerminalKind::Kind, format!("terminal:{id}"));
+                ir.operation(SqlOperation::ScanTerminal);
+            }
             AstMatcher::Kind(kind) => {
                 let Some(kinds) = kind.potential_kinds() else {
                     self.unsupported
@@ -2287,7 +2295,7 @@ impl Builder {
                 }
             }
             AstMatcher::Any(items)
-                if items.iter().all(|item| matches!(item, AstMatcher::Kind(_))) =>
+                if items.iter().all(|item| matches!(item, AstMatcher::Kind(_) | AstMatcher::Supertype(_))) =>
             {
                 let mut allowed = BTreeSet::new();
                 for item in items {

@@ -5,6 +5,8 @@
 
 use super::*;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::facts::observe::roots::directory_root;
 use crate::code_rule_dsl::findings::contract::Coverage;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
@@ -394,6 +396,145 @@ fn broken(id: &str) -> Option<(String, CompiledCodeRuleDsl)> {
 /// (O29, SIM300, was the one entry until the sweeps set and cleared their verdicts.)
 const KNOWN: [(&str, &str, &str); 0] = [];
 
+/// The packs' census (decision 0028): over every pack's rules and candidates, how many `forbid`
+/// `ast` clauses lower (any language), and of their programs (root and label) how many are micro
+/// walks, the device's shape (0024), against those that need a general executor.
+#[test]
+#[ignore = "the packs' census; run with --ignored --nocapture"]
+fn pack_census() {
+    use crate::code_rule_dsl::matcher::match_tree;
+    use crate::code_rule_dsl::transducer::packed::{LoweredMatcher, Micro};
+    let packs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
+    let mut names = std::fs::read_dir(&packs).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| e.path()).collect::<Vec<_>>();
+    names.sort();
+    // The data-layer pack, the architecture's hardest test, lives in its own worktree (read only).
+    let data_layer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Data-layer-rule-expressivity/packs/data-layer");
+    if data_layer.is_dir() {
+        names.push(data_layer);
+    }
+    let mut total = BTreeMap::<String, [usize; 2]>::new();
+    for dir in names {
+        let pack = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let mut documents = Vec::new();
+        files(&dir.join("rules"), "json", &mut documents);
+        files(&dir.join("candidates/rules"), "json", &mut documents);
+        let (mut rules, mut refused, mut clauses, mut unlowered) = (0, 0, 0, 0);
+        let mut by = BTreeMap::<String, [usize; 2]>::new();
+        let mut examples = Vec::new();
+        let mut reasons = Vec::new();
+        for path in documents {
+            let text = std::fs::read_to_string(&path).unwrap();
+            let compiled = match CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()) {
+                Ok(compiled) => compiled,
+                Err(error) => {
+                    refused += 1;
+                    if reasons.len() < 3 {
+                        reasons.push(error.reason.chars().take(160).collect::<String>());
+                    }
+                    continue;
+                }
+            };
+            rules += 1;
+            for clause in &compiled.inner.clauses {
+                let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
+                for grammar in matchers {
+                    clauses += 1;
+                    let Some(matcher) = match_tree(grammar).ok().and_then(|tree| LoweredMatcher::lower(&tree).ok()) else {
+                        unlowered += 1;
+                        continue;
+                    };
+                    for (kind, program) in matcher.census() {
+                        let micro = Micro::of(program).is_some();
+                        let entry = by.entry(format!("{kind}/{}", crate::code_rule_dsl::language::label(grammar.language).unwrap_or("?"))).or_default();
+                        entry[usize::from(!micro)] += 1;
+                        total.entry(kind.to_owned()).or_default()[usize::from(!micro)] += 1;
+                        if !micro && kind != "pattern" && kind != "constrained" && examples.len() < 3 {
+                            examples.push(format!("{}#{} {kind}", path.file_stem().unwrap().to_string_lossy(), clause.id));
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("census {pack}: {rules} rules ({refused} refused), {clauses} forbid-ast matchers, {unlowered} not lowered; [micro, general] by label kind/language: {by:?}; general examples {examples:?}; refusals {reasons:?}");
+    }
+    eprintln!("census total [micro, general] by kind: {total:?}");
+}
+
+/// A rule naming a grammar supertype (O17: N's semantics) lowers to `SUPERTYPE` over the tape's
+/// memberships, and every backend finds the same members: the two calls, `expression`s holding an
+/// identifier (the assigned `x` is a `pattern`, and no identifier holds one).
+#[test]
+fn a_supertype_rule_finds_the_same_members_on_every_backend() {
+    let policy = |rule: serde_json::Value| {
+        let document = serde_json::json!({
+            "format": "rerail.policy/v1", "id": "supertype", "revision": 1, "mode": "block",
+            "clauses": [{ "id": "c", "forbid": { "ast": { "language": "python", "rule": rule } },
+                          "violation": { "anchor": "witness.span", "code": "X", "message": "m" } }]
+        });
+        ("supertype".to_owned(), CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|error| panic!("{}", error.reason)))
+    };
+    let policies = vec![policy(serde_json::json!({ "kind": "expression", "has": { "kind": "identifier" } }))];
+    let (clauses, _) = lowered(&policies).unwrap();
+    assert_eq!(clauses.len(), 1, "the supertype clause lowers");
+    let dir = temp("supertype");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = f(y)\nreturn g(x)\n").unwrap();
+    let mut backends = vec![ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit];
+    #[cfg(target_os = "macos")]
+    backends.extend([ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit]);
+    let mut reference = None;
+    for backend in backends {
+        let store = ContentStore::open(&temp("supertype-store").with_extension("sqlite")).unwrap();
+        let mut rules = Rules::lower(&policies, backend).unwrap();
+        let root = directory_root(&store, &dir).unwrap();
+        let found = keys(&audit(&store, WS, root, &mut rules).unwrap());
+        let lines = found.iter().map(|key| key.3).collect::<Vec<_>>();
+        match &reference {
+            None => {
+                assert_eq!(lines, [0, 1], "{backend:?}: `f(y)` (line 0) and `g(x)` (line 1)");
+                reference = Some(found);
+            }
+            Some(first) => assert_eq!(&found, first, "{backend:?}"),
+        }
+    }
+}
+
+/// Phase 4's check (list step 19): the interpreter, the JIT and (on macOS) Metal's interpreter and
+/// compiled kernel find the same finding keys and coverage over S7's sample of real files
+/// (`RERAIL_S7_FIXTURES`, default 150), each cold in its own store.
+#[test]
+fn the_backends_find_the_same_keys_on_real_files() {
+    let policies = policies();
+    let dir = temp("phase4");
+    let (paths, _) = sample(&dir);
+    assert!((100..=300).contains(&paths.len()) || std::env::var_os("RERAIL_S7_FIXTURES").is_some(), "{} files", paths.len());
+    let mut backends = vec![("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)];
+    #[cfg(target_os = "macos")]
+    backends.extend([("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)]);
+    let mut reference: Option<(Keys, BTreeMap<(String, String), Coverage>)> = None;
+    for (name, backend) in backends {
+        let store = ContentStore::open(&temp(&format!("phase4-{name}")).with_extension("sqlite")).unwrap();
+        let mut rules = Rules::lower(&policies, backend).unwrap();
+        let start = cpu();
+        let root = directory_root(&store, &dir).unwrap();
+        let run = audit(&store, WS, root, &mut rules).unwrap();
+        let (found, covered) = (keys(&run), coverage(&run));
+        eprintln!("phase 4 {name}: {} files, {} clauses, {} keys, cpu {:?}", run.paths.len(), rules.clauses(), found.len(), cpu() - start);
+        match &reference {
+            None => {
+                assert!(!found.is_empty(), "the sample finds nothing");
+                reference = Some((found, covered));
+            }
+            Some((keys0, coverage0)) => {
+                let missing = keys0.difference(&found).take(5).collect::<Vec<_>>();
+                let extra = found.difference(keys0).take(5).collect::<Vec<_>>();
+                assert!(missing.is_empty() && extra.is_empty(), "{name} differs from the interpreter: missing {missing:?}, extra {extra:?}");
+                assert_eq!(&covered, coverage0, "{name}: coverage differs from the interpreter");
+            }
+        }
+    }
+}
+
 /// 06 S7's gate. On the sample (`sample`), the slice's cold audit (`audit`, every Python clause
 /// S1/S2 lowers, on the CPU, and on Metal with `RERAIL_S7_BACKENDS`) gives the same finding keys as W's engine for
 /// every (rule, code). Every (rule, file) it leaves `Unknown` is one where W's clause fails. It
@@ -409,7 +550,7 @@ fn the_slice_finds_ws_findings_on_real_files() {
     let (paths, repo) = sample(&dir);
     let sources = paths.iter().map(|p| (p.clone(), std::fs::read_to_string(dir.join(p)).unwrap())).collect::<Vec<_>>();
     let bytes = sources.iter().map(|(_, s)| s.len()).sum::<usize>();
-    let (clauses, _) = lowered(&policies);
+    let (clauses, _) = lowered(&policies).unwrap();
     let names = clauses.iter().map(|c| c.name.clone()).collect::<BTreeSet<_>>();
     let total = python_clauses(&policies);
 
@@ -422,12 +563,13 @@ fn the_slice_finds_ws_findings_on_real_files() {
     // keeps the gate within a minute (Metal adds 15 s and agrees; decision 0017).
     let wanted = std::env::var("RERAIL_S7_BACKENDS").unwrap_or_else(|_| "cpu".to_owned());
     let mut backends = Vec::new();
+    // The production bindings: interpreted until the wave's plan is compiled (list step 16).
     if wanted.contains("cpu") {
-        backends.push(("cpu", ExecutionBackend::CpuJit));
+        backends.push(("cpu", ExecutionBackend::CpuBackground));
     }
     #[cfg(target_os = "macos")]
     if wanted.contains("metal") {
-        backends.push(("metal", ExecutionBackend::MetalJit));
+        backends.push(("metal", ExecutionBackend::MetalBackground));
     }
     let mut cpu_store = None;
     for (name, backend) in backends {
@@ -597,7 +739,7 @@ fn a_recursive_label_settles_at_every_depth() {
     std::fs::create_dir_all(&dir).unwrap();
     let source = "X == 4 * 365 + 1\nX == [[1]]\nX == 1 + 2 + 3\nX == (4 + 1)\n4 * 365 + 1 == x\n";
     write(&dir, "a.py", source);
-    let (clauses, _) = lowered(&policies);
+    let (clauses, _) = lowered(&policies).unwrap();
     let names = clauses.iter().map(|c| c.name.clone()).collect::<BTreeSet<_>>();
     let (ws, failed) = ws_keys(&policies, &names, &[("a.py".to_owned(), source.to_owned())]);
     let run = cold(&dir, &policies);
