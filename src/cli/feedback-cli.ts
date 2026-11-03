@@ -5,6 +5,7 @@ import type { RerailHost } from "../engine/adapter-contract.js";
 import { listRepositories, lookupCheckout, repositoryHistoryIds } from "../engine/catalog/repository-registry.js";
 import { activeCoreVersion, installedPackDirectories, readRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { events, libraryRules, rules, sessions, steerFeedback } from "../engine/storage/schema.js";
 
 /**
@@ -64,13 +65,18 @@ function oneLine(words: readonly string[]): string {
   return reason;
 }
 
-/** The checkout's repository, and the session in it the rule last steered with its coding agent, as far as Rerail knows. */
+/**
+ * The checkout's repository, and the session in it the rule last steered with its coding agent, as far as Rerail knows.
+ * A note needs a repository: `rerail reset` deletes notes by repository, and a steer only ever comes in one.
+ */
 function steeredHere(database: RerailDatabase, ruleId: string, cwd: string): {
-  repositoryId: string | null;
+  repositoryId: string;
   session: { sessionId: string; host: RerailHost } | undefined;
 } {
   const checkout = lookupCheckout(database, cwd);
-  if (checkout === undefined) return { repositoryId: null, session: undefined };
+  if (checkout === undefined) {
+    throw new Error(`Rerail knows no repository at ${cwd}; run rerail feedback in the repository the steer came from`);
+  }
   const repository = listRepositories(database).find(candidate => candidate.repositoryKey === checkout.repositoryKey);
   const repositoryIds = repository === undefined ? [checkout.repositoryKey] : repositoryHistoryIds(repository);
   const session = database.select({ sessionId: sessions.sessionId, host: sessions.host })
@@ -91,7 +97,8 @@ function record(database: RerailDatabase, ruleId: string, words: readonly string
   const { repositoryId, session } = steeredHere(database, ruleId, context.cwd ?? process.cwd());
   // Which installed pack lists the rule, from the packs' manifests: a note needs no compiled rule, and compiling every
   // installed pack's rules (`loadRulePacks`) would cost each `rerail feedback` seconds.
-  const catalog = readRuleCatalog(installedPackDirectories(), { coreVersion: activeCoreVersion() });
+  const home = defaultRerailHome(context.env);
+  const catalog = readRuleCatalog(installedPackDirectories(home), { coreVersion: activeCoreVersion(home) });
   const packId = catalog.packOf.get(ruleId) ?? null;
   const known = session !== undefined || packId !== null
     || database.select({ id: rules.id }).from(rules).where(eq(rules.id, ruleId)).get() !== undefined

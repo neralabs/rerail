@@ -103,6 +103,20 @@ describe("rerail feedback", () => {
     expect(notes()).toEqual([]);
   });
 
+  it("refuses a note outside any repository Rerail knows, since a reset could never delete it", async () => {
+    const { root, notes } = await steeredRepository();
+    const outside = join(root, "outside");
+    mkdirSync(outside);
+
+    await expect(runFeedbackCommand([RULE, "not in a repository"], () => "usage", {
+      packageVersion: "9.9.9",
+      cwd: outside,
+      env: { RERAIL_HOME: join(root, "home") },
+      stdout: { write: () => true },
+    })).rejects.toThrow(/knows no repository at .*outside; run rerail feedback in the repository the steer came from/u);
+    expect(notes()).toEqual([]);
+  });
+
   it("takes the reason on stdin for a line with a quote in it", async () => {
     const { run, notes, stdin } = await steeredRepository();
     stdin.value = "I won't: it's the repo's convention\n";

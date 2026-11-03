@@ -359,8 +359,8 @@ export const workLinks = sqliteTable(
 /**
  * A coding agent's one-line reason for not following a steer (`rerail feedback`), kept on this computer for tuning
  * the rule; `rerail feedback list` prints them for the person to attach to a rule misfire issue. Rerail sends none
- * anywhere. The repository is the checkout's, and the session is where the rule last steered there, when Rerail found
- * one; like `work_links`, no foreign key, and a reset deletes the repository's notes.
+ * anywhere. The repository is the checkout's, so a reset deletes the repository's notes, and the session is where the
+ * rule last steered there, when Rerail found one; like `work_links`, no foreign key.
  */
 export const steerFeedback = sqliteTable(
   "steer_feedback",
@@ -371,7 +371,7 @@ export const steerFeedback = sqliteTable(
     packVersion: text("pack_version"),
     host: text("host").$type<RerailHost>(),
     sessionId: text("session_id"),
-    repositoryId: text("repository_id"),
+    repositoryId: text("repository_id").notNull(),
     reason: text("reason").notNull(),
     rerailVersion: text("rerail_version").notNull(),
     recordedAt: integer("recorded_at").notNull(),
