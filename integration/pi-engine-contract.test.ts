@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 describe("Pi native code rule engine", () => {
-  it("delivers the contract cursor-execute code rule violation through Pi's native session queue", async () => {
+  it("delivers the contract cursor-execute code rule violation once, in the write's result or Pi's native session queue", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-kernel-"));
     process.env.RERAIL_HOME = join(cwd, "home");
     startTestRepository(cwd);
@@ -84,7 +84,7 @@ describe("Pi native code rule engine", () => {
         },
       });
       await writeFile(join(cwd, "api", "route.py"), "def route(cursor):\n    cursor.execute('SELECT 1')\n");
-      await session.extensionRunner.emitToolResult({
+      const result = await session.extensionRunner.emitToolResult({
         type: "tool_result",
         toolCallId,
         toolName: "write",
@@ -97,14 +97,16 @@ describe("Pi native code rule engine", () => {
         isError: false,
       });
       const steer = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5");
-      await expect.poll(() => sessionManager.getBranch(), { timeout: 10_000, interval: 10 }).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            type: "custom_message",
-            content: expect.stringContaining(steer),
-          }),
-        ]),
-      );
+      const ruleMessage = expect.objectContaining({ type: "custom_message", content: expect.stringContaining(steer) });
+      // A check that finishes while Pi waits on the write's result rides that result; one that finishes after it is
+      // queued as a rule message. Which one depends on timing, so either passes, but never both.
+      if (result?.content?.some(block => block.type === "text" && block.text.includes(steer)) === true) {
+        expect(sessionManager.getBranch()).not.toContainEqual(ruleMessage);
+      } else {
+        await expect.poll(() => sessionManager.getBranch(), { timeout: 10_000, interval: 10 }).toEqual(
+          expect.arrayContaining([ruleMessage]),
+        );
+      }
     } finally {
       await session.dispose();
     }
