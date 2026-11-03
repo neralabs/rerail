@@ -69,10 +69,12 @@ jobs:
     # Pinned to a release commit. `reviewer_ref` is where the called workflow loads the reviewer's own code
     # from, so it is the same commit: Dependabot moves `uses:` alone, and `npm run check:pins` fails until
     # `npm run deps:sync` brings `reviewer_ref` along (scripts/deps/sync-pins.mjs).
-    uses: neralabs/reviewer/.github/workflows/review.yml@a5661b2d02971b4e51667c230eb7664c699d643a # v0.1.0
+    # Trial: an unreleased reviewer commit with rule-aware review (neralabs/reviewer#4), not a release. To go back,
+    # revert this change: v0.1.0 is a5661b2d02971b4e51667c230eb7664c699d643a.
+    uses: neralabs/reviewer/.github/workflows/review.yml@10399ce1666cc7a4bc3f66fe5c6761908e529f66 # v0.2.0-pre.rule-aware
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
-      reviewer_ref: a5661b2d02971b4e51667c230eb7664c699d643a
+      reviewer_ref: 10399ce1666cc7a4bc3f66fe5c6761908e529f66
       allow_approve: false
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
@@ -84,7 +86,16 @@ jobs:
       provider: bedrock
       model: ${{ vars.REVIEWER_MODEL }}
       aws_region: us-east-1
+      # Rule-aware review (trial): before the model reviews, a Rerail scan checks the pull request against the
+      # complexity rule pack, with the rules from the base branch. A new violation of a steer rule is a blocker
+      # that names its rule. Rerail comes from a pre-release build served by the Rerail remote; the scan result
+      # is sent there too (send_results), in a job that holds only the remote's URL and token.
+      rerail_package: remote:0.1.1-w2.0
+      rerail_packs: complexity
+      send_results: true
     # Named, not `secrets: inherit`: the reviewer gets these and nothing else this repo can see.
     secrets:
       REVIEWER_APP_PRIVATE_KEY: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
       REVIEWER_BEDROCK_API_KEY: ${{ secrets.REVIEWER_BEDROCK_API_KEY_MAIN }}
+      RERAIL_REMOTE_URL: ${{ secrets.RERAIL_REMOTE_URL }}
+      RERAIL_REMOTE_TOKEN: ${{ secrets.RERAIL_REMOTE_TOKEN }}
