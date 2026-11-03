@@ -87,7 +87,7 @@ The lead says what Rerail did:
 | A repository audit | `Rerail checked the repository and found 1 problem:` (`N problems`) |
 | A tool call or conversation rule | `Rerail has guidance for this <Tool> call:`, or `Rerail has guidance for this step:` when no tool is named |
 
-The latitude closes it: `Fix it, or tell the user in one line why you won't.` (`Fix these, …` for more than one finding; `Follow it` and `Follow these` for a tool call's guidance). A Block-mode rule steers the same way, since blocking is not built yet. A Log-mode rule never reaches a session.
+The latitude closes it: ``Fix it, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.`` (`Fix these, …` for more than one finding; `Follow it` and `Follow these` for a tool call's guidance). The command names the rule when the block has one, and keeps `<rule-id>` for the agent to fill in when it has several; `rerail feedback` keeps the reason on this computer ([Steer feedback](reference.md#steer-feedback)). A Block-mode rule steers the same way, since blocking is not built yet. A Log-mode rule never reaches a session.
 
 ### What you see
 
