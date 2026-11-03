@@ -9,13 +9,14 @@
     "post_op_no_internal_dispatch",
     "publication_registry_writes",
     "revision_ancestry_invariants",
-    "unknown_contract_defaults"
+    "unknown_contract_defaults",
+    "versioned_merged_identity"
   ],
   "source_mismatches": [],
   "pytest_exit_code": 0,
   "collected_tests": 0,
   "uncaptured_tests": [],
-  "loaded_source_files_checked": 124,
+  "loaded_source_files_checked": 125,
   "events": [
     {
       "test": "probe:batch7:text-lines-and-multiplicity",
@@ -1239,6 +1240,432 @@
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:catalog-alias-chain",
+      "check": "versioned_merged_identity",
+      "call": 1,
+      "entry": "collect_violations",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "def build():\n    a = catalog_versioned_merged_projection(Model, columns)\n    b = a\n    c = b\n    return SqlVersionedMergedCte(read_projection=c)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "expectedCallers": [
+            "probe.py:build"
+          ]
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:catalog-alias-killed",
+      "check": "versioned_merged_identity",
+      "call": 1,
+      "entry": "collect_violations",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "def build():\n    a = catalog_versioned_merged_projection(Model, columns)\n    a = other\n    return SqlVersionedMergedCte(read_projection=a)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "expectedCallers": [
+            "probe.py:build"
+          ]
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "VMI003",
+          "message": "Merged constructor must use a catalog-backed projection builder.",
+          "caller": "probe.py:build",
+          "original_line": 4
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:catalog-alias-cycle",
+      "check": "versioned_merged_identity",
+      "call": 1,
+      "entry": "collect_violations",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "def build():\n    a = b\n    b = a\n    return SqlVersionedMergedCte(read_projection=a)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "expectedCallers": [
+            "probe.py:build"
+          ]
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "VMI003",
+          "message": "Merged constructor must use a catalog-backed projection builder.",
+          "caller": "probe.py:build",
+          "original_line": 4
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:catalog-unpacked-builder",
+      "check": "versioned_merged_identity",
+      "call": 1,
+      "entry": "collect_violations",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "def build():\n    projection, meta = catalog_versioned_merged_projection(Model, columns)\n    return SqlVersionedMergedCte(read_projection=projection)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "expectedCallers": [
+            "probe.py:build"
+          ]
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:missing-projection",
+      "check": "versioned_merged_identity",
+      "call": 1,
+      "entry": "collect_violations",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "def build():\n    return SqlVersionedMergedCte()\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "expectedCallers": [
+            "probe.py:build"
+          ]
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "VMI003",
+          "message": "Merged constructor must use a catalog-backed projection builder.",
+          "caller": "probe.py:build",
+          "original_line": 2
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:alias-future-does-not-authorize",
+      "check": "post_op_no_internal_dispatch",
+      "call": 1,
+      "entry": "collect_violations_for_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_x_builder(spec):\n    x.get(\"domain\")\n    x = spec.literal_payload\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:alias-kill-is-monotone",
+      "check": "post_op_no_internal_dispatch",
+      "call": 1,
+      "entry": "collect_violations_for_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_x_builder(spec):\n    x = spec.literal_payload\n    x = {}\n    x.get(\"domain\")\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 4,
+          "column": null,
+          "code": "POSTOPDISPATCH007",
+          "message": "materializers must not dispatch by probing literal_payload keys"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:separate-function-aliases",
+      "check": "post_op_no_internal_dispatch",
+      "call": 1,
+      "entry": "collect_violations_for_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_a_builder(spec):\n    x = spec.literal_payload\ndef materialize_b_builder(spec):\n    x.get(\"domain\")\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:nested-comparison-scope",
+      "check": "post_op_no_internal_dispatch",
+      "call": 1,
+      "entry": "collect_violations_for_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_a_builder(spec):\n    if spec.kind == RuntimeBuilderKind.X: pass\n    def inner():\n        if spec.kind == RuntimeBuilderKind.X: pass\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 2,
+          "column": null,
+          "code": "POSTOPDISPATCH005",
+          "message": "deleted post-op dispatch surface RuntimeBuilderKind must not be referenced"
+        },
+        {
+          "path": "probe.py",
+          "line": 4,
+          "column": null,
+          "code": "POSTOPDISPATCH005",
+          "message": "deleted post-op dispatch surface RuntimeBuilderKind must not be referenced"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:same-enum-different-owners",
+      "check": "post_op_no_internal_dispatch",
+      "call": 1,
+      "entry": "collect_violations_for_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def first(k):\n    return k == RuntimeBuilderKind.X\ndef second(k):\n    return k == RuntimeBuilderKind.X\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 2,
+          "column": null,
+          "code": "POSTOPDISPATCH005",
+          "message": "deleted post-op dispatch surface RuntimeBuilderKind must not be referenced"
+        },
+        {
+          "path": "probe.py",
+          "line": 4,
+          "column": null,
+          "code": "POSTOPDISPATCH005",
+          "message": "deleted post-op dispatch surface RuntimeBuilderKind must not be referenced"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:arbitrary-keys-membership",
+      "check": "post_op_no_internal_dispatch",
+      "call": 1,
+      "entry": "collect_violations_for_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_a_builder(spec):\n    return \"x\" in unrelated.keys()\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:legacy-labels-clean",
+      "check": "post_op_no_internal_dispatch",
+      "call": 1,
+      "entry": "collect_violations_for_source",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def build(RuntimeBuilderKind):\n    return x.RuntimeBuilderKind\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "probe.py",
+          "line": 2,
+          "column": null,
+          "code": "POSTOPDISPATCH005",
+          "message": "deleted post-op dispatch surface RuntimeBuilderKind must not be referenced"
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:second-production-root",
+      "check": "versioned_merged_identity",
+      "call": 1,
+      "entry": "collect_violations",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l9700_sql_graph_query/probe.py",
+          "source": "def build():\n    return SqlVersionedMergedCte(read_projection=catalog_versioned_merged_projection(Model, columns))\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "expectedCallers": [
+            "probe.py:build"
+          ]
         }
       },
       "findings": []

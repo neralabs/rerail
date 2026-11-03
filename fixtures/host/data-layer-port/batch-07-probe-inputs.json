@@ -429,6 +429,167 @@
         }
       ],
       "production_scope": false
+    },
+    {
+      "check": "versioned_merged_identity",
+      "id": "catalog-alias-chain",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "def build():\n    a = catalog_versioned_merged_projection(Model, columns)\n    b = a\n    c = b\n    return SqlVersionedMergedCte(read_projection=c)\n"
+        }
+      ],
+      "production_scope": false,
+      "expected_callers": [
+        "probe.py:build"
+      ]
+    },
+    {
+      "check": "versioned_merged_identity",
+      "id": "catalog-alias-killed",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "def build():\n    a = catalog_versioned_merged_projection(Model, columns)\n    a = other\n    return SqlVersionedMergedCte(read_projection=a)\n"
+        }
+      ],
+      "production_scope": false,
+      "expected_callers": [
+        "probe.py:build"
+      ]
+    },
+    {
+      "check": "versioned_merged_identity",
+      "id": "catalog-alias-cycle",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "def build():\n    a = b\n    b = a\n    return SqlVersionedMergedCte(read_projection=a)\n"
+        }
+      ],
+      "production_scope": false,
+      "expected_callers": [
+        "probe.py:build"
+      ]
+    },
+    {
+      "check": "versioned_merged_identity",
+      "id": "catalog-unpacked-builder",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "def build():\n    projection, meta = catalog_versioned_merged_projection(Model, columns)\n    return SqlVersionedMergedCte(read_projection=projection)\n"
+        }
+      ],
+      "production_scope": false,
+      "expected_callers": [
+        "probe.py:build"
+      ]
+    },
+    {
+      "check": "versioned_merged_identity",
+      "id": "missing-projection",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/probe.py",
+          "source": "def build():\n    return SqlVersionedMergedCte()\n"
+        }
+      ],
+      "production_scope": false,
+      "expected_callers": [
+        "probe.py:build"
+      ]
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "id": "alias-future-does-not-authorize",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_x_builder(spec):\n    x.get(\"domain\")\n    x = spec.literal_payload\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "id": "alias-kill-is-monotone",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_x_builder(spec):\n    x = spec.literal_payload\n    x = {}\n    x.get(\"domain\")\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "id": "separate-function-aliases",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_a_builder(spec):\n    x = spec.literal_payload\ndef materialize_b_builder(spec):\n    x.get(\"domain\")\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "id": "nested-comparison-scope",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_a_builder(spec):\n    if spec.kind == RuntimeBuilderKind.X: pass\n    def inner():\n        if spec.kind == RuntimeBuilderKind.X: pass\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "id": "same-enum-different-owners",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def first(k):\n    return k == RuntimeBuilderKind.X\ndef second(k):\n    return k == RuntimeBuilderKind.X\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "id": "arbitrary-keys-membership",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def materialize_a_builder(spec):\n    return \"x\" in unrelated.keys()\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "id": "legacy-labels-clean",
+      "files": [
+        {
+          "path": "probe.py",
+          "source": "def build(RuntimeBuilderKind):\n    return x.RuntimeBuilderKind\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "versioned_merged_identity",
+      "id": "second-production-root",
+      "files": [
+        {
+          "path": "impl/common/l9700_sql_graph_query/probe.py",
+          "source": "def build():\n    return SqlVersionedMergedCte(read_projection=catalog_versioned_merged_projection(Model, columns))\n"
+        }
+      ],
+      "expected_callers": [
+        "probe.py:build"
+      ],
+      "production_scope": false
     }
   ]
 }

@@ -52,6 +52,9 @@ def main():
             elif check == 'post_op_no_internal_dispatch':
                 path = module.POST_OP_SOURCE if case.get('post_op_source') else Path(files[0]['path'])
                 raw = module.collect_violations_for_source(path, files[0]['source']); entry = 'collect_violations_for_source'
+            elif check == 'versioned_merged_identity':
+                raw = module.collect_violations(root, expected_callers=frozenset(case.get('expected_callers', module.EXPECTED_CALLERS)))
+                entry = 'collect_violations'
             else:
                 raise ValueError('No supplemental adapter for ' + check)
             def logical(path):
@@ -61,6 +64,8 @@ def main():
                 return path.as_posix()
             findings = normalize(check, raw, files, logical)
             options = {'oracleAnalyzer': not production}
+            if check == 'versioned_merged_identity':
+                options = {'expectedCallers': sorted(case.get('expected_callers', module.EXPECTED_CALLERS))}
             events.append({'test': 'probe:batch7:' + case['id'], 'check': check, 'call': 1, 'entry': entry,
                            'upstream_passed': True, 'production_scope': production,
                            'scope': {'include': ['**/*.py'], 'exclude': []}, 'files': files,
