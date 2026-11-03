@@ -26,7 +26,7 @@ pub(in crate::code_rule_dsl) mod extension;
 pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, hold_symbols, register_symbols};
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
-    pub(in crate::code_rule_dsl) use super::setfix::{close, derived, materialize, open, reprobe, run, stats, steps};
+    pub(in crate::code_rule_dsl) use super::setfix::{close, columns_source, derived, live, materialize, open, reprobe, run, step_counts, table_source};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};

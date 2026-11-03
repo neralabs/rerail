@@ -559,7 +559,10 @@ impl Model {
             let mut rows = atom_rows_(a, bound);
             // No variable bound on a relation of the component being solved: a scan of it per binding, priced as a
             // pass over the corpus (shared among its constants' values) at least.
-            if stats.solving.contains(&a.rel) && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
+            // The delta atom of a probe is not such a scan: it reads the last wave's rows, priced by the relation's
+            // live size (an upper bound), not the corpus.
+            let delta = first.is_some_and(|f| matches!(&body[f], Literal::Atom(d) if std::ptr::eq(d, a)));
+            if !delta && stats.solving.contains(&a.rel) && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
                 let mut floor = stats.nodes;
                 for (c, t) in a.args.iter().enumerate() {
                     if constant(t).is_some() {
@@ -1298,11 +1301,27 @@ impl Fx<'_> {
     fn run(&self, name: &str, waves: u32) -> Result<String> {
         Ok(if self.direct { super::native::component::run(self.db, name, waves)? } else { self.db.query_row("SELECT set_fixpoint_run(?1, ?2)", rusqlite::params![name, waves], |r| r.get(0))? })
     }
-    fn steps(&self, name: &str) -> Result<String> {
-        Ok(if self.direct { super::native::component::steps(name)? } else { self.db.query_row("SELECT set_fixpoint_steps(?1)", [name], |r| r.get(0))? })
+    /// Per probe, its steps' (in, out) bindings since the last call.
+    fn steps(&self, name: &str) -> Result<Vec<Vec<(i64, i64)>>> {
+        if self.direct {
+            return Ok(super::native::component::step_counts(name)?);
+        }
+        let text: String = self.db.query_row("SELECT set_fixpoint_steps(?1)", [name], |r| r.get(0))?;
+        Ok(text
+            .split('\n')
+            .map(|line| line.split(',').filter_map(|x| { let (i, o) = x.split_once(':')?; Some((i.parse().ok()?, o.parse().ok()?)) }).collect())
+            .collect())
     }
-    fn stats(&self, name: &str) -> Result<String> {
-        Ok(if self.direct { super::native::component::stats(name)? } else { self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))? })
+    /// Each relation's live statistics, in spec order.
+    fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
+        if self.direct {
+            return Ok(super::native::component::live(name)?
+                .into_iter()
+                .map(|l| LiveRel { n: l.n, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
+                .collect());
+        }
+        let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
+        Ok(text.split('\n').enumerate().map(|(i, line)| LiveRel::parse(line, &|c| symbols_text(i, c))).collect())
     }
     fn reprobe(&self, name: &str, i: usize, kind: &str, body: &str) -> Result<()> {
         if self.direct {
@@ -1494,19 +1513,9 @@ impl Run<'_> {
 /// Adds a native join's step counts ("in:out" per step, `set_fixpoint_steps`) to the observed fanouts of the binding
 /// patterns its positive atoms were read with (T's `observe`). The first step (the delta, or a seed's anchor) is
 /// skipped.
-fn observe(stats: &mut Stats, order: &[Step], line: &str) {
-    if line.is_empty() {
-        return;
-    }
-    let counts: Vec<(i64, i64)> = line
-        .split(',')
-        .filter_map(|x| {
-            let (i, o) = x.split_once(':')?;
-            Some((i.parse().ok()?, o.parse().ok()?))
-        })
-        .collect();
+fn observe(stats: &mut Stats, order: &[Step], counts: &[(i64, i64)]) {
     let mut bound = BTreeSet::new();
-    for (i, (s, &(n_in, n_out))) in order.iter().zip(&counts).enumerate() {
+    for (i, (s, &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
         if i > 0
             && let Literal::Atom(l) = &s.lit
             && !l.neg
@@ -1536,31 +1545,51 @@ fn prog_types<'p>(prog: &'p Program, r: &str) -> Vec<&'p str> {
 /// A relation's statistics from the native store (`set_fixpoint_stats`, T's `live_stats`): rows, then per column
 /// the distinct count and the sum of squared postings, whose ratio to rows is the skew-weighted fanout ingestion
 /// gives inputs.
-fn live_stats(prog: &Program, model: &mut Model, r: &str, line: &str) {
-    let mut parts = line.split(" |");
-    let nums: Vec<i64> = parts.next().unwrap_or("").split_whitespace().filter_map(|x| x.parse().ok()).collect();
-    let Some((&n, rest)) = nums.split_first() else { return };
-    let k = rest.len() / 2;
-    model.stats.card.insert(r.to_owned(), (n as f64).max(1.0));
-    for c in 0..k {
-        model.ndv.insert((r.to_owned(), c), rest[c].max(1) as f64);
-        model.stats.fan.insert((r.to_owned(), c), if n != 0 { rest[k + c] as f64 / n as f64 } else { 1.0 });
-        model.stats.dfreq.remove(&(r.to_owned(), c));
-    }
-    let types = prog_types(prog, r);
-    for f in parts {
-        let Some((c, vals)) = f.trim().split_once(':') else { continue };
-        let Ok(c) = c.parse::<usize>() else { continue };
-        let freq = vals
-            .split(',')
-            .filter(|x| !x.is_empty())
-            .filter_map(|x| {
-                let (v, m) = x.split_once('=')?;
-                let v = unhex(v)?;
-                let v = if types.get(c) == Some(&"sym") && model.inputs.atoms.is_none() { Constant::Str(v) } else { Constant::Int(v.parse().ok()?) };
-                Some((v, m.parse().ok()?))
+/// A native relation's live statistics (`setfix::live`): rows, per column distinct values and the sum of squared
+/// postings, and each value's postings in a column of few values.
+struct LiveRel {
+    n: i64,
+    ndv: Vec<i64>,
+    sq: Vec<i64>,
+    freq: Vec<(usize, HashMap<Constant, i64>)>,
+}
+impl LiveRel {
+    /// From T's extension's text line (`set_fixpoint_stats`); `text(c)`: column `c` holds symbols as text.
+    fn parse(line: &str, text: &dyn Fn(usize) -> bool) -> LiveRel {
+        let mut parts = line.split(" |");
+        let nums: Vec<i64> = parts.next().unwrap_or("").split_whitespace().filter_map(|x| x.parse().ok()).collect();
+        let (n, rest) = nums.split_first().map_or((0, &[][..]), |(n, r)| (*n, r));
+        let k = rest.len() / 2;
+        let freq = parts
+            .filter_map(|f| {
+                let (c, vals) = f.trim().split_once(':')?;
+                let c = c.parse::<usize>().ok()?;
+                let freq = vals
+                    .split(',')
+                    .filter(|x| !x.is_empty())
+                    .filter_map(|x| {
+                        let (v, m) = x.split_once('=')?;
+                        let v = unhex(v)?;
+                        let v = if text(c) { Constant::Str(v) } else { Constant::Int(v.parse().ok()?) };
+                        Some((v, m.parse().ok()?))
+                    })
+                    .collect();
+                Some((c, freq))
             })
             .collect();
+        LiveRel { n, ndv: rest[..k].to_vec(), sq: rest[k..].to_vec(), freq }
+    }
+}
+
+fn live_stats(model: &mut Model, r: &str, live: LiveRel) {
+    let n = live.n;
+    model.stats.card.insert(r.to_owned(), (n as f64).max(1.0));
+    for (c, (&ndv, &sq)) in live.ndv.iter().zip(&live.sq).enumerate() {
+        model.ndv.insert((r.to_owned(), c), ndv.max(1) as f64);
+        model.stats.fan.insert((r.to_owned(), c), if n != 0 { sq as f64 / n as f64 } else { 1.0 });
+        model.stats.dfreq.remove(&(r.to_owned(), c));
+    }
+    for (c, freq) in live.freq {
         model.stats.dfreq.insert((r.to_owned(), c), freq);
     }
 }
@@ -1862,26 +1891,26 @@ impl Run<'_> {
         loop {
             let f: String = self.fx().run(&name, chunk as u32)?;
             let f: Vec<&str> = f.split_whitespace().collect();
-            let steps: String = self.fx().steps(&name)?;
-            for (o, line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(steps.split('\n')) {
+            let steps = self.fx().steps(&name)?;
+            for (o, line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&steps) {
                 observe(&mut self.model.stats, o, line);
             }
-            for (k, line) in steps.split('\n').enumerate() {
+            for (k, line) in steps.iter().enumerate() {
                 if counted.len() <= k {
                     counted.resize(k + 1, Vec::new());
                 }
-                for (i, step) in line.split(',').filter(|s| !s.is_empty()).enumerate() {
-                    let (a, b) = step.split_once(':').unwrap_or(("0", "0"));
-                    if counted[k].len() <= i {
-                        counted[k].resize(i + 1, (0, 0));
-                    }
-                    counted[k][i].0 += a.parse::<u64>().unwrap_or(0);
-                    counted[k][i].1 += b.parse::<u64>().unwrap_or(0);
+                if counted[k].len() < line.len() {
+                    counted[k].resize(line.len(), (0, 0));
+                }
+                for (i, &(a, b)) in line.iter().enumerate() {
+                    counted[k][i].0 += a as u64;
+                    counted[k][i].1 += b as u64;
                 }
             }
-            let live: String = self.fx().stats(&name)?;
-            for (r, line) in rels.iter().zip(live.split('\n')) {
-                live_stats(prog, &mut self.model, r, line);
+            let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && prog_types(prog, rels[i]).get(c) == Some(&"sym");
+            let live = self.fx().stats(&name, &text_symbols)?;
+            for (r, l) in rels.iter().zip(live) {
+                live_stats(&mut self.model, r, l);
             }
             if f.last() == Some(&"1") || chunk == 0 {
                 break;
@@ -2219,9 +2248,10 @@ impl Run<'_> {
             if f.split_whitespace().last() == Some("1") || chunk == 0 {
                 break;
             }
-            let live: String = self.fx().stats(&name)?;
-            for (r, line) in rels.iter().zip(live.split('\n')) {
-                live_stats(prog, &mut self.model, r, line);
+            let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && prog_types(prog, rels[i]).get(c) == Some(&"sym");
+            let live = self.fx().stats(&name, &text_symbols)?;
+            for (r, l) in rels.iter().zip(live) {
+                live_stats(&mut self.model, r, l);
             }
             for k in 0..probes.len() {
                 let (r, ai) = (probes[k].0, probes[k].3);

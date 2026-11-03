@@ -285,7 +285,7 @@ struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule
 pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
-struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool }
+struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool }
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
@@ -402,12 +402,25 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let store = Arc::new(RwLock::new(Store { rels, syms: symbols }));
     let mut reg = COMPONENTS.lock().unwrap();
     reg.retain(|(n, _)| *n != name);
-    reg.push((name.clone(), Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write }))));
+    reg.push((name.clone(), Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write, done: false }))));
     Ok(name)
 }
 
+/// At the fixpoint the component's relations move to `DERIVED`, the input of later strata (`r:` sources), with the
+/// hash indexes the waves kept (`InRel::chains`): nothing is copied or indexed again.
 pub fn close(name: &str) -> Result<()> {
-    COMPONENTS.lock().unwrap().retain(|(n, _)| n != name);
+    let mut reg = COMPONENTS.lock().unwrap();
+    let Some(at) = reg.iter().position(|(n, _)| n == name) else { return Ok(()) };
+    let (_, comp) = reg.remove(at);
+    drop(reg);
+    let comp = comp.lock().unwrap();
+    if comp.done {
+        let rels = std::mem::take(&mut comp.store.write().unwrap().rels);
+        let mut derived = DERIVED.lock().unwrap();
+        for rel in rels {
+            derived.insert(rel.table.clone(), Arc::new(InRel::moved(rel)));
+        }
+    }
     Ok(())
 }
 
@@ -563,19 +576,21 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     if !done {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 0", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
-    let store = comp.store.read().unwrap();
+    comp.done = true;
     let mut new_rows = 0usize;
-    // Every relation of the component, whole, is an input of later strata (`r:` sources).
-    for rel in &store.rels {
-        DERIVED.lock().unwrap().insert(rel.table.clone(), Arc::new(InRel { k: rel.k, n: rel.n, rows: rel.data.clone(), view: None, base: false, types: rel.types.clone(),
-                                                                         stored: rel.stored, idx: Mutex::new(HashMap::default()) }));
-    }
-    for rel in store.rels.iter().filter(|_| comp.write) {
-        let marks: Vec<String> = (1..=rel.types.len()).map(|i| format!("?{i}")).collect();
-        let mut ins = conn.prepare(&format!("INSERT INTO {} VALUES ({})", rel.table, marks.join(", ")))?;
-        for id in rel.stored..rel.n {
-            ins.execute(rusqlite::params_from_iter(rel.row(id)))?;
-            new_rows += 1;
+    if comp.write {
+        // Each relation's new rows into its table, many rows per statement (SQLite binds at most 32766 values).
+        let store = comp.store.read().unwrap();
+        for rel in &store.rels {
+            let per = (32000 / rel.k.max(1)).max(1);
+            let mut id = rel.stored;
+            while id < rel.n {
+                let end = (id + per).min(rel.n);
+                let holes = vec![format!("({})", vec!["?"; rel.k].join(", ")); end - id].join(", ");
+                conn.execute(&format!("INSERT INTO {} VALUES {holes}", rel.table), rusqlite::params_from_iter(rel.data[id * rel.k..end * rel.k].iter()))?;
+                new_rows += end - id;
+                id = end;
+            }
         }
     }
     Ok(format!("{new_rows} {waves} {visits} {runs} {skips} {:.1} {:.1} {} 1", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")))
@@ -611,6 +626,37 @@ pub fn stats(name: &str) -> Result<String> {
 
 /// `set_fixpoint_steps(name)`: per probe line (spec order), its join steps' "in:out" counts since the last call,
 /// comma-separated (empty for a SQL probe); the counts restart.
+/// Per probe (spec order), its join steps' (in, out) binding counts since the last call (empty for a SQL probe); the
+/// counts restart.
+pub fn step_counts(name: &str) -> Result<Vec<Vec<(i64, i64)>>> {
+    let comp = component(name)?;
+    let comp = comp.lock().unwrap();
+    Ok(comp.probes.iter().map(|p| match &p.body {
+        Body::Join(j) => j.counts.iter().map(|[a, b]| (a.replace(0) as i64, b.replace(0) as i64)).collect(),
+        Body::Sql(_) => Vec::new(),
+    }).collect())
+}
+
+/// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,
+/// and for a column of at most `FREQ_NDV` values each value's postings.
+pub struct Live { pub n: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)> }
+pub fn live(name: &str) -> Result<Vec<Live>> {
+    let comp = component(name)?;
+    let comp = comp.lock().unwrap();
+    let store = comp.store.read().unwrap();
+    Ok(store.rels.iter().map(|r| {
+        let cols = &r.idx[..r.k];
+        let freq = cols.iter().enumerate().filter(|(_, ix)| ix.table.len() <= FREQ_NDV)
+            .map(|(c, ix)| (c, ix.table.iter().map(|p| (r.row(p.head as usize)[c], i64::from(p.len))).collect())).collect();
+        Live {
+            n: r.n as i64,
+            ndv: cols.iter().map(|ix| ix.table.len() as i64).collect(),
+            sq: cols.iter().map(|ix| ix.table.iter().map(|p| i64::from(p.len) * i64::from(p.len)).sum()).collect(),
+            freq,
+        }
+    }).collect())
+}
+
 pub fn steps(name: &str) -> Result<String> {
     let comp = component(name)?;
     let comp = comp.lock().unwrap();
@@ -788,7 +834,7 @@ pub fn loads() -> String {
 
 /// An input relation: `n` rows flat (`k` columns each), and hash indexes by key-column bitmask. `base`: read from
 /// the facts (or a view of them), not from a derived relation.
-pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, base: bool, types: Vec<u8>, stored: usize, idx: Mutex<HashMap<u64, Arc<Csr>>> }
+pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, base: bool, types: Vec<u8>, stored: usize, idx: Mutex<HashMap<u64, Arc<Csr>>>, chains: Vec<Index> }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
 /// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
 pub struct View { src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
@@ -816,7 +862,8 @@ impl RowRef<'_> {
 /// first row (`rep`) and its run (`start`, `len`). Two passes over the rows, no allocation per key.
 /// Over a view whose source indexes the one key column, the source's index serves (`source`), and nothing is built.
 /// Over an unfiltered view of a source with a sorted index (`sorted`), a probe is a slice of that index.
-pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool }
+/// Over a moved relation whose waves kept an index on the key columns (`chain`), a probe walks that index's chain.
+pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize> }
 impl Csr {
     fn build(rel: &InRel, cols: &[usize]) -> Csr {
         let key = |id: usize| cols.iter().map(move |&c| rel.at(id).at(c));
@@ -837,7 +884,7 @@ impl Csr {
             ids[(e.1 + e.2) as usize] = id as u32;
             e.2 += 1;
         }
-        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false }
+        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None }
     }
     /// `key` holds the values of `cols`, in order.
     fn get<'a>(&'a self, rel: &InRel, key: &[i64]) -> &'a [u32] {
@@ -928,6 +975,10 @@ unsafe impl VTabCursor for DerivedCursor {
     fn rowid(&self) -> Result<i64> { Ok(self.id as i64) }
 }
 impl InRel {
+    /// A component's relation at its fixpoint, its rows and indexes moved.
+    fn moved(rel: Rel) -> InRel {
+        InRel { k: rel.k, n: rel.n, rows: rel.data, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx }
+    }
     fn len(&self) -> usize { self.n }
     /// A flat relation's row (a derived one: views are base inputs only).
     fn row(&self, id: usize) -> &[i64] { &self.rows[id * self.k..][..self.k] }
@@ -941,12 +992,15 @@ impl InRel {
         idx.entry(mask).or_insert_with(|| {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
-            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted };
+            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None };
             let m = if cols.is_empty() {
                 empty(false, false)
+            } else if let Some(i) = self.chains.iter().position(|ix| ix.cols == cols) {
+                Csr { chain: Some(i), ..empty(false, false) }
             } else if let (Some(v), [c]) = (&self.view, cols) && v.ids.is_none() && v.eqs.is_empty() && v.src.sorted_rows(v.cols[*c], 0).is_some() {
                 empty(false, true)
-            } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) {
+            } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) && v.src.sorted_rows(v.cols[*c], 0).is_none() {
+                // (A source's lookup allocates each probe's rows; over a sorted source a filtered view builds its own.)
                 empty(true, false)
             } else {
                 Csr::build(self, cols)
@@ -984,7 +1038,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
         if let Some(view) = view(conn, &table, &cols) {
             let n = view.ids.as_ref().map_or(view.src.len(), Vec::len);
-            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
+            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new() });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
             if std::env::var_os("RDL_PROFILE").is_some() {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
@@ -1000,7 +1054,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms)?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
+    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new() });
     {
         let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
         l.0 += thread_cpu() - c0;
@@ -1050,7 +1104,7 @@ fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
 /// (`View`). A column's index is built on its first lookup. A table holding a non-integer value is not one.
 struct Stored { columns: Vec<String>, n: std::sync::OnceLock<usize>, values: Vec<std::sync::OnceLock<Vec<i64>>>, index: Vec<std::sync::OnceLock<Vec<u32>>> }
 impl Stored {
-    fn col(&self, c: usize) -> &[i64] { self.values[c].get().expect("a loaded column") }
+    fn col(&self, c: usize) -> &[i64] { self.values[c].get().map_or(&[], Vec::as_slice) }
     /// Column `c`'s rows ordered by value (4 bytes a row, no allocation per key); a value's rows are one run.
     fn index(&self, c: usize) -> &[u32] {
         self.index[c].get_or_init(|| {
@@ -1094,16 +1148,32 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     fn columns(&self) -> Vec<String> { self.columns.clone() }
     fn len(&self) -> usize { self.n.get().copied().unwrap_or(0) }
     fn estimated_matches(&self, _: usize, _: bool) -> usize { 1 }
-    /// Not for a join's probes (each lookup allocates its rows): a join builds its hash index once (`Csr`). A
-    /// view's constant filters still find their rows by `lookup`, once per filter.
-    fn indexed(&self, _: usize) -> bool { false }
+    /// For SQL over its vtab and a view's constant filters (`lookup`); a join probes the sorted index in place
+    /// (`sorted_rows`), or builds its own over a filtered view.
+    fn indexed(&self, _: usize) -> bool { true }
     fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
         let mut out: Vec<usize> = values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect();
         out.sort_unstable();
         Some(out)
     }
-    fn value(&self, row: usize, c: usize) -> i64 { self.col(c)[row] }
+    /// A column held nowhere (no rule names it, `columns_source`) reads as 0.
+    fn value(&self, row: usize, c: usize) -> i64 { self.col(c).get(row).copied().unwrap_or(0) }
     fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { Some(self.rows_of(c, v)) }
+}
+/// A relation held in memory as columns (`None`: a column no rule reads, which reads as 0), read in place: a
+/// probe on a column is a slice of its sorted index, built on first use.
+pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+    let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
+    let k = columns.len();
+    let t = Stored { columns, n: std::sync::OnceLock::new(), values: values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect(), index: (0..k).map(|_| std::sync::OnceLock::new()).collect() };
+    let _ = t.n.set(n);
+    Arc::new(t)
+}
+/// The table `schema.name` read once into memory, every column (`None`: not a table of integers).
+pub fn table_source(conn: &Connection, schema: &str, name: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+    let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{name}")).ok()?.column_names().into_iter().map(str::to_owned).collect();
+    let need: Vec<&str> = columns.iter().map(String::as_str).collect();
+    stored_table(conn, schema, name, &need)
 }
 /// The stored tables read this run, by database and `schema.table` (dropped with the inputs, `forget_inputs`).
 static STORED: LazyLock<Mutex<HashMap<(String, String), Option<Arc<Stored>>>>> = LazyLock::new(Default::default);
@@ -1297,6 +1367,10 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             match src {
                 Src::In(rel, ix) => {
                     if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
+                    else if let Some(i) = ix.chain {
+                        let index = &rel.chains[i];
+                        (Rows::In(rel), index.get(&rel.rows, rel.k, key).map_or(Cands::Slice(&[]), |p| Cands::Chain { head: p.head, next: &index.next, stop: 0 }))
+                    }
                     else if ix.sorted && let Some(v) = &rel.view { (Rows::Source(v), Cands::Slice(v.src.sorted_rows(v.cols[ix.cols[0]], key[0]).unwrap_or(&[]))) }
                     else if ix.source && let Some(v) = &rel.view { (Rows::Source(v), Cands::Owned(v.find(ix.cols[0], key[0]))) }
                     else { (Rows::In(rel), Cands::Slice(ix.get(rel, key))) }

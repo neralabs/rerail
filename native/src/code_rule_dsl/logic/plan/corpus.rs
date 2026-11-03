@@ -112,6 +112,28 @@ pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connect
 }
 
 /// CPU seconds (user + system) and peak RSS in MB of this process so far.
+/// The calling thread's CPU (user, system) seconds.
+pub(crate) fn thread_usage() -> (f64, f64) {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info: libc::thread_basic_info = unsafe { std::mem::zeroed() };
+        let mut count = (std::mem::size_of::<libc::thread_basic_info>() / std::mem::size_of::<libc::integer_t>()) as libc::mach_msg_type_number_t;
+        // SAFETY: THREAD_BASIC_INFO fills a `thread_basic_info` of `count` integers for this thread's port (the
+        // pthread's own, so no port right is taken).
+        let port = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
+        unsafe { libc::thread_info(port, libc::THREAD_BASIC_INFO as libc::thread_flavor_t, (&raw mut info).cast(), &mut count) };
+        let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
+        (t(info.user_time), t(info.system_time))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        (s(u.ru_utime), s(u.ru_stime))
+    }
+}
+
 pub(crate) fn usage() -> (f64, f64, f64) {
     let mut u: libc::rusage = unsafe { std::mem::zeroed() };
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
@@ -138,16 +160,19 @@ use std::collections::{BTreeMap, BTreeSet};
 /// bound as `binding`, and writes its outputs into `out` as T does. The store and its derived tables live in `out`.
 ///
 /// The program is split at its file-local relations (`typing::file_local::programs`, list step 29). Documents are
-/// taken in chunks of about `chunk_nodes` nodes: each chunk is parsed, bound and its file-local part run, and what the
-/// cross-file part reads (the exported relations, the base relations it reads) is appended to `cross.sqlite` in
-/// `out` (schema `x`); the chunk is then dropped. The cross-file part runs once, over `x`. Memory is one chunk's, and
-/// the cross-file part's own.
+/// taken in chunks of about `chunk_nodes` nodes, each built on a worker thread while the previous one runs (list
+/// step 24): its file-local part is run, the exported relations are appended to `cross.sqlite` in `out` (schema `x`),
+/// the base columns the cross-file part names are appended in memory, and the chunk is dropped. The cross-file part
+/// runs once, over the base relations held in memory and the exports read once from `x`, all bound in `main`. Memory
+/// is two chunks', the held base columns, and the cross-file part's own.
 pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
-    let mut last = usage();
+    // The main thread's CPU (the chunk builder's is its own, below) and the process's peak RSS.
+    let main_usage = || { let (u, s) = thread_usage(); (u, s, usage().2) };
+    let mut last = main_usage();
     let mut counted = 0;
     let mut phase = |name: &'static str, statements: usize| {
-        let now = usage();
+        let now = main_usage();
         let n = statements - counted;
         counted = statements;
         match phases.iter_mut().find(|p| p.0 == name) {
@@ -190,10 +215,11 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     // cross-file part with them and the chunks' totals.
     let t_stats = super::Stats::of_schema(&db, &lowered.program, "s")?;
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
-    // Each base relation the cross-file part reads is stored with the columns its rules name (and those decoding a
-    // finding's location reads): the others are never read.
+    // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
+    // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
+    // read back, 0.75 s on Python.)
     let decodes = cross.program.outputs.iter().any(|o| o == "finding");
-    let mut stored: Vec<(String, String)> = Vec::new();
+    let mut stored: Vec<(String, Vec<String>)> = Vec::new();
     for rel in &split.base {
         let cols = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
@@ -216,8 +242,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         if named.is_empty() {
             continue;
         }
-        db.execute_batch(&format!("CREATE TABLE x.{rel}({})", named.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", ")))?;
-        stored.push((rel.clone(), named.join(", ")));
+        stored.push((rel.clone(), named.iter().map(|c| (*c).to_owned()).collect()));
     }
     for rel in &split.exports {
         let width = lowered.program.decls[rel].len();
@@ -227,6 +252,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     phase("stats", statements.count());
     statements.enter("parse");
     let modules = Modules::default();
+    let mut base_rows: BTreeMap<String, (Vec<String>, Vec<Option<Vec<i64>>>)> = BTreeMap::new();
     let mut bound = BTreeSet::new();
     let mut totals = Totals::default();
     let (mut nodes, mut native, mut chunks) = (0, BTreeSet::new(), 0);
@@ -241,33 +267,77 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         }
         got.native
     };
-    let mut pending = Vec::new();
-    let mut pending_nodes = 0;
-    let mut at = docs.iter().peekable();
-    while at.peek().is_some() || !pending.is_empty() {
-        if let Some((d, path)) = at.next() {
+    // Chunk k+1 is built (read, parsed, `nearest` bound) on a worker thread while chunk k's file-local part runs
+    // (E12, list step 24): at most one chunk waits built, so memory is two chunks'. The worker's CPU is measured on its
+    // own thread and reported as `parse` and `batch`; the main thread's as the other phases.
+    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>);
+    let (send, chunks_in) = std::sync::mpsc::sync_channel::<Result<Chunk>>(1);
+    let (mut parse_cpu, mut batch_cpu) = ((0.0, 0.0), (0.0, 0.0));
+    let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64))> {
+    let worker = scope.spawn(|| {
+        let (mut parse, mut batch) = ((0.0, 0.0), (0.0, 0.0));
+        let add = |acc: &mut (f64, f64), from: (f64, f64)| {
+            let now = thread_usage();
+            acc.0 += now.0 - from.0;
+            acc.1 += now.1 - from.1;
+        };
+        let mut pending = Vec::new();
+        let mut pending_nodes = 0;
+        let mut at = docs.iter().peekable();
+        let mut t = thread_usage();
+        let build = |d: &i64, path: &String| -> Result<syntax::Document> {
             let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
             let facts = match core::build(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
                 Built::Facts(f) => Arc::new(f),
                 Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
             };
-            pending_nodes += facts.len();
-            pending.push(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts });
+            Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts })
+        };
+        while let Some((d, path)) = at.next() {
+            match build(d, path) {
+                Ok(doc) => {
+                    pending_nodes += doc.facts.len();
+                    pending.push(doc);
+                }
+                Err(e) => {
+                    let _ = send.send(Err(e));
+                    break;
+                }
+            }
             if pending_nodes < chunk_nodes && at.peek().is_some() {
                 continue;
             }
+            add(&mut parse, t);
+            t = thread_usage();
+            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, binding).map_err(|e| Error::Plan(e.to_string()));
+            add(&mut batch, t);
+            let n = std::mem::take(&mut pending_nodes);
+            if send.send(built.map(|sources| (n, sources))).is_err() {
+                break;
+            }
+            t = thread_usage();
         }
-        phase("parse", statements.count());
-        statements.enter("batch");
-        nodes += pending_nodes;
-        pending_nodes = 0;
-        chunks += 1;
-        let sources = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, binding).map_err(|e| Error::Plan(e.to_string()))?;
-        phase("batch", statements.count());
+        drop(send);
+        (parse, batch)
+    });
+    for built in chunks_in {
+        let (chunk_nodes_built, sources) = built?;
+        phase("wait", statements.count());
         statements.enter("local");
+        nodes += chunk_nodes_built;
+        chunks += 1;
         let mut stats = t_stats.clone();
         for (rel, source) in sources {
+            if let Some((_, names)) = stored.iter().find(|(r, _)| *r == rel) {
+                let have = source.columns();
+                let held = base_rows.entry(rel.clone()).or_insert_with(|| (have.clone(), vec![None; have.len()]));
+                for name in names {
+                    let c = have.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
+                    let col = held.1[c].get_or_insert_with(Vec::new);
+                    col.extend((0..source.len()).map(|r| source.value(r, c)));
+                }
+            }
             let measured = syntax::statistics(source.as_ref());
             if split.base.contains(&rel) && rel.starts_with("nearest_") {
                 totals.add(&rel, source.len(), &measured);
@@ -281,9 +351,6 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("local:{k}")));
         db.execute_batch("BEGIN")?;
-        for (rel, cols) in &stored {
-            db.execute_batch(&format!("INSERT INTO x.{rel} SELECT {cols} FROM main.{rel}"))?;
-        }
         for rel in &split.exports {
             // Rows another chunk wrote too (a file-local relation without a location column) are kept once. A kept
             // export goes from the engine to `x` in one statement and is measured in place; one a SQL stratum
@@ -309,23 +376,29 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         }
         crate::code_rule_dsl::logic::native::forget_inputs(&db);
         phase("local", statements.count());
-        statements.enter("parse");
+        statements.enter("wait");
     }
+    worker.join().map_err(|_| Error::Plan("the chunk builder panicked".to_owned()))
+    })?;
+    (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     statements.enter("stats");
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
     let mut cross_stats = t_stats;
     totals.apply(&mut cross_stats);
 
-    // Each input is read by one statement (a scan), so only decoding needs an index: `node` and `doc` by key.
-    for rel in stored.iter().map(|(r, _)| r).filter(|r| decodes && matches!(r.as_str(), "node" | "doc")) {
-        for (i, cols) in super::vtab_indexes(rel).iter().take(1).enumerate() {
-            db.execute_batch(&format!("CREATE INDEX x.{rel}_{i} ON {rel}({})", cols.join(", ")))?;
-        }
+    // The cross-file part reads every input in place from `main`: the base relations held in memory, and the
+    // exports, read from `x` once each.
+    for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
+        modules.bind(&db, &rel, crate::code_rule_dsl::logic::native::component::columns_source(columns, values))?;
+    }
+    for rel in &split.exports {
+        let source = crate::code_rule_dsl::logic::native::component::table_source(&db, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
+        modules.bind(&db, rel, source)?;
     }
     phase("stats", statements.count());
     statements.enter("cross");
     if !cross.program.rules.is_empty() {
-        let got = super::run_atoms_native_over(&cross, &db, "x", cross_stats, BTreeSet::new(), modes)?;
+        let got = super::run_atoms_native_over(&cross, &db, "main", cross_stats, BTreeSet::new(), modes)?;
         native.extend(gather(got, &mut outputs, &mut node_columns, &|_| true).into_iter().map(|k| format!("cross:{k}")));
     }
     phase("cross", statements.count());
@@ -356,6 +429,9 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         rows.insert(rel.clone(), decoded.len());
     }
     phase("write", statements.count());
+    let rss = usage().2;
+    phases.insert(1, ("parse (worker)", parse_cpu.0, parse_cpu.1, rss, 0));
+    phases.insert(2, ("batch (worker)", batch_cpu.0, batch_cpu.1, rss, 0));
     Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks })
 }
 

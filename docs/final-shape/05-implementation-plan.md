@@ -464,12 +464,19 @@ Measured at load 13–17, with `nearest` on the CPU binding.
 
 Most of the chunks' statements are now one copy of each export into `x` per chunk (30 on Python). The rest are the tables SQL strata need.
 
-What is left, measured:
-- **Base copies into `x`:** about 0.5 s of CPU on Python (`node` 184 ms, `child` 155 ms, `nearest_fdef` 97 ms, `field` 77 ms), and about 0.25 s to read them back. That is option (a)'s price. Keeping the stored columns in memory instead would cost about 120 MB. That is the user's decision, and it is not taken here.
-- **Index rebuilds:** the local strata build hash indexes on each derived relation that a later component joins. The component already kept a per-column index of those rows while deriving them (`Rel::idx`), but `DERIVED` copies the rows (`rel.data.clone()`) instead of moving them with their indexes.
-- **Parsing:** 1.2 s.
-- **Statistics as text:** the set engine's `stats` is still a text line that the planner parses.
-- **`write` mode:** unused by the planner, but it still inserts one row per statement.
+What was left, and how each was closed (2026-11-03, the user's choice for the first):
+- **Base relations in memory, not in `x`.** Each chunk appends the base columns the cross rules name to columns held in memory (`corpus::run`, `base_rows`). After the last chunk they are bound as the base vtabs (`native::component::columns_source`). Each export is read from `x` once (`table_source`) and bound beside them. The cross pass then reads everything in place from `main`, with no copy into `x` and no read-back (was 0.75 s on Python). Memory optimizing comes after CPU.
+- **Relations move with their indexes.** At a component's `close`, its relations move into `DERIVED` (`InRel::moved`) together with the per-column hash indexes their waves kept (`InRel::chains`). Before, the rows were cloned at the fixpoint and every later probe rebuilt an index (`Csr`). A probe on a kept index walks its chain. On Python, index building fell from 523 to 273 ms.
+- **Live statistics and step counts as values.** The planner reads the engine's live statistics as values (`setfix::live`, `step_counts`, `LiveRel`) when it is in process. The text lines remain only for T's extension over SQL (text symbols).
+- **`write` mode** inserts many rows per statement.
+- **A probe's delta is priced by its live size,** not the corpus-pass floor (`atom_rows`).
+- **Parsing** is tree-sitter itself (about 55% of the phase's samples) and building the tape. It now overlaps the chunks' runs (list step 24, below).
+
+- **List step 24 (2026-11-03): chunk k+1's preparation overlaps chunk k's run (E12).**
+  - **What moved:** a worker thread reads, parses and binds `nearest` for each chunk (`syntax::with_nearest`). It hands the built chunk to the main thread over a channel bounded at one, so at most one chunk waits built and memory is two chunks'.
+  - **How CPU is counted:** each thread measures its own CPU (`corpus::thread_usage`, Mach `thread_info` on macOS). The worker's is reported as `parse (worker)` and `batch (worker)`, the main thread's as the other phases, and `wait` is the main thread's time blocked on the channel.
+  - **Results:** on Python and on Rust, `wait` is 0.00 s, so the main thread never waits for a chunk. Rust ran in 4.42 s wall for 5.22 s user CPU. Outputs are identical (Python, Rust, and the fixture with `--chunk 200`).
+  - **Memory cost:** peak RSS rose to 446 MB on Python and 410 MB on Rust, because a built chunk waits while the current one runs. That is the open memory item.
 
 ### Phase 7: SQL-driven waves (§4, §7; E1, E12, E14)
 
