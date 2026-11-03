@@ -206,11 +206,16 @@ pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]
         let mut seeds = Vec::new();
         let mut covered = true;
         for literal in &rule.body {
-            let Literal::Ast { document, node, matcher } = literal else {
+            let Literal::Ast { document, node, matcher, captures } = literal else {
                 lowered_body.push(literal.clone());
                 demand_body.push(literal.clone());
                 continue;
             };
+            // The wave's `match(i, $D, $N)` carries no captures (O60): a rule reading them stays out.
+            if !captures.is_empty() {
+                covered = false;
+                break;
+            }
             let found = by_matcher.get(matcher).and_then(|found| {
                 found
                     .iter()
