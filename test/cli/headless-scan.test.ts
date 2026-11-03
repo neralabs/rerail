@@ -91,6 +91,11 @@ describe("headless rerail scan", () => {
     expect(report.violations).toEqual([expect.objectContaining({ ruleId: "needle", mode: "steer", path: "a.py" })]);
   });
 
+  it("refuses a --rules-ref that is not a commit rather than scanning with no rules", async () => {
+    const root = checkout();
+    await expect(scan(root, { rulesRef: "mian" })).rejects.toThrow("--rules-ref mian is not a commit");
+  });
+
   it("scans only what changed since the merge base with --base, and only the paths asked for", async () => {
     const root = checkout();
     git(root, "checkout", "--quiet", "-b", "feature");

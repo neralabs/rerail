@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describeScan, runHeadlessScan } from "./headless-scan.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
+import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { daemonEndpoint, findRunningDaemon, type DaemonEndpoint } from "../runtime/daemon-control.js";
 
 import {
@@ -231,7 +232,9 @@ async function runHeadlessScanCommand(args: readonly string[], options: AuditCli
   const scope = auditRequestScope(values.get("--scope")) ?? "repository";
   const base = values.get("--base");
   const rulesRef = values.get("--rules-ref");
+  const ruleDocuments = new Map<string, RuleDocument>();
   const report = await runHeadlessScan({
+    ruleDocuments,
     repo: values.get("--repo") ?? process.cwd(),
     scope,
     packs,
@@ -242,8 +245,14 @@ async function runHeadlessScanCommand(args: readonly string[], options: AuditCli
   });
   print(options, flags.has("--json"), report, describeScan(report));
   // Internal testing: with a remote added, the report goes to it too (the daemon or `rerail remote push` sends it).
-  if (!flags.has("--no-send") && report.status === "completed" && new RemoteOutbox({ home: options.home }).queueScan(report))
-    process.stderr.write("rerail: scan queued for this machine's remotes\n");
+  if (!flags.has("--no-send") && report.status === "completed") {
+    try {
+      if (new RemoteOutbox({ home: options.home }).queueScan(report, ruleDocuments)) process.stderr.write("rerail: scan queued for this machine's remotes\n");
+    } catch (error) {
+      // The scan itself succeeded; a remote configuration that cannot be read does not change its exit code.
+      process.stderr.write(`rerail: scan not queued for remotes: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
   if (report.status !== "completed") return 1;
   return flags.has("--fail-on-violations") && report.violations.length > 0 ? SCAN_VIOLATIONS_EXIT : 0;
 }

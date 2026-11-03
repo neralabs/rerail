@@ -6,7 +6,8 @@
 
 `rerail scan` without `--session` scans a checkout in its own process, with no daemon, no session and nothing set up
 first, so it runs in CI. It prints one JSON document with `--json` (the `rerail.scan/1` shape below), or one line per
-violation and a summary without it. The scan records nothing in the Rerail database's history.
+violation and a summary without it. The scan adds nothing to the Rerail database's session history. With a
+[remote](remote-sink.md) added, a completed scan is queued for it (`--no-send` keeps it local).
 
 ```sh
 rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]...

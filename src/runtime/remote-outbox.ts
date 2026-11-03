@@ -40,6 +40,8 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const MIN_BACKOFF_MS = 2_000;
 export const MAX_BACKOFF_MS = 5 * 60_000;
 const LOCK_TTL_MS = 2 * 60_000;
+/** Records one sync may skip because the remote refused each alone (400/413) before it backs off instead. */
+const MAX_SKIPPED_RECORDS_PER_SYNC = 3;
 /** `events.payload_json` of a payload only `node:v8` could store: it has no JSON form to send. */
 const V8_ONLY_PAYLOAD = JSON.stringify({ encoding: "node:v8" });
 
@@ -80,6 +82,15 @@ export interface SyncResult {
   readonly error?: string;
   /** Nothing was attempted: another process holds this remote's lock, or its backoff has not passed. */
   readonly skipped?: "locked" | "backoff" | "no-token";
+}
+
+export interface SyncOptions {
+  /** Ignore the backoff (`rerail remote push`). */
+  readonly force?: boolean;
+  readonly maxBatches?: number;
+  readonly batchBytes?: number;
+  /** Stops between batches and aborts a request in flight (the daemon closing). */
+  readonly signal?: AbortSignal;
 }
 
 export interface OutboxOptions {
@@ -170,11 +181,20 @@ class BatchBuilder {
   bytes = 0;
   full = false;
   readonly oversized: OutboxRecord[] = [];
+  /** `stream\0id` of every record taken, so a rule many audits name goes in once. */
+  readonly ids = new Set<string>();
 
-  constructor(readonly budget: number) {}
+  #sendable = 0;
+
+  /** `maxSendable`: at most this many records that go out (narrowing down a record the remote refuses). */
+  constructor(readonly budget: number, readonly maxSendable: number = Number.POSITIVE_INFINITY) {}
 
   /** False once the batch is full: the caller stops collecting. */
   add(item: OutboxRecord): boolean {
+    if (item.line !== "" && this.#sendable >= this.maxSendable) {
+      this.full = true;
+      return false;
+    }
     const size = Buffer.byteLength(item.line) + 1;
     if (size > this.budget) {
       this.oversized.push(item);
@@ -185,6 +205,8 @@ class BatchBuilder {
       return false;
     }
     this.records.push(item);
+    if (item.line !== "") this.#sendable += 1;
+    this.ids.add(`${item.stream}\0${item.id}`);
     this.bytes += size;
     return true;
   }
@@ -203,10 +225,17 @@ export class RemoteOutbox {
   }
 
   /** Queues a headless scan report (`rerail.scan/1`) for every remote; false when no remote would receive it. */
-  queueScan(report: { scanId: string; repository: { key: string }; rules: ReadonlyArray<{ ruleId: string; payloadHash: string }>; checkout: { path: string } }): boolean {
+  queueScan(
+    report: { scanId: string; repository: { key: string }; rules: ReadonlyArray<{ ruleId: string; payloadHash: string }>; checkout: { path: string } },
+    /** Rule documents found nowhere else later (a `--rules-ref` scan's), by payload hash; kept with the scan. */
+    documents: ReadonlyMap<string, RuleDocument> = new Map(),
+  ): boolean {
     const config = readRemoteConfig(this.#home);
     if (config.remotes.length === 0 || config.excludedRepositories.includes(report.repository.key)) return false;
-    const rules = report.rules.map(rule => ({ ruleId: rule.ruleId, payloadHash: rule.payloadHash, checkoutPath: report.checkout.path }));
+    const rules = report.rules.map(rule => ({
+      ruleId: rule.ruleId, payloadHash: rule.payloadHash, checkoutPath: report.checkout.path,
+      ...(documents.has(rule.payloadHash) ? { document: documents.get(rule.payloadHash) } : {}),
+    }));
     const state = openState(this.#home);
     try {
       state.prepare("INSERT OR REPLACE INTO scans (scan_id, repository_key, document_json, rules_json, queued_at) VALUES (?, ?, ?, ?, ?)")
@@ -254,12 +283,40 @@ export class RemoteOutbox {
    * Sends every remote what it lacks, batch after batch, until it is caught up, an attempt fails, or `maxBatches` is
    * reached. `force` ignores the backoff (`rerail remote push`). Never throws for a remote's failure; it is recorded.
    */
-  async sync(options: { force?: boolean; maxBatches?: number; batchBytes?: number } = {}): Promise<SyncResult[]> {
+  async sync(options: SyncOptions = {}): Promise<SyncResult[]> {
     const config = readRemoteConfig(this.#home);
     if (config.remotes.length === 0) return [];
     const results: SyncResult[] = [];
-    for (const remote of config.remotes) results.push(await this.#syncRemote(remote, config.excludedRepositories, options));
+    for (const remote of config.remotes) {
+      if (options.signal?.aborted === true) break;
+      results.push(await this.#syncRemote(remote, config.excludedRepositories, options));
+    }
+    this.#pruneScans(config.remotes.map(remote => remote.name));
     return results;
+  }
+
+  /** Drops the outbox's state for a remote that was removed, so one added later under its name starts from nothing. */
+  forget(name: string): void {
+    const state = openState(this.#home);
+    try {
+      state.transaction(() => {
+        for (const table of ["cursors", "sent", "pending_gaps", "status", "locks"]) state.prepare(`DELETE FROM ${table} WHERE remote = ?`).run(name);
+      })();
+    } finally {
+      state.close();
+    }
+  }
+
+  /** Queued scans every current remote has acknowledged are done with. */
+  #pruneScans(remotes: readonly string[]): void {
+    const state = openState(this.#home);
+    try {
+      const placeholders = remotes.map(() => "?").join(", ");
+      state.prepare(`DELETE FROM scans WHERE scan_id IN (
+        SELECT id FROM sent WHERE stream = 'scan' AND remote IN (${placeholders}) GROUP BY id HAVING count(DISTINCT remote) = ?)`).run(...remotes, remotes.length);
+    } finally {
+      state.close();
+    }
   }
 
   #openRerail(): Database.Database | undefined {
@@ -270,7 +327,7 @@ export class RemoteOutbox {
     return database;
   }
 
-  async #syncRemote(remote: RemoteEntry, excluded: readonly string[], options: { force?: boolean; maxBatches?: number; batchBytes?: number }): Promise<SyncResult> {
+  async #syncRemote(remote: RemoteEntry, excluded: readonly string[], options: SyncOptions): Promise<SyncResult> {
     const token = readRemoteToken(remote.name, this.#home);
     if (token === undefined) return { remote: remote.name, batches: 0, records: 0, skipped: "no-token" };
     const state = openState(this.#home);
@@ -287,20 +344,39 @@ export class RemoteOutbox {
         const rerail = this.#openRerail();
         try {
           const rules = new RuleDocuments(rerail);
+          const budget = options.batchBytes ?? MAX_BATCH_BYTES;
+          let maxSendable = Number.POSITIVE_INFINITY;
+          let skipped = 0;
           for (let index = 0; index < (options.maxBatches ?? 50); index += 1) {
-            const batch = this.#collect(state, rerail, rules, remote, excluded, options.batchBytes ?? MAX_BATCH_BYTES);
+            if (options.signal?.aborted === true) break;
+            const batch = this.#collect(state, rerail, rules, remote, excluded, budget, maxSendable);
             if (batch.records.length === 0 && batch.oversized.length === 0) break;
-            if (batch.records.every(item => item.line === "")) {
+            const sendable = batch.records.filter(item => item.line !== "").length;
+            if (sendable === 0) {
               // Only opted-out events and records too large to send: nothing goes out, the cursor moves past them.
               this.#acknowledge(state, remote.name, batch.records, batch.oversized, undefined);
               continue;
             }
-            const outcome = await this.#post(remote, token, batch.records);
-            this.#lock(state, remote.name);
+            const outcome = await this.#post(remote, token, batch.records, options.signal);
+            if (!this.#lock(state, remote.name)) return { remote: remote.name, batches, records, skipped: "locked" };
+            if (outcome.kind === "rejected" && sendable > 1) {
+              // Find the record the remote refuses before giving anything up: halve the batch and send again.
+              maxSendable = Math.max(1, Math.floor(sendable / 2));
+              continue;
+            }
             if (outcome.kind === "accepted" || outcome.kind === "rejected") {
               this.#acknowledge(state, remote.name, batch.records, batch.oversized, outcome.kind === "rejected" ? outcome.error : undefined);
               batches += 1;
               records += batch.records.length;
+              maxSendable = Number.POSITIVE_INFINITY;
+              if (outcome.kind === "rejected") {
+                skipped += 1;
+                // A remote that refuses record after record is broken, not this data: stop, and try again later.
+                if (skipped >= MAX_SKIPPED_RECORDS_PER_SYNC) {
+                  this.#recordFailure(state, remote.name, configHash, outcome.error, false);
+                  return { remote: remote.name, batches, records, error: outcome.error };
+                }
+              }
               this.#recordSuccess(state, remote.name, configHash, batch.records.length, outcome.kind === "rejected" ? outcome.error : null);
               continue;
             }
@@ -331,8 +407,11 @@ export class RemoteOutbox {
     return result.changes > 0;
   }
 
-  #collect(state: Database.Database, rerail: Database.Database | undefined, rules: RuleDocuments, remote: RemoteEntry, excluded: readonly string[], budget: number): BatchBuilder {
-    const batch = new BatchBuilder(budget - 1024);
+  #collect(
+    state: Database.Database, rerail: Database.Database | undefined, rules: RuleDocuments, remote: RemoteEntry, excluded: readonly string[],
+    budget: number, maxSendable: number,
+  ): BatchBuilder {
+    const batch = new BatchBuilder(budget - 1024, maxSendable);
     const sent = new Map<string, string>();
     for (const row of state.prepare("SELECT stream, id, hash FROM sent WHERE remote = ?").all(remote.name) as Array<{ stream: string; id: string; hash: string }>)
       sent.set(`${row.stream}\0${row.id}`, row.hash);
@@ -369,7 +448,7 @@ export class RemoteOutbox {
       if (isExcluded(scan.repository_key)) continue;
       const item: OutboxRecord = { line: JSON.stringify({ type: "scan", id: scan.scan_id, ...(JSON.parse(scan.document_json) as Json) }), stream: "scan", id: scan.scan_id, hash: "queued" };
       if (!unsent(item)) continue;
-      for (const rule of JSON.parse(scan.rules_json) as Array<{ ruleId: string; payloadHash: string; checkoutPath: string }>) {
+      for (const rule of JSON.parse(scan.rules_json) as Array<{ ruleId: string; payloadHash: string; checkoutPath: string; document?: RuleDocument }>) {
         if (!this.#addRule(rules, rule, batch, unsent)) return batch;
       }
       if (!batch.add(item)) return batch;
@@ -445,16 +524,21 @@ export class RemoteOutbox {
     }
   }
 
-  #addRule(rules: RuleDocuments, provenance: { ruleId: string; payloadHash: string; checkoutPath: string }, batch: BatchBuilder, unsent: (item: OutboxRecord) => boolean): boolean {
+  #addRule(
+    rules: RuleDocuments,
+    provenance: { ruleId: string; payloadHash: string; checkoutPath: string; document?: RuleDocument },
+    batch: BatchBuilder,
+    unsent: (item: OutboxRecord) => boolean,
+  ): boolean {
     const probe: OutboxRecord = { line: "", stream: "rule", id: provenance.payloadHash, hash: provenance.payloadHash };
-    if (!unsent(probe) || batch.records.some(item => item.stream === "rule" && item.id === provenance.payloadHash)) return true;
-    const document = rules.find(provenance);
+    if (!unsent(probe) || batch.ids.has(`rule\0${provenance.payloadHash}`)) return true;
+    const document = provenance.document ?? rules.find(provenance);
     if (document === undefined) return true;
     const mode = document.kind === "code" ? (document.rule as { mode?: string }).mode ?? null : null;
     return batch.add(record("rule", provenance.payloadHash, { ruleId: provenance.ruleId, kind: document.kind, mode, document: document.rule }, { hash: provenance.payloadHash }));
   }
 
-  async #post(remote: RemoteEntry, token: string, records: readonly OutboxRecord[]): Promise<
+  async #post(remote: RemoteEntry, token: string, records: readonly OutboxRecord[], stop?: AbortSignal): Promise<
     { kind: "accepted" } | { kind: "rejected"; error: string } | { kind: "unauthorized"; error: string } | { kind: "retry"; error: string }
   > {
     const header = {
@@ -473,7 +557,7 @@ export class RemoteOutbox {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/x-ndjson" },
         body: `${lines.join("\n")}\n`,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: stop === undefined ? AbortSignal.timeout(REQUEST_TIMEOUT_MS) : AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), stop]),
       });
     } catch (error) {
       return { kind: "retry", error: error instanceof Error ? error.message : String(error) };
@@ -494,7 +578,9 @@ export class RemoteOutbox {
       if (sequence > 0) state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, 'event', ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)").run(remote, sequence);
       const upsert = state.prepare("INSERT INTO sent (remote, stream, id, hash) VALUES (?, ?, ?, ?) ON CONFLICT (remote, stream, id) DO UPDATE SET hash = excluded.hash");
       for (const item of [...records, ...oversized]) if (item.hash !== undefined) upsert.run(remote, item.stream, item.id, item.hash);
-      state.prepare("DELETE FROM pending_gaps WHERE remote = ?").run(remote);
+      const sentGap = state.prepare("DELETE FROM pending_gaps WHERE remote = ? AND id = ?");
+      // Only the gaps this batch carried: a rejected one is reported again inside the new gap's records.
+      for (const item of records) if (item.stream === "gap" && item.sequence === undefined) sentGap.run(remote, item.id);
       const addGap = state.prepare("INSERT OR REPLACE INTO pending_gaps (remote, id, record_json) VALUES (?, ?, ?)");
       for (const item of oversized) {
         const id = `${machine}:too-large:${item.stream}:${item.id}`;
@@ -627,10 +713,11 @@ export function startRemoteSink(options: OutboxOptions & { intervalMs?: number; 
   const log = options.log ?? (line => process.stderr.write(line));
   let running: Promise<void> | undefined;
   let stopped = false;
+  const abort = new AbortController();
   const lastErrors = new Map<string, string>();
   const tick = (): void => {
     if (stopped || running !== undefined) return;
-    running = outbox.sync().then(results => {
+    running = outbox.sync({ signal: abort.signal }).then(results => {
       for (const result of results) {
         // Each new error once, and its recovery, not every retry.
         if (result.error !== undefined && lastErrors.get(result.remote) !== result.error) log(`rerail daemon: remote ${result.remote}: ${result.error}\n`);
@@ -639,7 +726,9 @@ export function startRemoteSink(options: OutboxOptions & { intervalMs?: number; 
         else if (result.skipped === undefined) lastErrors.delete(result.remote);
       }
     }, (error: unknown) => {
-      log(`rerail daemon: remote sink: ${error instanceof Error ? error.message : String(error)}\n`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (lastErrors.get("") !== message) log(`rerail daemon: remote sink: ${message}\n`);
+      lastErrors.set("", message);
     }).finally(() => { running = undefined; });
   };
   const timer = setInterval(tick, options.intervalMs ?? 10_000);
@@ -649,6 +738,7 @@ export function startRemoteSink(options: OutboxOptions & { intervalMs?: number; 
     async stop() {
       stopped = true;
       clearInterval(timer);
+      abort.abort();
       await running;
     },
   };

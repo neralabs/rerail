@@ -19,6 +19,8 @@ rerail remote exclude [--repo <dir>]
 rerail remote include [--repo <dir>]
 ```
 
+- **`remove`** deletes the remote's token and what the outbox knew of it: a remote added later under the same name
+  starts from nothing and receives everything again.
 - **`add`** takes the URL (HTTPS; plain HTTP only to `localhost`) and the bearer token the service gave this machine,
   from standard input or a file, never on the command line. The name defaults to the URL's host. A new remote
   receives what the database already holds first, then everything new.
@@ -79,8 +81,8 @@ Answers:
 | Status | Rerail |
 | --- | --- |
 | `200` | The batch is stored: the cursor moves past it. |
-| `400`, `413` | Will never be stored: Rerail skips it and sends a `gap` (`stream: "batch"`, the event range and the other records) in the next batch. |
-| `401`, `403` | Waits five minutes, or until the remote is added again with a new token. |
+| `400`, `413` | Rerail halves the batch and sends again, until it finds the one record the remote refuses on its own. That record is skipped and a `gap` (`stream: "batch"`, its event sequence or its stream and id) goes in the next batch. After three such records in one round, Rerail stops and retries later with backoff instead, so a remote that refuses everything does not empty the queue. |
+| `401`, `403` | Waits five minutes, or until the remote is removed and added again with a new token (`rerail remote remove`, then `add`). |
 | anything else, timeouts, network errors | Retries the same batch, waiting 2 s, then doubling to at most five minutes. |
 
 **Gaps.** Rerail says what it could not send rather than leaving a hole: events deleted before they were sent (`rerail

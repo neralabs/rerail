@@ -1,7 +1,8 @@
 /**
  * Internal testing: the headless `rerail scan` (no `--session`). It audits one checkout in this process, with no daemon
  * and no session, and reports a stable JSON document (`rerail.scan/1`, docs/headless-scan.md) a CI job or another tool
- * can read. Nothing is written to the Rerail database's history: the audit is recorded in memory.
+ * can read. Nothing is added to the Rerail database's session history: the audit is recorded in memory. (With the
+ * home's configuration it opens that database as the daemon would, which applies this version's schema to it.)
  *
  * Which rules run:
  * - The Rerail home's configuration for the checkout, when Rerail is started and set up in it there (packs attached,
@@ -24,6 +25,7 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { setRuleSetting, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { parseRuleDocument } from "../engine/catalog/rule-documents.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
+import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import type { CodeRuleViolation } from "../engine/code-rule/code-rule.js";
@@ -107,6 +109,11 @@ export interface HeadlessScanOptions {
   version: string;
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`. */
   databasePath?: string;
+  /**
+   * Filled with the documents of the rules read from `rulesRef`, by payload hash: they exist nowhere else afterwards,
+   * so a remote that receives the scan gets them from here.
+   */
+  ruleDocuments?: Map<string, RuleDocument>;
 }
 
 function git(cwd: string, args: readonly string[]): string {
@@ -132,21 +139,20 @@ function diffPaths(root: string, against: string): string[] {
   return [...new Set([...changed, ...untracked])].sort((left, right) => left.localeCompare(right));
 }
 
-/** The rule documents in `.rerail/rules/` at `ref`, by file name. Only code rules are kept. */
+/**
+ * The rule documents in `.rerail/rules/` at `ref`, by file name; none when the commit has no such folder. Only code
+ * rules are kept. A ref that is not a commit throws: a typo must not pass as a scan with no rules.
+ */
 function rulesAtRef(root: string, ref: string): Array<{ name: string; document: unknown }> {
   const resolved = gitMaybe(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
   if (resolved === null) throw new Error(`--rules-ref ${ref} is not a commit in ${root}`);
+  if (runGit(root, ["cat-file", "-e", `${resolved}:${WORKTREE_RULES_FOLDER}`]).status !== 0) return [];
   const names = nulList(git(root, ["ls-tree", "-z", "--name-only", `${resolved}:${WORKTREE_RULES_FOLDER}`]).replace(/\n/gu, "\0"));
   return names.filter(name => name.endsWith(".json")).sort().flatMap(name => {
     const text = git(root, ["show", `${resolved}:${WORKTREE_RULES_FOLDER}/${name}`]);
     const parsed = parseRuleDocument(parseJsonWithoutDuplicateKeys(text, `${ref}:${WORKTREE_RULES_FOLDER}/${name}`), name);
     return parsed.kind === "code" ? [{ name, document: parsed.rule }] : [];
   });
-}
-
-/** Whether `rules-ref` has a rules folder at all; a ref without one runs no worktree rules. */
-function hasRulesFolder(root: string, ref: string): boolean {
-  return runGit(root, ["cat-file", "-e", `${ref}:${WORKTREE_RULES_FOLDER}`]).status === 0;
 }
 
 /** Home database eligibility: recorded, started and set up. Read-only; an absent file is not eligible. */
@@ -167,7 +173,9 @@ function homeIsEligible(databasePath: string, root: string): boolean {
 }
 
 /** Sets up `root` in a throwaway database: its repository started and set up with `packs` and the ref's rules. */
-function prepareScratchDatabase(databasePath: string, root: string, packs: readonly string[], rulesRef: string | undefined): Set<string> {
+function prepareScratchDatabase(
+  databasePath: string, root: string, packs: readonly string[], rulesRef: string | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
+): Set<string> {
   const refRuleIds = new Set<string>();
   const database = openRerailDatabase(databasePath);
   try {
@@ -175,12 +183,13 @@ function prepareScratchDatabase(databasePath: string, root: string, packs: reado
     const libraryRules: Array<{ sourceKind: "library_rule"; sourceId: string; folder: string }> = [];
     if (rulesRef !== undefined) {
       const catalog = loadRuleCatalog();
-      const documents = hasRulesFolder(root, rulesRef) ? rulesAtRef(root, rulesRef) : [];
+      const documents = rulesAtRef(root, rulesRef);
       for (const { document } of documents) {
         const stored = upsertLibraryRule(database, catalog, document, "code");
         const ruleId = stored.document.rule.id;
         approve(database, ruleSubject(ruleId, stored.payloadHash));
         refRuleIds.add(ruleId);
+        ruleDocuments?.set(stored.payloadHash, stored.document);
         libraryRules.push({ sourceKind: "library_rule", sourceId: ruleId, folder: "" });
       }
     }
@@ -261,7 +270,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   if (previousStore === undefined || previousStore === "") process.env.RERAIL_CONTENT_STORE_PATH = join(scratch, "content.sqlite");
   try {
     const databasePath = useHome ? homeDatabase : join(scratch, "rerail.sqlite");
-    const refRuleIds = useHome ? new Set<string>() : prepareScratchDatabase(databasePath, root, options.packs, options.rulesRef);
+    const refRuleIds = useHome ? new Set<string>() : prepareScratchDatabase(databasePath, root, options.packs, options.rulesRef, options.ruleDocuments);
     const repository = repositoryOf(databasePath, root);
 
     let base: ScanReport["base"] = null;

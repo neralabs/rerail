@@ -96,6 +96,7 @@ export async function runRemoteCommand(args: readonly string[], options: RemoteC
     if (target === undefined || extra.length > 0) throw new Error(`rerail remote remove takes one name or URL\nUsage: ${USAGE}`);
     const removed = removeRemote(target, options.home);
     if (removed === undefined) throw new Error(`No remote named ${target}`);
+    outbox.forget(removed.name);
     out.write(`Removed remote ${removed.name}; its token is deleted.\n`);
     return 0;
   }

@@ -171,16 +171,38 @@ describe("remote sink outbox", () => {
     expect(records.filter(item => item.type === "event")).toHaveLength(2);
   });
 
-  it("skips a batch the remote rejects and tells it what is missing in the next", async () => {
+  it("narrows a refused batch down to the one record the remote refuses, skips only it, and reports it", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const machine = machineId(home);
+    sink.refuseWhen(records => records.some(item => item.id === `${machine}:3`));
+    const [result] = await outbox().sync({ force: true });
+    expect(result!.error).toBeUndefined();
+    const stored = storedRecords(sink);
+    expect(stored.filter(item => item.type === "event").map(item => item.id)).toEqual([1, 2, 4].map(sequence => `${machine}:${sequence}`));
+    expect(stored.find(item => item.type === "gap")).toMatchObject({ stream: "batch", fromSequence: 3, toSequence: 3, reason: expect.stringMatching(/400/u) });
+  });
+
+  it("stops and backs off when the remote refuses record after record, instead of emptying the queue", async () => {
     seed();
     addRemote({ url: sink.url, token: "test-token", content: true }, home);
     sink.respondWith(400);
-    await outbox().sync({ force: true, maxBatches: 1 });
-    sink.respondWith(200);
+    const [result] = await outbox().sync({ force: true });
+    expect(result!.error).toMatch(/400/u);
+    expect(outbox().status()[0]).toMatchObject({ consecutiveFailures: 1 });
+    expect(outbox().status()[0]!.pendingEvents).toBeGreaterThan(0);
+  });
+
+  it("starts a remote added again under a removed one's name from nothing", async () => {
+    seed();
+    const stdout = { write: () => true };
+    addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
     await outbox().sync({ force: true });
-    const gap = storedRecords(sink).find(item => item.type === "gap");
-    expect(gap).toMatchObject({ stream: "batch", fromSequence: 1, toSequence: 4, reason: expect.stringMatching(/400/u) });
-    expect(storedRecords(sink).filter(item => item.type === "event")).toEqual([]);
+    await runRemoteCommand(["remove", "team"], { home, stdout });
+    addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    expect(sink.requests[1]!.records.filter(item => item.type === "event")).toHaveLength(4);
   });
 
   it("queues a headless scan for every remote and sends it as a scan record", async () => {
@@ -189,6 +211,10 @@ describe("remote sink outbox", () => {
     expect(outbox().queueScan(report)).toBe(true);
     await outbox().sync({ force: true });
     expect(storedRecords(sink)).toEqual([expect.objectContaining({ type: "scan", id: "scan-1", schema: "rerail.scan/1" })]);
+    // Every remote has it: the outbox lets it go.
+    const state = new Database(join(home, "remote-outbox.sqlite"), { readonly: true });
+    expect(state.prepare("SELECT count(*) AS n FROM scans").get()).toEqual({ n: 0 });
+    state.close();
     setRepositoryExcluded(REPOSITORY, true, home);
     expect(outbox().queueScan({ ...report, scanId: "scan-2" })).toBe(false);
   });
