@@ -3,7 +3,9 @@ import { chmod, lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { chooseEngineSocketPath, preparePrivateDirectory, startEngineService } from "../../src/runtime/engine-service.js";
+import { chooseEngineSocketPath, ingestEngineEvent, preparePrivateDirectory, startEngineService } from "../../src/runtime/engine-service.js";
+import { testEmbedder } from "../support/hook-events.js";
+import { startTestRepository } from "../support/started-repository.js";
 
 describe.runIf(process.platform !== "win32")("engine service socket directory", () => {
   const roots: string[] = [];
@@ -54,6 +56,43 @@ describe.runIf(process.platform !== "win32")("engine service socket directory", 
     const socketPath = join(link, "engine.sock");
     await expect(startEngineService({ socketPath, storageRoot: join(root, "state") })).rejects.toThrow(/is a link or not a directory/u);
     expect(existsSync(join(directory, "engine.sock"))).toBe(false);
+  });
+
+  it("refuses an event without its capability before anything is written where the event asks", async () => {
+    const root = await temporaryRoot();
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const socketPath = join(root, "socket", "engine.sock");
+    const service = await startEngineService({
+      socketPath,
+      storageRoot: join(root, "state"),
+      databasePath: join(root, "rerail.sqlite"),
+      embedder: testEmbedder,
+      accessToken: "capability",
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    // What a process that reaches the socket but not the Rerail home would ask the daemon, which runs unsandboxed, to do.
+    const elsewhere = join(root, "elsewhere");
+    const redirected = {
+      storageRoot: join(elsewhere, "sessions"),
+      modelPath: join(elsewhere, "model"),
+      databasePath: join(elsewhere, "rerail.sqlite"),
+      workspaceRoot: root,
+    };
+    const start = { kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "s", cwd: root } } as const;
+    try {
+      for (const endpoint of [{ socketPath }, { socketPath, accessToken: "not-the-capability" }]) {
+        await expect(ingestEngineEvent(endpoint, start, redirected)).rejects.toThrow(/\(401\).*engine-access-required/u);
+      }
+      expect(existsSync(elsewhere)).toBe(false);
+      await expect(ingestEngineEvent({ socketPath, accessToken: "capability" }, start)).resolves.toEqual([]);
+    } finally {
+      await service.close();
+    }
   });
 
   it("skips a refused socket directory for the next candidate, made for this user alone", async () => {

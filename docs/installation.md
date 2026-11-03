@@ -457,6 +457,10 @@ what it added; an entry you had already stays. Running set-up again with another
 A Rerail home that is your home folder, or a folder above it, is left out, since denying it would deny every
 project. The cache is still denied.
 
+Settings → Coding agents in the dashboard and `rerail status` show, for each connected coding agent, whether its
+tools can read Rerail's data on this computer, from its settings as they are now (for Claude Code, whether
+`sandbox.enabled` is on in your user settings or in managed settings).
+
 - **Claude Code** (`~/.claude/settings.json`):
   - The sandbox's `filesystem.denyRead` and `filesystem.denyWrite` name both folders. `filesystem.allowRead` opens
     `current` and `versions` in the Rerail home again, so commands can read the installed package but no data.

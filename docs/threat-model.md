@@ -116,7 +116,7 @@ These are stated in the code or docs, or follow from the design:
 
 ## Trust boundaries and their controls
 
-### B1: Clients to the daemon (HTTP, MCP, native session)
+### B1: Clients to the daemon (HTTP, MCP, native session, engine socket)
 
 - **Bind address.** `assertHostBindable` (`src/daemon/daemon.ts`) refuses a non-loopback host without
   `--allow-remote`.
@@ -126,9 +126,18 @@ These are stated in the code or docs, or follow from the design:
   - Every request needs `x-rerail-access`. This covers `/healthz`, `/openapi.json`, `/api/*`, `/mcp` and
     `/native/session`.
   - The exemptions are an allowlist: GET and HEAD for the page's own static files (`PUBLIC_PAGE_FILE`).
-  - The comparison hashes both values with SHA-256 and uses `timingSafeEqual` (`sameSecret`).
+  - The comparison hashes both values with SHA-256 and uses `timingSafeEqual` (`sameSecret` in
+    `src/runtime/daemon-control.ts`).
   - The token is 32 random bytes. It is written 0600 through a temp file and a rename.
   - A loopback daemon persists the token across restarts. A remote or public-host daemon mints a new one at each start.
+- **Engine socket.** Hooks send events to `POST /events` on a Unix socket in a per-user 0700 folder (T14). The daemon's
+  engine service (`startEngineService` in `src/runtime/engine-service.ts`) requires the same capability there, as
+  `x-rerail-access`, and refuses a request without it (`401`) before reading its body. A request names where its
+  runtime writes (`storageRoot`, `databasePath`), and the daemon runs outside every coding agent's sandbox, so without
+  this check a process that can reach the socket but not read the Rerail home could have the daemon write wherever it
+  names. Hooks take the capability from the daemon's state with the socket path (`daemonEngineEndpoint`), or, for a
+  socket named in `RERAIL_ENGINE_SOCKET`, from the home's `daemon.json` when that names the same socket
+  (`engineEndpointAt`).
 - **Cross-site requests.** The capability travels in a header, not a cookie, so a browser cannot attach it to a
   cross-origin request without a preflight, and the daemon never answers one. A foreign `Origin` on an `/api` write
   gets `403`, as defence in depth. `/native/session` refuses any `Origin`.
@@ -269,12 +278,19 @@ Two controls now narrow this.
   - `permissions.deny` covers `Edit` for both folders and `Read` for the home's data files (`RERAIL_HOME_DATA_ENTRIES`).
   - Rerail's own CLI is listed in `sandbox.excludedCommands`. It runs outside the sandbox through the normal permission
     flow, so a command the command files do not pre-approve asks the person first.
-- **Cursor CLI.** `Read` and `Write` denies go into `~/.cursor/cli-config.json`.
-- **Codex.** Nothing is added. Its default sandbox already has no network and writes only inside the workspace.
-- **Cursor editor, OMP and Pi.** They have no setting for this.
+- **Cursor CLI.** `Read` and `Write` denies go into `~/.cursor/cli-config.json`. They bind its file tools only.
+- **Codex.** Nothing is added. Its sandbox has no network by default, so commands cannot reach the daemon, and writes
+  only inside the workspace, but it lets commands **read every file**, the Rerail home included: a Codex agent can read
+  the database, other repositories' history included, and the capability.
+- **Cursor editor.** Its sandbox is on by default on macOS (Cursor 2.0 and later) and blocks loopback, but it has no
+  per-path read deny, so its commands can read the Rerail home.
+- **OMP and Pi.** They have no sandbox.
 
-These entries take effect only when the host's sandbox is on, and Claude Code's is opt-in.
-[installation.md](installation.md) says, for each host, what is isolated and what is not.
+These entries take effect only when the host's sandbox is on, and Claude Code's is opt-in. Rerail does not turn a
+sandbox on or change a host's permission settings. Settings → Coding agents in the dashboard and `rerail status` say,
+for each connected coding agent, whether its tools can read Rerail's data on this computer
+(`codingAgentStates` in `src/setup/coding-agents.ts`). [installation.md](installation.md) says, for each host, what is
+isolated and what is not.
 
 **Rule approval.** A rule Rerail did not publish steers only with content a person approved; until then it runs in Log,
 recorded and sent to no one (`src/engine/catalog/rule-approval.ts`):
@@ -539,7 +555,8 @@ items therefore mostly match the host's own trust model rather than going beyond
 
 ### T12: Native engine crash or hang
 
-**Mitigated** (`src/api/http.ts:requestBodyLimit`, `src/daemon/daemon.ts`, `native/src/code_rule_dsl/value/names.rs`):
+**Mitigated** (`src/api/http.ts:requestBodyLimit`, `src/daemon/daemon.ts`, `native/src/code_rule_dsl/value/names.rs`,
+`native/src/panic_boundary.rs`):
 
 - **Body limits.** A body over 4 MiB on `/api` or `/mcp`, or over 256 MiB on `/native`, gets `413`.
 - **Timeouts.** `headersTimeout` is 10 s and `requestTimeout` 60 s. `/mcp` sends one JSON response per request, so
@@ -548,11 +565,20 @@ items therefore mostly match the host's own trust model rather than going beyond
   refuses a Git LFS pointer in place of `names.bin`, and so does `install --root` for any LFS-tracked file.
 - **Health covers the model.** `/healthz`, `rerail status` and the dashboard header check `model/` against
   `manifest.json` and name the file that fails. `rerail status` exits 5 when the model is not ok.
+- **Rust panics.** A panic that unwinds out of a Node-API callback aborts the process. Every native export that works
+  on repository content, workspace state, rules or the model is marked `#[napi(catch_unwind)]`, and every
+  `AsyncTask::compute`, which runs on a libuv worker inside napi-rs's own `extern "C"` callback the attribute does not
+  reach, runs through `contain_panic`. The panic becomes a rejected call. Workspace state sits behind a
+  `std::sync::Mutex` that the panic poisons; the next call that meets it closes the workspace (`close_poisoned`), so
+  it and every later call fail as on a closed workspace, which the host does not retry, and that session's checks fail
+  rather than run on half-updated state. The CPU slot that serializes applies guards no data and cannot be poisoned,
+  so a panic in one apply does not block the next one in any session.
 
 **What remains:**
 
-- **Panics.** No production entry point calls `catch_unwind`, so a panic on a background thread can take down the
-  shared daemon and disarm every rule (T4).
+- **Crashes that are not panics.** A segmentation fault in a C external scanner, an allocation failure (the
+  Tree-sitter allocator aborts) or a panic on a thread Rerail spawned itself still takes down the shared daemon and
+  disarms every rule (T4). Parsing is not isolated in a separate process.
 - **Cooperative aborts.** Parse aborts are cooperative, so a stuck external scanner is not interrupted.
 - **No fuzzing.** There is no fuzz harness.
 - **`unsafe` code.** `git_workspace.rs` (`openat`), the mmap read cache, and a lifetime `transmute` in `embedded/`.

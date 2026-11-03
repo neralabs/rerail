@@ -10,7 +10,7 @@
 //! `max_file_bytes`). Its apply publishes the batch and releases every source and tape before the
 //! chunk returns, so between chunks the workspace retains per-file results only.
 
-use super::api::{WorkspaceApplyTask, cpu_slot};
+use super::api::{WorkspaceApplyTask, close_poisoned, cpu_slot};
 use super::crossfile::CrossFileScheduler;
 use super::global::record_evidence;
 use super::ingest::{Request, WireFile, make_file};
@@ -295,7 +295,7 @@ impl WorkspaceIndexTask {
     fn lock(&self) -> Result<MutexGuard<'_, WorkspaceState>> {
         self.state
             .lock()
-            .map_err(|_| invalid("policy workspace is unavailable"))
+            .map_err(|error| close_poisoned(error.into_inner(), &self.state, &self.closed))
     }
 
     /// The host's file label for `path`: its whole name where the host lists it (`.npmignore`),
@@ -702,68 +702,70 @@ impl Task for WorkspaceIndexTask {
     /// slot: an interactive apply waits for one batch at most, and if it holds the slot the
     /// chunk keeps its plan and reports busy, so the host retries.
     fn compute(&mut self) -> Result<String> {
-        check_closed(&self.closed)?;
-        let (storage, index) = {
-            let mut state = self.lock()?;
-            let storage = state
-                .storage
-                .clone()
-                .ok_or_else(|| invalid("repository indexing requires storage"))?;
-            (storage, state.repository_index.take())
-        };
-        let repository = storage
-            .repository
-            .clone()
-            .ok_or_else(|| invalid("repository indexing requires Git discovery"))?;
-        let mut index = match index {
-            Some(index) => index,
-            None => self.plan(&storage, &repository)?,
-        };
-        let Ok(_slot) = cpu_slot().try_lock() else {
-            self.lock()?.repository_index = Some(index);
-            return Err(invalid("WORKSPACE_BUSY"));
-        };
-        let mut failures = std::mem::take(&mut index.failures);
-        let batch = self.read_batch(&repository, &mut index, &mut failures)?;
-        let evaluation = if batch.is_empty() {
-            Value::Null
-        } else {
-            let revision = self.lock()?.revision.saturating_add(1);
-            let mut apply = WorkspaceApplyTask {
-                state: Arc::clone(&self.state),
-                closed: Arc::clone(&self.closed),
-                request_json: String::new(),
-                request_buffer: None,
-                request_direct: Some(Request {
-                    revision,
-                    files: batch,
-                    removed: Vec::new(),
-                    defer_global: true,
-                    quiet: false,
-                }),
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            check_closed(&self.closed)?;
+            let (storage, index) = {
+                let mut state = self.lock()?;
+                let storage = state
+                    .storage
+                    .clone()
+                    .ok_or_else(|| invalid("repository indexing requires storage"))?;
+                (storage, state.repository_index.take())
             };
-            let mut output: Value =
-                serde_json::from_str(&apply.apply_with_slot()?.text).map_err(json_error)?;
-            output["evaluation"].take()
-        };
-        let mut state = self.lock()?;
-        check_closed(&self.closed)?;
-        let done = index.pending.is_empty();
-        let response = json!({
-            "revision": state.revision,
-            "done": done,
-            "overBudget": done && index.over_budget,
-            "evaluation": evaluation,
-            "failures": failures,
-            "discoveredFiles": index.discovered,
-            "restoredFiles": index.restored,
-            "readFiles": index.read_files,
-            "readBytes": index.read_bytes,
-            "reusableDirectories": index.reusable_directories,
-            "nestedCheckouts": index.nested_checkouts,
-        });
-        state.repository_index = Some(index);
-        serde_json::to_string(&response).map_err(json_error)
+            let repository = storage
+                .repository
+                .clone()
+                .ok_or_else(|| invalid("repository indexing requires Git discovery"))?;
+            let mut index = match index {
+                Some(index) => index,
+                None => self.plan(&storage, &repository)?,
+            };
+            let Some(_slot) = cpu_slot().try_lock() else {
+                self.lock()?.repository_index = Some(index);
+                return Err(invalid("WORKSPACE_BUSY"));
+            };
+            let mut failures = std::mem::take(&mut index.failures);
+            let batch = self.read_batch(&repository, &mut index, &mut failures)?;
+            let evaluation = if batch.is_empty() {
+                Value::Null
+            } else {
+                let revision = self.lock()?.revision.saturating_add(1);
+                let mut apply = WorkspaceApplyTask {
+                    state: Arc::clone(&self.state),
+                    closed: Arc::clone(&self.closed),
+                    request_json: String::new(),
+                    request_buffer: None,
+                    request_direct: Some(Request {
+                        revision,
+                        files: batch,
+                        removed: Vec::new(),
+                        defer_global: true,
+                        quiet: false,
+                    }),
+                };
+                let mut output: Value =
+                    serde_json::from_str(&apply.apply_with_slot()?.text).map_err(json_error)?;
+                output["evaluation"].take()
+            };
+            let mut state = self.lock()?;
+            check_closed(&self.closed)?;
+            let done = index.pending.is_empty();
+            let response = json!({
+                "revision": state.revision,
+                "done": done,
+                "overBudget": done && index.over_budget,
+                "evaluation": evaluation,
+                "failures": failures,
+                "discoveredFiles": index.discovered,
+                "restoredFiles": index.restored,
+                "readFiles": index.read_files,
+                "readBytes": index.read_bytes,
+                "reusableDirectories": index.reusable_directories,
+                "nestedCheckouts": index.nested_checkouts,
+            });
+            state.repository_index = Some(index);
+            serde_json::to_string(&response).map_err(json_error)
+        })
     }
 
     fn resolve(&mut self, _env: Env, output: String) -> Result<String> {

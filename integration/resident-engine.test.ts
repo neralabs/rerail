@@ -52,6 +52,7 @@ describe("engine service", () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-resident-kernel-"));
     seedContractCodeRule(isolatedRerailHome, root);
     const socketPath = join(root, "engine.sock");
+    const engine = { socketPath };
     const storageRoot = join(root, ".rerail", "sessions");
     let service: { close(): Promise<void> } | undefined;
     const session = { host: "omp" as const, sessionId: "resident-engine", cwd: root };
@@ -61,9 +62,9 @@ describe("engine service", () => {
       await writeFile(join(root, "api", "route.py"), "def route():\n    return 1\n");
       service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
 
-      await ingestEngineEvent(socketPath, { kind: "session-start", eventId: "start", session });
-      await awaitCodeRulesOpen(socketPath, session);
-      await ingestEngineEvent(socketPath, {
+      await ingestEngineEvent(engine, { kind: "session-start", eventId: "start", session });
+      await awaitCodeRulesOpen(engine, session);
+      await ingestEngineEvent(engine, {
         kind: "call",
         eventId: "call:write-route",
         toolCallId: "write-route",
@@ -73,7 +74,7 @@ describe("engine service", () => {
       });
 
       await writeFile(join(root, "api", "route.py"), 'def route(cursor):\n    cursor.execute("SELECT 1")\n');
-      const deliveries = await ingestEngineEvent(socketPath, {
+      const deliveries = await ingestEngineEvent(engine, {
         kind: "result",
         eventId: "result:write-route",
         toolCallId: "write-route",
@@ -84,7 +85,7 @@ describe("engine service", () => {
 
       expect(await awaitCodeRuleSteer(
         deliveries,
-        eventId => ingestEngineEvent(socketPath, {
+        eventId => ingestEngineEvent(engine, {
           kind: "user-prompt",
           eventId,
           sessionId: session.sessionId,
@@ -99,7 +100,7 @@ describe("engine service", () => {
           ruleIds: expect.arrayContaining([CONTRACT_CURSOR_EXECUTE_RULE_ID]),
         }),
       ]);
-      await ingestEngineEvent(socketPath, { kind: "session-end", eventId: "end", sessionId: session.sessionId });
+      await ingestEngineEvent(engine, { kind: "session-end", eventId: "end", sessionId: session.sessionId });
     } finally {
       await service?.close();
       await rm(socketPath, { force: true });
@@ -190,17 +191,17 @@ describe("engine service", () => {
         workspaceRoot: root,
       });
       const session = { host: "claude-code" as const, sessionId: "daemon-session", cwd: root };
-      await ingestEngineEvent(daemon.state().kernelSocketPath, { kind: "session-start", eventId: "start", session });
-      const deliveries = await ingestEngineEvent(daemon.state().kernelSocketPath, {
+      const engine = { socketPath: daemon.state().kernelSocketPath, accessToken: daemon.state().accessToken! };
+      await ingestEngineEvent(engine, { kind: "session-start", eventId: "start", session });
+      const deliveries = await ingestEngineEvent(engine, {
         kind: "user-prompt",
         eventId: "prompt",
         sessionId: session.sessionId,
         text: "Preserve database transaction atomicity",
       });
-      const socketPath = daemon.state().kernelSocketPath;
       expect(await awaitCodeRuleSteer(
         deliveries,
-        eventId => ingestEngineEvent(socketPath, {
+        eventId => ingestEngineEvent(engine, {
           kind: "user-prompt",
           eventId,
           sessionId: session.sessionId,
@@ -219,6 +220,7 @@ describe("engine service", () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-kernel-restart-"));
     seedContractCodeRule(isolatedRerailHome, root);
     const socketPath = join(root, "engine.sock");
+    const engine = { socketPath };
     const options = { socketPath, storageRoot: join(root, ".rerail/sessions"), modelPath: resolve("model") };
     let service: { close(): Promise<void> } | undefined;
     const session = { host: "codex" as const, sessionId: "restart", cwd: root };
@@ -226,9 +228,9 @@ describe("engine service", () => {
       await mkdir(join(root, "api"));
       await writeFile(join(root, "api/route.py"), "def route():\n    return 1\n");
       service = await startEngineService(options);
-      await ingestEngineEvent(socketPath, { kind: "session-start", eventId: "start", session });
-      await awaitCodeRulesOpen(socketPath, session);
-      await ingestEngineEvent(socketPath, {
+      await ingestEngineEvent(engine, { kind: "session-start", eventId: "start", session });
+      await awaitCodeRulesOpen(engine, session);
+      await ingestEngineEvent(engine, {
         kind: "call",
         eventId: "call",
         toolCallId: "write",
@@ -242,9 +244,9 @@ describe("engine service", () => {
       service = await startEngineService(options);
       // The restarted runtime takes the session back at its next event and reopens its evaluator; a result that
       // arrived during that open would go on without code rules.
-      await ingestEngineEvent(socketPath, { kind: "user-prompt", eventId: "reattach", sessionId: session.sessionId, session, text: "go on" });
-      await awaitCodeRulesOpen(socketPath, session);
-      const deliveries = await ingestEngineEvent(socketPath, {
+      await ingestEngineEvent(engine, { kind: "user-prompt", eventId: "reattach", sessionId: session.sessionId, session, text: "go on" });
+      await awaitCodeRulesOpen(engine, session);
+      const deliveries = await ingestEngineEvent(engine, {
         kind: "result",
         eventId: "result",
         toolCallId: "write",
@@ -255,7 +257,7 @@ describe("engine service", () => {
       });
       expect(await awaitCodeRuleSteer(
         deliveries,
-        eventId => ingestEngineEvent(socketPath, {
+        eventId => ingestEngineEvent(engine, {
           kind: "user-prompt",
           eventId,
           sessionId: session.sessionId,
@@ -275,6 +277,7 @@ describe("engine service", () => {
   it("isolates identical session IDs in different projects served by one daemon", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-kernel-projects-"));
     const socketPath = join(root, "engine.sock");
+    const engine = { socketPath };
     let service: { close(): Promise<void> } | undefined;
     try {
       service = await startEngineService({
@@ -301,20 +304,16 @@ describe("engine service", () => {
           databasePath: join(cwd, ".rerail/rerail.sqlite"),
         };
         const session = { host: "claude-code" as const, sessionId: "same-id", cwd };
-        await ingestEngineEvent(socketPath, { kind: "session-start", eventId: "start", session }, configuration);
-        const deliveries = await ingestEngineEvent(
-          socketPath,
-          {
-            kind: "user-prompt",
-            eventId: "prompt",
-            sessionId: session.sessionId,
-            text: "Preserve database transaction atomicity",
-          },
-          configuration,
-        );
+        await ingestEngineEvent(engine, { kind: "session-start", eventId: "start", session }, configuration);
+        const deliveries = await ingestEngineEvent(engine, {
+          kind: "user-prompt",
+          eventId: "prompt",
+          sessionId: session.sessionId,
+          text: "Preserve database transaction atomicity",
+        }, configuration);
         expect(await awaitCodeRuleSteer(
           deliveries,
-          eventId => ingestEngineEvent(socketPath, {
+          eventId => ingestEngineEvent(engine, {
             kind: "user-prompt",
             eventId: `${project}:${eventId}`,
             sessionId: session.sessionId,

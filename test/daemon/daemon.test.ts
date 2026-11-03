@@ -415,7 +415,7 @@ describe("Rerail daemon", () => {
     root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
     startTestRepository(root, join(root, "rerail.sqlite"));
     const daemon = await start();
-    await ingestEngineEvent(daemon.kernelSocketPath, {
+    await ingestEngineEvent({ socketPath: daemon.kernelSocketPath, accessToken: ACCESS }, {
       kind: "session-start", eventId: "start-controls",
       session: { host: "claude-code", sessionId: "audit-session", cwd: root },
     });
@@ -821,7 +821,7 @@ describe("Rerail daemon", () => {
       expect(dirname(state.kernelSocketPath)).toBe(join(root, "run"));
       expect((await lstat(state.kernelSocketPath)).isSocket()).toBe(true);
       expect(await readdir(squatted)).toEqual([]);
-      await ingestEngineEvent(state.kernelSocketPath, {
+      await ingestEngineEvent({ socketPath: state.kernelSocketPath, accessToken: state.accessToken! }, {
         kind: "session-start", eventId: "start-fallback",
         session: { host: "claude-code", sessionId: "fallback-session", cwd: root },
       });

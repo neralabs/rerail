@@ -281,6 +281,10 @@ const codingAgentSchema = z.object({
   found: z.boolean().describe("The coding agent's config folder exists on this computer."),
   connected: z.boolean().describe("Rerail's hooks and commands are in place for it."),
   problem: z.string().nullable().describe("Why the connection could not be checked, such as a config file that is not valid JSON."),
+  rerailData: z.object({
+    access: z.enum(["kept-out", "file-tools", "open"]).describe("kept-out: neither its commands nor its file tools can read Rerail's data; file-tools: its file tools cannot, its shell commands can; open: nothing keeps it out."),
+    why: z.string().describe("One sentence for a person saying why."),
+  }).strict().describe("Whether this coding agent's own tools can read Rerail's data (the Rerail home and the content cache), as far as its configuration on this computer shows. Rerail never changes it."),
 }).strict();
 
 export const operations: readonly Operation[] = [
@@ -438,7 +442,7 @@ export const operations: readonly Operation[] = [
     id: "coding_agents_list",
     method: "GET",
     path: "/api/coding-agents",
-    summary: "List the coding agents Rerail works with: whether each is on this computer and whether Rerail is connected to it. Changes nothing.",
+    summary: "List the coding agents Rerail works with: whether each is on this computer, whether Rerail is connected to it, and whether its tools can read Rerail's data. Changes nothing.",
     output: z.object({ agents: z.array(codingAgentSchema) }),
     handler: async (stores) => {
       const agents = stores.codingAgents();

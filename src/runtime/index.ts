@@ -9,6 +9,7 @@ export {
   daemonFetch,
   type DaemonHealth,
   type DaemonLaunchOptions,
+  type EngineEndpoint,
   type DaemonState,
   probeDaemon,
   readDaemonState,

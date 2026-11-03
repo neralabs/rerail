@@ -10,13 +10,13 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit, sameSecret } from "../api/http.js";
+import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
@@ -361,6 +361,7 @@ export class RerailDaemon {
         modelPath,
         databasePath,
         workspaceRoot,
+        accessToken,
       });
       const nativeToken = randomBytes(32).toString("hex");
       const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath });
