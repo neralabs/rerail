@@ -16,7 +16,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O8 | Phase 2 | Tape format: v9np (structure-only, regular) is not decided or built; W runs v8 | closed (2026-11-01): decision 0025, v9np (user decision; measured on Rerail's grammars); `tape.rs` stores v9np (format 10), supertype memberships folded into the codes (0025 amended 2026-11-02: no table beside the tape); 0.72–0.92× v8's stored size |
 | O9 | Phase 2 | Kind histograms are digests only; their rows are not stored | open (Phase 3) |
 | O10 | Phase 2 | Core facts of a non-UTF-8 blob, an unknown language or a parse stopped at a limit are `ABSENT` | open |
-| O11 | Phase 6 | §12's "unbounded value cycle" has no definition of a bound; T's programs recurse through `@cat` | open, **decision needed** |
+| O11 | Phase 6 | §12's "unbounded value cycle" has no definition of a bound; T's programs recurse through `@cat` | **closed** (2026-11-03): option (b), `logic::front::cycles` |
 | O12 | Phase 6 | `nearest` has no executor after the native tape functions were dropped; Phase 6's check needs one | open, **decision needed** |
 | O13 | Phase 6 | Symbols as atoms in the planner's SQL | SQL side done (decision 0009); native strata open |
 | O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | closed (2026-10-30): `logic::plan::emit`; independent strata share waves; plans from the boundary's counts |
@@ -266,6 +266,23 @@ recursive step joins through one; (b) recursion through `nearest` or a tree-edge
 bounded by construction, because tree structure is not a relation (§12); (c) a depth bound,
 `widen`-style, per value-creating rule. Until this is decided, `logic::front` does not raise the
 error (`front.rs` header). Closure: the decision, then the check, with T's five programs passing.
+
+**Closed (2026-11-03): option (b), decided by the user.** `logic::front::cycles::check` runs in `parse`:
+- **A value cycle is in the flow of values between columns**, not of relations: a value a builtin made
+  (`@cat`, `@flat_bin`, in a head or by `$v = @f(…)`) reaching that builtin's arguments again. A
+  component whose made values never come back makes finitely many: T's `qv(@cat($q, $x), …)` sits in
+  `calls.rdl`'s cross-file component `{base, bv, found, need_attr, pv, qv, sub}`, but `$q` and `$x`
+  come from columns no made value reaches. Values made into a lattice's value column are bounded by
+  the lattice (`UnboundedLattice` checks its height or `widen`), as `cv`'s `@flat_bin`.
+- **A value cycle's component is bounded by the tree** when one node column per relation (its key)
+  moves one way along tree edges in every rule: from the head's key to each recursive atom's key,
+  strictly for a rule that makes a value, and not backwards for the others. Tree edges are `child`,
+  `field`, `tape`, `nearest`, and what a lower stratum's relation guarantees between its node columns
+  in every rule (`attr_of(n, o, a)`: `o` below `n`).
+- **T's five programs pass**, with exactly `qn` (calls), `modn` (calls_rust) and `resolves` (the three
+  workloads) bounded by the tree; a cycle along a graph relation, or down one way and up another, is
+  `Error::UnboundedValueCycle` (`named_errors`). A data-layer or cross-file rule that makes names
+  around an import or call graph is refused; (c), a depth bound, is the fallback if one needs it.
 
 ## O12. An executor for `nearest`
 

@@ -44,6 +44,16 @@ fn t_programs_match_t_front_end() {
         );
         let (d, r, f, l, dm, k, i, o, s, big, pr, ps) = expected;
         assert_eq!(got, (d, r, f, l, dm.to_vec(), k, i, o, s, big, pr, ps), "{name}");
+        // O11: the value cycles, each bounded by the tree.
+        let treed: Vec<String> = cycles::check(&p).unwrap().iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect();
+        let expected: &[&str] = match name {
+            "calls.rdl" => &["qn"],
+            "calls_rust.rdl" => &["modn"],
+            _ => &["resolves"],
+        };
+        for rel in expected {
+            assert!(treed.iter().any(|c| c.split(',').any(|r| r == *rel)), "{name}: {rel} not bounded by the tree: {treed:?}");
+        }
     }
 }
 
@@ -103,6 +113,21 @@ fn named_errors() {
     // Into a max lattice, a count only rises: monotone, so allowed.
     let monotone = format!(".decl a(x: node; k: max) widen 8\n{counting}");
     assert!(strata(&parse(&monotone).unwrap()).is_ok());
+
+    // O11: names made along a tree edge are bounded by the tree; along a graph, they are not.
+    let decls = ".decl e(a: node, b: node)\n.decl field(p: node, f: sym, c: node)\n.decl nm(n: node, s: sym)\n.decl q(n: node, s: sym)\n.input e, field, nm\n";
+    let down = format!("{decls}q($n, $s) :- nm($n, $s).\nq($n, @cat($p, $s)) :- field($n, \"object\", $o), q($o, $p), nm($n, $s).\n");
+    assert!(parse(&down).is_ok());
+    let up = format!("{decls}.decl r(n: node, s: sym)\nr($n, $s) :- nm($n, $s).\nr($n, @cat($p, $s)) :- nearest($n, $a, k), r($a, $p), nm($n, $s).\n.kindset k = \"module\"\n");
+    assert!(parse(&up).is_ok(), "{:?}", parse(&up).err());
+    let graph = format!("{decls}q($n, $s) :- nm($n, $s).\nq($n, @cat($p, $s)) :- e($n, $o), q($o, $p), nm($n, $s).\n");
+    assert!(matches!(parse(&graph), Err(Error::UnboundedValueCycle { component, .. }) if component.contains("q")));
+    // Down one way and up the other: no key moves one way.
+    let both = format!("{decls}q($n, $s) :- nm($n, $s).\nq($n, @cat($p, $s)) :- field($n, \"object\", $o), q($o, $p), nm($n, $s).\nq($o, $s) :- field($n, \"object\", $o), q($n, $s).\n");
+    assert!(matches!(parse(&both), Err(Error::UnboundedValueCycle { .. })));
+    // A derived relation's guarantee carries the bound (`attr_of` in T's calls.rdl).
+    let derived = format!("{decls}.decl at(n: node, o: node)\nat($n, $o) :- field($n, \"object\", $o).\nq($n, $s) :- nm($n, $s).\nq($n, @cat($p, $s)) :- at($n, $o), q($o, $p), nm($n, $s).\n");
+    assert!(parse(&derived).is_ok());
 
     let computed = parse("a($x) :- e(@cat($x, $x)).\n");
     assert!(matches!(computed, Err(Error::Syntax(m)) if m.contains("computed term")));
