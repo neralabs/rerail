@@ -52,7 +52,7 @@ Rerail stores what it needs to evaluate rules and show you their history. None o
 
 | Where | What |
 | --- | --- |
-| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits and findings, and every event your coding agents report: your prompts, the agent's replies, and tool calls with their inputs and outputs. Also the daemon's state and log, your consent answer, installed rule packs and managed installs |
+| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits and findings, the one-line reasons your coding agent gave for not following a steer (`rerail feedback`, which sends them nowhere; `rerail feedback list` prints them if you want to attach them to an issue), and every event your coding agents report: your prompts, the agent's replies, and tool calls with their inputs and outputs. Also the daemon's state and log, your consent answer, installed rule packs and managed installs |
 | `~/.cache/rerail/` | `content-v1.sqlite`: compressed copies of the source files Rerail has read, with their syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per coding-agent session: its events, and the text of files as they were before the agent edited them. The folder holds a `.gitignore` of `*`, so Git never shows or commits it |
 
@@ -129,10 +129,10 @@ rule's id, a path or a project's name. Its report reaches GitHub only when you s
 
 ## Deleting your data
 
-- `rerail reset`, run inside a repository, deletes that repository's recorded history (sessions, events, audits) from
-  the database. It keeps rules and settings, and does not touch `.rerail/sessions/`, the content cache or the daemon
-  log. It then rewrites the database file, so the deleted history cannot be read back from it. Every write to the
-  database also zeroes the space it frees (`secure_delete`).
+- `rerail reset`, run inside a repository, deletes that repository's recorded history (sessions, events, steer
+  feedback notes, audits) from the database. It keeps rules and settings, and does not touch `.rerail/sessions/`, the
+  content cache or the daemon log. It then rewrites the database file, so the deleted history cannot be read back from
+  it. Every write to the database also zeroes the space it frees (`secure_delete`).
 - `rerail install --remove` disconnects every coding agent, stops the daemon and takes Rerail off your `PATH`. It
   **moves** the database to a backup folder, `~/.rerail-clean-YYYYMMDD`, rather than deleting it.
 - `rerail install --remove --delete-data` deletes instead: the databases, every `~/.rerail-clean-*` backup, the

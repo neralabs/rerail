@@ -82,6 +82,12 @@ body:
       label: The steer the agent got
       render: text
   - type: textarea
+    id: feedback-notes
+    attributes:
+      label: The agent's feedback notes
+      description: Optional. When the agent declined this rule's steers, it recorded why with `rerail feedback`; `rerail feedback list --rule <rule-id>` prints those notes. Read them before you paste them.
+      render: text
+  - type: textarea
     id: support-bundle
     attributes:
       label: Support bundle
