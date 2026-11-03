@@ -98,7 +98,7 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
             }
         }
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Semantic(Semantic::Resolves(_))

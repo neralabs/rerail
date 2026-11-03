@@ -271,6 +271,8 @@ export interface NativeCodeRuleSlice {
   audit(scope: string, directory: string, observer?: "directory" | "head" | null, buffers?: NativeSliceBuffer[] | null): string;
   /** `scope` at `directory` as `observer` sees it, evaluating only the documents that changed since the last run. */
   apply(scope: string, directory: string, observer?: "directory" | "head" | null, buffers?: NativeSliceBuffer[] | null): string;
+  /** The lowered rules as `rir` (list step 18): programs and label tables, with `fused` the packs and groups, with `setplan` the set plan. */
+  dump(fused?: boolean | null, setplan?: boolean | null): string;
 }
 
 export interface NativeCodeRuleSliceConstructor {
@@ -326,6 +328,13 @@ export interface NativeBinding {
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
   CodeRuleDslWorkspace: NativeCodeRuleDslWorkspaceConstructor;
   CodeRuleSlice: NativeCodeRuleSliceConstructor;
+  /**
+   * `policies` lowered and dumped as `rir` without a store (`rerail engine dump`): every clause, or only `clause`
+   * (`policy/clause` or a clause id); `fused` adds the packs and groups, `setplan` the set plan.
+   */
+  dumpRir(policies: NativeSlicePolicy[], capabilitiesJson: string, clause?: string | null, fused?: boolean | null, setplan?: boolean | null): string;
+  /** Every `program` block of `text` assembled through the verifier and dumped again (`rerail engine asm`); throws the first refusal. */
+  assembleRir(text: string): string;
 }
 
 const require = createRequire(import.meta.url);

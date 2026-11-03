@@ -31,6 +31,7 @@ pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;
 #[allow(dead_code)]
 mod reader;
 pub(in crate::code_rule_dsl) mod sets;
+pub(in crate::code_rule_dsl) mod terms;
 pub(crate) mod tapes;
 mod tree;
 mod values;
@@ -196,8 +197,8 @@ pub(in crate::code_rule_dsl) fn select_indexed_sql(
 
 /// The pure-SQL fallback (03 §17): the same plans lowered to SQL alone, relations read from the
 /// tape (`nera_tree`), over `tapes`. Per plan, its (index in `tapes`, preorder) rows and whether
-/// they are exactly its rule's roots; where not, they are a superset, as `select`'s.
-#[cfg_attr(not(test), allow(dead_code, reason = "the fallback's driver is list step 20 (`logic::sql`)"))]
+/// they are exactly its rule's roots; where not, they are a superset, as `select`'s. The wave's
+/// `Candidates::Sql` route (`RERAIL_CANDIDATES=sql`) drives it.
 pub(in crate::code_rule_dsl) fn fallback(
     store: &ContentStore,
     lang: u32,

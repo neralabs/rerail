@@ -1,14 +1,16 @@
 //! The first slice's findings layer (06-first-slice S5; architecture §8): after the wave's fixpoint,
 //! one non-recursive program over the match-fact families turns matches into finding keys and
-//! feeds nothing back. It is the pack's `violation` rule (`FINDINGS`), emitted by the planner as the
+//! feeds nothing back. It is the pack's reporting rule (`FINDINGS`, `reported`), emitted by the planner as the
 //! wave's step is, and run once (`schedule::layer`): each match's violations (`anchored`: one per
 //! anchored byte), less those a syntax error region or a suppression comment drops (`quiet`) and
 //! those of a rule under its report ceiling, give `finding(rule, code, d, line)`. Each rule's
 //! findings are a family (`finding:<rule>`), so an unchanged finding set cuts off;
 //! `Findings::publish` writes each (rule, document)'s keys with its coverage.
 //!
-//! The program reads, besides `match` and `span` (the wave's), facts of the clauses and documents
-//! written as tables before it runs (`Layer::write`):
+//! The program reads the wave's `violation` (the policies' rules, list step 21) and `span`. A
+//! violation is a clause's match through `clause(c, p, k)`: clause `c` is the one of policy `p` and id
+//! `k`, both atoms. It also reads facts of the clauses and documents written as tables before it runs
+//! (`Layer::write`):
 //! - `shape(c, r, k, a, i, g)`: clause `c`'s rule and code (`Layer::rules`, `Layer::codes` from 1),
 //!   its anchor (0 the witness's start, 1 its end, 2 the file's start, 3 a capture), the
 //!   `rerail-ignore` name that silences it (from 1; 0 none, or one that only marks), and `g` 1
@@ -62,8 +64,10 @@ use std::sync::Arc;
 pub(in crate::code_rule_dsl) const PROGRAM: &str = "findings";
 const RELATION: &str = "finding";
 
-/// The pack's `violation` rule over the match facts and the clauses' and documents' facts above.
+/// The pack's reporting rule (`reported`) over the wave's violations and the clauses' and documents' facts above.
 const FINDINGS: &str = "
+.decl forbidden(p: int, k: int, d: int, n: int)
+.decl clause(c: int, p: int, k: int)
 .decl match(c: int, d: int, n: int)
 .decl span(d: int, n: int, s: int, e: int)
 .decl shape(c: int, r: int, k: int, a: int, i: int, g: int)
@@ -83,7 +87,7 @@ const FINDINGS: &str = "
 .decl after(d: int, l: int, p: int)
 .decl cover(d: int, i: int, s: int, e: int)
 .decl ceiling(r: int, m: int)
-.input match, span, shape, group, applies, around, error, line, noqa, parented, stmt, exempt, mapped, directive, nosec, bandit, after, cover, ceiling
+.input forbidden, clause, span, shape, group, applies, around, error, line, noqa, parented, stmt, exempt, mapped, directive, nosec, bandit, after, cover, ceiling
 .decl grouped(c: int, d: int, n: int)
 .decl kept(c: int, d: int, n: int)
 .decl anchored(c: int, d: int, n: int, b: int)
@@ -100,10 +104,11 @@ const FINDINGS: &str = "
 .decl tested(c: int, d: int, n: int, b: int, l: int)
 .decl named(c: int, d: int, n: int, b: int)
 .decl quiet(c: int, d: int, n: int, b: int)
-.decl violation(r: int, c: int, d: int, n: int, b: int)
+.decl reported(r: int, c: int, d: int, n: int, b: int)
 .decl total(r: int, x: int)
 .decl finding(r: int, k: int, d: int, l: int)
 .output finding
+match($c, $d, $n) :- forbidden($p, $k, $d, $n), clause($c, $p, $k).
 grouped($c, $d, $n) :- group($c, $d, $n, _).
 kept($c, $d, $n) :- match($c, $d, $n), applies($c, $d, _), shape($c, _, _, _, _, 0).
 kept($c, $d, $n) :- match($c, $d, $n), applies($c, $d, _), shape($c, _, _, _, _, 1), grouped($c, $d, $n).
@@ -142,13 +147,14 @@ quiet($c, $d, $n, $b) :- tested($c, $d, $n, $b, $l), bandit($d, $l, $k), nosec($
 quiet($c, $d, $n, $b) :- anchored($c, $d, $n, $b), shape($c, _, _, $a, $i, _), $a != 1, cover($d, $i, $s, $e), $s <= $b, $b < $e.
 quiet($c, $d, $n, $v) :- anchored($c, $d, $n, $v), shape($c, _, _, 1, $i, _), span($d, $n, $w, $v), $w < $v, cover($d, $i, $s, $e), $s < $v, $v <= $e.
 quiet($c, $d, $n, $v) :- anchored($c, $d, $n, $v), shape($c, _, _, 1, $i, _), span($d, $n, $v, $v), cover($d, $i, $s, $e), $s <= $v, $v < $e.
-violation($r, $c, $d, $n, $b) :- anchored($c, $d, $n, $b), !quiet($c, $d, $n, $b), shape($c, $r, _, _, _, _).
-total($r, $x) :- ceiling($r, _), $x = count { violation($r, _, _, _, _) }.
-finding($r, $k, $d, $l) :- violation($r, $c, $d, $n, $b), lined($c, $d, $n, $b, $l), shape($c, _, $k, _, _, _), ceiling($r, $m), total($r, $x), $x >= $m.
+reported($r, $c, $d, $n, $b) :- anchored($c, $d, $n, $b), !quiet($c, $d, $n, $b), shape($c, $r, _, _, _, _).
+total($r, $x) :- ceiling($r, _), $x = count { reported($r, _, _, _, _) }.
+finding($r, $k, $d, $l) :- reported($r, $c, $d, $n, $b), lined($c, $d, $n, $b, $l), shape($c, _, $k, _, _, _), ceiling($r, $m), total($r, $x), $x >= $m.
 ";
 
 /// The tables the program's inputs read (`Layer::write`), each with its columns.
-const TABLES: [(&str, &str); 17] = [
+const TABLES: [(&str, &str); 18] = [
+    ("clause", "c, p, k"),
     ("shape", "c, r, k, a, i, g"),
     ("group", "c, d, n, s"),
     ("applies", "c, d, h"),
@@ -360,7 +366,8 @@ impl Layer {
     /// one family per code rule, and the statements its steps read (`Emitted::setup`: the views).
     pub(in crate::code_rule_dsl) fn program(&self, store: &ContentStore) -> StoreResult<emit::Emitted> {
         let mut batch = HashMap::from([
-            ("match".to_owned(), ("(SELECT c0, c1, c2 FROM match)".to_owned(), self.shapes.len() as f64)),
+            // The policies' violations, as the wave's rules derived them (list step 21).
+            ("forbidden".to_owned(), ("(SELECT c0, c1, c2, c3 FROM violation)".to_owned(), self.shapes.len() as f64)),
             ("span".to_owned(), ("(SELECT c0, c1, c2, c3 FROM span)".to_owned(), self.shapes.len() as f64)),
         ]);
         for (name, columns) in TABLES {
@@ -452,6 +459,12 @@ impl Layer {
         for (r, id) in self.rules.iter().enumerate() {
             let rule = &self.shapes.iter().find(|shape| shape.rule.id == *id).expect("a rule has a clause").rule;
             insert("ceiling", &[r as i64, rule.report_count_gt.map_or(0, |maximum| maximum as i64 + 1)])?;
+        }
+        // Each clause by its violations' key: its policy's id and its own, as atoms.
+        let keys = self.shapes.iter().flat_map(|shape| [shape.rule.id.as_str(), shape.rule.clauses[shape.clause].id.as_str()]).collect::<Vec<_>>();
+        let atoms = graph.store().intern_atoms(&keys)?;
+        for (c, pair) in atoms.chunks(2).enumerate() {
+            insert("clause", &[c as i64, i64::from(pair[0]), i64::from(pair[1])])?;
         }
         for (c, shape) in self.shapes.iter().enumerate() {
             let violation = shape.violation();
