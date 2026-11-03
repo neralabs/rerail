@@ -152,7 +152,8 @@ which share a module).
    generator refuses any other. It copies the tool's tests for each ported rule, runs the pinned tool on them under the
    approved configuration, writes the expected findings with each unit's upstream origin, writes Rerail's own cases
    (suppression cases, probes) and lists them in the tool's `UPSTREAM.md`, and writes the provenance last through the
-   shared writer ([What the generators write](upstream.md#what-the-generators-write)).
+   shared writer, which fails the derive when a file disagrees with the licence record: no entry, outside its globs,
+   a glob matching nothing ([What the generators write](upstream.md#what-the-generators-write)).
 
 4. **`conformance.json`** with the tool and its version, the capabilities the ports exercise, and the port entries;
    **`divergences.json`** starts empty.
@@ -358,7 +359,8 @@ No re-derive: the generator's authored output does not depend on which rules shi
 
 ## Before you open the pull request
 
-With the data pulled (and the derived data in `publish/`, for a new tool-pack):
+For a rule of the pack's own, the first and third commands are the whole list, and in a pack with no tool-pack they
+run without any data. For a port, with the data pulled (and the derived data in `publish/`, for a new tool-pack):
 
 ```sh
 npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"   # checks 1 to 8, each rule's status

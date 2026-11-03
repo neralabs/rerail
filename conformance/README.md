@@ -20,7 +20,8 @@ the renamer `scripts/pack-data/rename/`). How the data is snapshotted and publis
 [docs/upstream.md](../docs/upstream.md).
 
 Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack); the contributor's steps for
-a rule, written or ported, from candidate to shipped, are [docs/porting-a-pack.md](../docs/porting-a-pack.md).
+a rule, written for Rerail or ported, and a port's way from candidate to shipped, are
+[docs/porting-a-pack.md](../docs/porting-a-pack.md).
 
 ## The gate
 
