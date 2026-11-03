@@ -45,6 +45,24 @@ request, credits its author with `Co-authored-by:`, and closes it with a link to
 - **Releases.** Core and the packs publish only after one of the `release` environment's required reviewers, who are
   maintainers, approves the run ([docs/release.md](release.md)).
 
+## Issues that wait on their reporter
+
+When a maintainer cannot act on an issue without more from its reporter, a version, a reproduction, the rule it
+concerns, they ask for it in the issue and label it `needs-info`. From then on the issue is the reporter's turn, and
+[.github/workflows/stale.yml](../.github/workflows/stale.yml) keeps it from waiting for ever:
+
+- A comment from the reporter removes `needs-info`. The issue is the maintainers' turn again, and the
+  [response times](../CONTRIBUTING.md#response-times) apply from that comment.
+- After 14 days with no activity, the bot asks once more and labels the issue `stale`. Any comment or edit removes
+  `stale`.
+- 7 days after that, it closes the issue as not planned, saying how to get it reopened: comment there, or open a new
+  issue if the details have changed. A comment from the reporter reopens it, and it is the maintainers' turn again.
+
+Nothing else is closed for age. An issue a maintainer has confirmed (`bug`, `rule-misfire`, `known-issue`,
+`enhancement`) stays open until it is fixed or declined with a reason ([Saying no](#how-decisions-are-made)), however
+old it is. One still in `needs-triage` is waiting on a maintainer, not its reporter, and the response times are the
+measure of that. An assigned issue, an issue on a milestone, and a pull request are never touched.
+
 ## Who the maintainers are
 
 Nera Software appoints and removes maintainers internally. There is no nomination, application or promotion to
