@@ -290,3 +290,51 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
         }
     }
 }
+
+/// A program split at its file-local relations (`split`): `local` derives them, run per chunk of documents over the
+/// chunk's base relations; `cross` derives the rest, run once over what the chunks wrote: `exports` (the file-local
+/// relations a cross-file rule reads) and `base` (the base relations a cross-file rule reads, and `node` and `doc`,
+/// which decode findings). In `cross`, both are inputs.
+pub(crate) struct Programs {
+    pub(crate) local: crate::code_rule_dsl::logic::front::Program,
+    pub(crate) cross: crate::code_rule_dsl::logic::front::Program,
+    pub(crate) exports: Vec<String>,
+    pub(crate) base: Vec<String>,
+}
+
+pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
+    use crate::code_rule_dsl::logic::front::Literal;
+    use std::collections::BTreeSet;
+    let local = split(prog);
+    let is_local = |rel: &str| local.contains(rel);
+    let read = |rules: &mut dyn Iterator<Item = &crate::code_rule_dsl::logic::front::Rule>| -> BTreeSet<String> {
+        rules
+            .flat_map(|r| &r.body)
+            .filter_map(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let cross_reads = read(&mut prog.rules.iter().filter(|r| !is_local(&r.head.rel)));
+    let exports: Vec<String> = cross_reads.iter().filter(|r| is_local(r)).cloned().collect();
+    let base_read: Vec<String> = prog.inputs.iter().filter(|i| cross_reads.contains(*i)).cloned().collect();
+    let mut base = base_read.clone();
+    for decode in ["node", "doc"] {
+        if prog.inputs.iter().any(|i| i == decode) && !base.iter().any(|b| b == decode) {
+            base.push(decode.to_owned());
+        }
+    }
+    let mut l = prog.clone();
+    l.rules.retain(|r| is_local(&r.head.rel));
+    l.lattice.retain(|rel, _| is_local(rel));
+    l.gates.retain(|(rel, _)| is_local(rel));
+    l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();
+    let mut c = prog.clone();
+    c.rules.retain(|r| !is_local(&r.head.rel));
+    c.lattice.retain(|rel, _| !is_local(rel));
+    c.gates.retain(|(rel, _)| !is_local(rel));
+    c.outputs.retain(|o| !is_local(o));
+    c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
+    Programs { local: l, cross: c, exports, base }
+}

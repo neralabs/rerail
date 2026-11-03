@@ -2,11 +2,11 @@
 //!
 //!   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
 //!   rerail-engine asm <file.rir>
-//!   rerail-engine logic <program.rdl> <corpus root> <T facts.sqlite> <out dir> [--modes <modes>] [--metal]
+//!   rerail-engine logic <program.rdl> <corpus root> <T facts.sqlite> <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rdl> <corpus root> <T facts.sqlite> <out dir> [--modes <modes>] [--metal]";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rdl> <corpus root> <T facts.sqlite> <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -36,17 +36,18 @@ fn run(args: &[String]) -> Result<String, String> {
 
 /// `logic`: a program over a corpus, its outputs as T's (list step 23).
 fn logic(args: &[String]) -> Result<String, String> {
-    let (mut positional, mut modes, mut metal) = (Vec::new(), "program".to_owned(), false);
+    let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), "program".to_owned(), false, 1_usize << 18);
     let mut args = args.iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--metal" => metal = true,
             "--modes" => modes = args.next().ok_or("--modes requires a value")?.clone(),
+            "--chunk" => chunk = args.next().ok_or("--chunk requires a value")?.parse().map_err(|_| "--chunk takes a node count")?,
             other => positional.push(other.to_owned()),
         }
     }
     let [program, root, facts, out] = positional.as_slice() else { return Err(USAGE.into()) };
-    rerail_engine::tools::logic(&read(program)?, Path::new(root), Path::new(facts), Path::new(out), &modes, metal)
+    rerail_engine::tools::logic(&read(program)?, Path::new(root), Path::new(facts), Path::new(out), &modes, metal, chunk)
 }
 
 fn dump(args: &[String]) -> Result<String, String> {

@@ -30,11 +30,11 @@ pub fn assemble(text: &str) -> Result<String, String> {
 
 /// `program` (`.rdl` text) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS.
-pub fn logic(program: &str, root: &std::path::Path, t_facts: &std::path::Path, out: &std::path::Path, modes: &str, metal: bool) -> Result<String, String> {
+pub fn logic(program: &str, root: &std::path::Path, t_facts: &std::path::Path, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize) -> Result<String, String> {
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
-    let report = super::logic::plan::corpus::run(program, root, t_facts, out, modes, binding).map_err(|error| error.to_string())?;
-    let mut text = format!("{} files, {} nodes, {} components native ({modes}, nearest on {binding:?})\n", report.files, report.nodes, report.native);
+    let report = super::logic::plan::corpus::run(program, root, t_facts, out, modes, binding, chunk_nodes).map_err(|error| error.to_string())?;
+    let mut text = format!("{} files, {} nodes in {} chunks, {} components native ({modes}, nearest on {binding:?})\n", report.files, report.nodes, report.chunks, report.native);
     for (phase, user, sys, rss) in &report.phases {
         text += &format!("  {phase:<6} {user:.2} s user + {sys:.2} s sys; peak RSS {rss:.0} MB\n");
     }

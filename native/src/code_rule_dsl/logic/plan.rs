@@ -2176,6 +2176,12 @@ pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connect
 /// (`tape_load`), which is not kept: `nearest` is the transducer's (`Lowered::transduce_nearest`), so those two
 /// modes are dropped from `modes`.
 pub(in crate::code_rule_dsl) fn run_atoms_native(lowered: &lower::Lowered, db: &Connection, stats: &str, modes: &str) -> Result<Outcome> {
+    run_atoms_native_over(lowered, db, "main", stats, modes)
+}
+
+/// `run_atoms_native` over input relations in schema `facts` (the bound vtabs are `main`'s; a cross-file pass reads
+/// what the chunks wrote, `corpus::run`).
+pub(in crate::code_rule_dsl) fn run_atoms_native_over(lowered: &lower::Lowered, db: &Connection, facts: &str, stats: &str, modes: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register(db)?;
     super::native::register_symbols(db)?;
@@ -2183,7 +2189,7 @@ pub(in crate::code_rule_dsl) fn run_atoms_native(lowered: &lower::Lowered, db: &
     let mut native = native_modes(modes);
     native.remove("nearest");
     native.remove("kseed");
-    let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native, batch: HashMap::new() };
+    let inputs = Inputs { facts: format!("{facts}."), stats: format!("{stats}."), atoms: Some(lowered.ops), native, batch: HashMap::new() };
     let out = run(&lowered.program, db, inputs, Some(lowered));
     super::native::flush_symbols(db)?;
     out

@@ -12,6 +12,7 @@
 //! T's documents (`doc`) name the files, in T's order.
 
 use super::{Error, Outcome, Result, lower, run_atoms_native};
+
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -102,15 +103,6 @@ pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connect
     Ok(())
 }
 
-/// `nearest_<set>`'s statistics, made at bind time, beside T's in schema `s`.
-fn nearest_statistics(db: &Connection, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Result<()> {
-    db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64])?;
-    for (col, rows, ndv, sq, sqd) in syntax::statistics(source) {
-        db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd])?;
-    }
-    Ok(())
-}
-
 /// CPU seconds (user + system) and peak RSS in MB of this process so far.
 pub(crate) fn usage() -> (f64, f64, f64) {
     let mut u: libc::rusage = unsafe { std::mem::zeroed() };
@@ -129,18 +121,32 @@ pub(crate) struct Report {
     pub(crate) nodes: usize,
     pub(crate) native: usize,
     pub(crate) rows: BTreeMap<String, usize>,
+    pub(crate) chunks: usize,
 }
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Runs `program` (`.rdl` text) over the files T's `t_facts` names under `root`, in native `modes`, with `nearest`
 /// bound as `binding`, and writes its outputs into `out` as T does. The store and its derived tables live in `out`.
-pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes: &str, binding: Binding) -> Result<Report> {
-    let mut phases = Vec::new();
+///
+/// The program is split at its file-local relations (`typing::file_local::programs`, list step 29). Documents are
+/// taken in chunks of about `chunk_nodes` nodes: each chunk is parsed, bound and its file-local part run, and what the
+/// cross-file part reads (the exported relations, the base relations it reads) is appended to `cross.sqlite` in
+/// `out` (schema `x`); the chunk is then dropped. The cross-file part runs once, over `x`. Memory is one chunk's, and
+/// the cross-file part's own.
+pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
+    let mut phases: Vec<(&'static str, f64, f64, f64)> = Vec::new();
     let mut last = usage();
     let mut phase = |name: &'static str| {
         let now = usage();
-        phases.push((name, now.0 - last.0, now.1 - last.1, now.2));
+        match phases.iter_mut().find(|p| p.0 == name) {
+            Some(p) => {
+                p.1 += now.0 - last.0;
+                p.2 += now.1 - last.1;
+                p.3 = now.2;
+            }
+            None => phases.push((name, now.0 - last.0, now.1 - last.1, now.2)),
+        }
         last = now;
     };
     let prog = front::parse(program)?;
@@ -150,45 +156,117 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     let rust = docs.first().is_some_and(|(_, p)| p.ends_with(".rs"));
     let (label, dialect) = if rust { ("rust", "rust") } else { ("python", "python") };
     let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
-    let mut documents = Vec::with_capacity(docs.len());
-    let mut nodes = 0;
-    for (d, path) in &docs {
-        let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
-        let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
-        let facts = match core::build(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
-            Built::Facts(f) => Arc::new(f),
-            Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
-        };
-        nodes += facts.len();
-        documents.push(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts });
-    }
-    phase("parse");
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
     let path = out.join("store.sqlite");
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| Error::Plan(e.to_string()))?;
+    let cross_path = out.join("cross.sqlite");
+    for p in [&path, &cross_path] {
+        if p.exists() {
+            std::fs::remove_file(p).map_err(|e| Error::Plan(e.to_string()))?;
+        }
     }
     let store = ContentStore::open(&path).map_err(|e| Error::Plan(e.to_string()))?;
     let db = Connection::open(&path)?;
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
     let sets = lowered.transduce_nearest();
+    let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
+    let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
+    let (local, cross) = (part(split.local), part(split.cross));
     atomized_statistics(&t, &db, &store, &first, dialect)?;
+    // T's corpus statistics, kept for the cross-file part's planning: each chunk's overwrite them with its own.
+    db.execute_batch("CREATE TABLE s.t_meta AS SELECT * FROM s.stat_meta; CREATE TABLE s.t_col AS SELECT * FROM s.stat_col;")?;
+    db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
+    for rel in &split.base {
+        let cols = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
+        db.execute_batch(&format!("CREATE TABLE x.{rel}({})", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", ")))?;
+    }
+    for rel in &split.exports {
+        let width = lowered.program.decls[rel].len();
+        let cols: Vec<String> = (0..width).map(|i| format!("c{i}")).collect();
+        db.execute_batch(&format!("CREATE TABLE x.{rel}({}, PRIMARY KEY ({})) WITHOUT ROWID", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")))?;
+    }
     phase("stats");
     let modules = Modules::default();
-    let sources = syntax::with_nearest(&store, documents, &sets, binding).map_err(|e| Error::Plan(e.to_string()))?;
-    phase("batch");
-    for (rel, source) in sources {
-        if rel.starts_with("nearest_") {
-            nearest_statistics(&db, &rel, source.as_ref())?;
+    let mut bound = BTreeSet::new();
+    let (mut nodes, mut native, mut chunks) = (0, BTreeSet::new(), 0);
+    let mut outputs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut node_columns: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let gather = |got: Outcome, outputs: &mut BTreeMap<String, Vec<String>>, node_columns: &mut BTreeMap<String, Vec<usize>>, keep: &dyn Fn(&str) -> bool| {
+        for (rel, lines) in got.outputs {
+            if keep(&rel) {
+                outputs.entry(rel.clone()).or_default().extend(lines);
+                node_columns.insert(rel.clone(), got.nodes[&rel].clone());
+            }
         }
-        modules.bind(&db, &rel, source)?;
+        got.native
+    };
+    let mut pending = Vec::new();
+    let mut pending_nodes = 0;
+    let mut at = docs.iter().peekable();
+    while at.peek().is_some() || !pending.is_empty() {
+        if let Some((d, path)) = at.next() {
+            let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
+            let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
+            let facts = match core::build(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
+                Built::Facts(f) => Arc::new(f),
+                Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
+            };
+            pending_nodes += facts.len();
+            pending.push(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts });
+            if pending_nodes < chunk_nodes && at.peek().is_some() {
+                continue;
+            }
+        }
+        phase("parse");
+        nodes += pending_nodes;
+        pending_nodes = 0;
+        chunks += 1;
+        let sources = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, binding).map_err(|e| Error::Plan(e.to_string()))?;
+        phase("batch");
+        for (rel, source) in sources {
+            source_statistics(&db, &rel, source.as_ref())?;
+            modules.bind(&db, &rel, source)?;
+            bound.insert(rel);
+        }
+        let got = run_atoms_native(&local, &db, "s", modes)?;
+        let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
+        native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("local:{k}")));
+        db.execute_batch("BEGIN")?;
+        for rel in &split.base {
+            let cols = super::super::sql::select::input_columns(rel).expect("checked above").join(", ");
+            db.execute_batch(&format!("INSERT INTO x.{rel} SELECT {cols} FROM main.{rel}"))?;
+        }
+        for rel in &split.exports {
+            db.execute_batch(&format!("INSERT OR IGNORE INTO x.{rel} SELECT * FROM temp.{rel}"))?;
+        }
+        db.execute_batch("COMMIT")?;
+        // The chunk's sources are dropped before the next is built.
+        for rel in &bound {
+            if let Some(b) = modules.get(rel) {
+                b.clear();
+            }
+        }
+        crate::code_rule_dsl::logic::native::forget_inputs(&db);
+        phase("local");
     }
-    phase("bind");
-    let got: Outcome = run_atoms_native(&lowered, &db, "s", modes)?;
-    phase("run");
+    // The cross-file part's statistics: T's for the base relations, measured on `x` for the rest.
+    db.execute_batch("DELETE FROM s.stat_meta; INSERT INTO s.stat_meta SELECT * FROM s.t_meta; DELETE FROM s.stat_col; INSERT INTO s.stat_col SELECT * FROM s.t_col;")?;
+    for rel in split.base.iter().filter(|r| r.starts_with("nearest_")).chain(&split.exports) {
+        table_statistics(&db, rel)?;
+    }
+    for rel in &split.base {
+        for (i, cols) in super::vtab_indexes(rel).iter().enumerate() {
+            db.execute_batch(&format!("CREATE INDEX x.{rel}_{i} ON {rel}({})", cols.join(", ")))?;
+        }
+    }
+    phase("stats");
+    if !cross.program.rules.is_empty() {
+        let got = super::run_atoms_native_over(&cross, &db, "x", "s", modes)?;
+        native.extend(gather(got, &mut outputs, &mut node_columns, &|_| true).into_iter().map(|k| format!("cross:{k}")));
+    }
+    phase("cross");
     let mut rows = BTreeMap::new();
-    for (rel, lines) in &got.outputs {
-        let node_columns = &got.nodes[rel];
+    for (rel, lines) in &outputs {
+        let node_columns = &node_columns[rel];
         let mut decoded: Vec<String> = lines
             .iter()
             .map(|row| {
@@ -203,6 +281,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
             })
             .collect();
         decoded.sort();
+        decoded.dedup();
         let mut text = decoded.join("\n");
         if !text.is_empty() {
             text.push('\n');
@@ -211,5 +290,28 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         rows.insert(rel.clone(), decoded.len());
     }
     phase("write");
-    Ok(Report { phases, files: docs.len(), nodes, native: got.native.len(), rows })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks })
+}
+
+/// A bound source's statistics (its rows, and `stat_col`'s per column), in schema `s`: a chunk's own.
+fn source_statistics(db: &Connection, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Result<()> {
+    db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64])?;
+    for (col, rows, ndv, sq, sqd) in syntax::statistics(source) {
+        db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd])?;
+    }
+    Ok(())
+}
+
+/// A table of `x`'s statistics, measured: rows, and per column its distinct values, the sum of its postings' squares,
+/// and that sum by document (`sqd`: postings of (the first column's document, value)).
+fn table_statistics(db: &Connection, rel: &str) -> Result<()> {
+    let cols: Vec<String> = db.prepare(&format!("PRAGMA x.table_info({rel})"))?.query_map([], |r| r.get(1))?.collect::<rusqlite::Result<_>>()?;
+    let rows: i64 = db.query_row(&format!("SELECT count(*) FROM x.{rel}"), [], |r| r.get(0))?;
+    db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), rows])?;
+    for col in &cols {
+        let (ndv, sq): (i64, i64) = db.query_row(&format!("SELECT count(*), coalesce(sum(k * k), 0) FROM (SELECT count(*) AS k FROM x.{rel} GROUP BY {col})"), [], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let sqd: i64 = db.query_row(&format!("SELECT coalesce(sum(k * k), 0) FROM (SELECT count(*) AS k FROM x.{rel} GROUP BY {} >> 32, {col})", cols[0]), [], |r| r.get(0))?;
+        db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd])?;
+    }
+    Ok(())
 }
