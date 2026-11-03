@@ -181,6 +181,10 @@ def generate(source):
     for i, pattern in enumerate([columns + r"""[\"'`]?[\s\S]{0,80}::\s*text""", r'CAST\([\s\S]{0,160}?' + columns + r"""[\"'`]?[\s\S]{0,80}?\s+AS\s+(?:TEXT|CHAR(?:\s*\(\s*\d+\s*\))?)\s*\)"""]):
         text_finding(f'stored-text-cast-{i}', '(?i)' + pattern, 'stored_revision_text_cast', 'Stored revision column cast to text')
     out.append(p)
+    from data_layer_batch_seven_identity import candidate as merged_identity
+    out.append(merged_identity(source, policy, constant))
+    from data_layer_batch_seven_dispatch import candidate as internal_dispatch
+    out.append(internal_dispatch(source, policy, constant))
     return out
 
 
