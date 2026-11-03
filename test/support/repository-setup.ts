@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { lookupCheckout, offerSetupReview, openRerailDatabase, recordCheckout, repositoryIdentityLocation } from "../../src/engine/index.js";
-import type { SetupRequest } from "../../src/cli/repository-setup.js";
+import type { SetupRequest } from "../../src/cli/index.js";
 import { onRuleCount, type RepositorySetupIo } from "../../src/runtime/index.js";
 import { attachedPacks } from "./attached-packs.js";
 import { repositoryPackVersions } from "./directory-pack-store.js";
