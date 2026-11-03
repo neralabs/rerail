@@ -47,13 +47,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
 
       # Every file carries licence information and every licence it names has its text in LICENSES/.
       - name: REUSE lint
@@ -70,7 +70,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -85,12 +85,12 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      # Core's release notes, on a pull request: each entry it adds to CHANGELOG.md stays at a sentence or two and
-      # names no ticket, pull request or commit, and on the Release pull request the dated section leads with a
-      # paragraph for the people who upgrade (scripts/release/core-changelog-check.mjs). The base branch's tip is
-      # fetched alone, so the entries the pull request adds can be told from the ones main has; the event's base.sha
-      # is the base as it was when the pull request was last updated, which would count main's newer entries as the
-      # pull request's.
+      # Core's release notes, on a pull request: each entry it adds or changes in .changelog/ stays at a sentence or two
+      # and names no ticket, pull request or commit, none is written into CHANGELOG.md by hand, and on the Release pull
+      # request the dated section leads with a paragraph for the people who upgrade
+      # (scripts/release/core-changelog-check.mjs). The base branch's tip is fetched alone, so the entries the pull
+      # request adds can be told from the ones main has; the event's base.sha is the base as it was when the pull
+      # request was last updated, which would count main's newer entries as the pull request's.
       - name: Fetch the base branch's tip
         if: github.event_name == 'pull_request'
         env:
@@ -123,13 +123,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
@@ -207,7 +207,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -258,14 +258,14 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
       # The script needs no npm packages.
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           package-manager-cache: false
@@ -324,7 +324,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -367,7 +367,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo artifacts
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -388,7 +388,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -408,7 +408,7 @@ jobs:
 
       - id: native-cache
         name: Restore the release native engine
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             native/*.node
@@ -424,7 +424,7 @@ jobs:
 
       - name: Cache cargo artifacts
         if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -444,7 +444,7 @@ jobs:
         run: npm run build:js
 
       - name: Upload the built package
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: built
           path: |
@@ -475,7 +475,7 @@ jobs:
         shard: [1, 2]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -502,7 +502,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -521,7 +521,7 @@ jobs:
 
       - name: Upload the Playwright report and traces
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-e2e-report
           path: .rerail/e2e/
@@ -534,7 +534,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -582,7 +582,7 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -622,7 +622,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -669,7 +669,7 @@ jobs:
 
       - name: Upload the conformance summary
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: conformance-summary
           path: ${{ runner.temp }}/conformance/
@@ -695,7 +695,7 @@ jobs:
     steps:
       - name: Download the conformance summary
         continue-on-error: true
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: conformance-summary
           path: ${{ runner.temp }}/conformance
@@ -755,7 +755,7 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -831,7 +831,7 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -839,7 +839,7 @@ jobs:
       - uses: ./.github/actions/lfs
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: "npm"
@@ -855,7 +855,7 @@ jobs:
 
       - id: native-cache
         name: Restore the release native engine
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             native/*.node
@@ -871,7 +871,7 @@ jobs:
 
       - name: Cache cargo artifacts
         if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry

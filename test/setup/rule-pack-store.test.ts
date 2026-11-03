@@ -360,7 +360,8 @@ describe("addPackSpecs", { timeout: COMPILING_TIMEOUT_MS }, () => {
   });
 });
 
-describe("packsLeftOutByCore", { timeout: COMPILING_TIMEOUT_MS }, () => {
+describe("packsLeftOutByCore", () => {
+  // A real pack install and three catalog reads: over 4 s on a loaded CI shard, near vitest's 5 s default.
   it("names an installed pack the new core leaves out that the previous one loaded, with why, and nothing else", async () => {
     const home = temporaryHome();
     await installPackVersions([typescriptAt("0.1.1")], copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" }));
@@ -369,7 +370,7 @@ describe("packsLeftOutByCore", { timeout: COMPILING_TIMEOUT_MS }, () => {
     // Already left out before the change, or still fitting after it: not this change's to name.
     expect(packsLeftOutByCore(home, "0.2.1", "0.2.0")).toEqual([]);
     expect(packsLeftOutByCore(home, "0.1.9", "0.1.8")).toEqual([]);
-  });
+  }, 30_000);
 });
 
 describe("discoverPacks", () => {

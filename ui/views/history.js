@@ -17,8 +17,8 @@ export const needs = ["rules", "packs", "activity", "findings"];
 
 const ALL_TIME = 9999;
 
-/** The icon and colour of each mode's chip, as the rule sheet shows them. */
-const MODE_OUTCOME = { log: "logged", steer: "steered", block: "blocked" };
+/** The icon and colour of each mode's chip: what Rerail does on it. Block steers until blocking ships, so it shows as steered. */
+const MODE_OUTCOME = { log: "logged", steer: "steered", block: "steered" };
 /** A violation's time, 24-hour ("17:35"), as the design reads it. */
 const CLOCK = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const SVG_NS = "http://www.w3.org/2000/svg";

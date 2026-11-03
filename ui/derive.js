@@ -83,7 +83,8 @@ export function rulePrefix(id) {
 /** Every rule, either kind, carries one mode: what Rerail does on a violation. */
 export const ruleMode = stored => stored.rule.mode;
 
-export const MODE_LABEL = { log: "Log", steer: "Steer", block: "Block" };
+/** A mode as the dashboard names it. Block steers until blocking ships, so it says so wherever a rule is on it. */
+export const MODE_LABEL = { log: "Log", steer: "Steer", block: "Block (steers for now)" };
 export const modeLabel = stored => MODE_LABEL[ruleMode(stored)] ?? ruleMode(stored);
 export const isLog = stored => ruleMode(stored) === "log";
 /** How Rerail handled one past violation: by the mode recorded with it, since the rule may have changed mode. Block shows as Steered (not in this version). */

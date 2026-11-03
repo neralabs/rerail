@@ -1,6 +1,6 @@
-// What a release note may say (docs/release.md, "Release notes"): a core CHANGELOG.md entry or a pack's changeset
-// summary goes out as it is on the GitHub Release, to the people who upgrade. Nothing here needs node_modules: the
-// Changesets job of release-packs.yml installs none.
+// What a release note may say (docs/release.md, "Release notes"): a core changelog entry (.changelog/) or a pack's
+// changeset summary goes out as it is on the GitHub Release, to the people who upgrade. Nothing here needs
+// node_modules: the Changesets job of release-packs.yml installs none.
 import { TICKET } from "../check/check-internal-refs.mjs";
 
 /** The most words a release note (a changelog entry, a changeset summary) may run to. */
@@ -16,6 +16,15 @@ export const COMMIT_HASH = /\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/
 const PULL_REQUEST = /(?:^|[\s(])#(\d{2,})(?=[\s).,;:]|$)/u;
 
 const wordCount = (text) => text.split(/\s+/u).filter((word) => word !== "").length;
+
+/**
+ * The CHANGELOG.md entry a release note's text becomes (a pack's changeset summary, a core entry under .changelog/):
+ * `- <first line>`, its later lines indented under it, so its paragraphs stay under the bullet.
+ */
+export function releaseNoteEntry(text) {
+  const [first, ...rest] = text.trim().split("\n");
+  return [`- ${first}`, ...rest.map((line) => (line.trim() === "" ? "" : `  ${line}`))].join("\n");
+}
 
 /**
  * Why `note`, a release note (a changelog entry or a changeset summary, `- ` and all), is not written for the person

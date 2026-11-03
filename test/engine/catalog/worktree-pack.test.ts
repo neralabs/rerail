@@ -174,7 +174,10 @@ describe("a worktree's own rules", () => {
     // Until a person approves the file's content it is recorded, and steers no one.
     await edit(inFeature, "feature", 1);
     expect(found()).toEqual([{ checkout: feature, code: "NEEDLE", mode: "log" }]);
-    expect(approveRule()).toBe("● Approved rule worktree-needle: it runs in the mode it is set to from the next edit.\n");
+    // It prints the content it approves, then approves it.
+    expect(approveRule()).toMatch(
+      /^● worktree-needle \(code rule\) has this content:\n\{\n[\s\S]*"id": "worktree-needle"[\s\S]*\n\}\n● Approved rule worktree-needle: it runs in the mode it is set to from the next edit\.\n$/u,
+    );
     audits.length = 0;
     await edit(inFeature, "feature", 2);
     const inMain = routerAt(await realpath(main));

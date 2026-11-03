@@ -53,7 +53,7 @@ export {
   setUpRepository,
 } from "./catalog/rule-configuration.js";
 export { getLibraryRule, listLibraryRules, upsertLibraryRule, writeLibraryRule } from "./catalog/rule-library.js";
-export { RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
+export { BLOCK_STEERS_NOTE, RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
 export {
   loadRulePacks,
   RULE_PACK_RULE_ID,
