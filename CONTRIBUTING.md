@@ -445,7 +445,7 @@ The workflow's jobs, its guarantees and the comment's states are described in
 ### Adding or changing a pack
 
 Each change below is one pull request, with a changeset for the pack ([.changeset/README.md](.changeset/README.md)).
-The whole path of a port, from candidate to shipped, with what each step has needed in practice, is
+The steps for adding a rule, written for Rerail or ported from a tool, with what each has needed in practice, are
 [docs/porting-a-pack.md](docs/porting-a-pack.md).
 
 **A rule.** A pack ships the rules in `packs/<id>/rules/` that `pack.json` lists; `candidates/` holds ports under
