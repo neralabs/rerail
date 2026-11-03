@@ -411,6 +411,66 @@ Load 21–31; `nearest` on the CPU binding. With `--metal`, `nearest` waited 2.5
 
 To repeat it (paths as in the run): `dl-export <corpus> <dir>`; `python3 -I stats.py build <dir>/facts.sqlite`; `python3 -I rdl.py sql <program> <dir>/facts.sqlite <golden>`; `rerail-engine logic <program> <corpus> <dir>/facts.sqlite <out> --metal`; compare the CSVs; `score_calls.py`/`score_rust.py` over the fixture's facts and each output directory.
 
+- **Quality round (2026-11-03): query shapes, statement counts, nothing recomputed.** The profiling round left four problems:
+  - table scans and join shapes that read the same data many times;
+  - too many SQLite statements, about 845 a chunk;
+  - SQLite recomputing what memory already held;
+  - plans priced from missing statistics.
+
+  Each problem was measured with these tools:
+  - `RDL_STMTS`, per statement: runs, VM steps and full-scan steps;
+  - `RDL_COMPONENTS`, per component and per probe: work and plan;
+  - `RDL_EXPLAIN=<rel>`, per rule: each step's estimate, and what every other atom would have cost at that step;
+  - `sample` of the engine process.
+
+  Each problem was then fixed as a spike and checked against the goldens. The findings and fixes, in order:
+  - **S1. Missing statistics made cross products look free.**
+    - Problem: the planner reads a constant missing from `stat_val` as matching no row (`const_freq`, as T's `stats.py` defines it). The cross pass had `stat_col` for the exports but no `stat_val`. So `param($f,$x,0)` and `method($f,$c)` were each priced at 0.01 rows, and the planner chose `sub(d) × param WHERE c2 = 0` unbound. That cross product went from 3,090 to 36.45M bindings.
+    - Fix: the chunks' totals now carry each value column's exact postings (`Totals`, merged across chunks). That component went from 3,772 to 829 ms.
+  - **S2. A SQL statement per engine call.**
+    - Problem: the planner drove the set engine through SQL functions (`SELECT set_fixpoint_open(…)`, `_run`, `_steps`, `_stats`, `_reprobe`, `_close`, `_materialize`), about 2,000 statements a run. Each entry point also re-read the tail of `atoms` (797 statements).
+    - Fix: the planner now calls `logic::native::component` in process. A planner run holds the symbols (`hold_symbols`), because while it runs it is the only writer of `atoms`.
+  - **S3. SQLite recomputing what memory held.**
+    - Statistics written and read back: each chunk wrote its sources' statistics into `s.stat_*` one row per `INSERT` (308 a chunk). The planner then read them back with one `UNION ALL`. That query scanned T's whole `stat_val`, because `val IN (…)` has no index (15M VM steps a chunk). It also ran `count(*)` on every input to check a fingerprint the driver had just written (10.7M VM steps).
+      - Fix: T's statistics are read once (`Stats::of_schema`). Each chunk sets its sources' measurements on a copy in memory (`Stats::measured`, `Inputs::given`). The cross pass applies the chunks' totals the same way. Nothing is written or counted.
+    - Exports moved four times: each export was materialized into a temp table, decoded as an output, read again to measure it, then copied to `x`.
+      - Fix: the exports are kept in the engine (`Inputs::kept`, `Outcome::kept`). Each one goes from the engine to `x` in one statement (`INSERT OR IGNORE INTO x.e SELECT … FROM set_derived`) and is measured in place (`native::component::derived`).
+    - Names interned one at a time: T's statistics' names were interned one per transaction.
+      - Fix: they are interned in one transaction. That removed most of the statistics phase's sys time (0.36 → 0.08 s).
+  - **S4. The same table read many times, and copies of the tree.**
+    - Repeated reads: the cross pass read `x.kind` once per kind constant (8 full scans, 29.5M VM steps), and `x.child` and `x.field` 3 times each.
+      - Fix: each table of `x` is read once (`setfix::Stored`), with only the columns its inputs name. Every filtered or projected input over it is a view.
+    - Hash indexes on large tables: the joins built hash indexes over the million-row tables, about 50 MB each, which put peak RSS at 484 MB.
+      - Fix: a probe is a slice of a sorted permutation of the column: 4 bytes a row, binary search, no allocation per probe.
+    - `kind` exported as a copy of `node`: `kind` only projects `node`, yet it was copied into `x` (1.2M rows a chunk).
+      - Fix: a file-local relation that only projects a base input is derived by the cross pass from the stored input (`file_local::programs`).
+    - Unused columns stored: base relations were stored with all their columns.
+      - Fix: they are stored with only the columns the cross rules name (`node`: 5 columns, now 4 on Python). The index on `node` is built only when a finding's location must be decoded.
+  - **S5. Temp tables nobody read.**
+    - Problem: each run dropped every temp table and created one for every declared relation, in every chunk, including the cross-file part's relations (about 160 statements a chunk). Every stratum also read its relations' empty tables back.
+    - Fix: a table is made only when SQL needs it (`Run::ensure`: a SQL stratum, `materialize`, decoding), and only for relations the program's rules name. Views and `rdl_int` are kept across runs where they are unchanged. A stratum does not read the tables it just made (`rel … empty`).
+  - **S6. Join shapes left.**
+    - The heaviest probe of the cross pass is `found → bv → attr_of($n,$o,$a) → pv($o,130,$c)`: 2.7M bindings for 23K results. `RDL_EXPLAIN` shows its estimates are right. `attr_of` by name was priced at 167 rows a binding, and 242 were observed. The alternative, `pv` by `$c` first, was priced at 241. The cost comes from the rule's shape, not from a planner error.
+    - Every delta is still priced at the planner's default card for a relation being solved (1.2M rows). That does not change any order, because the delta is always first, but it inflates the reported `work`.
+
+| | Python, 7 chunks | Rust, 9 chunks |
+|---|---|---|
+| Outputs against `rdl.py sql` | 7 of 7 identical | 4 of 4 identical (fixture: identical with `--chunk 200`) |
+| SQLite statements (statistics, chunks, cross) | 60, 467, 91 (were 171, 5,915, 515) | 45, 373, 54 (were 129, 3,997, 444) |
+| CPU user + sys: parse, batch, local, statistics, cross | 1.17+0.08, 0.17+0.01, 2.22+0.15, 0.30+0.08, 1.11+0.05 s | 1.15+0.04, 0.23+0.02, 2.75+0.21, 0.12+0.03, 1.12+0.07 s |
+| Peak RSS | 349 MB (was 437) | 337 MB (was 511) |
+
+Measured at load 13–17, with `nearest` on the CPU binding.
+
+Most of the chunks' statements are now one copy of each export into `x` per chunk (30 on Python). The rest are the tables SQL strata need.
+
+What is left, measured:
+- **Base copies into `x`:** about 0.5 s of CPU on Python (`node` 184 ms, `child` 155 ms, `nearest_fdef` 97 ms, `field` 77 ms), and about 0.25 s to read them back. That is option (a)'s price. Keeping the stored columns in memory instead would cost about 120 MB. That is the user's decision, and it is not taken here.
+- **Index rebuilds:** the local strata build hash indexes on each derived relation that a later component joins. The component already kept a per-column index of those rows while deriving them (`Rel::idx`), but `DERIVED` copies the rows (`rel.data.clone()`) instead of moving them with their indexes.
+- **Parsing:** 1.2 s.
+- **Statistics as text:** the set engine's `stats` is still a text line that the planner parses.
+- **`write` mode:** unused by the planner, but it still inserts one row per statement.
+
 ### Phase 7: SQL-driven waves (§4, §7; E1, E12, E14)
 
 | Copy | From | To | Adaptations |

@@ -84,6 +84,11 @@ pub(in crate::code_rule_dsl) struct Inputs {
     /// statistics outside a batch. Each is read from its source (a subquery whose columns are
     /// `c0`, `c1`, …, filtered by `:batch`) and planned from its row estimate.
     batch: HashMap<String, (String, f64)>,
+    /// The planner's statistics, measured by the caller from the inputs in memory (`corpus::run`): nothing is read
+    /// or counted at plan time.
+    given: Option<Stats>,
+    /// Outputs left in the native engine (`DERIVED`) for the caller: neither written to their tables nor decoded.
+    kept: BTreeSet<String>,
 }
 
 /// T's `NATIVE`: the comma-separated modes, `all` as every one but `direct` and `upsert`, and `program` with the
@@ -113,7 +118,7 @@ fn unhex(s: &str) -> Option<String> {
 impl Inputs {
     /// T's facts file attached as `f`, statistics in it.
     fn file() -> Self {
-        Inputs { facts: "f.".to_owned(), stats: "f.".to_owned(), atoms: None, native: BTreeSet::new(), batch: HashMap::new() }
+        Inputs { facts: "f.".to_owned(), stats: "f.".to_owned(), atoms: None, native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() }
     }
 }
 
@@ -203,6 +208,7 @@ const OBS_MIN: i64 = 32;
 /// The corpus statistics the planner prices plans with, read from the tables `stats.py` builds at ingestion
 /// (`stat_*` in the facts database) in one statement. Nothing is counted at plan time (ast-index-spike S174, S178).
 /// Statistics whose fingerprint (row counts) does not match the facts are refused.
+#[derive(Clone, Debug)]
 pub(in crate::code_rule_dsl) struct Stats {
     /// (table, column) → (rows, ndv, sum of squared postings, the same within documents).
     col: HashMap<(String, String), [i64; 4]>,
@@ -231,6 +237,31 @@ pub(in crate::code_rule_dsl) struct Stats {
 
 impl Stats {
     fn new(db: &Connection, prog: &Program, inputs: &Inputs) -> Result<Self> {
+        if let Some(given) = &inputs.given {
+            return Ok(given.clone());
+        }
+        Self::read(db, prog, inputs, true)
+    }
+
+    /// The statistics in schema `stats` (T's, atomized) for `prog`'s constants, read once; no fingerprint (the
+    /// caller then sets what it measures, `measured`).
+    pub(in crate::code_rule_dsl) fn of_schema(db: &Connection, prog: &Program, stats: &str) -> Result<Self> {
+        let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+        Self::read(db, prog, &inputs, false)
+    }
+
+    /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
+    /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
+    pub(in crate::code_rule_dsl) fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
+        for (col, m) in cols {
+            self.col.insert((rel.to_owned(), col), m);
+        }
+        for (col, v, n) in vals {
+            self.memo.insert((rel.to_owned(), col, Constant::Int(v)), n);
+        }
+    }
+
+    fn read(db: &Connection, prog: &Program, inputs: &Inputs, fingerprint: bool) -> Result<Self> {
         let consts: BTreeSet<Constant> = prog
             .rules
             .iter()
@@ -247,7 +278,7 @@ impl Stats {
              UNION ALL SELECT 'edge', pkind, ckind, n, field, NULL, NULL FROM {s}stat_edge"
         );
         sql += &format!(" UNION ALL SELECT 'val', tbl, col, n, val, docs, sqd FROM {s}stat_val WHERE val IN ({holes})");
-        for t in prog.inputs.iter().filter(|t| !inputs.batch.contains_key(*t)) {
+        for t in prog.inputs.iter().filter(|t| fingerprint && !inputs.batch.contains_key(*t)) {
             sql += &format!(" UNION ALL SELECT 'rows', '{t}', NULL, count(*), NULL, NULL, NULL FROM {f}{t}");
         }
         let params: Vec<SqlValue> = consts
@@ -662,6 +693,34 @@ impl Model {
             }
         }
         let full: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
+        if std::env::var("RDL_EXPLAIN").is_ok_and(|r| r == head.rel) {
+            // The chosen order's estimates step by step, and every two-step prefix's, for this head's rules.
+            if let Some((work, rows, order, _, _)) = best_of.get(&full) {
+                eprintln!("EXPLAIN {head} (delta {first:?}): work {work:.0} rows {rows:.1}");
+                let mut bound = BTreeSet::new();
+                let mut r = 1.0;
+                for s in order {
+                    if let Literal::Atom(a) = &s.lit && !a.neg {
+                        let per = atom_rows(a, &bound);
+                        r *= per;
+                        // What every positive atom would cost here instead.
+                        let others: Vec<String> = body
+                            .iter()
+                            .filter_map(|l| if let Literal::Atom(o) = l && !o.neg && !order.iter().take_while(|t| !std::ptr::eq(*t, s)).any(|t| t.lit == *l) { Some(format!("{}={:.2}", o.rel, atom_rows(o, &bound))) } else { None })
+                            .collect();
+                        eprintln!("    {:<40} per binding {per:.2}, rows {r:.1}   [{}]", s.lit.to_string(), others.join(" "));
+                    } else {
+                        eprintln!("    {}", s.lit);
+                    }
+                    bound.extend(s.lit.vars());
+                }
+            }
+            for (mask, b) in &best_of {
+                if mask.count_ones() == 2 {
+                    eprintln!("  prefix {:?}: work {:.0} rows {:.1}", shown(&b.2), b.0, b.1);
+                }
+            }
+        }
         let Some((work, rows, order, _, rest)) = best_of.remove(&full) else {
             return Err(Error::Plan(format!("cannot order the body of {head}")));
         };
@@ -1216,6 +1275,59 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) native: BTreeSet<String>,
     /// Each output's node columns (atoms mode: node ids are the vtabs', `d << 32 | index`).
     pub(in crate::code_rule_dsl) nodes: BTreeMap<String, Vec<usize>>,
+    /// The kept outputs (`Inputs::kept`) the native engine holds (`native::derived`); the others are in their tables.
+    pub(in crate::code_rule_dsl) kept: BTreeSet<String>,
+}
+
+/// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
+/// each; over text symbols (T's extension loaded on the connection, which keeps its own symbols) through its SQL
+/// functions.
+struct Fx<'a> {
+    db: &'a Connection,
+    direct: bool,
+}
+impl Fx<'_> {
+    fn open(&self, spec: &str) -> Result<()> {
+        if self.direct {
+            super::native::component::open(self.db, spec)?;
+        } else {
+            self.db.query_row("SELECT set_fixpoint_open(?1)", [spec], |_| Ok(()))?;
+        }
+        Ok(())
+    }
+    fn run(&self, name: &str, waves: u32) -> Result<String> {
+        Ok(if self.direct { super::native::component::run(self.db, name, waves)? } else { self.db.query_row("SELECT set_fixpoint_run(?1, ?2)", rusqlite::params![name, waves], |r| r.get(0))? })
+    }
+    fn steps(&self, name: &str) -> Result<String> {
+        Ok(if self.direct { super::native::component::steps(name)? } else { self.db.query_row("SELECT set_fixpoint_steps(?1)", [name], |r| r.get(0))? })
+    }
+    fn stats(&self, name: &str) -> Result<String> {
+        Ok(if self.direct { super::native::component::stats(name)? } else { self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))? })
+    }
+    fn reprobe(&self, name: &str, i: usize, kind: &str, body: &str) -> Result<()> {
+        if self.direct {
+            super::native::component::reprobe(self.db, name, i, kind, body)?;
+        } else {
+            self.db.query_row("SELECT set_fixpoint_reprobe(?1, ?2, ?3, ?4)", rusqlite::params![name, i as i64, kind, body], |_| Ok(()))?;
+        }
+        Ok(())
+    }
+    fn close(&self, name: &str) -> Result<()> {
+        if self.direct {
+            super::native::component::close(name)?;
+        } else {
+            self.db.query_row("SELECT set_fixpoint_close(?1)", [name], |_| Ok(()))?;
+        }
+        Ok(())
+    }
+    fn materialize(&self, table: &str) -> Result<()> {
+        if self.direct {
+            super::native::component::materialize(self.db, table)?;
+        } else {
+            self.db.query_row("SELECT set_fixpoint_materialize(?1)", [table], |_| Ok(()))?;
+        }
+        Ok(())
+    }
 }
 
 /// A run's evaluation state on its connection.
@@ -1227,6 +1339,9 @@ struct Run<'a> {
     made: HashSet<(String, Vec<usize>)>,
     /// Relations held only by the native set engine (`program`) until `materialize`.
     native_rels: BTreeSet<String>,
+    /// Derived relations whose table is made only when SQL first needs it (`ensure`): its `CREATE` statement. A
+    /// relation the native engine derives and keeps never has one.
+    pending: HashMap<String, String>,
 }
 
 /// A recursive atom's delta variant: the rule's head, its plan with that atom first, and the atom's plan position.
@@ -1480,11 +1595,26 @@ fn const_tok(t: &Term) -> Option<String> {
 }
 
 impl Run<'_> {
+    fn fx(&self) -> Fx<'_> {
+        Fx { db: self.db, direct: self.model.inputs.atoms.is_some() }
+    }
+
+    /// Makes the tables of `rels` not yet made (`pending`).
+    fn ensure<'r>(&mut self, rels: impl IntoIterator<Item = &'r String>) -> Result<()> {
+        for r in rels {
+            if let Some(create) = self.pending.remove(r) {
+                self.db.execute(&create, [])?;
+            }
+        }
+        Ok(())
+    }
+
     /// Moves the native set engine's relations among `rels` into their tables (`set_fixpoint_materialize`).
     fn materialize(&mut self, rels: &[String]) -> Result<()> {
         let held: BTreeSet<String> = rels.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect();
+        self.ensure(&held)?;
         for r in held {
-            self.db.query_row("SELECT set_fixpoint_materialize(?1)", [&r], |_| Ok(()))?;
+            self.fx().materialize(&r)?;
             self.native_rels.remove(&r);
         }
         Ok(())
@@ -1677,7 +1807,8 @@ impl Run<'_> {
         let rules: Vec<&Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
         let types = |r: &str| prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
         let mut lines = vec![format!("name {name}")];
-        lines.extend(rels.iter().map(|r| format!("rel {r} {}", types(r))));
+        // A stratum's relations were made empty by `run` unless the program states facts of them.
+        lines.extend(rels.iter().map(|r| format!("rel {r} {}{}", types(r), if prog.facts.get(*r).is_none_or(|f| f.is_empty()) { " empty" } else { "" })));
         lines.push("nowrite".to_owned());
         let native_rels = self.native_rels.clone();
         let mut est: HashMap<&str, f64> = HashMap::new();
@@ -1724,16 +1855,31 @@ impl Run<'_> {
                 if deps.is_empty() { "-".to_owned() } else { deps }
             ));
         }
-        self.db.query_row("SELECT set_fixpoint_open(?1)", [lines.join("\n")], |_| Ok(()))?;
+        let started = std::time::Instant::now();
+        let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
+        self.fx().open(&lines.join("\n"))?;
         let mut chunk: i64 = 2;
         loop {
-            let f: String = self.db.query_row("SELECT set_fixpoint_run(?1, ?2)", rusqlite::params![name, chunk], |r| r.get(0))?;
+            let f: String = self.fx().run(&name, chunk as u32)?;
             let f: Vec<&str> = f.split_whitespace().collect();
-            let steps: String = self.db.query_row("SELECT set_fixpoint_steps(?1)", [&name], |r| r.get(0))?;
+            let steps: String = self.fx().steps(&name)?;
             for (o, line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(steps.split('\n')) {
                 observe(&mut self.model.stats, o, line);
             }
-            let live: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [&name], |r| r.get(0))?;
+            for (k, line) in steps.split('\n').enumerate() {
+                if counted.len() <= k {
+                    counted.resize(k + 1, Vec::new());
+                }
+                for (i, step) in line.split(',').filter(|s| !s.is_empty()).enumerate() {
+                    let (a, b) = step.split_once(':').unwrap_or(("0", "0"));
+                    if counted[k].len() <= i {
+                        counted[k].resize(i + 1, (0, 0));
+                    }
+                    counted[k][i].0 += a.parse::<u64>().unwrap_or(0);
+                    counted[k][i].1 += b.parse::<u64>().unwrap_or(0);
+                }
+            }
+            let live: String = self.fx().stats(&name)?;
             for (r, line) in rels.iter().zip(live.split('\n')) {
                 live_stats(prog, &mut self.model, r, line);
             }
@@ -1750,16 +1896,37 @@ impl Run<'_> {
                 let spec = self
                     .join_spec(&r.head, &new, Some(at), &ri, scc, &native_rels)
                     .ok_or_else(|| Error::Plan(format!("a replanned probe of {} has no native step", r.head)))?;
-                self.db.query_row(
-                    "SELECT set_fixpoint_reprobe(?1, ?2, 'join', ?3)",
-                    rusqlite::params![name, (seeds.len() + k) as i64, hex(&spec)],
-                    |_| Ok(()),
-                )?;
+                self.fx().reprobe(&name, seeds.len() + k, "join", &hex(&spec))?;
                 probes[k].2 = new;
             }
             chunk *= 2;
         }
-        self.db.query_row("SELECT set_fixpoint_close(?1)", [&name], |_| Ok(()))?;
+        if let Some(file) = std::env::var_os("RDL_COMPONENTS") {
+            // The component's plans and each step's observed bindings in and out (`set_fixpoint_steps`), appended.
+            let mut text = format!("COMPONENT {} rounds={} ms={:.1}\n", rels.iter().map(|r| r.as_str()).collect::<Vec<_>>().join("/"), chunk.trailing_zeros(), started.elapsed().as_secs_f64() * 1e3);
+            for l in &lines {
+                let parts: Vec<&str> = l.split(' ').collect();
+                if matches!(parts.first(), Some(&"seed" | &"join")) {
+                    let spec = parts.get(if parts[0] == "seed" { 2 } else { 3 }).and_then(|h| unhex(h)).unwrap_or_default();
+                    let spec: Vec<String> = spec.split('\n').map(|step| step.split(' ').map(|t| t.strip_prefix("t:").map_or(t.to_owned(), |rest| {
+                        let f: Vec<&str> = rest.splitn(4, ':').collect();
+                        format!("t:{}:[{}]", f.first().unwrap_or(&""), f.get(1).and_then(|h| unhex(h)).unwrap_or_default())
+                    })).collect::<Vec<_>>().join(" ")).collect();
+                    text += &format!("  SPEC {} {}\n", parts[0], spec.join(" | "));
+                }
+            }
+            let empty = Vec::new();
+            for (k, o) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate() {
+                let line: Vec<String> = counted.get(k).unwrap_or(&empty).iter().map(|(a, b)| format!("{a}:{b}")).collect();
+                let work: u64 = counted.get(k).unwrap_or(&empty).iter().map(|(a, _)| a).sum();
+                text += &format!("  work={work} {}\n    {}\n", line.join(","), shown(o).join(" , "));
+            }
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
+                let _ = f.write_all(text.as_bytes());
+            }
+        }
+        self.fx().close(&name)?;
         self.native_rels.extend(scc.iter().cloned());
         Ok(true)
     }
@@ -2036,7 +2203,7 @@ impl Run<'_> {
             let sql = self.model.sql_select(prog, &r.head, order, Some(*at), Some(&tables))?;
             lines.push(format!("probe {} {} {}", ri[&r.head.rel], ri[&rel], hex(&sql)));
         }
-        self.db.query_row("SELECT set_fixpoint_open(?1)", [lines.join("\n")], |_| Ok(()))?;
+        self.fx().open(&lines.join("\n"))?;
         for r in &rels {
             let (full, delta) = &tables[*r];
             for (which, vt) in [("full", full), ("delta", delta)] {
@@ -2048,11 +2215,11 @@ impl Run<'_> {
         // native store's hash indexes, replan the probes and resume, doubling the chunk until the fixpoint.
         let mut chunk: i64 = 2;
         loop {
-            let f: String = self.db.query_row("SELECT set_fixpoint_run(?1, ?2)", rusqlite::params![name, chunk], |r| r.get(0))?;
+            let f: String = self.fx().run(&name, chunk as u32)?;
             if f.split_whitespace().last() == Some("1") || chunk == 0 {
                 break;
             }
-            let live: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [&name], |r| r.get(0))?;
+            let live: String = self.fx().stats(&name)?;
             for (r, line) in rels.iter().zip(live.split('\n')) {
                 live_stats(prog, &mut self.model, r, line);
             }
@@ -2071,11 +2238,7 @@ impl Run<'_> {
                         ("sql", hex(&self.model.sql_select(prog, &r.head, &new, Some(nat), Some(&tables))?))
                     }
                 };
-                self.db.query_row(
-                    "SELECT set_fixpoint_reprobe(?1, ?2, ?3, ?4)",
-                    rusqlite::params![name, k as i64, kind, body],
-                    |_| Ok(()),
-                )?;
+                self.fx().reprobe(&name, k, kind, &body)?;
                 probes[k].1 = new;
                 probes[k].2 = nat;
             }
@@ -2085,7 +2248,7 @@ impl Run<'_> {
             let (full, delta) = &tables[*r];
             self.db.execute_batch(&format!("DROP TABLE temp.{full}; DROP TABLE temp.{delta};"))?;
         }
-        self.db.query_row("SELECT set_fixpoint_close(?1)", [&name], |_| Ok(()))?;
+        self.fx().close(&name)?;
         self.made.insert((format!("sfx:{name}"), Vec::new()));
         Ok(true)
     }
@@ -2164,8 +2327,15 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
 pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register_symbols(db)?;
-    let inputs =
-        Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native: BTreeSet::new(), batch: HashMap::new() };
+    let inputs = Inputs {
+        facts: "main.".to_owned(),
+        stats: format!("{stats}."),
+        atoms: Some(lowered.ops),
+        native: BTreeSet::new(),
+        batch: HashMap::new(),
+        given: None,
+        kept: BTreeSet::new(),
+    };
     let out = run(&lowered.program, db, inputs, Some(lowered));
     super::native::flush_symbols(db)?;
     out
@@ -2176,21 +2346,41 @@ pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connect
 /// (`tape_load`), which is not kept: `nearest` is the transducer's (`Lowered::transduce_nearest`), so those two
 /// modes are dropped from `modes`.
 pub(in crate::code_rule_dsl) fn run_atoms_native(lowered: &lower::Lowered, db: &Connection, stats: &str, modes: &str) -> Result<Outcome> {
-    run_atoms_native_over(lowered, db, "main", stats, modes)
+    let mut native = native_modes(modes);
+    native.remove("nearest");
+    native.remove("kseed");
+    let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    run_native_inputs(lowered, db, inputs)
 }
 
 /// `run_atoms_native` over input relations in schema `facts` (the bound vtabs are `main`'s; a cross-file pass reads
 /// what the chunks wrote, `corpus::run`).
-pub(in crate::code_rule_dsl) fn run_atoms_native_over(lowered: &lower::Lowered, db: &Connection, facts: &str, stats: &str, modes: &str) -> Result<Outcome> {
+/// With the planner's statistics `given` (measured by the caller, in memory), and the outputs `kept` in the native
+/// engine for the caller (`Outcome::kept`): neither written to their tables nor decoded.
+pub(in crate::code_rule_dsl) fn run_atoms_native_over(
+    lowered: &lower::Lowered,
+    db: &Connection,
+    facts: &str,
+    given: Stats,
+    kept: BTreeSet<String>,
+    modes: &str,
+) -> Result<Outcome> {
+    let mut native = native_modes(modes);
+    native.remove("nearest");
+    native.remove("kseed");
+    // The statistics schema is still read for document ranges (`stat_docrange`).
+    let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
+    run_native_inputs(lowered, db, inputs)
+}
+
+fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register(db)?;
     super::native::register_symbols(db)?;
     super::native::forget_inputs(db);
-    let mut native = native_modes(modes);
-    native.remove("nearest");
-    native.remove("kseed");
-    let inputs = Inputs { facts: format!("{facts}."), stats: format!("{stats}."), atoms: Some(lowered.ops), native, batch: HashMap::new() };
+    super::native::hold_symbols(db, true)?;
     let out = run(&lowered.program, db, inputs, Some(lowered));
+    super::native::hold_symbols(db, false)?;
     super::native::flush_symbols(db)?;
     out
 }
@@ -2255,15 +2445,24 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
 
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
     let db = db;
-    let temp: Vec<(String, String)> = db
-        .prepare("SELECT type, name FROM temp.sqlite_master WHERE type IN ('table', 'view')")?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+    // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
+    // positions table (`rdl_int`) is the same for every run.
+    let temp: Vec<(String, String, String)> = db
+        .prepare("SELECT type, name, coalesce(sql, '') FROM temp.sqlite_master WHERE type IN ('table', 'view')")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    for (ty, name) in temp {
-        db.execute_batch(&format!("DROP {} IF EXISTS temp.{name}", if ty == "view" { "VIEW" } else { "TABLE" }))?;
+    let mut old_views: HashMap<String, String> = HashMap::new();
+    for (ty, name, sql) in temp {
+        if ty == "view" {
+            old_views.insert(name, sql);
+        } else if name != "rdl_int" {
+            db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{name}"))?;
+        }
     }
     // Positions in a symbol, for splitting one at its dots (`$m = @cat($q, $x)` with only $m bound).
-    db.execute_batch(RDL_INT)?;
+    if !db.prepare("SELECT 1 FROM temp.sqlite_master WHERE name = 'rdl_int'")?.exists([])? {
+        db.execute_batch(RDL_INT)?;
+    }
     let atoms = inputs.atoms.is_some();
     let facts = inputs.facts.clone();
     if inputs.native.contains("nearest") {
@@ -2276,13 +2475,31 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         rules_by.entry(r.head.rel.as_str()).or_default().push(r);
     }
     let native = model.inputs.native.clone();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new() };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
-        db.execute(&view, [])?;
+        // SQLite keeps a temp view's statement without `TEMP`.
+        if old_views.remove(&rel).as_deref() != Some(&view.replacen("CREATE TEMP VIEW", "CREATE VIEW", 1)) {
+            db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{rel}"))?;
+            db.execute(&view, [])?;
+        }
         run.views.insert(rel);
     }
+    for name in old_views.keys() {
+        db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{name}"))?;
+    }
+    // Relations the program's rules or outputs name (a part of a split program declares the whole's).
+    let named: HashSet<&str> = prog
+        .rules
+        .iter()
+        .flat_map(|r| std::iter::once(r.head.rel.as_str()).chain(r.body.iter().filter_map(|l| match l {
+            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
+            _ => None,
+        })))
+        .chain(prog.outputs.iter().map(String::as_str))
+        .chain(prog.facts.keys().map(String::as_str))
+        .collect();
     for (rel, cols) in &prog.decls {
-        if prog.inputs.contains(rel) || run.views.contains(rel) {
+        if prog.inputs.contains(rel) || run.views.contains(rel) || !named.contains(rel.as_str()) {
             continue;
         }
         // Typed columns: an untyped column compared with an INTEGER one gets numeric affinity applied to it, and
@@ -2304,7 +2521,14 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             Some(l) => (0..l.keys).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", "),
             None => (0..cols.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", "),
         };
-        db.execute(&format!("CREATE TEMP TABLE {rel}({names}, PRIMARY KEY ({key})) WITHOUT ROWID"), [])?;
+        let create = format!("CREATE TEMP TABLE {rel}({names}, PRIMARY KEY ({key})) WITHOUT ROWID");
+        // A rule's head is made when SQL first needs it; a relation of facts alone, or of neither, now.
+        // (Over atoms: T's extension, over text, reads its relations' tables itself.)
+        if atoms && rules_by.contains_key(rel.as_str()) && prog.facts.get(rel).is_none_or(|f| f.is_empty()) {
+            run.pending.insert(rel.clone(), create);
+            continue;
+        }
+        db.execute(&create, [])?;
         let rows: Vec<Vec<SqlValue>> = prog
             .facts
             .get(rel)
@@ -2344,6 +2568,17 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 .collect();
             run.materialize(&read)?;
         }
+        // This stratum runs in SQL: its relations' and those it reads' tables.
+        let read: Vec<String> = rules
+            .iter()
+            .flat_map(|r| &r.body)
+            .filter_map(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.clone()),
+                _ => None,
+            })
+            .chain(scc.iter().cloned())
+            .collect();
+        run.ensure(&read)?;
         let mut planned = Vec::new();
         for rule in &rules {
             let (order, work, _) = run.model.plan_rule(prog, &rule.head, &rule.body, None)?;
@@ -2417,8 +2652,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
-    run.materialize(&prog.outputs)?;
-    let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms)?;
+    let kept = run.model.inputs.kept.clone();
+    outcome.kept = kept.iter().filter(|r| run.native_rels.contains(*r)).cloned().collect();
+    let written: Vec<String> = prog.outputs.iter().filter(|r| !outcome.kept.contains(*r)).cloned().collect();
+    run.materialize(&written)?;
+    let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms, &kept)?;
     outcome.outputs = outputs;
     outcome.nodes = nodes;
     Ok(outcome)
@@ -2433,10 +2671,11 @@ fn decoded_outputs(
     lowered: Option<&lower::Lowered>,
     facts: &str,
     atoms: bool,
+    kept: &BTreeSet<String>,
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
     let (mut outputs, mut all_nodes) = (BTreeMap::new(), BTreeMap::new());
     let text = |e: &str| if atoms { format!("sym_text({e})") } else { e.to_owned() };
-    for rel in &prog.outputs {
+    for rel in prog.outputs.iter().filter(|r| !kept.contains(*r)) {
         // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).
         let domains: Vec<lower::Domain> = match lowered {
             Some(l) if rel != "finding" => l.domains[rel].clone(),

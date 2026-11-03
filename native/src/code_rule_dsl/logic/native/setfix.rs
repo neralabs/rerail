@@ -55,13 +55,18 @@ fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()
 /// table before any of them is written, in the caller's (write) transaction. `buf`: scratch for `cat`, so joining
 /// two symbols allocates only when the result is new.
 #[derive(Default)]
-pub struct Interner { atoms: crate::content_store::atoms::Interner, stored: usize, buf: String }
+pub struct Interner { atoms: crate::content_store::atoms::Interner, stored: usize, buf: String, held: bool }
 impl Interner {
     fn id(&mut self, s: &str) -> i64 { i64::from(self.atoms.intern(s)) }
     fn get(&self, s: &str) -> Option<i64> { self.atoms.get(s).map(i64::from) }
     fn name(&self, v: i64) -> &str { self.atoms.str(v as crate::content_store::atoms::Sym) }
     /// Drops symbols never flushed (a failed run's) and reads the table's new tail.
+    /// While a planner run holds the symbols (`hold_symbols`) it is the table's only writer, so there is nothing to
+    /// read: no statement per entry point.
     fn sync(&mut self, conn: &Connection) -> Result<()> {
+        if self.held {
+            return Ok(());
+        }
         self.atoms.truncate(self.stored);
         self.atoms.catch_up(conn).map_err(|e| err(e.to_string()))?;
         self.stored = self.atoms.len();
@@ -123,6 +128,14 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
         }
         Ok(Some(cat(&mut s, a, b)))
     })?;
+    Ok(())
+}
+
+/// Marks `conn`'s symbols held (`true`, after one catch-up) or released for a planner run: while held, the engine's
+/// entry points do not read the `atoms` table's tail (one statement each), since the run is its only writer.
+pub fn hold_symbols(conn: &Connection, held: bool) -> Result<()> {
+    let syms = symbols(conn)?;
+    syms.write().unwrap().held = held;
     Ok(())
 }
 
@@ -322,7 +335,10 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
             "name" => name = toks[1].to_string(),
             "rel" => {
                 let mut rel = Rel::new(toks[1], toks[2].as_bytes());
-                for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                // `rel <table> <types> empty`: the table was made this run and nothing wrote it (no statement).
+                if toks.get(3) != Some(&"empty") {
+                    for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                }
                 rel.stored = rel.n;
                 rels.push(rel);
             }
@@ -799,7 +815,8 @@ impl RowRef<'_> {
 /// A hash index of an immutable relation on `cols`: each key's row ids are one run of `ids`, found from the key's
 /// first row (`rep`) and its run (`start`, `len`). Two passes over the rows, no allocation per key.
 /// Over a view whose source indexes the one key column, the source's index serves (`source`), and nothing is built.
-pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool }
+/// Over an unfiltered view of a source with a sorted index (`sorted`), a probe is a slice of that index.
+pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool }
 impl Csr {
     fn build(rel: &InRel, cols: &[usize]) -> Csr {
         let key = |id: usize| cols.iter().map(move |&c| rel.at(id).at(c));
@@ -820,7 +837,7 @@ impl Csr {
             ids[(e.1 + e.2) as usize] = id as u32;
             e.2 += 1;
         }
-        Csr { cols: cols.to_vec(), table, ids, source: false }
+        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false }
     }
     /// `key` holds the values of `cols`, in order.
     fn get<'a>(&'a self, rel: &InRel, key: &[i64]) -> &'a [u32] {
@@ -833,6 +850,22 @@ static DERIVED: LazyLock<Mutex<HashMap<String, Arc<InRel>>>> = LazyLock::new(Def
 const SEED: usize = usize::MAX;
 /// Columns with at most this many values report each value's postings (`stats`).
 const FREQ_NDV: usize = 64;
+
+/// A native relation's rows, in place (for a caller that keeps an output in the engine): a source of columns
+/// `c0`, `c1`, ….
+pub fn derived(table: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+    let rel = DERIVED.lock().unwrap().get(table).cloned()?;
+    Some(Arc::new(Derived(rel)))
+}
+struct Derived(Arc<InRel>);
+impl crate::code_rule_dsl::facts::vtab::Source for Derived {
+    fn columns(&self) -> Vec<String> { (0..self.0.k).map(|i| format!("c{i}")).collect() }
+    fn len(&self) -> usize { self.0.n }
+    fn estimated_matches(&self, _: usize, _: bool) -> usize { 1 }
+    fn indexed(&self, _: usize) -> bool { false }
+    fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> { None }
+    fn value(&self, row: usize, column: usize) -> i64 { self.0.at(row).at(column) }
+}
 
 /// `set_fixpoint_materialize(table)`: inserts a native relation's rows (those not already in its table) into the
 /// table, for SQL that reads it. Returns the rows written.
@@ -908,11 +941,13 @@ impl InRel {
         idx.entry(mask).or_insert_with(|| {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
-            let empty = |source| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source };
+            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted };
             let m = if cols.is_empty() {
-                empty(false)
+                empty(false, false)
+            } else if let (Some(v), [c]) = (&self.view, cols) && v.ids.is_none() && v.eqs.is_empty() && v.src.sorted_rows(v.cols[*c], 0).is_some() {
+                empty(false, true)
             } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) {
-                empty(true)
+                empty(true, false)
             } else {
                 Csr::build(self, cols)
             };
@@ -934,6 +969,7 @@ static INPUTS: LazyLock<Mutex<HashMap<(String, String), Arc<InRel>>>> = LazyLock
 pub fn forget_inputs(conn: &Connection) {
     let path = conn.path().unwrap_or_default().to_owned();
     INPUTS.lock().unwrap().retain(|(p, _), _| *p != path);
+    STORED.lock().unwrap().retain(|(p, _), _| *p != path);
 }
 
 fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel>> {
@@ -944,7 +980,8 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     let base = which == "b";
     let (table, cols, types) = (unhex(table)?, unhex(cols)?, types.as_bytes());
     let (t0, c0) = (Instant::now(), thread_cpu());
-    if base && types.iter().all(|&t| t == b'i') {
+    // A stored table holds symbols as atoms (integers), so any column types read in place there.
+    if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
         if let Some(view) = view(conn, &table, &cols) {
             let n = view.ids.as_ref().map_or(view.src.len(), Vec::len);
             let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
@@ -979,9 +1016,16 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
 /// A base input over a bound vtab, read in place: `main.<table>` with `<col> = <int>` filters (joined by AND), its
 /// columns named. `None` when the table is not a bound source or the select is another shape (it is copied then).
 fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
-    let rest = table.strip_prefix("main.")?;
+    let (schema, rest) = table.split_once('.')?;
     let (name, filters) = match rest.split_once(" WHERE ") { Some((n, f)) => (n, Some(f)), None => (rest, None) };
-    let src = crate::code_rule_dsl::facts::vtab::bound_source(conn, name)?;
+    let src = if schema == "main" {
+        crate::code_rule_dsl::facts::vtab::bound_source(conn, name)?
+    } else {
+        // The columns read and those filtered.
+        let filtered = filters.into_iter().flat_map(|f| f.split(" AND ")).filter_map(|f| f.split_once(" = ").map(|(c, _)| c));
+        let need: Vec<&str> = cols.split(',').chain(filtered).collect();
+        stored_table(conn, schema, name, &need)?
+    };
     let names = src.columns();
     let column = |c: &str| names.iter().position(|n| n == c.trim());
     let cols: Vec<usize> = cols.split(',').map(column).collect::<Option<_>>()?;
@@ -998,6 +1042,93 @@ fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
         Some(cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect())
     };
     Some(View { src, cols, ids, eqs })
+}
+
+/// A table of integer columns in an attached schema (the cross-file pass's `x`), read in place: the columns an input
+/// reads are loaded by one statement the first time any input of the run needs them (a table scan, `NOT INDEXED`,
+/// so every column is in the table's row order), and every filtered or projected input over it is then a view
+/// (`View`). A column's index is built on its first lookup. A table holding a non-integer value is not one.
+struct Stored { columns: Vec<String>, n: std::sync::OnceLock<usize>, values: Vec<std::sync::OnceLock<Vec<i64>>>, index: Vec<std::sync::OnceLock<Vec<u32>>> }
+impl Stored {
+    fn col(&self, c: usize) -> &[i64] { self.values[c].get().expect("a loaded column") }
+    /// Column `c`'s rows ordered by value (4 bytes a row, no allocation per key); a value's rows are one run.
+    fn index(&self, c: usize) -> &[u32] {
+        self.index[c].get_or_init(|| {
+            let col = self.col(c);
+            let mut ids: Vec<u32> = (0..col.len() as u32).collect();
+            ids.sort_by_key(|&r| col[r as usize]);
+            ids
+        })
+    }
+    fn rows_of(&self, c: usize, v: i64) -> &[u32] {
+        let (ids, col) = (self.index(c), self.col(c));
+        let lo = ids.partition_point(|&r| col[r as usize] < v);
+        let hi = ids.partition_point(|&r| col[r as usize] <= v);
+        &ids[lo..hi]
+    }
+    /// Loads the columns among `need` not yet loaded, in one statement. False if one holds a non-integer value.
+    fn load(&self, conn: &Connection, table: &str, need: &[usize]) -> bool {
+        let missing: Vec<usize> = need.iter().copied().filter(|&c| self.values[c].get().is_none()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+        if missing.is_empty() { return true; }
+        let names: Vec<&str> = missing.iter().map(|&c| self.columns[c].as_str()).collect();
+        let read = || -> rusqlite::Result<Option<Vec<Vec<i64>>>> {
+            let mut st = conn.prepare(&format!("SELECT {} FROM {table} NOT INDEXED", names.join(", ")))?;
+            let mut values = vec![Vec::new(); missing.len()];
+            let mut q = st.query([])?;
+            while let Some(r) = q.next()? {
+                for (i, v) in values.iter_mut().enumerate() {
+                    match r.get_ref(i)? { ValueRef::Integer(x) => v.push(x), _ => return Ok(None) }
+                }
+            }
+            Ok(Some(values))
+        };
+        let Ok(Some(values)) = read() else { return false };
+        for (c, v) in missing.into_iter().zip(values) {
+            let _ = self.n.set(v.len());
+            let _ = self.values[c].set(v);
+        }
+        true
+    }
+}
+impl crate::code_rule_dsl::facts::vtab::Source for Stored {
+    fn columns(&self) -> Vec<String> { self.columns.clone() }
+    fn len(&self) -> usize { self.n.get().copied().unwrap_or(0) }
+    fn estimated_matches(&self, _: usize, _: bool) -> usize { 1 }
+    /// Not for a join's probes (each lookup allocates its rows): a join builds its hash index once (`Csr`). A
+    /// view's constant filters still find their rows by `lookup`, once per filter.
+    fn indexed(&self, _: usize) -> bool { false }
+    fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+        let mut out: Vec<usize> = values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect();
+        out.sort_unstable();
+        Some(out)
+    }
+    fn value(&self, row: usize, c: usize) -> i64 { self.col(c)[row] }
+    fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { Some(self.rows_of(c, v)) }
+}
+/// The stored tables read this run, by database and `schema.table` (dropped with the inputs, `forget_inputs`).
+static STORED: LazyLock<Mutex<HashMap<(String, String), Option<Arc<Stored>>>>> = LazyLock::new(Default::default);
+/// The stored table `schema.name` with the columns named in `need` loaded (`None`: not one, or not integers).
+fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+    if schema == "temp" || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') { return None; }
+    let key = (conn.path().unwrap_or_default().to_owned(), format!("{schema}.{name}"));
+    let t = STORED.lock().unwrap().get(&key).cloned();
+    let t = match t {
+        Some(t) => t?,
+        None => {
+            // The columns' names, from the statement (prepared, not run).
+            let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{name}")).ok()?.column_names().into_iter().map(str::to_owned).collect();
+            let k = columns.len();
+            let t = Arc::new(Stored { columns, n: std::sync::OnceLock::new(), values: (0..k).map(|_| std::sync::OnceLock::new()).collect(), index: (0..k).map(|_| std::sync::OnceLock::new()).collect() });
+            STORED.lock().unwrap().insert(key.clone(), Some(t.clone()));
+            t
+        }
+    };
+    let need: Vec<usize> = need.iter().map(|c| t.columns.iter().position(|n| n == c.trim())).collect::<Option<_>>()?;
+    if !t.load(conn, &format!("{schema}.{name}"), &need) {
+        STORED.lock().unwrap().insert(key, None);
+        return None;
+    }
+    Some(t as Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)
 }
 
 #[derive(Clone, Copy)]
@@ -1166,6 +1297,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             match src {
                 Src::In(rel, ix) => {
                     if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
+                    else if ix.sorted && let Some(v) = &rel.view { (Rows::Source(v), Cands::Slice(v.src.sorted_rows(v.cols[ix.cols[0]], key[0]).unwrap_or(&[]))) }
                     else if ix.source && let Some(v) = &rel.view { (Rows::Source(v), Cands::Owned(v.find(ix.cols[0], key[0]))) }
                     else { (Rows::In(rel), Cands::Slice(ix.get(rel, key))) }
                 }

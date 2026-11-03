@@ -55,6 +55,11 @@ pub(crate) trait Source: Send + Sync {
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
     fn value(&self, row: usize, column: usize) -> i64;
+    /// The rows whose `column` is `value`, as a slice of the source's own sorted index (no allocation); `None`
+    /// where the source keeps none.
+    fn sorted_rows(&self, _column: usize, _value: i64) -> Option<&[u32]> {
+        None
+    }
 }
 
 #[derive(Default)]

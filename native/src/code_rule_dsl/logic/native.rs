@@ -23,7 +23,11 @@ mod setfix;
 #[cfg(test)]
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
-pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, register_symbols};
+pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, hold_symbols, register_symbols};
+/// The set engine's component calls, made in process by the planner (no SQL statement each).
+pub(in crate::code_rule_dsl) mod component {
+    pub(in crate::code_rule_dsl) use super::setfix::{close, derived, materialize, open, reprobe, run, stats, steps};
+}
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConnection, VTabCursor, VTabKind};

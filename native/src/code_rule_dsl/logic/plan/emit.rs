@@ -48,6 +48,8 @@ pub(in crate::code_rule_dsl) fn emit(
         atoms: Some(lowered.ops),
         native: BTreeSet::new(),
         batch: batch.clone(),
+        given: None,
+        kept: BTreeSet::new(),
     };
     let mut model = make_plan(prog, db, inputs)?;
     let (sccs, _) = strata(prog)?;
@@ -251,5 +253,5 @@ pub(in crate::code_rule_dsl) fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
-    decoded_outputs(&lowered.program, db, Some(lowered), "main.", true)
+    decoded_outputs(&lowered.program, db, Some(lowered), "main.", true, &BTreeSet::new())
 }

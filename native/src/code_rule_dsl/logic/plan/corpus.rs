@@ -11,7 +11,7 @@
 //! `atomized_statistics`), and each document's first node id, which maps a node `d << 32 | index` to T's global id.
 //! T's documents (`doc`) name the files, in T's order.
 
-use super::{Error, Outcome, Result, lower, run_atoms_native};
+use super::{Error, Outcome, Result, lower};
 
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
@@ -43,7 +43,6 @@ pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connect
     let kinds = dialect.kinds();
     let kind = |s: &str| i64::from(crate::code_rule_dsl::facts::core::kind_atom(tag, kinds.kind_id(s)));
     let field = |s: &str| kinds.field_id(s).map_or(-1, |f| i64::from(syntax::field_atom(tag, f)));
-    let name = |s: &str| -> Result<i64> { Ok(i64::from(store.intern_atoms(&[s]).map_err(|e| Error::Plan(e.to_string()))?[0])) };
     let domain = |tbl: &str, col: &str| match (tbl, col) {
         ("node", "kind") => Domain::Kind,
         ("field", "f") => Domain::Field,
@@ -83,7 +82,13 @@ pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connect
     for r in rows("SELECT pkind, ckind, field, n FROM stat_edge")? {
         insert("stat_edge", vec![SqlValue::Integer(kind(&text(&r[0]))), SqlValue::Integer(kind(&text(&r[1]))), r[2].clone(), r[3].clone()])?;
     }
-    for mut r in rows("SELECT tbl, col, val, n, docs, sqd FROM stat_val")? {
+    let vals = rows("SELECT tbl, col, val, n, docs, sqd FROM stat_val")?;
+    // The names among the values, interned in one transaction (not one each).
+    let names: Vec<String> = vals.iter().filter(|r| domain(&text(&r[0]), &text(&r[1])) == Domain::Name).map(|r| text(&r[2])).collect();
+    let atoms = store.intern_atoms(&names.iter().map(String::as_str).collect::<Vec<_>>()).map_err(|e| Error::Plan(e.to_string()))?;
+    let named: HashMap<&str, i64> = names.iter().map(String::as_str).zip(atoms.into_iter().map(i64::from)).collect();
+    let name = |s: &str| -> Result<i64> { Ok(named[s]) };
+    for mut r in vals {
         let v = text(&r[2]);
         r[2] = match domain(&text(&r[0]), &text(&r[1])) {
             Domain::Kind => SqlValue::Integer(kind(&v)),
@@ -174,18 +179,45 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     let store = ContentStore::open(&path).map_err(|e| Error::Plan(e.to_string()))?;
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
+    statements.enter("stats");
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
     let sets = lowered.transduce_nearest();
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
     let (local, cross) = (part(split.local), part(split.cross));
     atomized_statistics(&t, &db, &store, &first, dialect)?;
-    // T's corpus statistics, kept for the cross-file part's planning: each chunk's overwrite them with its own.
-    db.execute_batch("CREATE TABLE s.t_meta AS SELECT * FROM s.stat_meta; CREATE TABLE s.t_col AS SELECT * FROM s.stat_col;")?;
+    // T's corpus statistics, read once: each chunk plans with them and its sources' own, measured in memory, and the
+    // cross-file part with them and the chunks' totals.
+    let t_stats = super::Stats::of_schema(&db, &lowered.program, "s")?;
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
+    // Each base relation the cross-file part reads is stored with the columns its rules name (and those decoding a
+    // finding's location reads): the others are never read.
+    let decodes = cross.program.outputs.iter().any(|o| o == "finding");
+    let mut stored: Vec<(String, String)> = Vec::new();
     for rel in &split.base {
         let cols = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
-        db.execute_batch(&format!("CREATE TABLE x.{rel}({})", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", ")))?;
+        let decode: &[&str] = match rel.as_str() {
+            "node" if decodes => &["d", "n", "start"],
+            "doc" if decodes => &["d", "path"],
+            _ => &[],
+        };
+        let named: Vec<&str> = cols
+            .iter()
+            .enumerate()
+            .filter(|(i, c)| {
+                decode.contains(c)
+                    || cross.program.rules.iter().flat_map(|r| &r.body).any(|l| match l {
+                        front::Literal::Atom(a) | front::Literal::Agg { atom: a, .. } => &a.rel == rel && a.args.get(*i).is_some_and(|t| !matches!(t, front::Term::Wild)),
+                        _ => false,
+                    })
+            })
+            .map(|(_, c)| *c)
+            .collect();
+        if named.is_empty() {
+            continue;
+        }
+        db.execute_batch(&format!("CREATE TABLE x.{rel}({})", named.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", ")))?;
+        stored.push((rel.clone(), named.join(", ")));
     }
     for rel in &split.exports {
         let width = lowered.program.decls[rel].len();
@@ -193,6 +225,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         db.execute_batch(&format!("CREATE TABLE x.{rel}({}, PRIMARY KEY ({})) WITHOUT ROWID", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")))?;
     }
     phase("stats", statements.count());
+    statements.enter("parse");
     let modules = Modules::default();
     let mut bound = BTreeSet::new();
     let mut totals = Totals::default();
@@ -226,34 +259,46 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
             }
         }
         phase("parse", statements.count());
+        statements.enter("batch");
         nodes += pending_nodes;
         pending_nodes = 0;
         chunks += 1;
         let sources = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, binding).map_err(|e| Error::Plan(e.to_string()))?;
         phase("batch", statements.count());
-        db.execute_batch("BEGIN")?;
+        statements.enter("local");
+        let mut stats = t_stats.clone();
         for (rel, source) in sources {
-            let measured = source_statistics(&db, &rel, source.as_ref())?;
+            let measured = syntax::statistics(source.as_ref());
             if split.base.contains(&rel) && rel.starts_with("nearest_") {
                 totals.add(&rel, source.len(), &measured);
             }
+            stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
             modules.bind(&db, &rel, source)?;
             bound.insert(rel);
         }
-        db.execute_batch("COMMIT")?;
-        let got = run_atoms_native(&local, &db, "s", modes)?;
+        let got = super::run_atoms_native_over(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes)?;
+        let kept = got.kept.clone();
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("local:{k}")));
         db.execute_batch("BEGIN")?;
-        for rel in &split.base {
-            let cols = super::super::sql::select::input_columns(rel).expect("checked above").join(", ");
+        for (rel, cols) in &stored {
             db.execute_batch(&format!("INSERT INTO x.{rel} SELECT {cols} FROM main.{rel}"))?;
         }
         for rel in &split.exports {
-            // Rows another chunk wrote too (a file-local relation without a location column) are kept once.
-            let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT * FROM temp.{rel}"), [])?;
-            let rows = Rows::read(&db, &format!("temp.{rel}"))?;
-            totals.add(rel, inserted, &syntax::statistics(&rows));
+            // Rows another chunk wrote too (a file-local relation without a location column) are kept once. A kept
+            // export goes from the engine to `x` in one statement and is measured in place; one a SQL stratum
+            // derived is in its table.
+            let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
+            if kept.contains(rel) {
+                let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
+                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM set_derived WHERE rel = ?1"), [rel])?;
+                let rows = crate::code_rule_dsl::logic::native::component::derived(rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
+                totals.add_rows(rel, inserted, rows.as_ref(), &types);
+            } else {
+                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT * FROM temp.{rel}"), [])?;
+                let rows = Rows::read(&db, &format!("temp.{rel}"))?;
+                totals.add_rows(rel, inserted, &rows, &types);
+            }
         }
         db.execute_batch("COMMIT")?;
         // The chunk's sources are dropped before the next is built.
@@ -264,25 +309,27 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         }
         crate::code_rule_dsl::logic::native::forget_inputs(&db);
         phase("local", statements.count());
+        statements.enter("parse");
     }
-    // The cross-file part's statistics: T's for the base relations, measured on `x` for the rest.
-    db.execute_batch("DELETE FROM s.stat_meta; INSERT INTO s.stat_meta SELECT * FROM s.t_meta; DELETE FROM s.stat_col; INSERT INTO s.stat_col SELECT * FROM s.t_col;")?;
-    db.execute_batch("BEGIN")?;
-    totals.write(&db)?;
-    db.execute_batch("COMMIT")?;
+    statements.enter("stats");
+    // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
+    let mut cross_stats = t_stats;
+    totals.apply(&mut cross_stats);
 
     // Each input is read by one statement (a scan), so only decoding needs an index: `node` and `doc` by key.
-    for rel in split.base.iter().filter(|r| matches!(r.as_str(), "node" | "doc")) {
+    for rel in stored.iter().map(|(r, _)| r).filter(|r| decodes && matches!(r.as_str(), "node" | "doc")) {
         for (i, cols) in super::vtab_indexes(rel).iter().take(1).enumerate() {
             db.execute_batch(&format!("CREATE INDEX x.{rel}_{i} ON {rel}({})", cols.join(", ")))?;
         }
     }
     phase("stats", statements.count());
+    statements.enter("cross");
     if !cross.program.rules.is_empty() {
-        let got = super::run_atoms_native_over(&cross, &db, "x", "s", modes)?;
+        let got = super::run_atoms_native_over(&cross, &db, "x", cross_stats, BTreeSet::new(), modes)?;
         native.extend(gather(got, &mut outputs, &mut node_columns, &|_| true).into_iter().map(|k| format!("cross:{k}")));
     }
     phase("cross", statements.count());
+    statements.enter("write");
     let mut rows = BTreeMap::new();
     for (rel, lines) in &outputs {
         let node_columns = &node_columns[rel];
@@ -312,71 +359,96 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks })
 }
 
-/// A bound source's statistics (its rows, and `stat_col`'s per column), in schema `s`: a chunk's own.
-fn source_statistics(db: &Connection, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Result<Vec<(String, i64, i64, i64, i64)>> {
-    db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64])?;
-    let measured = syntax::statistics(source);
-    for (col, rows, ndv, sq, sqd) in &measured {
-        db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd])?;
-    }
-    Ok(measured)
-}
 
 /// The statements SQLite runs on a connection (`SQLITE_TRACE_STMT`: each statement's first step, those inside
 /// `execute_batch` and those the native engine's SQL functions run on it included), counted until dropped.
+///
+/// `RDL_STMTS=<file>`: also each statement's cost at its end (`SQLITE_TRACE_PROFILE`): its time and SQLite's own
+/// counters (VM steps, full-scan steps, sorts, automatic-index rows), summed by statement text and written to `<file>`
+/// as tab-separated rows (phase, runs, ms, vm steps, full-scan steps, sorts, autoindex rows, text).
 struct Statements {
     db: *mut rusqlite::ffi::sqlite3,
-    count: Box<std::sync::atomic::AtomicUsize>,
+    state: Box<StatementState>,
+}
+#[derive(Default)]
+struct StatementState {
+    count: std::sync::atomic::AtomicUsize,
+    phase: parking_lot::Mutex<&'static str>,
+    costs: Option<parking_lot::Mutex<HashMap<(&'static str, String), [u64; 6]>>>,
 }
 impl Statements {
     fn on(db: &Connection) -> Self {
-        unsafe extern "C" fn trace(_: u32, state: *mut std::ffi::c_void, _: *mut std::ffi::c_void, sql: *mut std::ffi::c_void) -> std::ffi::c_int {
-            // SAFETY: the counter outlives the callback (removed on drop).
-            unsafe { &*state.cast::<std::sync::atomic::AtomicUsize>() }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if let Some(texts) = TEXTS.as_ref() {
-                // SAFETY: for SQLITE_TRACE_STMT, the last argument is the statement's text.
-                let text = unsafe { std::ffi::CStr::from_ptr(sql.cast()) }.to_string_lossy();
-                let shape: String = text.chars().take(90).collect();
-                *texts.lock().entry(shape).or_default() += 1;
+        use rusqlite::ffi;
+        unsafe extern "C" fn trace(event: u32, state: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
+            // SAFETY: the state outlives the callback (removed on drop).
+            let state = unsafe { &*state.cast::<StatementState>() };
+            if event == ffi::SQLITE_TRACE_STMT as u32 {
+                state.count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return 0;
+            }
+            let Some(costs) = &state.costs else { return 0 };
+            let stmt = p.cast::<ffi::sqlite3_stmt>();
+            // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
+            let (ns, text, vm, scan, sort, auto) = unsafe {
+                let ns = *x.cast::<i64>() as u64;
+                let text = std::ffi::CStr::from_ptr(ffi::sqlite3_sql(stmt)).to_string_lossy().split_whitespace().collect::<Vec<_>>().join(" ");
+                let st = |op| ffi::sqlite3_stmt_status(stmt, op, 1) as u64;
+                (ns, text, st(ffi::SQLITE_STMTSTATUS_VM_STEP), st(ffi::SQLITE_STMTSTATUS_FULLSCAN_STEP), st(ffi::SQLITE_STMTSTATUS_SORT), st(ffi::SQLITE_STMTSTATUS_AUTOINDEX))
+            };
+            let phase = *state.phase.lock();
+            let mut costs = costs.lock();
+            let c = costs.entry((phase, text)).or_default();
+            for (a, b) in c.iter_mut().zip([1, ns, vm, scan, sort, auto]) {
+                *a += b;
             }
             0
         }
-        let count = Box::new(std::sync::atomic::AtomicUsize::new(0));
-        // SAFETY: the connection is live for the run; the counter is boxed (a stable address) and outlives it.
+        let state = Box::new(StatementState { costs: std::env::var_os("RDL_STMTS").map(|_| Default::default()), ..Default::default() });
+        let mask = ffi::SQLITE_TRACE_STMT as u32 | if state.costs.is_some() { ffi::SQLITE_TRACE_PROFILE as u32 } else { 0 };
+        // SAFETY: the connection is live for the run; the state is boxed (a stable address) and outlives the callback.
         let db = unsafe { db.handle() };
-        unsafe { rusqlite::ffi::sqlite3_trace_v2(db, rusqlite::ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::from_ref(&*count).cast_mut().cast()) };
-        Statements { db, count }
+        unsafe { ffi::sqlite3_trace_v2(db, mask, Some(trace), std::ptr::from_ref(&*state).cast_mut().cast()) };
+        Statements { db, state }
     }
     fn count(&self) -> usize {
-        self.count.load(std::sync::atomic::Ordering::Relaxed)
+        self.state.count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    /// The phase the statements from now on are charged to.
+    fn enter(&self, phase: &'static str) {
+        *self.state.phase.lock() = phase;
     }
 }
-/// `RDL_STMTS`: the statements' texts (their first 90 characters) and how often each ran, printed at the end.
-static TEXTS: std::sync::LazyLock<Option<parking_lot::Mutex<HashMap<String, usize>>>> =
-    std::sync::LazyLock::new(|| std::env::var_os("RDL_STMTS").map(|_| Default::default()));
 impl Drop for Statements {
     fn drop(&mut self) {
-        if let Some(texts) = TEXTS.as_ref() {
-            let mut all: Vec<(String, usize)> = texts.lock().drain().collect();
-            all.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
-            for (text, n) in all.iter().take(25) {
-                eprintln!("{n:>9}  {text}");
-            }
-        }
         // SAFETY: as in `on`; the connection is still open (dropped after this).
         unsafe { rusqlite::ffi::sqlite3_trace_v2(self.db, 0, None, std::ptr::null_mut()) };
+        if let (Some(costs), Some(file)) = (&self.state.costs, std::env::var_os("RDL_STMTS")) {
+            let mut all: Vec<((&str, String), [u64; 6])> = costs.lock().drain().collect();
+            all.sort_by_key(|(_, c)| std::cmp::Reverse(c[1]));
+            let text: String = all
+                .iter()
+                .map(|((phase, sql), [n, ns, vm, scan, sort, auto])| format!("{phase}\t{n}\t{:.3}\t{vm}\t{scan}\t{sort}\t{auto}\t{sql}\n", *ns as f64 / 1e6))
+                .collect();
+            let _ = std::fs::write(file, text);
+        }
     }
 }
 
-/// The cross-file pass's statistics of what the chunks wrote, summed over the chunks as they are written (no scan at
-/// the end): rows, postings' squares and their per-document sums add exactly (a document is in one chunk). Distinct
-/// values add exactly on a column of locations; elsewhere the sum bounds them above, which the planner reads as an
-/// estimate.
+/// The cross-file pass's statistics of what the chunks wrote, as T's `stats.py` defines them, summed over the chunks
+/// as each chunk's rows are written (from the rows in memory; no scan at the end). A document is in one chunk, so
+/// per-document sums (`sqd`, `docs`) add exactly. Value columns (not node ids) keep each value's postings (`stat_val`:
+/// `n`, `docs`, `sqd`), merged across chunks, so their `ndv` and `sq` are exact too; the planner reads a constant
+/// missing from `stat_val` as matching no row (`const_freq`), so a value column without them would price every
+/// constant at zero rows. Node columns' values never cross documents, so their `ndv` adds exactly.
 #[derive(Default)]
-struct Totals(BTreeMap<String, (usize, BTreeMap<String, [i64; 4]>)>);
+struct Totals {
+    rels: BTreeMap<String, (usize, BTreeMap<String, [i64; 4]>)>,
+    /// Per (relation, value column): per value, (n, docs, sqd).
+    vals: BTreeMap<(String, String), HashMap<i64, [i64; 3]>>,
+}
 impl Totals {
     fn add(&mut self, rel: &str, rows: usize, measured: &[(String, i64, i64, i64, i64)]) {
-        let entry = self.0.entry(rel.to_owned()).or_default();
+        let entry = self.rels.entry(rel.to_owned()).or_default();
         entry.0 += rows;
         for (col, rows, ndv, sq, sqd) in measured {
             let t = entry.1.entry(col.clone()).or_default();
@@ -385,15 +457,59 @@ impl Totals {
             }
         }
     }
-    fn write(&self, db: &Connection) -> Result<()> {
-        for (rel, (rows, cols)) in &self.0 {
-            db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), *rows as i64])?;
-            for (col, [_, ndv, sq, sqd]) in cols {
-                db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, *rows as i64, ndv.max(&1), sq, sqd])?;
+    /// A chunk's rows of `rel` (`inserted` of them new to `x`), with its columns' declared types.
+    fn add_rows(&mut self, rel: &str, inserted: usize, rows: &dyn crate::code_rule_dsl::facts::vtab::Source, types: &[&str]) {
+        let n = rows.len();
+        // A row's document: its first node column's (`d << 32 | index`), or one document for a relation without one.
+        let doc_col = types.iter().position(|t| *t == "node");
+        let doc = |r: usize| doc_col.map_or(-1, |c| rows.value(r, c) >> 32);
+        let entry = self.rels.entry(rel.to_owned()).or_default();
+        entry.0 += inserted;
+        for (c, name) in rows.columns().iter().enumerate() {
+            if types.get(c) == Some(&"node") {
+                let measured = column_moments(rows, c, &doc);
+                let t = entry.1.entry(name.clone()).or_default();
+                for (a, b) in t.iter_mut().zip([n as i64, measured.0, measured.1, measured.2]) {
+                    *a += b;
+                }
+                continue;
+            }
+            // Per (document, value) counts of this chunk, then per value: n, documents, and the sum of squares.
+            let mut per: HashMap<(i64, i64), i64> = HashMap::new();
+            for r in 0..n {
+                *per.entry((doc(r), rows.value(r, c))).or_default() += 1;
+            }
+            let vals = self.vals.entry((rel.to_owned(), name.clone())).or_default();
+            for ((_, v), k) in per {
+                let e = vals.entry(v).or_default();
+                e[0] += k;
+                e[1] += 1;
+                e[2] += k * k;
             }
         }
-        Ok(())
     }
+    /// The totals as the planner's statistics (T's `stats.py` definitions), over `stats`.
+    fn apply(&self, stats: &mut super::Stats) {
+        for (rel, (rows, measured)) in &self.rels {
+            stats.measured(rel, measured.iter().map(|(col, [_, ndv, sq, sqd])| (col.clone(), [*rows as i64, (*ndv).max(1), *sq, *sqd])), []);
+        }
+        for ((rel, col), per) in &self.vals {
+            let rows = self.rels.get(rel).map_or(0, |r| r.0 as i64);
+            let (ndv, sq, sqd) = per.values().fold((0, 0, 0), |(a, b, c), e| (a + 1, b + e[0] * e[0], c + e[2]));
+            stats.measured(rel, [(col.clone(), [rows, ndv.max(1), sq, sqd])], per.iter().map(|(v, [n, _, _])| (col.clone(), *v, *n)));
+        }
+    }
+}
+
+/// A node column's (ndv, sq, sqd) in one chunk: its values never cross documents.
+fn column_moments(rows: &dyn crate::code_rule_dsl::facts::vtab::Source, c: usize, doc: &dyn Fn(usize) -> i64) -> (i64, i64, i64) {
+    let mut per: HashMap<i64, i64> = HashMap::new();
+    let mut per_doc: HashMap<(i64, i64), i64> = HashMap::new();
+    for r in 0..rows.len() {
+        *per.entry(rows.value(r, c)).or_default() += 1;
+        *per_doc.entry((doc(r), rows.value(r, c))).or_default() += 1;
+    }
+    (per.len() as i64, per.values().map(|k| k * k).sum(), per_doc.values().map(|k| k * k).sum())
 }
 
 /// A chunk's rows of a relation (columns `c0`, `c1`, …), read once to measure them.
