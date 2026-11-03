@@ -2195,6 +2195,22 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_over(lowered: &lower::Lowered, 
     out
 }
 
+/// Inserts `rows` (each of one width) with `insert` (`INSERT [OR …] INTO t`), many rows per statement: a statement
+/// per row would be a host loop over data.
+pub(in crate::code_rule_dsl) fn insert_many(db: &Connection, insert: &str, rows: Vec<Vec<SqlValue>>) -> Result<()> {
+    let Some(width) = rows.first().map(Vec::len) else { return Ok(()) };
+    // SQLite binds at most 32766 parameters per statement.
+    let per = (32_000 / width.max(1)).max(1);
+    let mut rows = rows.into_iter().peekable();
+    while rows.peek().is_some() {
+        let part: Vec<Vec<SqlValue>> = rows.by_ref().take(per).collect();
+        let row = format!("({})", vec!["?"; width].join(", "));
+        let holes = vec![row.as_str(); part.len()].join(", ");
+        db.execute(&format!("{insert} VALUES {holes}"), rusqlite::params_from_iter(part.into_iter().flatten()))?;
+    }
+    Ok(())
+}
+
 /// Positions in a symbol, for splitting one at its dots (`$m = @cat($q, $x)` with only $m bound).
 const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT INTO rdl_int WITH RECURSIVE i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM i WHERE i < 4096) SELECT i FROM i;";
 
@@ -2289,17 +2305,21 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             None => (0..cols.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", "),
         };
         db.execute(&format!("CREATE TEMP TABLE {rel}({names}, PRIMARY KEY ({key})) WITHOUT ROWID"), [])?;
-        for row in prog.facts.get(rel).into_iter().flatten() {
-            let values: Vec<SqlValue> = row
-                .iter()
-                .map(|v| match v {
-                    Value::Int(i) => SqlValue::Integer(*i),
-                    Value::Str(s) => SqlValue::Text(s.clone()),
-                })
-                .collect();
-            let holes = vec!["?"; values.len()].join(", ");
-            db.execute(&format!("INSERT OR IGNORE INTO {rel} VALUES ({holes})"), rusqlite::params_from_iter(values))?;
-        }
+        let rows: Vec<Vec<SqlValue>> = prog
+            .facts
+            .get(rel)
+            .into_iter()
+            .flatten()
+            .map(|row| {
+                row.iter()
+                    .map(|v| match v {
+                        Value::Int(i) => SqlValue::Integer(*i),
+                        Value::Str(s) => SqlValue::Text(s.clone()),
+                    })
+                    .collect()
+            })
+            .collect();
+        insert_many(db, &format!("INSERT OR IGNORE INTO {rel}"), rows)?;
     }
     let mut outcome = Outcome::default();
     for scc in &sccs {

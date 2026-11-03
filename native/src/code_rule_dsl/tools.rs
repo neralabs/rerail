@@ -35,8 +35,8 @@ pub fn logic(program: &str, root: &std::path::Path, t_facts: &std::path::Path, o
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
     let report = super::logic::plan::corpus::run(program, root, t_facts, out, modes, binding, chunk_nodes).map_err(|error| error.to_string())?;
     let mut text = format!("{} files, {} nodes in {} chunks, {} components native ({modes}, nearest on {binding:?})\n", report.files, report.nodes, report.chunks, report.native);
-    for (phase, user, sys, rss) in &report.phases {
-        text += &format!("  {phase:<6} {user:.2} s user + {sys:.2} s sys; peak RSS {rss:.0} MB\n");
+    for (phase, user, sys, rss, statements) in &report.phases {
+        text += &format!("  {phase:<6} {user:.2} s user + {sys:.2} s sys; peak RSS {rss:.0} MB; {statements} SQLite statements\n");
     }
     for (rel, rows) in &report.rows {
         text += &format!("  {rel}: {rows} rows\n");

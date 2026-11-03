@@ -23,7 +23,7 @@ mod setfix;
 #[cfg(test)]
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
-pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, read_in_place, register_symbols};
+pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, register_symbols};
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConnection, VTabCursor, VTabKind};
@@ -409,6 +409,8 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
     })?;
     const SETREL: Module<setfix::RelTab> = Module::read_only_module();
     db.create_module(c"set_rel", &SETREL, None)?;
+    const DERIVED: Module<setfix::DerivedTab> = Module::eponymous_only_module();
+    db.create_module(c"set_derived", &DERIVED, None)?;
     const RESULT: Module<ResultTab> = Module::read_only_module();
     db.create_module(c"lattice_result", &RESULT, None)?;
     Ok(())

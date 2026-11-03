@@ -65,9 +65,10 @@ pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connect
         let rows = st.query_map([], |r| (0..width).map(|i| r.get::<_, SqlValue>(i)).collect())?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     };
+    // Rows per table, inserted many per statement at the end.
+    let pending: std::cell::RefCell<BTreeMap<String, Vec<Vec<SqlValue>>>> = Default::default();
     let insert = |table: &str, row: Vec<SqlValue>| -> Result<()> {
-        let holes = vec!["?"; row.len()].join(", ");
-        db.execute(&format!("INSERT INTO s.{table} VALUES ({holes})"), rusqlite::params_from_iter(row))?;
+        pending.borrow_mut().entry(format!("INSERT INTO s.{table}")).or_default().push(row);
         Ok(())
     };
     db.execute_batch("BEGIN")?;
@@ -91,13 +92,15 @@ pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connect
             _ => r[2].clone(),
         };
         // Two of T's strings can lower to one atom (kinds a dialect does not have are all -1).
-        let holes = vec!["?"; r.len()].join(", ");
-        db.execute(&format!("INSERT OR IGNORE INTO s.stat_val VALUES ({holes})"), rusqlite::params_from_iter(r))?;
+        pending.borrow_mut().entry("INSERT OR IGNORE INTO s.stat_val".to_owned()).or_default().push(r);
     }
     for r in rows("SELECT d, lo, hi FROM stat_docrange")? {
         let d = int(&r[0]);
         let id = |n: i64| SqlValue::Integer((d << 32) + n - first[&d]);
         insert("stat_docrange", vec![r[0].clone(), id(int(&r[1])), id(int(&r[2]))])?;
+    }
+    for (statement, rows) in pending.into_inner() {
+        super::insert_many(db, &statement, rows)?;
     }
     db.execute_batch("COMMIT")?;
     Ok(())
@@ -115,8 +118,8 @@ pub(crate) fn usage() -> (f64, f64, f64) {
 
 /// What a corpus run did: its phases' CPU (user, system) and the peak RSS after each, and the outcome.
 pub(crate) struct Report {
-    /// (phase, user, sys, peak RSS so far).
-    pub(crate) phases: Vec<(&'static str, f64, f64, f64)>,
+    /// (phase, user, sys, peak RSS so far, SQLite statements run).
+    pub(crate) phases: Vec<(&'static str, f64, f64, f64, usize)>,
     pub(crate) files: usize,
     pub(crate) nodes: usize,
     pub(crate) native: usize,
@@ -135,17 +138,21 @@ use std::collections::{BTreeMap, BTreeSet};
 /// `out` (schema `x`); the chunk is then dropped. The cross-file part runs once, over `x`. Memory is one chunk's, and
 /// the cross-file part's own.
 pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
-    let mut phases: Vec<(&'static str, f64, f64, f64)> = Vec::new();
+    let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     let mut last = usage();
-    let mut phase = |name: &'static str| {
+    let mut counted = 0;
+    let mut phase = |name: &'static str, statements: usize| {
         let now = usage();
+        let n = statements - counted;
+        counted = statements;
         match phases.iter_mut().find(|p| p.0 == name) {
             Some(p) => {
                 p.1 += now.0 - last.0;
                 p.2 += now.1 - last.1;
                 p.3 = now.2;
+                p.4 += n;
             }
-            None => phases.push((name, now.0 - last.0, now.1 - last.1, now.2)),
+            None => phases.push((name, now.0 - last.0, now.1 - last.1, now.2, n)),
         }
         last = now;
     };
@@ -166,6 +173,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     }
     let store = ContentStore::open(&path).map_err(|e| Error::Plan(e.to_string()))?;
     let db = Connection::open(&path)?;
+    let statements = Statements::on(&db);
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
     let sets = lowered.transduce_nearest();
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
@@ -184,7 +192,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         let cols: Vec<String> = (0..width).map(|i| format!("c{i}")).collect();
         db.execute_batch(&format!("CREATE TABLE x.{rel}({}, PRIMARY KEY ({})) WITHOUT ROWID", cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")))?;
     }
-    phase("stats");
+    phase("stats", statements.count());
     let modules = Modules::default();
     let mut bound = BTreeSet::new();
     let mut totals = Totals::default();
@@ -217,12 +225,13 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
                 continue;
             }
         }
-        phase("parse");
+        phase("parse", statements.count());
         nodes += pending_nodes;
         pending_nodes = 0;
         chunks += 1;
         let sources = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, binding).map_err(|e| Error::Plan(e.to_string()))?;
-        phase("batch");
+        phase("batch", statements.count());
+        db.execute_batch("BEGIN")?;
         for (rel, source) in sources {
             let measured = source_statistics(&db, &rel, source.as_ref())?;
             if split.base.contains(&rel) && rel.starts_with("nearest_") {
@@ -231,6 +240,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
             modules.bind(&db, &rel, source)?;
             bound.insert(rel);
         }
+        db.execute_batch("COMMIT")?;
         let got = run_atoms_native(&local, &db, "s", modes)?;
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("local:{k}")));
@@ -253,29 +263,26 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
             }
         }
         crate::code_rule_dsl::logic::native::forget_inputs(&db);
-        phase("local");
+        phase("local", statements.count());
     }
     // The cross-file part's statistics: T's for the base relations, measured on `x` for the rest.
     db.execute_batch("DELETE FROM s.stat_meta; INSERT INTO s.stat_meta SELECT * FROM s.t_meta; DELETE FROM s.stat_col; INSERT INTO s.stat_col SELECT * FROM s.t_col;")?;
+    db.execute_batch("BEGIN")?;
     totals.write(&db)?;
-    // The cross-file pass probes exports on any column: a column's own index (the key serves the first).
-    for rel in &split.exports {
-        for c in 1..lowered.program.decls[rel].len() {
-            db.execute_batch(&format!("CREATE INDEX x.{rel}_c{c} ON {rel}(c{c})"))?;
-        }
-    }
-    for rel in &split.base {
-        for (i, cols) in super::vtab_indexes(rel).iter().enumerate() {
+    db.execute_batch("COMMIT")?;
+
+    // Each input is read by one statement (a scan), so only decoding needs an index: `node` and `doc` by key.
+    for rel in split.base.iter().filter(|r| matches!(r.as_str(), "node" | "doc")) {
+        for (i, cols) in super::vtab_indexes(rel).iter().take(1).enumerate() {
             db.execute_batch(&format!("CREATE INDEX x.{rel}_{i} ON {rel}({})", cols.join(", ")))?;
         }
     }
-    phase("stats");
+    phase("stats", statements.count());
     if !cross.program.rules.is_empty() {
-        crate::code_rule_dsl::logic::native::read_in_place(&db, "x")?;
         let got = super::run_atoms_native_over(&cross, &db, "x", "s", modes)?;
         native.extend(gather(got, &mut outputs, &mut node_columns, &|_| true).into_iter().map(|k| format!("cross:{k}")));
     }
-    phase("cross");
+    phase("cross", statements.count());
     let mut rows = BTreeMap::new();
     for (rel, lines) in &outputs {
         let node_columns = &node_columns[rel];
@@ -301,7 +308,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         std::fs::write(out.join(format!("{rel}.csv")), text).map_err(|e| Error::Plan(e.to_string()))?;
         rows.insert(rel.clone(), decoded.len());
     }
-    phase("write");
+    phase("write", statements.count());
     Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks })
 }
 
@@ -313,6 +320,52 @@ fn source_statistics(db: &Connection, rel: &str, source: &dyn crate::code_rule_d
         db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd])?;
     }
     Ok(measured)
+}
+
+/// The statements SQLite runs on a connection (`SQLITE_TRACE_STMT`: each statement's first step, those inside
+/// `execute_batch` and those the native engine's SQL functions run on it included), counted until dropped.
+struct Statements {
+    db: *mut rusqlite::ffi::sqlite3,
+    count: Box<std::sync::atomic::AtomicUsize>,
+}
+impl Statements {
+    fn on(db: &Connection) -> Self {
+        unsafe extern "C" fn trace(_: u32, state: *mut std::ffi::c_void, _: *mut std::ffi::c_void, sql: *mut std::ffi::c_void) -> std::ffi::c_int {
+            // SAFETY: the counter outlives the callback (removed on drop).
+            unsafe { &*state.cast::<std::sync::atomic::AtomicUsize>() }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if let Some(texts) = TEXTS.as_ref() {
+                // SAFETY: for SQLITE_TRACE_STMT, the last argument is the statement's text.
+                let text = unsafe { std::ffi::CStr::from_ptr(sql.cast()) }.to_string_lossy();
+                let shape: String = text.chars().take(90).collect();
+                *texts.lock().entry(shape).or_default() += 1;
+            }
+            0
+        }
+        let count = Box::new(std::sync::atomic::AtomicUsize::new(0));
+        // SAFETY: the connection is live for the run; the counter is boxed (a stable address) and outlives it.
+        let db = unsafe { db.handle() };
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(db, rusqlite::ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::from_ref(&*count).cast_mut().cast()) };
+        Statements { db, count }
+    }
+    fn count(&self) -> usize {
+        self.count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+/// `RDL_STMTS`: the statements' texts (their first 90 characters) and how often each ran, printed at the end.
+static TEXTS: std::sync::LazyLock<Option<parking_lot::Mutex<HashMap<String, usize>>>> =
+    std::sync::LazyLock::new(|| std::env::var_os("RDL_STMTS").map(|_| Default::default()));
+impl Drop for Statements {
+    fn drop(&mut self) {
+        if let Some(texts) = TEXTS.as_ref() {
+            let mut all: Vec<(String, usize)> = texts.lock().drain().collect();
+            all.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+            for (text, n) in all.iter().take(25) {
+                eprintln!("{n:>9}  {text}");
+            }
+        }
+        // SAFETY: as in `on`; the connection is still open (dropped after this).
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(self.db, 0, None, std::ptr::null_mut()) };
+    }
 }
 
 /// The cross-file pass's statistics of what the chunks wrote, summed over the chunks as they are written (no scan at
