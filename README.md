@@ -21,9 +21,10 @@ Rule checking runs on your machine and makes no network requests. No account or 
 
 You need Node.js 24 or later and Git, on macOS, Linux with glibc 2.28 or later (not Alpine or other musl Linux), or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine. If set-up or Rerail goes wrong, see [Troubleshooting](docs/troubleshooting.md).
 
+In your repository, run this to install Rerail under `~/.rerail`, connect your coding agents and start Rerail there:
+
 ```sh
-cd your-repo
-npx @neralabs/rerail setup   # install under ~/.rerail, connect your coding agents, start Rerail here
+npx @neralabs/rerail setup
 ```
 
 Then, in a new terminal, which has `rerail` on its `PATH`, open the dashboard with `rerail manage`.
@@ -75,12 +76,22 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 
 Core ships no rules. A rule pack is a set of rules published as its own npm package: Rerail's are `@neralabs/rerail-pack-<id>`, and anyone can publish one as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, which Rerail has not reviewed ([rule packs](docs/rule-packs.md#third-parties-packs)). Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend`.
 
-To add a pack after set-up:
+To add a pack after set-up, first see the packs that fit this repository, and why:
 
 ```sh
-rerail packs recommend        # the packs that fit this repository, and why
-rerail packs add complexity   # install it into ~/.rerail/packs
-rerail manage                 # Rule packs page: add it to this repository
+rerail packs recommend
+```
+
+Install one into `~/.rerail/packs`:
+
+```sh
+rerail packs add complexity
+```
+
+Then open the dashboard and add it to this repository on the **Rule packs** page:
+
+```sh
+rerail manage
 ```
 
 `rerail packs add` installs a pack but turns it on nowhere; it runs only in the repositories you add it to.
@@ -195,8 +206,23 @@ To build from a checkout you need Node.js 24+, npm, Rust (pinned in `rust-toolch
 
 ```sh
 git lfs install
+```
+
+Then, in the checkout, install the dependencies and build:
+
+```sh
 npm ci && npm run build
+```
+
+Run the checks:
+
+```sh
 npm run check:all
+```
+
+Run the tests:
+
+```sh
 npm run test:all
 ```
 
