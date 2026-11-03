@@ -5487,3 +5487,21 @@ No automatic merge, rule regeneration, or sibling-worktree edit was performed.
 The frozen October addon no longer loads because its temporary allocator library is absent; the temporary Cargo target is also gone.
 Existing full-run receipts remain historical evidence, including the failed OS RSS gate.
 No new candidate or Linear issue was created during recovery.
+
+
+### Restart batch seven through the integrated production API (2026-11-03)
+
+A clean, isolated worktree at integrated revision `9bc955cc5` builds with the normal allocator in 2 minutes 11 seconds.
+The frozen addon SHA-256 is `4f356c1cb4bbc8aacd35eea337adcfc543eef33f4905c48b59c6c4b31674d181`.
+No sibling worktree files or in-progress logic changes enter that build.
+The current production API omits the legacy execution-owner class and accepts relational clauses only in test builds.
+The replay harness now bridges the old owner API and the integrated compiled-rule/workspace APIs; its exact scoring dimensions remain unchanged.
+The first publication rule passes its original positive and clean observations on both production APIs after a failing missing-policy regression.
+This is one working port, not batch-seven completion or cumulative 70-rule validation.
+
+The unchanged pinned upstream batch-seven suite passes 208 tests in 8.07 seconds, including original root conftest and configuration.
+Source-blob verification has no mismatches.
+Its new recorder captures 150 eligible observations: 108 positive and 42 clean.
+It retains four aggregate post-op/signing observations without source-bearing arguments and one empty-domain missing-constructor observation.
+There are 53 uncaptured helper/integration tests.
+The post-op dispatch original corpus has ten positive observations and no clean observation, so supplements are required before parity certification.
