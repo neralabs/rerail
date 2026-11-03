@@ -48,6 +48,8 @@ def normalize(check, result, files, logical):
         else:
             value = asdict(item) if is_dataclass(item) else item if isinstance(item, dict) else vars(item)
         supplied = value.get("path", value.get("file", value.get("file_path")))
+        if supplied is None and check == "post_op_side_effects" and len(files) > 1:
+            supplied = "l2070_batching/post_op.py"
         if supplied is None and check == "versioned_merged_identity":
             caller = value["caller"]
             matches = [file["path"] for file in files if Path(file["path"]).name == caller.split(":", 1)[0]]
@@ -138,6 +140,17 @@ def install(recorder):
                     paths = [path for directory in module.PRODUCTION_ROOTS for path in sorted((root / directory).glob("*.py"))]
                     files = [{"path": logical(p), "source": p.read_text()} for p in paths]
                     event["oracle_config"] = {"options": {"expectedCallers": sorted(arguments.get("expected_callers", module.EXPECTED_CALLERS))}}
+                elif check == "post_op_side_effects" and entry == "_collect_violations":
+                    paths = (*module.POST_OP_SURFACE_FILES, module.POST_OP_RUNTIME_ALLOWLIST_SOURCE)
+                    files = [{"path": logical(p), "source": p.read_text()} for p in paths]
+                    overrides = arguments.get("overrides")
+                    if overrides is None: overrides = module.POST_OP_FATE_OVERRIDES
+                    event["oracle_config"] = {"options": {
+                        "entryPoint": entry,
+                        "fateOverrides": sorted(key + "=" + value.value for key, value in overrides.items()),
+                        "fatesSignature": module.POST_OP_FATES_SIGNATURE,
+                        "surfaceSignature": module.POST_OP_SURFACE_SIGNATURE,
+                    }}
                 else:
                     raise ValueError("No original source-bearing analyzer input")
                 if not files and check != "versioned_merged_identity":
@@ -153,6 +166,8 @@ def install(recorder):
                         "initialTaint": sorted(visitor._tainted_names),
                         "helperFunctions": sorted(visitor._function_defs),
                     }}
+                elif check == "post_op_side_effects":
+                    event.setdefault("oracle_config", {}).setdefault("options", {})["entryPoint"] = entry
                 if not Path.read_text.__module__.startswith("pathlib"):
                     raise ValueError("Test replaces the source reader; retain its original I/O assertions")
             except Exception as error:
@@ -170,6 +185,11 @@ def install(recorder):
                     event["findings"] = normalize(check, raw, files, logical)
                 except Exception as error:
                     event["retained_reason"] = "Output adapter: " + type(error).__name__ + ": " + str(error)
+            if entry == "_RuntimeOpBehaviorVisitor.visit":
+                event["retained_reason"] = (
+                    "Legacy helper observation: this visitor has no production caller at the source pin. "
+                    "Its unchanged inputs, configuration, findings and pytest result are retained separately."
+                )
             recorder.events.append(event)
             return result
         return observed
