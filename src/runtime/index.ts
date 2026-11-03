@@ -22,6 +22,7 @@ export {
 export { type HostRuntimePort, type HostRuntimeSessionState, RerailHostRuntime } from "./host-runtime.js";
 export { OmpMessageContentSource, type OmpSessionEntryLike, OmpWatermarkStore } from "./omp-semantic.js";
 export { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
+export { type AgentJudge, createAgentJudge } from "./merge-assist/agent-judge.js";
 export {
   createMergeAssistService,
   MERGE_ASSIST_ERROR_CODES,

@@ -12,6 +12,17 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   `/healthz` waits while dashboard tabs poll (`--tabs`, `--seconds`).
 - `steer-strategy.ts` (`just rerail-steer-strategy`) runs a real harness on one task per host × strategy × trial and
   compares the code-rule steer strategies (`message`, `rewind`, `subagent`). See [Steer strategies](#steer-strategies).
+- `merge-assist.ts` (`node --import tsx benchmark/merge-assist.ts [--suites capture,transfer,compare,lookup] [--trials N]
+  [--compare-trials N] [--concurrency N] [--cases id,id] [--pairs id,id] [--json out.json] [--verbose] [--keep]`)
+  evaluates Merge Assist on `fixtures/host/benchmark/merge-assist/cases.json` through `createMergeAssistService` and
+  the person's own agent CLI as judge. Each trial gets a fresh temporary Git repository (worktrees `jeremy` and
+  `tim`), database and `RERAIL_HOME`, removed afterwards unless `--keep`. **capture** turns each correction session
+  into a decision; **transfer** commits each saved code rule on Jeremy's branch and scans Tim's worktree with teammate
+  files written independently; **scope** matches each decision's scope against paths it should and should not cover;
+  **compare** scans Tim's decision against Jeremy's and reads the verdict from the finding's tier; **lookup** times
+  1,000 generated scopes over 10,000 paths, with no model. It prints each metric against its pre-registered threshold
+  (per-case rows with `--verbose`). Capture, transfer and compare spend the person's model budget on every judge call;
+  results are never committed.
 
 The workloads are host test data under `fixtures/host/benchmark/<kind>/`. Benchmark results are never committed. Keep
 them out of the repository, and put headline numbers in prose (with corpus commits and tool versions) where a change
