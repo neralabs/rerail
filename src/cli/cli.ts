@@ -63,6 +63,8 @@ import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-con
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
+import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
+import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runRuleApproveCommand } from "./rule-approval-cli.js";
@@ -183,7 +185,12 @@ function usage(): string {
     "",
     internalTesting("Not part of the 0.1.0 release:"),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
-    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations]",
+    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
+    "  rerail remote add <url> [--name <name>] (--token-stdin | --token-file <file>) [--no-content]",
+    "  rerail remote list|status [--json]",
+    "  rerail remote remove <name|url>",
+    "  rerail remote push [--json]",
+    "  rerail remote exclude|include [--repo <dir>]",
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
@@ -274,6 +281,12 @@ async function runStatusCommand(home: string): Promise<number> {
   else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
   else process.stdout.write(`Rerail is on in ${name}.\n`);
   const code = printDaemonStatus(lookup);
+  // Internal testing: the remote sink, only when a remote is added.
+  try {
+    for (const remote of new RemoteOutbox({ home }).status()) process.stdout.write(`${describeRemoteStatus(remote)}\n`);
+  } catch (error) {
+    process.stdout.write(`Remote sink: status unreadable (${error instanceof Error ? error.message : String(error)})\n`);
+  }
   // Last, for each connected coding agent, whether its tools can read Rerail's data on this computer.
   for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
     // Each sentence names its coding agent.
@@ -605,7 +618,7 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
   // `seed`, `rules`, `show-me`, `reset` and `scrub` write the Rerail database with the invoking package's schema (a checkout build, say).
   // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle"].includes(command ?? "")) return true;
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle", "remote"].includes(command ?? "")) return true;
   // A headless `scan` (no `--session`) runs in this process, so it scans with the package invoked.
   if (command === "scan") return !commandArgs.includes("--session");
   if (command === "daemon") return commandArgs[1] === "stop";
@@ -720,6 +733,8 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "state") return runStateCommand(args);
   // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
   if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home, version: context.packageVersion });
+  // Internal testing: the remote sink.
+  if (command === "remote") return await runRemoteCommand(args, { home });
   return undefined;
 }
 

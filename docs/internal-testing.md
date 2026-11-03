@@ -15,6 +15,8 @@ Each is tagged with an `Internal testing:` comment where it is defined, and ever
 | Block mode | `mode: "block"`, stored and delivered exactly like `steer`; the CLI and API writes that set it say it steers in this release, and the dashboard shows it as `Block (steers for now)` |
 | Activation profiles | `rerail activate`, `rerail activation request`, `rerail profile` and `--profile` |
 | Event stream | `rerail events` |
+| Headless scan ([Headless scan](headless-scan.md)) | `rerail scan` without `--session`: a scan of a checkout with no daemon or session, and its `rerail.scan/1` report |
+| Remote sink ([Remote sink](remote-sink.md)) | `rerail remote`; the daemon's sender; the remote lines in `rerail status`; the files `remote.json`, `remote-tokens/`, `remote-outbox.sqlite` and `machine-id` in the Rerail home |
 | Steer strategies `rewind` and `subagent`, experimental: off unless `RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1` | `steerStrategy` in the audit settings (`rerail settings --steer-strategy`, `audit_settings_update`); Pi's `rerail_fix` tool; `benchmark/steer-strategy.ts` |
 | Missed-steer digest, experimental: off unless `RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST=1` | Late code-rule steers held and sent as one steer at the agent's yield; Cursor's `stop` follow-up |
 

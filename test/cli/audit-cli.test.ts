@@ -412,7 +412,9 @@ describe("rerail scan and settings CLI", () => {
 
 
   it("requires a session instead of guessing the latest one", async () => {
-    await expect(runAuditCommand("scan", [], { home: "/unused" })).rejects.toThrow("--session is required");
+    // `rerail scan` without one is the headless scan of a checkout (headless-scan.test.ts), never the latest session's.
+    await expect(runAuditCommand("settings", [], { home: "/unused" })).rejects.toThrow("--session is required");
+    await expect(runAuditCommand("scan", ["--session", "s1", "--repo", "."], { home: "/unused" })).rejects.toThrow("Unknown option: --repo");
   });
 
   it("refuses a steer strategy it does not know before reaching Rerail", async () => {

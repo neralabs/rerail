@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describeScan, runHeadlessScan } from "./headless-scan.js";
+import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { daemonEndpoint, findRunningDaemon, type DaemonEndpoint } from "../runtime/daemon-control.js";
 
 import {
@@ -207,7 +208,7 @@ async function runHeadlessScanCommand(args: readonly string[], options: AuditCli
   const flags = new Set<string>();
   for (let index = 0; index < args.length;) {
     const argument = args[index]!;
-    if (argument === "--json" || argument === "--fail-on-violations") {
+    if (argument === "--json" || argument === "--fail-on-violations" || argument === "--no-send") {
       flags.add(argument);
       index += 1;
     } else if (argument === "--pack") {
@@ -240,6 +241,9 @@ async function runHeadlessScanCommand(args: readonly string[], options: AuditCli
     ...(paths === undefined ? {} : { paths }),
   });
   print(options, flags.has("--json"), report, describeScan(report));
+  // Internal testing: with a remote added, the report goes to it too (the daemon or `rerail remote push` sends it).
+  if (!flags.has("--no-send") && report.status === "completed" && new RemoteOutbox({ home: options.home }).queueScan(report))
+    process.stderr.write("rerail: scan queued for this machine's remotes\n");
   if (report.status !== "completed") return 1;
   return flags.has("--fail-on-violations") && report.violations.length > 0 ? SCAN_VIOLATIONS_EXIT : 0;
 }
