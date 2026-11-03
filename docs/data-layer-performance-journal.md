@@ -5505,3 +5505,31 @@ Its new recorder captures 150 eligible observations: 108 positive and 42 clean.
 It retains four aggregate post-op/signing observations without source-bearing arguments and one empty-domain missing-constructor observation.
 There are 53 uncaptured helper/integration tests.
 The post-op dispatch original corpus has ten positive observations and no clean observation, so supplements are required before parity certification.
+
+
+## 2026-11-03 — Restart batch seven: seven local and graph candidates
+
+Status: partial delivery. Batch seven still requires three checks and cumulative validation.
+Jeremy approved integrated-engine compatibility and capabilities as part of the remaining work.
+
+The seven candidates pass 163 recorded observations: 109 positive and 54 clean.
+Snapshot and resident-workspace APIs have zero finding differences and zero failures.
+The [receipt](../fixtures/host/data-layer-port/batch-07-local-evidence.json) records policies, addon identity, and every replay result.
+The integrated addon is a clean normal-allocator build of `9bc955cc5`.
+These small source observations are correctness evidence, not a full-repository performance comparison.
+
+The TDD ladder first exposed incorrect deletion targets, empty defaults with comments, keyword arguments, and chained identity comparisons.
+Additional probes exposed import aliases, nested history paths, production extraction triggers, and differences between text and structured diagnostic anchors.
+The seven-check regression gate now passes, including original positives and clean controls for each check.
+
+The grammar rule initially failed with a correlated `calls` matcher.
+Existing evidence relations and partitioned name closure represent the required graph without that matcher extension.
+No missing feature ticket is justified by that failed formulation.
+Graph probes cover cycles, constructor/runtime overlap, class ownership, nested functions, and arbitrary helper chains.
+A recursive structural utility handles nested subscripts without a fixed depth.
+
+The original recording preserves five retained integration calls and 53 uncaptured helper/integration tests.
+The remaining source candidates are `post_op_side_effects`, `post_op_no_internal_dispatch`, and `versioned_merged_identity`.
+The current integrated addon also rejects ten legacy candidates at the removed `relational` clause boundary.
+Compilation rejection is not a parity result. The previous 60-rule baseline has not passed on that addon.
+No Linear issue was created.
