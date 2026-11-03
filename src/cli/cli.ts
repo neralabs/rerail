@@ -183,6 +183,7 @@ function usage(): string {
     "",
     internalTesting("Not part of the 0.1.0 release:"),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
+    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations]",
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
@@ -605,6 +606,8 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   // `seed`, `rules`, `show-me`, `reset` and `scrub` write the Rerail database with the invoking package's schema (a checkout build, say).
   // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
   if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle"].includes(command ?? "")) return true;
+  // A headless `scan` (no `--session`) runs in this process, so it scans with the package invoked.
+  if (command === "scan") return !commandArgs.includes("--session");
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && commandArgs[1] === "status";
 }
@@ -716,7 +719,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
   if (command === "state") return runStateCommand(args);
   // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
-  if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
+  if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home, version: context.packageVersion });
   return undefined;
 }
 

@@ -1,0 +1,131 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
+import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
+import { setUpTestRepository } from "../support/repository-rules.js";
+
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=Test", ...args], { cwd, encoding: "utf8" }).trim();
+}
+
+function needle(id: string, code: string, mode = "steer"): unknown {
+  return {
+    format: "rerail.policy/v1", id, revision: 1, mode, description: `Keep ${code} out of Python files.`,
+    scope: { include: ["**/*.py"], exclude: [] },
+    clauses: [{ id: "needle", violation: { code, anchor: "witness.span", message: `No ${code}` }, forbid: { regex: { pattern: code, source: "file.content" } } }],
+  };
+}
+
+function writeRule(root: string, name: string, document: unknown): void {
+  mkdirSync(join(root, ".rerail", "rules"), { recursive: true });
+  writeFileSync(join(root, ".rerail", "rules", name), JSON.stringify(document));
+}
+
+/** A committed checkout on `main` with one NEEDLE rule and `a.py`, which breaks it on line 2. */
+function checkout(): string {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-scan-")));
+  roots.push(root);
+  git(root, "init", "--quiet", "--initial-branch=main");
+  writeRule(root, "needle.json", needle("needle", "NEEDLE"));
+  writeFileSync(join(root, "a.py"), "a = 1\n  x = NEEDLE\n");
+  git(root, "add", ".");
+  git(root, "commit", "--quiet", "-m", "seed");
+  return root;
+}
+
+const scan = (repo: string, options: Partial<Parameters<typeof runHeadlessScan>[0]> = {}): Promise<ScanReport> =>
+  runHeadlessScan({ repo, scope: "repository", packs: [], version: "0.0.0-test", databasePath: `${repo}-no-home.sqlite`, ...options });
+
+describe("headless rerail scan", () => {
+  it("scans a checkout with no daemon and no set-up, reporting 1-based positions with an exclusive end", async () => {
+    const root = checkout();
+    const report = await scan(root);
+    expect(report).toMatchObject({
+      schema: "rerail.scan/1",
+      tool: { name: "rerail", version: "0.0.0-test" },
+      checkout: { path: root, head: git(root, "rev-parse", "HEAD"), ref: "refs/heads/main" },
+      scope: "repository",
+      base: null,
+      paths: null,
+      rulesSource: { kind: "worktree" },
+      status: "completed",
+      summary: { violations: 1, failures: 0 },
+    });
+    expect(report.repository.key).toMatch(/^clone:/u);
+    // Worktree rules nobody approved run in Log.
+    expect(report.rules).toEqual([{ ruleId: "needle", payloadHash: expect.stringMatching(/^sha256:/u), mode: "log", source: { kind: "pack", id: "worktree", packId: "worktree" } }]);
+    expect(report.violations).toEqual([{
+      ruleId: "needle", payloadHash: report.rules[0]!.payloadHash, mode: "log", code: "NEEDLE", clauseId: "needle", path: "a.py",
+      start: { line: 2, column: 7 }, end: { line: 2, column: 13 }, message: "No NEEDLE", fingerprint: expect.stringMatching(/^[0-9a-f]{32}$/u),
+    }]);
+  });
+
+  it("keeps a finding's fingerprint when its line moves, and gives identical matches their own", async () => {
+    const root = checkout();
+    const before = (await scan(root)).violations[0]!.fingerprint;
+    writeFileSync(join(root, "a.py"), "# moved\n\n\nx    =    NEEDLE\ny = NEEDLE\n");
+    const after = (await scan(root)).violations.map(violation => violation.fingerprint);
+    expect(after[0]).toBe(before);
+    expect(new Set(after).size).toBe(2);
+  });
+
+  it("runs the rules at --rules-ref at their own mode and ignores the working tree's rules", async () => {
+    const root = checkout();
+    git(root, "checkout", "--quiet", "-b", "feature");
+    // The change under review weakens the rule and adds one of its own; neither may judge it.
+    writeRule(root, "needle.json", needle("needle", "NOTHING_MATCHES"));
+    writeRule(root, "extra.json", needle("extra", "x"));
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "weaken");
+    const report = await scan(root, { rulesRef: "main" });
+    expect(report.rulesSource).toEqual({ kind: "ref", ref: "main" });
+    expect(report.rules).toEqual([expect.objectContaining({ ruleId: "needle", mode: "steer", source: { kind: "ref", id: "needle", packId: null, ref: "main" } })]);
+    expect(report.violations).toEqual([expect.objectContaining({ ruleId: "needle", mode: "steer", path: "a.py" })]);
+  });
+
+  it("scans only what changed since the merge base with --base, and only the paths asked for", async () => {
+    const root = checkout();
+    git(root, "checkout", "--quiet", "-b", "feature");
+    writeFileSync(join(root, "b.py"), "NEEDLE\n");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "b");
+    writeFileSync(join(root, "c.py"), "NEEDLE\n");
+    const diff = await scan(root, { scope: "git-diff", base: "main" });
+    expect(diff.base).toEqual({ ref: "main", mergeBase: git(root, "rev-parse", "main") });
+    expect(diff.paths).toEqual(["b.py", "c.py"]);
+    expect(diff.violations.map(violation => violation.path).sort()).toEqual(["b.py", "c.py"]);
+
+    const listed = await scan(root, { paths: ["./b.py", "gone.py"] });
+    expect(listed.paths).toEqual(["b.py"]);
+    expect(listed.violations.map(violation => violation.path)).toEqual(["b.py"]);
+  });
+
+  it("uses the Rerail home's configuration when Rerail is set up and started in the checkout", async () => {
+    const root = checkout();
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const databasePath = join(home, "rerail.sqlite");
+    setUpTestRepository(root, {}, databasePath);
+    const report = await scan(root, { databasePath });
+    expect(report.rulesSource).toEqual({ kind: "home" });
+    expect(report.violations).toHaveLength(1);
+  });
+
+  it("prints JSON and exits 3 on violations only with --fail-on-violations", async () => {
+    const root = checkout();
+    let output = "";
+    const stdout = { write: (text: string) => { output += text; return true; } };
+    expect(await runAuditCommand("scan", ["--repo", root, "--json"], { home: root, version: "1.2.3", stdout })).toBe(0);
+    expect(JSON.parse(output)).toMatchObject({ schema: "rerail.scan/1", tool: { version: "1.2.3" } });
+    expect(await runAuditCommand("scan", ["--repo", root, "--fail-on-violations"], { home: root, stdout })).toBe(SCAN_VIOLATIONS_EXIT);
+    await expect(runAuditCommand("scan", ["--repo", root, "--base", "main"], { home: root, stdout })).rejects.toThrow("--base applies only to --scope git-diff");
+  });
+});
