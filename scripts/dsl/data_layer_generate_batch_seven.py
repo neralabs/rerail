@@ -185,6 +185,8 @@ def generate(source):
     out.append(merged_identity(source, policy, constant))
     from data_layer_batch_seven_dispatch import candidate as internal_dispatch
     out.append(internal_dispatch(source, policy, constant))
+    from data_layer_batch_seven_post_ops import candidate as signed_post_ops
+    out.append(signed_post_ops(source, policy, constant))
     return out
 
 

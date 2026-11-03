@@ -5533,3 +5533,50 @@ The remaining source candidates are `post_op_side_effects`, `post_op_no_internal
 The current integrated addon also rejects ten legacy candidates at the removed `relational` clause boundary.
 Compilation rejection is not a parity result. The previous 60-rule baseline has not passed on that addon.
 No Linear issue was created.
+
+
+## 2026-11-03 — Batch seven: native contracts and cumulative rejection
+
+Status: ten candidate rules pass local observations. Cumulative acceptance remains open.
+The user included integrated-engine compatibility and capabilities in this delivery.
+
+The source recording contains 148 eligible calls: 104 positive and 44 clean.
+The 62 supplemental calls contain 38 positive and 24 clean observations.
+All ten candidates pass snapshot and resident-workspace replay without finding differences or failures.
+Seven additional captured calls retain their findings as legacy-helper observations.
+Production code does not instantiate that helper visitor, so these calls are not detector passes.
+The unchanged upstream tests pass 208 tests. There are 53 uncaptured helper, CLI, or integration tests.
+
+Real ports required three generic contracts: production relational compatibility, configured SQL text escaping, and detached Ed25519 verification.
+SQL text options become UTF-8 hexadecimal text expressions, including quotes, NUL, and Unicode.
+Signature verification operates on artifact rows and returns false for malformed input.
+The RFC 8032 vector, tampered input, and malformed input pass through the production N-API boundary.
+A separate regression preserves declared file-level diagnostic anchors on relational inputs.
+The original 60 candidates compile through that boundary.
+This compatibility implementation does not lower authored relational clauses into the newer wave/GPU execution model.
+No new Linear issue was created.
+
+The first complete 70-rule run matches all 24,993 expected findings, but reports 22 engine failures.
+Twenty-one legacy execution partitions report interrupted SQL queries.
+One state-analysis clause exceeds its repository-input budget.
+These failures reject the run; matching finding counts do not establish parity.
+Compilation uses 1.418 seconds of CPU and 1.475 seconds of wall time.
+Cold execution uses 646.248 seconds of CPU and 567.704 seconds of wall time.
+OS peak RSS reaches 14,283,554,816 bytes. This is not a memory improvement.
+The addon SHA-256 is `3723d86bb33b5c5255b4b0f142349976e4b54c11d6bec4d6fe01be472ba19461`.
+The workload SHA-256 is `8dcd26660991ff4fe64021ffd17947845ba99879c2d00c909728754900e9c1b9`.
+Local receipts are under `.rerail/data-layer-batch-seven/suite-70*`.
+This run precedes two supplemental fixes for case-sensitive authority matching and Python-compatible signature decoding.
+It is retained as a failed compatibility measurement, not a final policy benchmark.
+
+The pinned Python oracle uses 152.746 seconds of analyzer CPU and 199.203 seconds of total wall time.
+Its OS peak RSS is 1,947,811,840 bytes across all 9,021 files.
+
+A production regression now proves that compatibility loaded source before empty-gate admission.
+It also proves that syntax-only consumers requested unrelated source across the entire rule scope.
+The fix queues file identities, admits the gate, and loads syntax only for its own gated files.
+Explicit source-text queries retain aggregate byte limits after admission.
+The reduced tests and all ten candidate gates pass on addon `550fb2943642d50f268fa420ad5a433956c9f61b777878a99e224ab3b9fe15fa`.
+The edit harness passes 40 oracle edit transitions and ten removals compared with a fresh empty workspace.
+A closed-domain rule can report an absence after removal; the harness does not assume an empty finding set.
+Legacy interruptions remain under investigation. The cumulative gate has not passed.

@@ -9,10 +9,32 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from contextlib import contextmanager
 from data_layer_batch_seven import CHECKERS, MODULES, normalize
 from data_layer_probe_record import verify_sources
 
 PIN = '2b1504adc4291daaf080b2e932962b134da1a69a'
+
+
+@contextmanager
+def post_op_repository(module, root, options):
+    """Run unchanged functions with the file constants of the fixture repository."""
+    paths = {
+        'POST_OP_SOURCE': 'l2070_batching/post_op.py',
+        'POST_OP_SPECS_SOURCE': 'l2070_batching/post_op_specs.py',
+        'POST_OP_DOMAIN_DECODERS_SOURCE': 'l2070_batching/post_op_domain_decoders.py',
+        'POST_OP_RUNTIME_ALLOWLIST_SOURCE': 'l2070_batching/post_op_allowlist.py',
+    }
+    updates = {'REPO_ROOT': root, **{key: root / path for key, path in paths.items()}}
+    updates['POST_OP_SURFACE_FILES'] = tuple(updates[key] for key in ('POST_OP_SOURCE', 'POST_OP_SPECS_SOURCE', 'POST_OP_DOMAIN_DECODERS_SOURCE'))
+    for option, name in [('fatesSignature', 'POST_OP_FATES_SIGNATURE'), ('surfaceSignature', 'POST_OP_SURFACE_SIGNATURE')]:
+        if option in options: updates[name] = options[option]
+    saved = {key: getattr(module, key) for key in updates}
+    try:
+        for key, value in updates.items(): setattr(module, key, value)
+        yield
+    finally:
+        for key, value in saved.items(): setattr(module, key, value)
 
 
 def main():
@@ -32,7 +54,14 @@ def main():
             for file in files:
                 path = root / file['path']; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(file['source'])
             production = case.get('production_scope', False)
-            if production:
+            if production and check == 'post_op_side_effects':
+                with post_op_repository(module, root, case.get('options', {})):
+                    plugin = module.post_op_side_effects_plugin(root)
+                    engine = FactEngine(root=root, fact_store=JsonFactStore(root / '.facts'),
+                                       extractors=module.post_op_side_effects_fact_extractors(root), enable_fact_cache=False)
+                    raw = plugin.reporter(engine.materialize((plugin,), max_workers=1))
+                entry = 'plugin.reporter'
+            elif production:
                 factory = getattr(module, check + '_plugin')
                 plugin = factory(root)
                 engine = FactEngine(root=root, fact_store=JsonFactStore(root / '.facts'),
@@ -66,10 +95,14 @@ def main():
             options = {'oracleAnalyzer': not production}
             if check == 'versioned_merged_identity':
                 options = {'expectedCallers': sorted(case.get('expected_callers', module.EXPECTED_CALLERS))}
+            elif check == 'post_op_side_effects':
+                options = {'entryPoint': entry, **case.get('options', {})}
             events.append({'test': 'probe:batch7:' + case['id'], 'check': check, 'call': 1, 'entry': entry,
                            'upstream_passed': True, 'production_scope': production,
                            'scope': {'include': ['**/*.py'], 'exclude': []}, 'files': files,
                            'oracle_config': {'options': options}, 'findings': findings})
+            if production and check == 'post_op_side_effects':
+                events[-1]['oracle_context'] = 'File constants point to the temporary fixture repository; implementations and signing keys are unchanged.'
     report = {'format': 'rerail.data-layer-recording/v1', 'commit': PIN, 'checks': sorted({e['check'] for e in events}),
               'source_mismatches': [], 'pytest_exit_code': 0, 'collected_tests': 0, 'uncaptured_tests': [],
               'loaded_source_files_checked': verify_sources(source, args.repo, PIN), 'events': events}

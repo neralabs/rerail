@@ -39,7 +39,7 @@ def candidate(source, policy, constant):
           SELECT v.__path,v.site,v.target FROM versions v JOIN raw_calls c ON c.__path=v.__path AND c.__start=v.value_start WHERE v.value_kind='call' AND c.name IN {allowed}
           UNION SELECT v.__path,v.site,v.target FROM versions v JOIN catalog c ON c.path=v.__path AND c.site=v.site AND c.name=v.value WHERE v.value_kind='identifier')
           SELECT * FROM catalog''', ('path','site','name')),
-        S('expected', {'$option': 'expectedCallers', 'map': " UNION ALL SELECT '{}' AS caller", 'join': '', 'template': "SELECT '' AS caller WHERE 0{}"}, ('caller',)),
+        S('expected', {'$option': 'expectedCallers', 'escape': 'sql', 'map': " UNION ALL SELECT {} AS caller", 'join': '', 'template': "SELECT '' AS caller WHERE 0{}"}, ('caller',)),
     ]
     query = f'''SELECT c.__path AS path,c.__start AS start_byte,c.__end AS end_byte,c.caller,'VMI002' AS issue FROM constructors c WHERE NOT EXISTS(SELECT 1 FROM expected e WHERE e.caller=c.caller)
       UNION ALL SELECT c.__path,c.__start,c.__end,c.caller,'VMI003' FROM constructors c WHERE EXISTS(SELECT 1 FROM expected e WHERE e.caller=c.caller)

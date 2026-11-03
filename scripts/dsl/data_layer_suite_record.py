@@ -21,6 +21,7 @@ from data_layer_batch_three import BATCH_THREE
 from data_layer_batch_four import BATCH_FOUR
 from data_layer_batch_five import BATCH_FIVE, MODULES as BATCH_FIVE_MODULES
 from data_layer_batch_six import BATCH_SIX
+from data_layer_batch_seven import BATCH_SEVEN, MODULES as BATCH_SEVEN_MODULES
 
 
 def main() -> None:
@@ -30,22 +31,23 @@ def main() -> None:
     parser.add_argument("--revision", default="2b1504adc4291daaf080b2e932962b134da1a69a")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, currently 1 through 6.")
+    parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, currently 1 through 7.")
     parser.add_argument("--checks", help="Optional comma-separated subset of the selected batches")
     parser.add_argument("--selection", type=Path, help="Pinned profiling file/check selection; preserve project-fact metadata sentinels")
     parser.add_argument("--cpu-profile", type=Path, help="Optional cProfile output for oracle execution; adds measurement overhead")
     args = parser.parse_args()
     root = args.source.resolve()
     sys.path.insert(0, str(root))
+    sys.path.insert(1, str(root / 'scripts'))
     from scripts.lint_lib.fact_engine import FactEngine
     from scripts.lint_lib.fact_store import JsonFactStore
     from scripts.lint_lib.serverplan_facts import serverplan_fact_extractors
 
     plugins, extractors = [], serverplan_fact_extractors(root)
     batch_ids = [int(value) for value in args.batches.split(",")]
-    if any(value not in (1, 2, 3, 4, 5, 6) for value in batch_ids) or len(set(batch_ids)) != len(batch_ids):
-        parser.error("--batches requires distinct batch numbers from 1,2,3,4,5,6")
-    batches = {1: BATCH_ONE, 2: BATCH_TWO, 3: BATCH_THREE, 4: BATCH_FOUR, 5:BATCH_FIVE, 6:BATCH_SIX}
+    if any(value not in (1, 2, 3, 4, 5, 6, 7) for value in batch_ids) or len(set(batch_ids)) != len(batch_ids):
+        parser.error("--batches requires distinct batch numbers from 1,2,3,4,5,6,7")
+    batches = {1: BATCH_ONE, 2: BATCH_TWO, 3: BATCH_THREE, 4: BATCH_FOUR, 5:BATCH_FIVE, 6:BATCH_SIX, 7:BATCH_SEVEN}
     names = [name for value in batch_ids for name in batches[value]]
     if args.checks:
         selected_checks = args.checks.split(',')
@@ -60,7 +62,7 @@ def main() -> None:
                 extractors.update(graph_module.symbol_graph_fact_extractors(root))
             plugins.append(next(plugin for plugin in graph_module.symbol_graph_linter_plugins(root) if plugin.name==name))
             continue
-        module = importlib.import_module(BATCH_FIVE_MODULES.get(name,"scripts.lint_" + name))
+        module = importlib.import_module(BATCH_SEVEN_MODULES.get(name, BATCH_FIVE_MODULES.get(name,"scripts.lint_" + name)))
         if name == "rust_sql_grammar_boundary":
             continue
         plugin_name={"serverplan_target_architecture":"target_architecture","serverplan_dispatch_architecture":"dispatch_architecture"}.get(name,name)
@@ -196,8 +198,10 @@ def main() -> None:
         events.append({"test": "suite:" + result.name, "call": 1, "check": result.name, "entry": "plugin.reporter",
                        "upstream_passed": True, "input_mode": "suite", "production_scope": True,
                        "scope": {"include": ["**/*.py"], "exclude": []}, "file_set": "suite",
-                       "findings": [{"path": v.path.relative_to(root).as_posix(), "line": v.line, "column": getattr(v, "column", None),
-                                     "code": v.code, "message": v.message, "severity": v.severity} for v in result.violations]})
+                       "findings": [{"path": v.path.relative_to(root).as_posix(),
+                                     "line": 1 if result.name == 'versioned_merged_identity' and v.code == 'VMI001' and v.line == 0 else v.line,
+                                     **({"original_line": v.line} if result.name == 'versioned_merged_identity' and v.code == 'VMI001' else {}),
+                                     "column": getattr(v, "column", None), "code": v.code, "message": v.message, "severity": v.severity} for v in result.violations]})
     if "rust_sql_grammar_boundary" in names:
         module = importlib.import_module("scripts.lint_rust_sql_grammar_boundary")
         findings = module.check_all()

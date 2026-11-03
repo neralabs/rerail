@@ -475,7 +475,8 @@
             "name": "expected",
             "query": {
               "$option": "expectedCallers",
-              "map": " UNION ALL SELECT '{}' AS caller",
+              "escape": "sql",
+              "map": " UNION ALL SELECT {} AS caller",
               "join": "",
               "template": "SELECT '' AS caller WHERE 0{}"
             },
