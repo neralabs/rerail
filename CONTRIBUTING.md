@@ -208,7 +208,7 @@ Everything run from a checkout (tests, benchmarks, `node dist/cli/cli.js`) is a 
 store is `<checkout>/.rerail/content-v1.sqlite`, private to that checkout or worktree. Only the managed installation
 under `~/.rerail/versions/` opens the machine-wide `~/.cache/rerail/content-v1.sqlite`, so a checkout on a newer store
 schema cannot break the installed Rerail. `RERAIL_CONTENT_STORE_PATH` overrides the location; the test setup gives
-every test file its own store that way. See [Installing Rerail](docs/installation.md#after-setup).
+every test file its own store that way. See [The content store](docs/how-setup-works.md#the-content-store).
 
 To run a checkout's build in your harnesses instead of the published package, run `just rerail-dev --install-bridge`.
 It builds the checkout, activates the checkout as `~/.rerail/current`, the way `setup` activates a published version,
