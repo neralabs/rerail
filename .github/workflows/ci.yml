@@ -291,9 +291,9 @@ jobs:
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read three
   # tool-packs' test data (native/src/code_rule_dsl/test_support.rs's callers), restored from what the test-data job
-  # saved, so the job runs where that job does (the note at the top). The tests run in two legs of about equal time: the
-  # workspace's (much of it waiting out the store's busy timeouts) and every other, the second skipping exactly what the
-  # first runs.
+  # saved, so the job runs where that job does (the note at the top). The tests run in two legs of about equal time on
+  # a runner: the workspace's (much of it waiting out the store's busy timeouts) and the anchor index's, then every other,
+  # the second skipping exactly what the first runs.
   rust:
     name: Rust engine (${{ matrix.name }})
     needs: [changes, test-data]
@@ -317,11 +317,11 @@ jobs:
             name: fmt, clippy
             run: npm run check:native
           - task: test
-            name: tests, workspace
-            run: "npm run test:native -- -- code_rule_dsl::workspace::"
+            name: tests, workspace and anchors
+            run: "npm run test:native -- -- code_rule_dsl::workspace:: code_rule_dsl::matcher::anchors::"
           - task: test
             name: tests, the rest
-            run: "npm run test:native -- -- --skip code_rule_dsl::workspace::"
+            run: "npm run test:native -- -- --skip code_rule_dsl::workspace:: --skip code_rule_dsl::matcher::anchors::"
     # Line tables keep file:line in panics at a fraction of full debuginfo; incremental state only
     # bloats the cache, since dependencies never build incrementally.
     env:
