@@ -10,6 +10,8 @@
   with `/rerail-create` and `rerail rules evidence|test|add`, and keeping a rule to one worktree with `.rerail/rules/`
 - [rule-scoping.md](rule-scoping.md): global, project and repository rules
 - [tool-call-rules.md](tool-call-rules.md): writing rules over the commands an agent runs
+- [path-and-text-rules.md](path-and-text-rules.md): writing code rules over files' text and paths, which files they
+  read, and rules that say a file should not exist
 - [code-rule-dsl-reference.html](code-rule-dsl-reference.html): every construct of the `rerail.policy/v1` code-rule
   DSL. Hand-written prose with generated regions; see `scripts/generate/README.md`.
 - [in-session-surfaces.md](in-session-surfaces.md): what Rerail shows inside a coding-agent session

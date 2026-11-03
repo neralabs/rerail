@@ -332,7 +332,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <div class="table-wrap"><table>
 <thead><tr><th>Form</th><th>What it holds</th><th>What it reports</th></tr></thead>
 <tbody>
-<tr><td><code>forbid</code></td><td>a <a href="#queries">query</a>: <code>ast</code>, <code>regex</code>, or <code>select_when</code></td><td>one violation per witness (per binding with <a href="#violation-each"><code>each</code></a>)</td></tr>
+<tr><td><code>forbid</code></td><td>a <a href="#queries">query</a>: <code>ast</code>, <code>regex</code>, <code>file</code>, or <code>select_when</code></td><td>one violation per witness (per binding with <a href="#violation-each"><code>each</code></a>)</td></tr>
 <tr><td><code>require_each</code></td><td>two <a href="#g-Evidence">evidence relations</a>, <code>subject</code> and <code>evidence</code></td><td>each projected subject without evidence</td></tr>
 <tr><td><code>budget</code></td><td>an evidence relation, <code>group_by</code> keys and <code>count.lte</code></td><td>groups over the budget</td></tr>
 <tr><td><code>llm</code></td><td>anything (the schema reads <code>unknown</code>)</td><td>reserved</td></tr>
@@ -630,7 +630,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
                  map?: String, join?: String, template?: String, spread?: <span class="lit">true</span> }   <span class="c">(* anywhere but format, id, revision, options, config *)</span></div>
 <div class="prod" id="g-Utility" data-zod="codeRuleUtilitySchema"><span class="nt">Utility</span>      = <a class="nt" href="#g-AstRule">AstRule</a> | { <b class="k">params</b>: [NAME]⁺, <b class="k">rule</b>: <a class="nt" href="#g-AstRule">AstRule</a> }
 <span class="nt">UtilId</span>       = Str without <span class="lit">( ) , =</span></div>
-<div class="prod" id="g-Query" data-zod="codeRuleQuerySchema"><span class="nt">Query</span>        = { <b class="k">regex</b>: <a class="nt" href="#g-RegexQuery">RegexQuery</a> } | { <b class="k">ast</b>: <a class="nt" href="#g-AstQuery">AstQuery</a> }
+<div class="prod" id="g-Query" data-zod="codeRuleQuerySchema"><span class="nt">Query</span>        = { <b class="k">regex</b>: <a class="nt" href="#g-RegexQuery">RegexQuery</a> } | { <b class="k">ast</b>: <a class="nt" href="#g-AstQuery">AstQuery</a> } | { <b class="k">file</b>: {} }
                | { <b class="k">select_when</b>: { select: <a class="nt" href="#g-Query">Query</a>, exists: <a class="nt" href="#g-Query">Query</a> } }   <span class="c">(* exactly one source *)</span></div>
 <div class="prod" id="g-RegexQuery" data-zod="codeRuleQuerySchema.regex"><span class="nt">RegexQuery</span>   = { <b class="k">source</b>: <span class="lit">"file.content"</span> | <span class="lit">"file.path"</span>, <b class="k">pattern</b>: Str }   <span class="c">(* Rust regex; named groups are captures *)</span></div>
 <div class="prod" id="g-Evidence" data-zod="codeRuleEvidenceQuerySchema"><span class="nt">Evidence</span>     = { <b class="k">evidence</b>: { as: Str, paths?: Scope, query: AstQuery, project: Map⟨Str, ProjectionSource⟩, where?: Predicate } }</div>
@@ -748,7 +748,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 
 <section class="card" id="document">
 <h3><span class="keys">format · id · revision · mode · description · scope · clauses</span> <a class="anchor" href="#document">#</a><span class="since">M0</span></h3>
-<p>The document's envelope. <span id="scope"></span><code>scope</code> names the files the code rule reads: repository-relative globs (<code>globset</code>), <code>include</code> non-empty, <code>exclude</code> applied after. Without a <code>scope</code> the code rule reads every file (<code>include: ["**"]</code>).</p>
+<p>The document's envelope. <span id="scope"></span><code>scope</code> names the files the code rule reads: repository-relative globs (<code>globset</code>), <code>include</code> non-empty, <code>exclude</code> applied after. Without a <code>scope</code> the code rule reads every file (<code>include: ["**"]</code>) its queries can read: see <a href="#files-read">which files each query reads</a>.</p>
 <dl class="facets">
 <dt>Shape</dt><dd><div class="shape">{ "format": "rerail.policy/v1", "id": Str, "revision": Int≥1, "mode": "log" | "steer" | "block", "description"?: String,
   "scope"?: { "include": [Glob]⁺, "exclude": [Glob] }, "clauses": [Clause]⁺ }</div></dd>
@@ -819,16 +819,19 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 </section>
 
 <section class="card" id="queries">
-<h3><span class="keys">ast · regex · select_when</span> <a class="anchor" href="#queries">#</a><span class="since">M0</span></h3>
-<p>A query has exactly one source. <span id="ast-query"></span><code>ast</code> matches a <a href="#rule-objects">rule object</a> on a language's syntax tree; <span id="regex-query"></span><code>regex</code> runs a Rust regex over the file's text (<code>file.content</code>) or its path (<code>file.path</code>); <span id="select_when"></span><code>select_when</code> reports its <code>select</code> query's witnesses where its <code>exists</code> query has at least one witness anywhere in the workspace. Cross-file clause forms use <a href="#g-Evidence">Evidence</a>, not a query source.</p>
+<h3><span class="keys">ast · regex · file · select_when</span> <a class="anchor" href="#queries">#</a><span class="since">M0</span></h3>
+<p>A query has exactly one source. <span id="ast-query"></span><code>ast</code> matches a <a href="#rule-objects">rule object</a> on a language's syntax tree; <span id="regex-query"></span><code>regex</code> runs a Rust regex over the file's text (<code>file.content</code>) or its path (<code>file.path</code>); <span id="file-query"></span><code>file</code> matches every file in the code rule's <a href="#scope"><code>scope</code></a>, so a clause <code>{ "forbid": { "file": {} } }</code> says the files the scope names should not exist; <span id="select_when"></span><code>select_when</code> reports its <code>select</code> query's witnesses where its <code>exists</code> query has at least one witness anywhere in the workspace. Cross-file clause forms use <a href="#g-Evidence">Evidence</a>, not a query source.</p>
 <dl class="facets">
 <dt>Shape</dt><dd><div class="shape">{ "ast": { "language", "embedded"?, "rule", "utils"?, "constraints"?, "languageOptions"?, "when"?, "file"?, "transform"? } }
 { "regex": { "source": "file.content" | "file.path", "pattern": Str } }
+{ "file": {} }
 { "select_when": { "select": Query, "exists": Query } }</div></dd>
-<dt>Semantics</dt><dd><ul><li><code>regex</code>: every match is a witness; named groups (<code>(?&lt;NAME&gt;…)</code> or <code>(?P&lt;NAME&gt;…)</code>) are the witness's captures, which messages, anchors and (for <code>file.content</code>) fix templates read. A <code>file.path</code> match is no source text, so it takes no fix.</li><li><code>select_when</code>: <code>exists</code> is global by design; the violation reads <code>select</code>'s captures.</li><li><code>ast</code> runs on the file's own tree, or with <a href="#embedded"><code>embedded</code></a> on the program its language embeds through that <code>via</code>.</li><li>The ast query's options: <a href="#matches"><code>utils</code></a>, <a href="#constraints"><code>constraints</code></a>, <a href="#transform"><code>transform</code></a>, <a href="#languageOptions"><code>languageOptions</code></a>, <a href="#when"><code>when</code></a>, <a href="#file"><code>file</code></a>.</li></ul></dd>
+<dt>Semantics</dt><dd><ul><li><code>regex</code>: every match is a witness; named groups (<code>(?&lt;NAME&gt;…)</code> or <code>(?P&lt;NAME&gt;…)</code>) are the witness's captures, which messages, anchors and (for <code>file.content</code>) fix templates read. A <code>file.path</code> match is about the file, not a place in its text: it has no span, so its violation names the path with no line, and a path is one witness however often the pattern matches it (the first match, whose named groups messages read). It takes no fix and no <code>capture.NAME</code> anchor.</li><li><code>file</code>: one witness per file in scope that the query reads (see <a href="#files-read">Files</a>), with no span, whatever text the file holds. It takes no fix, no <code>capture.NAME</code> anchor and no <code>each</code>. Write the files that should not exist as the code rule's <code>scope</code>, and the exceptions as its <code>exclude</code>.</li><li><code>select_when</code>: <code>exists</code> is global by design; the violation reads <code>select</code>'s captures.</li><li><code>ast</code> runs on the file's own tree, or with <a href="#embedded"><code>embedded</code></a> on the program its language embeds through that <code>via</code>.</li><li>The ast query's options: <a href="#matches"><code>utils</code></a>, <a href="#constraints"><code>constraints</code></a>, <a href="#transform"><code>transform</code></a>, <a href="#languageOptions"><code>languageOptions</code></a>, <a href="#when"><code>when</code></a>, <a href="#file"><code>file</code></a>.</li></ul></dd>
 <dt>Captures</dt><dd>regex: named groups. ast: metavariables and the other binding terms.</dd>
 <dt>Syntax errors</dt><dd><span class="b ok">regex: always sound</span> (only AST leaves mark a file partial). ast: per rule, see each construct.</dd>
-<dt>Languages</dt><dd><code>ast</code>: <code>python</code>, <code>typescript</code>, <code>javascript</code>, <code>php</code>, <code>blade</code>, <code>rust</code>, <code>vue</code>, or <code>sql</code>. regex: any file.</dd>
+<dt id="files-read">Files</dt><dd><code>ast</code>: the files of its <code>language</code>: <code>python</code>, <code>typescript</code>, <code>javascript</code>, <code>php</code>, <code>blade</code>, <code>rust</code>, <code>vue</code>, or <code>sql</code>. <code>regex</code> and <code>file</code>: every text file in scope, which is
+<ul><li>a source file of the languages above, or of a language the registry plans (read as text until the engine parses it);</li><li>a file Rerail reads as text by its suffix (<code>.json</code>, <code>.yaml</code>, <code>.yml</code>, <code>.toml</code>, <code>.md</code>, <code>.mdx</code>, <code>.rst</code>, <code>.txt</code>, <code>.sh</code>, <code>.bash</code>, <code>.zsh</code>, <code>.html</code>, <code>.css</code>, <code>.scss</code>) or name (<code>.gitignore</code>, <code>.npmignore</code>);</li><li>any other file holding no NUL byte, such as <code>Justfile</code>, <code>LICENSE</code>, <code>NOTICE</code>, <code>.gitattributes</code> or <code>Cargo.lock</code>, read as text when a code rule with a <code>regex</code> or <code>file</code> query (at any depth) has it in scope. A code rule of <code>ast</code> queries alone never makes Rerail read such a file, and neither does any rule when the file is named like one holding secrets (<code>SENSITIVE_FILE_NAMES</code> and <code>SENSITIVE_FOLDER_NAMES</code> in <code>src/engine/path-boundary.ts</code>: <code>.env</code>, <code>.npmrc</code>, <code>id_rsa</code>, <code>*.pem</code>, <code>*.tfstate</code>, a path through <code>.ssh/</code>, …).</li></ul>
+A file holding a NUL byte is binary, and no query sees it: one of the third kind is passed over (one too large to read whole, by its first 8000 bytes), one of the first two is reported as not checked. A text file too large to read (over 32 MB in an audit, 1 MB in a session) is reported as not checked. No scan reads the folders <code>.git</code>, <code>.hg</code>, <code>.svn</code>, <code>.rerail</code>, <code>.venv</code>, <code>__pycache__</code>, <code>node_modules</code>, <code>dist</code>, <code>build</code>, <code>.next</code>, <code>.turbo</code>, <code>coverage</code>, <code>target</code> or <code>vendor</code>, nor, while the repository follows <code>.gitignore</code>, what Git ignores. <code>rerail-ignore</code> cannot silence a <code>file.path</code> or <code>file</code> match, which is in no line of the file.</dd>
 <dt>Limits</dt><dd>Pattern and regex source sizes are bounded by the capabilities (<code>maxAstPatternBytes</code>, <code>maxRegexPatternBytes</code>: 16 KiB each in the bundled capabilities).</dd>
 </dl>
 <figure class="ex-fig" data-kind="clause"><figcaption>A <code>file.content</code> regex anchored at the start of the file: a byte-order mark.</figcaption><pre class="ex" data-kind="clause">{
@@ -855,6 +858,25 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
     "code": "FILE_NAME_CASING",
     "message": "File name must be kebab-case"
   }
+}</pre></figure>
+<figure class="ex-fig" data-kind="document"><figcaption>A <code>file</code> query: a <code>pack.json</code> anywhere but at the top of a pack folder. The scope names the misplaced files; the exclude is the exception; each violation names the file, with no line.</figcaption><div class="src"><span class="src-path">example document</span> <span class="src-at"><code>(whole document)</code></span></div><pre class="ex" data-kind="document">{
+  "format": "rerail.policy/v1",
+  "id": "example:pack-json-placement",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep each pack's pack.json at the top of its pack folder.",
+  "scope": { "include": ["**/pack.json"], "exclude": ["packs/*/pack.json"] },
+  "clauses": [
+    {
+      "id": "misplaced",
+      "forbid": { "file": {} },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "MISPLACED_PACK_JSON",
+        "message": "Move this pack.json to the top of its pack folder, packs/&lt;name&gt;/pack.json."
+      }
+    }
+  ]
 }</pre></figure>
 <figure class="ex-fig" data-kind="clause"><figcaption>ESLint's <code>no-irregular-whitespace</code>: a regex query whose named group <code>WS</code> is the violation's anchor.</figcaption><div class="src"><span class="src-path">eslint/eslint/no-irregular-whitespace/skip-comments.json</span> <span class="src-at"><code>/checks/3</code> · ESLint conformance port</span></div><pre class="ex" data-kind="clause">{
   "id": "before-first-token-1-terminator",
@@ -4986,7 +5008,7 @@ Package  = { "bin"?: Bool, "nodeVersion"?: { "subsetOf": SemverRange } | { "notS
                "anchor": "witness.span" | "witness.start" | "witness.end" | "file.start" | "capture.NAME",
                "message": Template, "fix"?, "each"?, "suppress"?, "variables"?: {} }</div></dd>
 <dt>Semantics</dt><dd><ul>
-<li><code>anchor</code>: the whole witness, a zero-width point at its start or end, byte 0 of the file (<code>file.start</code>, whatever the witness: file-level diagnostics such as INP001), or a capture: an ast metavariable, a named group of a witness-level <code>regex</code>, a regex query's named group, or a capture a parsed tree exported. The violation id always derives from the witness span (plus the binding's range under <code>each</code>).</li>
+<li><code>anchor</code>: the whole witness, a zero-width point at its start or end, byte 0 of the file (<code>file.start</code>, whatever the witness: file-level diagnostics such as INP001), or a capture: an ast metavariable, a named group of a witness-level <code>regex</code>, a regex query's named group, or a capture a parsed tree exported. A witness with no span, a <code>file.path</code> match or a <code>file</code> query's file, gives a violation with no span, which names the file with no line, unless the anchor is <code>file.start</code>; it takes no <code>capture.NAME</code> anchor. The violation id always derives from the witness span (bytes 0 to 0 for a witness with no span), plus the binding's range under <code>each</code>.</li>
 <li><code>message</code>: <code>$NAME</code> and <code>$$$NAME</code> interpolate captured text and transform variables; a name the query cannot bind is refused. <code>\$</code> is a literal <code>$</code>; a digit-led name (<code>$100</code>) stays literal. <code>${NAME}</code> and <code>$$${NAME}</code> (Rerail's; ast-grep renders them literally) end the name at the brace, so a variable can sit before name characters (<code>${A}_ID</code>); <code>\${NAME}</code> is a backslash before the variable.</li>
 <li><code>variables</code> is reserved: only <code>{}</code> is accepted.</li>
 </ul></dd>

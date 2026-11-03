@@ -543,8 +543,8 @@ fn compile_query_as(
     seed: bool,
 ) -> Result<Query> {
     let query = object(value, path)?;
-    reject_unknown(query, &["regex", "ast", "select_when"], path)?;
-    let forms = ["regex", "ast", "select_when"]
+    reject_unknown(query, &["regex", "ast", "select_when", "file"], path)?;
+    let forms = ["regex", "ast", "select_when", "file"]
         .into_iter()
         .filter(|key| query.contains_key(*key))
         .collect::<Vec<_>>();
@@ -584,6 +584,14 @@ fn compile_query_as(
                     .map_err(|error| invalid(format!("{path}/regex/pattern: {error}")))?,
                 source,
             })
+        }
+        "file" => {
+            let file = object(
+                query.get("file").expect("form exists"),
+                &format!("{path}/file"),
+            )?;
+            reject_unknown(file, &[], &format!("{path}/file"))?;
+            Ok(Query::File)
         }
         "ast" => {
             let ast = object(

@@ -12,6 +12,7 @@ import {
   SqliteAuditControlStore,
   setRuleSetting,
   renderSteer,
+  languageFor,
 } from "../../src/engine/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
@@ -395,7 +396,8 @@ describe("Rerail tool results waiting for their edit's check", () => {
       },
       createAuditor: ({ steerDelivery }) => ({
         openWorkspace: async () => undefined,
-        acceptsPath: () => true,
+        // As rules without a text clause: the session's own files under `sessions/` are no sources.
+        acceptsPath: path => languageFor(path) !== undefined,
         auditGeneratedEdits: async (sessionId, batch) => {
           const violations = batch.edits.filter(edit => edit.generatedText?.includes("bad")).map(edit => finding(edit.path));
           checks.push((async () => {

@@ -285,7 +285,7 @@ fn witness_with_groups<'t, D: Doc>(
     }
     Ok(Witness {
         path: file.path.clone(),
-        span: node_span(node),
+        span: Some(node_span(node)),
         captures,
         message,
         fix,
@@ -352,7 +352,7 @@ pub(crate) fn evaluate_query(
     Ok(Ok(witnesses))
 }
 
-/// What one file contributes to a regex or AST query.
+/// What one file contributes to a regex, AST or file query.
 enum FileStep {
     /// The query does not read the file: it is outside the scope, or no grammar of it applies.
     Skipped,
@@ -378,7 +378,7 @@ struct Leaf<'a> {
 }
 
 impl<'a> Leaf<'a> {
-    /// One file of a regex or AST `query`.
+    /// One file of a regex, AST or file `query`.
     fn file(
         self,
         query: &Query,
@@ -396,19 +396,23 @@ impl<'a> Leaf<'a> {
             Query::Regex { regex, source } => {
                 // A leading byte order mark ESLint strips is no text a regex reads (`regex_haystack`).
                 let (haystack, offset) = crate::code_rule_dsl::query::regex_haystack(source, file);
-                let text: &str = match source {
-                    RegexSource::Content => &file.source,
-                    RegexSource::Path => &file.path,
+                // A path match lies in no source text: its witness has no span.
+                let lines = matches!(source, RegexSource::Content).then(|| {
+                    LineTable::new(
+                        &file.source,
+                        file_language(file)
+                            .map(Terminators::of)
+                            .unwrap_or(Terminators::Eslint),
+                    )
+                });
+                let span = |start: usize, end: usize| {
+                    lines
+                        .as_ref()
+                        .map(|lines| lines.span(start + offset, end + offset))
                 };
-                let lines = LineTable::new(
-                    text,
-                    file_language(file)
-                        .map(Terminators::of)
-                        .unwrap_or(Terminators::Eslint),
-                );
-                let span = |start: usize, end: usize| lines.span(start + offset, end + offset);
                 let (matches, complete) = crate::code_rule_dsl::query::regex_matches(
                     regex,
+                    source,
                     haystack,
                     self.limits.max_witnesses.saturating_add(1),
                 );
@@ -450,6 +454,21 @@ impl<'a> Leaf<'a> {
                     witnesses,
                     partial: None,
                     decided: false,
+                })
+            }
+            Query::File => {
+                metrics.witnesses += 1;
+                Ok(FileStep::Read {
+                    witnesses: vec![Witness {
+                        path: file.path.clone(),
+                        span: None,
+                        captures: Captures::default(),
+                        message: None,
+                        fix: None,
+                        ignored: false,
+                    }],
+                    partial: None,
+                    decided: decision,
                 })
             }
             Query::Ast { matchers, .. } => {

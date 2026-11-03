@@ -97,9 +97,10 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
 
    Then apply the gates in [references/rule-quality.md](references/rule-quality.md#gates):
    - Every case comes out right. A case marked not checked (`notChecked`) is not right.
-   - Read every repository match the report shows, and decide whether each is a real violation.
+   - Read every match in `repository.matches`, and decide whether each is a real violation. A match with no `line` is the
+     file's path.
    - `repository.leftOut` counts files and folders the repo pass did not read: hidden, secret-named, or ignored by Git.
-     Its matches say nothing about those.
+     Its matches say nothing about those. `repository.binary` counts files in scope it skipped as binary.
    - A rule that matches hundreds of places fights the repo's convention.
    - The message passes the harmful-steering check.
    - An architecture rule passes [Proving it against history](references/architecture-rules.md#proving-it-against-history):

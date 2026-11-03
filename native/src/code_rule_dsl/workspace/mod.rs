@@ -268,6 +268,7 @@ fn pause_at_test_phase(phase: &str, source: &Arc<String>) {
 
 #[derive(Default)]
 struct Candidates {
+    /// The file's `forbid` clauses over a regex or file query: they need no parse.
     regex: Vec<ClauseId>,
     ast: Vec<ClauseId>,
     by_kind: Vec<Vec<usize>>,

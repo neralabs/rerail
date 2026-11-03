@@ -70,8 +70,10 @@ changes nothing.
 ## Two kinds of rule
 
 **A code rule** checks the files the agent edits: imports across a layer boundary, a call that bypasses a helper, a blocking call
-in async code. It is a `rerail.policy/v1` document with a scope (globs) and clauses (a `regex`, or a syntax query over Python,
-JavaScript, TypeScript, PHP or Blade). See [Writing a code rule](../skills/rerail-create/references/code-rules.md).
+in async code, an old path still written in a `Justfile`, a file in the wrong folder. It is a `rerail.policy/v1` document with a
+scope (globs) and clauses (a `regex` over a file's text or path, a `file` query, or a syntax query over Python, JavaScript,
+TypeScript, PHP or Blade). See [Writing a code rule](../skills/rerail-create/references/code-rules.md), and for rules over
+text and paths in any file, [Writing path and text rules](path-and-text-rules.md).
 
 **A command rule** checks the commands the agent runs: force pushes, `--no-verify`, publishing. It is a conversation rule with a
 structural `match` over `input.command`. See [Writing a command rule](../skills/rerail-create/references/conversation-rules.md)
@@ -79,18 +81,40 @@ and, for regex technique, [tool-call-rules.md](tool-call-rules.md).
 
 ## Testing a draft
 
-A draft is the rule plus the cases it must catch and let through:
+A draft is the rule plus the cases it must catch and let through. It is not the bare rule: `rerail rules test` and
+`rerail rules add` read this envelope, and `rerail rules test --help` prints it.
 
 ```json
-{ "kind": "code", "rule": { "…": "…" }, "cases": { "caught": [{ "path": "src/a.ts", "content": "…" }], "passed": [] } }
+{
+  "kind": "code",
+  "rule": { "format": "rerail.policy/v1", "id": "local:…", "revision": 1, "mode": "steer", "description": "…", "scope": { "include": ["…"], "exclude": [] }, "clauses": ["…"] },
+  "cases": {
+    "caught": [{ "path": "src/a.ts", "content": "…" }],
+    "passed": [{ "path": "src/a.ts", "content": "…" }]
+  }
+}
 ```
 
+| Field | What it holds |
+|---|---|
+| `kind` | `code` |
+| `rule` | the rule document |
+| `folder` | optional: the repository folder to add the rule at, instead of the whole repository |
+| `cases.caught`, `cases.passed` | files the rule must catch, and files it must let pass: `{ "path", "content" }` |
+
+[Writing path and text rules](path-and-text-rules.md#text-in-files) has complete drafts to start from.
+
 ```sh
-rerail rules test draft.json            # validate, run the cases, count matches across the repo; writes nothing
+rerail rules test draft.json            # validate, run the cases, list the matches across the repo; writes nothing
+rerail rules test draft.json --json     # the same, listing every match and every file the rule could not check
 rerail rules add draft.json             # store it in your library and add it, on, to this repo
 rerail rules approve <id>               # after reading it: it steers instead of running in Log
 rerail rules export --output rules.json # your rules, to read or edit one
 ```
+
+The text report shows the first five matches and the count; `--json` lists them all. A match on a file's path, or of a
+`file` query, names the file with no line. The report also counts the binary files in the rule's scope, which no rule
+reads.
 
 The repo pass never reads hidden files and folders, files whose names usually hold secrets (`*.pem`, `id_rsa*`, `.ssh/`,
 …), or files Git ignores unless you turned the repository's Follow .gitignore setting off. It counts how many it left
