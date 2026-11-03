@@ -8,7 +8,7 @@ import { h } from "./dom.js";
 import { failed } from "./format.js";
 import { settingWrites } from "./settings-writes.js";
 import { attachmentWrites } from "./attachments.js";
-import { data, ui, panelRuleId, readScope, setScope, repoName, packById } from "./state.js";
+import { data, ui, panelRuleId, readScope, setScope, repoName, packById, packRuleOf, isAttached } from "./state.js";
 import { isWorktreePack } from "./derive.js";
 import { refreshNow, changeScope } from "./poll.js";
 import { bootRoute, parseRoute, repositoryUrl, urlFor } from "./routes.js";
@@ -208,7 +208,9 @@ export function showRepository(key) {
 function checkRule(id) {
   if (data.rules.has(id)) return;
   if (panelRuleId() === id) closePanel();
-  toast(`${id} isn’t a rule in ${repoName() || "this repo"}.`);
+  const pack = packRuleOf(id)?.pack;
+  if (pack && !isAttached(pack)) toast(`${pack.name} pack is not added.`, { action: { label: "Open pack", act: "viewpack", id: pack.id } });
+  else toast(`${id} isn’t a rule in ${repoName() || "this repo"}.`);
 }
 
 /** A route's rule link: its sheet, checked against the rules once they are in; a route without one closes a rule sheet. */

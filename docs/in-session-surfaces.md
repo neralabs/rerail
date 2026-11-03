@@ -113,7 +113,7 @@ A steer never becomes your message, before or after the agent compacts its conte
 
 ### Edits made by shell commands and before rules are ready
 
-Rerail checks files a shell command wrote once the command finishes. A shell command's result, or a turn end, waits up to 10 seconds for Rerail to find what the shell wrote; what is found later is checked and steered at a later step. The session's dashboard timeline then says shell edits were not yet checked at that step. A file the shell deleted is reported only if Rerail had seen it before.
+Rerail checks files a shell command wrote once the command finishes. A shell command's result, or a turn end, waits up to 10 seconds for Rerail to find what the shell wrote; what is found later is checked and steered at a later step. The session's dashboard timeline then says rules had not yet seen shell edits at that step. A file the shell deleted is reported only if Rerail had seen it before.
 
 When a session starts in a large repository, Rerail indexes it before code rules can run, and nothing waits for that. Edits made meanwhile are not checked at their own result: the first pass after indexing checks every file that changed. OMP's footer shows ` · indexing` while it lasts (only when it takes over half a second), and the dashboard timeline says code rules were not yet running at those steps.
 

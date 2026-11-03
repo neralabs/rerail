@@ -18,6 +18,9 @@ export function repoCounts(repo) {
   return shown ? { total: data.rules.size, on: runningCount() } : null;
 }
 
+/** How a repository not in the list gets there: the repository page's and the menu's one line. */
+export const repoHint = () => ["Don’t see the repo you want? Type ", h("span.mono", null, "/rerail-start"), " in a session there."];
+
 /** The line under the repository's name (`repoLine`), from the counts the page holds for it. */
 export const repoMeta = repo => repoLine(repo, repoCounts(repo));
 

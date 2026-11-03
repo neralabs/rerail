@@ -285,7 +285,7 @@ export async function saveFollowGitignore(follow, { toast, invalidate }) {
   data.followGitignore = follow; invalidate();
   try {
     if (!(await sendInScope(scope, "PUT", "/api/repository/follow-gitignore", { followGitignore: follow }))) return;
-    toast(follow ? "Files Git ignores are skipped from the next session." : "Files Git ignores are checked from the next session.");
+    toast(follow ? "New sessions skip Git-ignored files." : "New sessions include Git-ignored files.");
   } catch (error) {
     data.followGitignore = was;
     toast(failed("Couldn’t change Follow .gitignore", error));

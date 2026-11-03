@@ -17,8 +17,8 @@ test.describe("History by session", () => {
     await expect(row).toHaveAttribute("aria-current", "true");
     await expect(row.locator(".state")).toHaveClass(/\blive\b/);
     await expect(page.locator("#content .shead .live")).toBeVisible();
-    // The lead counts the loaded sessions against the total the daemon reports.
-    await expect(page.locator("#content .hhead p")).toContainText(`of ${manifest.sessionIds.length}`);
+    // The lead counts the sessions the daemon reports.
+    await expect(page.locator("#content .hhead p")).toContainText(`${manifest.sessionIds.length} sessions, newest first.`);
     // Every row with violations logged says how many of them were steered.
     const withViolations = page.locator("#content .srow .c:not(.zero)");
     await expect(withViolations.first()).toBeVisible();
