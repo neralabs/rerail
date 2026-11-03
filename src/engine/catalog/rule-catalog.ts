@@ -26,9 +26,12 @@ import {
 } from "./rule-packs.js";
 import { engineRegexIssues } from "./rule-regexes.js";
 
+/** In the Rerail home: the npm prefix rule packs are installed into. */
+export const INSTALLED_PACKS_DIR = "packs";
+
 /** The npm prefix packs are installed into: `$RERAIL_HOME/packs`. */
 export function installedPacksPrefix(home: string = defaultRerailHome()): string {
-  return join(home, "packs");
+  return join(home, INSTALLED_PACKS_DIR);
 }
 
 /**

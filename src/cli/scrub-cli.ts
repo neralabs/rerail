@@ -34,7 +34,7 @@ const RESERVE_LINE_END = '"}\n';
 /** The hosts whose hooks hold steers between hooks (`<storageRoot>/<host>-pending`). */
 const PENDING_HOSTS = Object.keys({ "claude-code": true, codex: true, cursor: true } satisfies Record<HookHost, true>);
 /** Written once the hint to run `rerail scrub` was shown (or had nothing to scrub), so it is shown once. */
-const SCRUB_HINT_FILE = "scrub-hint.json";
+export const SCRUB_HINT_FILE = "scrub-hint.json";
 
 /** What `rerail scrub` rewrote in one database: rows changed, of those it read. */
 interface DatabaseReport {

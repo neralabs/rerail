@@ -1,0 +1,138 @@
+{
+  "caught": [
+    {
+      "path": "src/api/repository-operations.ts",
+      "content": "import { checkoutStatus, type RepositoryStartState, type RepositoryStatus } from \"../engine/index.js\";\n\nfunction stateOf(status: RepositoryStatus): RepositoryStartState {\n  if (!status.started) return \"stopped\";\n  return status.setUp ? \"started\" : \"not-set-up\";\n}\n"
+    },
+    {
+      "path": "src/harness/hook-host.ts",
+      "content": "import { readRepositoryState } from \"../presentation/session-presentation.js\";\nimport { isRerailStarted } from \"../runtime/repository-start.js\";\n\nexport async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {\n  if (databasePath === undefined) {\n    const answered = await readRepositoryState(workspace, host);\n    if (answered !== null) return answered !== \"stopped\";\n  }\n  return isRerailStarted(workspace, databasePath);\n}\n"
+    },
+    {
+      "path": "src/hosts/omp/extension.ts",
+      "content": "async function rerailStarted(cwd: string, databasePath: string | undefined): Promise<boolean> {\n  const cli = join(PACKAGE_ROOT, ENTRY_POINTS.cli);\n  if (!existsSync(cli)) return false;\n  const { stdout } = await execFileAsync(nodeExecutable(), [cli, \"state\", \"--repo\", cwd], { cwd, timeout: STATE_CHECK_TIMEOUT_MS });\n  return [\"started\", \"not-set-up\"].includes(stdout.trim());\n}\n"
+    },
+    {
+      "path": "src/cli/repository-setup.ts",
+      "content": "function setUpState(root: string, databasePath: string): \"not-set-up\" | \"set-up\" {\n  if (!existsSync(databasePath)) return \"not-set-up\";\n  const database = openRerailDatabase(databasePath, { readonly: true });\n  try {\n    const checkout = lookupCheckout(database, root);\n    if (checkout === undefined || !checkoutStatus(database, checkout).setUp) return \"not-set-up\";\n    return \"set-up\";\n  } finally {\n    database.$client.close();\n  }\n}\n"
+    },
+    {
+      "path": "src/runtime/session-rules.ts",
+      "content": "export function sessionRules(status: RepositoryStatus, resolver: ConfigurationResolver, path: string): readonly EffectiveRule[] {\n  const active = status.started && status.setUp;\n  if (!active) return [];\n  return resolver.at(path, \"code\");\n}\n"
+    },
+    {
+      "path": "src/daemon/repository-state.ts",
+      "content": "export function answerState(status: RepositoryStatus): RepositoryStartState {\n  return !status.started ? \"stopped\" : status.setUp ? \"started\" : \"not-set-up\";\n}\n"
+    },
+    {
+      "path": "src/daemon/rules-run.ts",
+      "content": "export function rulesRun(status: RepositoryStatus): boolean {\n  return status.setUp && status.started;\n}\n"
+    },
+    {
+      "path": "src/presentation/state-line.ts",
+      "content": "export function runsHere(state: RepositoryStartState): boolean {\n  return state === \"started\" || state === \"not-set-up\";\n}\n"
+    },
+    {
+      "path": "src/presentation/state-of-row.ts",
+      "content": "export function stateOfRow(row: { started: boolean; setUp: boolean }): RepositoryStartState {\n  if (!row.started) { return \"stopped\"; }\n  return !row.setUp ? \"not-set-up\" : \"started\";\n}\n"
+    },
+    {
+      "path": "src/setup/start-check.ts",
+      "content": "export function counts(state: RepositoryStartState): boolean {\n  return \"stopped\" !== state;\n}\n"
+    },
+    {
+      "path": "src/api/checkout-eligibility.ts",
+      "content": "    const status = checkoutStatus(db, checkout);\n    if (!status.started) entry.eligibility = \"stopped\";\n    else entry.eligibility = status.setUp ? \"ok\" : \"not-set-up\";\n"
+    },
+    {
+      "path": "src/harness/session-start.ts",
+      "content": "  const runs = new Set([\"not-set-up\", \"started\"]).has(this.#state);\n"
+    },
+    {
+      "path": "src/cli/setup-state.ts",
+      "content": "function setUpState(root: string, databasePath: string): \"not-set-up\" | \"review-offered\" | \"set-up\" {\n  if (!existsSync(databasePath)) return \"not-set-up\";\n  const database = openRerailDatabase(databasePath, { readonly: true });\n  try {\n    const checkout = lookupCheckout(database, root);\n    if (checkout === undefined) return \"not-set-up\";\n    if (!checkoutStatus(database, checkout).setUp) return setupReviewOffered(database, checkout.repositoryKey) ? \"review-offered\" : \"not-set-up\";\n    return \"set-up\";\n  } finally {\n    database.$client.close();\n  }\n}\n"
+    },
+    {
+      "path": "src/harness/start-gate.ts",
+      "content": "import { workspaceStartState } from \"../runtime/repository-start.js\";\n\nexport function runsHere(workspace: string, databasePath?: string): boolean {\n  return workspaceStartState(workspace, databasePath) !== \"stopped\";\n}\n"
+    },
+    {
+      "path": "src/harness/hook-gate.ts",
+      "content": "export async function hookGate(workspace: string, host: RerailHost): Promise<boolean | undefined> {\n  return (await readRepositoryState(workspace, host)) !== \"stopped\";\n}\n"
+    },
+    {
+      "path": "src/api/destructured-state.ts",
+      "content": "function checkoutState(database: RerailDatabase, checkout: CheckoutContext): RepositoryStartState {\n  const { started, setUp } = checkoutStatus(database, checkout);\n  if (!started) return \"stopped\";\n  return setUp ? \"started\" : \"not-set-up\";\n}\n"
+    },
+    {
+      "path": "src/api/row-state.ts",
+      "content": "export function summary(repository: RepositoryListing) {\n  return {\n    started: repository.started,\n    state: repository.started ? (repository.configuredAt === null ? \"not-set-up\" : \"started\") : \"stopped\",\n  };\n}\n"
+    },
+    {
+      "path": "src/runtime/de-morgan.ts",
+      "content": "export function sessionRules(status: RepositoryStatus, resolver: ConfigurationResolver, path: string): readonly EffectiveRule[] {\n  if (!status.started || !status.setUp) return [];\n  return resolver.at(path, \"code\");\n}\n"
+    },
+    {
+      "path": "src/presentation/switch-runs.ts",
+      "content": "export function runsHere(state: RepositoryStartState): boolean {\n  switch (state) {\n    case \"started\":\n    case \"not-set-up\":\n      return true;\n    case \"stopped\":\n      return false;\n  }\n}\n"
+    },
+    {
+      "path": "src/cli/nested-call.ts",
+      "content": "  const status = readStatus();\n  const active = status.started && checkoutStatus(database, lookupCheckout(database, cwd)).setUp;\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/api/repository-summary.ts",
+      "content": "import { stateOf } from \"../runtime/repository-start.js\";\n\nexport function repositorySummary(repository: RepositoryListing) {\n  return {\n    setUp: repository.configuredAt !== null,\n    started: repository.started,\n    state: stateOf({ started: repository.started, setUp: repository.configuredAt !== null, startedBy: \"repository\" }),\n  };\n}\n"
+    },
+    {
+      "path": "src/harness/hook-start.ts",
+      "content": "import { isRerailStarted } from \"../runtime/repository-start.js\";\n\nexport async function hookRerailStarted(workspace: string, databasePath?: string): Promise<boolean> {\n  return isRerailStarted(workspace, databasePath);\n}\n"
+    },
+    {
+      "path": "src/cli/cli.ts",
+      "content": "  const state = workspaceStartState(cwd, databasePath);\n  if (!location.git && state === \"stopped\") {\n    process.stdout.write(\"Rerail is not on here.\\n\");\n  } else if (state === \"stopped\") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\\n`);\n  process.stdout.write(await stopDaemon(home) === \"stopped\" ? \"Rerail daemon stopped.\\n\" : \"The Rerail daemon is not running.\\n\");\n  if (await stopDaemon(home) !== \"stopped\") process.exitCode = 1;\n"
+    },
+    {
+      "path": "src/cli/repository-setup-summary.ts",
+      "content": "  if (workspaceStartState(repository.root, run.databasePath) === \"started\") return summary(run, repository, false, agents);\n  const others = listRepositories(database)\n    .filter(known => known.configuredAt !== null && (known.started || known.checkouts.some(checkout => checkout.started === true)));\n  if (checkoutStatus(database, checkout).setUp) return undefined;\n"
+    },
+    {
+      "path": "src/runtime/repository-start.ts",
+      "content": "export function stateOf(status: RepositoryStatus): RepositoryStartState {\n  if (!status.started) return \"stopped\";\n  return status.setUp ? \"started\" : \"not-set-up\";\n}\n\nexport function isRerailStarted(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {\n  return workspaceStartState(workspace, databasePath) !== \"stopped\";\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-dsl-catalog.ts",
+      "content": "    const status = checkoutStatus(this.database, checkout);\n    if (!status.started) entry.eligibility = \"stopped\";\n    else entry.eligibility = status.setUp ? \"ok\" : \"not-set-up\";\n"
+    },
+    {
+      "path": "src/presentation/signature.ts",
+      "content": "  const signature = `${digest}:${status.started ? \"on\" : \"off\"}:${status.setUp ? \"set-up\" : \"not-set-up\"}`;\n"
+    },
+    {
+      "path": "src/cli/setup-cli.ts",
+      "content": "    const started = await startDaemon(home);\n    process.stdout.write(`Daemon ${started.started ? \"started\" : \"already running\"} at ${started.daemon.state.url}\\n`);\n"
+    },
+    {
+      "path": "src/runtime/runtime.ts",
+      "content": "    const eligibility = this.#catalogs.refresh(start.checkoutRoot);\n    const runs = eligibility !== \"stopped\" && eligibility !== \"unrecorded\";\n"
+    },
+    {
+      "path": "src/cli/setup-step.ts",
+      "content": "    const { status, said, question } = await runStep(run);\n    return { step: status !== \"stopped\" ? \"done\" : \"stopped\", screen: said.join(\"\\n\"), question: null };\n"
+    },
+    {
+      "path": "src/api/checkout-own-setting.ts",
+      "content": "function ownSetting(record: CheckoutRecord): \"follows\" | \"started\" | \"stopped\" {\n  if (record.started === null) return \"follows\";\n  if (!record.started) return \"stopped\";\n  return \"started\";\n}\n"
+    },
+    {
+      "path": "src/cli/start-report.ts",
+      "content": "  const report = await startRepository(run);\n  const wasOn = report.previous !== \"stopped\";\n"
+    },
+    {
+      "path": "src/cli/daemon-stop.ts",
+      "content": "  const daemon = await stopDaemon(home);\n  if (daemon !== \"stopped\") process.exitCode = 1;\n"
+    }
+  ]
+}

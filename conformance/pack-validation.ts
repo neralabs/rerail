@@ -22,12 +22,12 @@ import {
   compareDeterministicStrings,
   LANGUAGE_REGISTRY,
   RULE_PACK_LIST,
-  bundledModelPath,
   ConversationRuleRegistry,
   type ConversationRule,
   engineRegexIssues,
   parseConversationRule,
 } from "../src/engine/index.js";
+import { resolveModelPath } from "../src/runtime/index.js";
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
@@ -801,7 +801,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // Check 3: examples. A caught example produces a violation of the rule (fires it, for a conversation rule), a passes
   // example none: pack.json's, and the pairs candidates carry in conformance.json until they ship.
   let registry: ConversationRuleRegistry | undefined;
-  const conversationRegistry = (): ConversationRuleRegistry => (registry ??= new ConversationRuleRegistry({ modelPath: process.env.RERAIL_MODEL_PATH ?? bundledModelPath() }));
+  const conversationRegistry = (): ConversationRuleRegistry => (registry ??= new ConversationRuleRegistry({ modelPath: resolveModelPath(process.cwd()) }));
   if (pack === undefined) {
     fail("proof", "pack.json does not parse; see check 1");
     fail("examples", "pack.json does not parse; see check 1");

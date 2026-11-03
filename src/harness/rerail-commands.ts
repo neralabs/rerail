@@ -5,6 +5,8 @@
  * everywhere.
  */
 
+import type { CommandSigil } from "../engine/adapter-contract.js";
+
 export type RerailCommandName =
   | "rerail"
   | "rerail-manage"
@@ -38,9 +40,6 @@ export const RERAIL_COMMANDS: readonly RerailCommand[] = [
   { name: "rerail-show-me", description: "See Rerail catch a broken rule in this repo and steer the fix, then clean up", summary: "see Rerail catch and fix a broken rule" },
   { name: "rerail-bug-report", description: "Work out what went wrong with Rerail, then fix your own rule or report a Rerail bug in an issue", summary: "diagnose a bug, then fix or report it" },
 ];
-
-/** How a coding agent invokes a command: Codex runs skills as `$name`, every other agent as `/name`. */
-export type CommandSigil = "/" | "$";
 
 /** The `rerail` commands a terminal answers, named at the end of `/rerail` so no one goes looking for them. */
 export const TERMINAL_COMMANDS_LINE = "In a terminal: rerail status · rerail version · rerail update · rerail daemon stop";

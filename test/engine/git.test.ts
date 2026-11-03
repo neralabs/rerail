@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { gitCandidates, gitInstalled, readGitBlobs } from "../../src/engine/git.js";
+import { gitCandidates, gitInstalled, readGitBlobs, runGit } from "../../src/engine/git.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -41,6 +41,19 @@ describe("readGitBlobs", () => {
     const oid = git(clone, "rev-parse", "HEAD:a.py").trim();
     expect(await readGitBlobs(clone, ["HEAD:./a.py"], { maxBlobBytes: 1_000 })).toEqual(new Map());
     // Still missing: asking for it fetched nothing from the remote.
+    expect(() => execFileSync("git", ["cat-file", "-e", oid], { cwd: clone, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" }, stdio: "ignore" })).toThrow();
+  });
+});
+
+describe("runGit", () => {
+  it("never fetches an object a partial clone does not hold", async () => {
+    const origin = await repository({ "a.py": "print(1)\n" });
+    git(origin, "config", "uploadpack.allowFilter", "true");
+    const clone = join(origin, "..", `${origin.split("/").pop()}-clone`);
+    roots.push(clone);
+    git(origin, "clone", "--quiet", "--filter=blob:none", "--no-checkout", `file://${origin}`, clone);
+    const oid = git(clone, "rev-parse", "HEAD:a.py").trim();
+    expect(runGit(clone, ["cat-file", "-p", oid]).status).not.toBe(0);
     expect(() => execFileSync("git", ["cat-file", "-e", oid], { cwd: clone, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" }, stdio: "ignore" })).toThrow();
   });
 });

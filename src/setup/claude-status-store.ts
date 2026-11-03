@@ -30,9 +30,12 @@ export interface ClaudeStatusRegistration {
   previousInherited?: boolean;
 }
 
+/** In `~/.rerail` (never `RERAIL_HOME`): which Claude Code status lines Rerail registered. */
+export const CLAUDE_STATUS_DATABASE_FILE = "harness.sqlite";
+
 /** Registration ownership lives outside project databases and presentation preferences. */
 export function claudeStatusDatabasePath(home: string = homedir()): string {
-  return join(resolve(home), ".rerail", "harness.sqlite");
+  return join(resolve(home), ".rerail", CLAUDE_STATUS_DATABASE_FILE);
 }
 
 export function isClaudeStatusLine(value: unknown): value is ClaudeStatusLine {

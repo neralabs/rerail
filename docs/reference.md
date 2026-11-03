@@ -608,6 +608,10 @@ Anything else, including `/native/*`, `/mcp`, `/healthz` and the page, gets `421
 
 </details>
 
+### Session storage
+
+Each session keeps its ledger (events and file preimages) under a storage root, `<workspace>/.rerail/sessions` by default, and loads the bundled embedding model. `RERAIL_STORAGE_ROOT` and `RERAIL_MODEL_PATH` replace them: a relative value resolves against the session's workspace, the folder the coding agent runs in, and an empty one counts as unset. Hooks, `rerail events`, OMP and Pi (in process or through the daemon) and the daemon itself all resolve them this way. Only the default root gets a `.gitignore` of `*`; a custom one may hold your own files, so Rerail leaves it as it is.
+
 ### Event ordering and edit capture
 
 Each session has its own serialized lane, and native tool-call IDs pair edits with their results.

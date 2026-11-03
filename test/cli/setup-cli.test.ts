@@ -16,9 +16,23 @@ import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { cleanupCommand, runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
-import { openRerailDatabase } from "../../src/engine/index.js";
-import { launcherPathMarker, ManagedUpdater } from "../../src/setup/index.js";
+import { CONSENT_FILE, cleanupCommand, runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
+import {
+  CLAUDE_STATUS_DATABASE_FILE,
+  CURRENT_LINK,
+  LAUNCHER_DIR,
+  LAUNCHER_PATH_FILE,
+  launcherPathMarker,
+  ManagedUpdater,
+  SEEN_AGENTS_FILE,
+  UPDATE_LOCK_DIR,
+  UPDATE_STATE_FILE,
+  VERSIONS_DIR,
+} from "../../src/setup/index.js";
+import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src/activation/index.js";
+import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
+import { INSTALLED_PACKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
 
 const temporaryDirectories: string[] = [];
 const previousHome = process.env.HOME;
@@ -324,6 +338,40 @@ describe("rerail install --root", () => {
     // Never "delete it" for a home that holds the person's own files.
     expect(text).toContain(`Kept ${context.home}, which also holds files that are not Rerail's. Rerail's settings, logs and records in it: coding-agents.json; delete those if you will not install Rerail again.`);
     expect(text).not.toContain("delete it if you will not install Rerail again");
+  });
+
+  it("counts the access token a loopback daemon keeps as Rerail's, so a home only Rerail uses may still go as a whole", async () => {
+    const { context, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    for (const name of ["access-token", "daemon.log"]) await writeFile(join(context.home, name), "");
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+
+    const text = output.mock.calls.join("");
+    expect(text).toContain(`Kept ${context.home}: access-token, coding-agents.json, daemon.log (Rerail's settings, logs and records; delete it if you will not install Rerail again).`);
+    expect(text).not.toContain("not Rerail's");
+  });
+
+  it("counts every name a Rerail writer gives an entry in its home as Rerail's, and what a write cut short leaves beside it", async () => {
+    const { context, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const folders = [PROFILES_DIR, DEVICE_SECRETS_DIR, START_LOCK_DIR, UPDATE_LOCK_DIR, VERSIONS_DIR, INSTALLED_PACKS_DIR, LAUNCHER_DIR];
+    const files = [
+      CONSENT_FILE, SEEN_AGENTS_FILE, LAUNCHER_PATH_FILE, DAEMON_STATE_FILE, DAEMON_PORT_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE,
+      RULES_DUMP_FILE, ACTIVE_PROFILE_FILE, UPDATE_STATE_FILE, RERAIL_DATABASE_FILE, `${RERAIL_DATABASE_FILE}-wal`, `${RERAIL_DATABASE_FILE}.pre-update`,
+      CLAUDE_STATUS_DATABASE_FILE, `${CLAUDE_STATUS_DATABASE_FILE}-shm`, `${DAEMON_ACCESS_TOKEN_FILE}.4242.tmp`, `${CURRENT_LINK}.4242.0b8f6a3e-6d1c.old`,
+    ];
+    for (const name of folders) await mkdir(join(context.home, name), { recursive: true });
+    for (const name of files) if (!existsSync(join(context.home, name))) await writeFile(join(context.home, name), "");
+    expect(existsSync(join(context.home, CURRENT_LINK))).toBe(true);
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+
+    const text = output.mock.calls.join("");
+    expect(text).toContain("delete it if you will not install Rerail again");
+    expect(text).not.toContain("not Rerail's");
   });
 
   it("names a cleanup command that removes exactly the path, in PowerShell never expanding it, and never follows the current link", () => {

@@ -36,6 +36,9 @@ export type DeliveryMechanism =
 export const STEER_STRATEGIES = ["message", "rewind", "subagent"] as const;
 export type SteerStrategy = (typeof STEER_STRATEGIES)[number];
 
+/** How a person types a Rerail command in a coding agent: Codex runs skills as `$name`, every other agent as `/name`. */
+export type CommandSigil = "/" | "$";
+
 export interface AdapterCapabilityProfile {
   host: RerailHost;
   assistantObservation: AssistantObservation;
@@ -44,6 +47,8 @@ export interface AdapterCapabilityProfile {
   delivery: Readonly<Record<RuleMode, DeliveryMechanism>>;
   lifecycleEvents: readonly string[];
   sampleEvents: Readonly<Record<"user" | "assistant" | "tool" | "turn", string>>;
+  /** What Rerail's commands start with in this coding agent, in every text that names one. */
+  commandSigil: CommandSigil;
 }
 
 export const ADAPTER_CAPABILITIES = {
@@ -64,6 +69,7 @@ export const ADAPTER_CAPABILITIES = {
       tool: "tool_call",
       turn: "turn_end",
     },
+    commandSigil: "/",
   },
   pi: {
     host: "pi",
@@ -82,6 +88,7 @@ export const ADAPTER_CAPABILITIES = {
       tool: "tool_call",
       turn: "turn_end",
     },
+    commandSigil: "/",
   },
   "claude-code": {
     host: "claude-code",
@@ -100,6 +107,7 @@ export const ADAPTER_CAPABILITIES = {
       tool: "PreToolUse/PostToolUse/PostToolUseFailure",
       turn: "Stop/StopFailure",
     },
+    commandSigil: "/",
   },
   codex: {
     host: "codex",
@@ -118,6 +126,7 @@ export const ADAPTER_CAPABILITIES = {
       tool: "PreToolUse/PostToolUse",
       turn: "Stop",
     },
+    commandSigil: "$",
   },
   cursor: {
     host: "cursor",
@@ -136,6 +145,7 @@ export const ADAPTER_CAPABILITIES = {
       tool: "preToolUse/postToolUse/postToolUseFailure",
       turn: "stop",
     },
+    commandSigil: "/",
   },
 } as const satisfies Record<RerailHost, AdapterCapabilityProfile>;
 

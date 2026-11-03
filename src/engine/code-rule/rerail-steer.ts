@@ -1,4 +1,4 @@
-import type { RerailHost, SteerRule } from "../adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type RerailHost, type SteerRule } from "../adapter-contract.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 
 /**
@@ -276,7 +276,7 @@ const rulesOn = (count: number): string => `${count} ${count === 1 ? "rule is" :
  * up. The person sees nothing.
  */
 export function sessionStartNote(origin: string | undefined, host: RerailHost, sessionId: string, rules: SessionNoteRules): string {
-  const sigil = host === "codex" ? "$" : "/";
+  const sigil = ADAPTER_CAPABILITIES[host].commandSigil;
   const sessionLink = origin === undefined ? [] : [`This session in the Rerail dashboard: ${sessionPageUrl(origin, host, sessionId)}`];
   if (!rules.setUp) {
     return [

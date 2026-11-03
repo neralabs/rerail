@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { RerailRuntime } from "../../src/runtime/index.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { resolveSessionPaths } from "../../src/runtime/session-paths.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-session-records-gitignore-");
 
@@ -77,5 +78,22 @@ describe("session records in a checkout", () => {
     await symlink(elsewhere, join(checkout, linked));
     await expect(openOneSession(checkout, storageRoot, databasePath)).rejects.toThrow(`through ${join(checkout, linked)}: it is a symbolic link`);
     expect(await readdir(elsewhere)).toEqual([]);
+  });
+
+  it("leave a custom storage root inside a .rerail folder without a .gitignore, since it is still not the default", async () => {
+    const { checkout, databasePath } = await checkoutWithSessionStorage();
+    const elsewhere = join(checkout, "..", "elsewhere");
+    await mkdir(elsewhere);
+    const storageRoot = join(elsewhere, ".rerail", "sessions");
+    await openOneSession(checkout, storageRoot, databasePath);
+    await expect(stat(join(storageRoot, ".gitignore"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("ignore the default root in Git when RERAIL_STORAGE_ROOT names it, relative to the checkout", async () => {
+    const { checkout, storageRoot: defaultRoot, databasePath } = await checkoutWithSessionStorage();
+    const { storageRoot } = resolveSessionPaths(checkout, {}, { RERAIL_STORAGE_ROOT: ".rerail/sessions" });
+    expect(storageRoot).toBe(defaultRoot);
+    await openOneSession(checkout, storageRoot, databasePath);
+    expect(execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: checkout, encoding: "utf8" })).toBe("");
   });
 });

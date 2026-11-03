@@ -657,9 +657,12 @@ async function installAnswered(run: Run, packs: readonly PackVersion[]): Promise
   return await installPackVersions(packs, run.request.environment.packs);
 }
 
-/** "Not now" at the confirm question: nothing installed, connected or turned on. */
+/**
+ * "Not now" at the confirm question: nothing installed, connected or turned on. The start command is written for the
+ * coding agents "Yes" would have connected, the ones the person types it in.
+ */
 function notNow(run: Run): SetupOutcome {
-  say(run.io, renderNotNow(run.io.lane));
+  say(run.io, renderNotNow(codingAgents(agentsToConnect(run)), run.io.lane));
   return { status: "not-now" };
 }
 
@@ -760,9 +763,11 @@ const recommendationsOf = (offering: Offering): RulePackRecommendation[] => offe
 const chosenRecommendations = (run: Run, repository: Repository, chosen: readonly PackVersion[], readRepository: boolean): RulePackRecommendation[] =>
   recommendationsOf(chosenOffering(run, repository, chosen, readRepository));
 
+/** What an answer connects: the agents `--agents` named, or every one found. */
+const agentsToConnect = (run: Run): readonly Harness[] => run.request.agents ?? run.request.environment.agentsFound();
+
 function packsInput(run: Run, repository: Repository, offering: Offering): RecommendedPacksInput {
-  // What the answer will connect: the agents `--agents` named, or every one found.
-  const connecting = run.request.agents ?? run.request.environment.agentsFound();
+  const connecting = agentsToConnect(run);
   return {
     repoName: repository.name,
     repoPath: repository.root,

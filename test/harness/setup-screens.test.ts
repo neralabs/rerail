@@ -40,7 +40,7 @@ import {
 const ANSI = /\u001b\[/;
 const stripAnsi = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g, "");
 
-const CLAUDE: CodingAgent = { id: "claude", name: "Claude Code" };
+const CLAUDE: CodingAgent = { id: "claude-code", name: "Claude Code" };
 const CURSOR: CodingAgent = { id: "cursor", name: "Cursor" };
 const CODEX: CodingAgent = { id: "codex", name: "Codex" };
 const WORKS_WITH: readonly CodingAgent[] = [{ id: "omp", name: "OMP" }, { id: "pi", name: "Pi" }, CLAUDE, CODEX, CURSOR];
@@ -82,7 +82,7 @@ function everyScreen(lane: SetupLane): Record<string, string> {
     T2x: renderSessionsDeclined(lane),
     T3: renderReadRepoQuestion({ repoName: "acme-web", repoPath: "/Users/me/code/acme-web" }, lane),
     T4: renderRecommendedPacks(PACKS, lane),
-    T5: renderNotNow(lane),
+    T5: renderNotNow([CLAUDE, CURSOR], lane),
     T6: renderSummary(SUMMARY, lane),
     C6b: renderTips(lane),
     E1: renderCannotInstall({ installCommand: "npx rerail" }, lane),
@@ -364,9 +364,20 @@ describe("T4 / C4 recommended rule packs", () => {
 
 describe("T5 not now", () => {
   it.each(LANES)("says nothing was installed or turned on, and how to start later (%s)", lane => {
-    const text = stripAnsi(renderNotNow(lane));
+    const text = stripAnsi(renderNotNow([CLAUDE, CURSOR], lane));
     expect(text).toContain("● Set-up stopped. No rule packs were installed and nothing was turned on.");
     expect(text).toContain(`Start Rerail in this repo whenever you’re ready with ${lane === "terminal" ? "rerail start" : "/rerail-start"}.`);
+  });
+
+  it("writes the start command as Codex types it when Codex is the only coding agent", () => {
+    const text = renderNotNow([CODEX], "agent");
+    expect(text).toContain("Start Rerail in this repo whenever you’re ready with $rerail-start.");
+    expect(text).not.toContain("/rerail-start");
+  });
+
+  it("gives Codex's form too when Codex is one of several coding agents", () => {
+    const text = renderNotNow([CLAUDE, CODEX], "agent");
+    expect(text).toContain("whenever you’re ready with /rerail-start.\n  In Codex, type $rerail-start.");
   });
 });
 

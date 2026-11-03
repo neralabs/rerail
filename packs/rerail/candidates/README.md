@@ -1,27 +1,30 @@
 # Rerail repository rule pack, candidates
 
-These are the rules being considered for the pack, and the history behind each. This file is not published; the
-pack's [README](../README.md) covers the rules it ships, which are none yet.
+These are the rules that were considered for the pack, and the study behind each. This file is not published; the
+pack's [README](../README.md) covers the rules it ships.
 
-Each candidate is drafted in [`rules/`](rules/), 35 documents in all: a candidate whose parts need different modes
-became two. Every draft passed `rerail rules test` (valid, every case right, none unchecked) and was run against the
-history below, and all but one were also reviewed by a second agent. A draft moves to the pack's `rules/` once it is
-approved. Until then it is never shipped and never runs.
+The candidates were drafted, checked and shipped: 33 rule documents in [`../rules/`](../rules/), 17 in Steer and 16 in
+Log, where a candidate whose parts needed different modes became two. Every document passes `rerail rules test`
+(valid, every case right, none unchecked) and was run against the history below. Two drafts were not approved and are
+listed under [Considered and not proposed](#considered-and-not-proposed). This pull request also fixed most of the
+code the candidates found; each section's "Today" says what was fixed and what is left.
 
 ## How the candidates were found
 
 A rule is worth steering on when this repository has broken it and had to correct it. Each candidate below was checked
 against the whole history of `neralabs/rerail` as of 2026-10-30: every branch, the head of each of the 286 pull
-requests, the unreachable pre-squash commits, and the 1,874 review and conversation comments on them. "Today" is
-`main` at `c39847fb1` (#353) for the first round and at `719a600d0` for the [second
-round](#second-round-design-docs-and-the-six-shapes).
+requests, the unreachable pre-squash commits, and the 1,874 review and conversation comments on them. "Today" in the
+history columns is `main` at `c39847fb1` (#353) for the first round and at `719a600d0` for the [second
+round](#second-round-design-docs-and-the-six-shapes). "Now" is what the shipped rule matches in this repository after
+this pull request's fixes.
 
 The counts in the tables:
 
 | Column | Counts |
 |---|---|
 | Main | Breaks that reached `main` after the convention existed |
-| Today | Of those, and of older breaks never corrected, how many are still on `main` |
+| Today | Of those, and of older breaks never corrected, how many were still on `main` before this pull request |
+| Now | Matches of the shipped rule's repository pass after this pull request |
 | Branch | Breaks written on a pull request branch and corrected before it merged |
 | Review | Review comments, by people or `neralabs-ci`, that flagged a break |
 
@@ -35,29 +38,28 @@ Apple Git 2.54 reads `\s`, `\b`, `\w` and `\d` literally in `git log -G` and `gi
 no matches for some searches. Every search in both rounds was re-run with `git grep -P` or POSIX classes; the counts
 below are the corrected ones.
 
-The verdicts:
+The modes the rules shipped in:
 
-- **Steer**: write the rule and steer on it.
-- **Log first**: write the rule in Log mode, because today's code still breaks it and the fix is a refactor nobody has
-  scheduled. Switch it to Steer once the refactor lands.
-- **Not proposed**: the history does not justify a rule (see [Considered and not proposed](#considered-and-not-proposed)).
+- **Steer**: the code holds the rule today, so a new break is steered.
+- **Log**: today's code still breaks the rule and the fix is a refactor nobody has scheduled, or the rule should run a
+  while first. Switch it to Steer once the matches are gone.
 
 ## Summary
 
-| Proposed id | Rule | Main | Today | Branch | Review | Verdict | Kind |
-|---|---|--:|--:|--:|--:|---|---|
-| `rerail-language-branching` | Only an Engine Adapter branches on a language or family | 3 | 3 | 4 | 3 | Steer | code, Rust and TypeScript |
-| `rerail-pack-rule-test-placement` | A test of one pack rule lives in `test/engine/code-rule/pack-rules/` | 8 | 8 | 4 | 0 | Steer | code, path |
-| `rerail-pack-data-through-publish` | Pack data reaches S3 and the locks only through the publish workflow | 5 | 5 | 0 | 0 | Steer | command |
-| `rerail-ui-color-tokens` | The dashboard defines no raw colours; every colour is a Nera token | 21 | 6 | 2 | 0 | Steer, with an allow-list | code, CSS and JS |
-| `rerail-provenance-writers` | Licence and provenance records come only from their shared writers | 7 | 0 | 4 | 3 | Steer | code, scripts |
-| `rerail-no-message-classification` | Failures are classified by code, never by their message text | 6 | 5 | 1 | 6 | Log first | code, Rust and TypeScript |
-| `rerail-workflow-script-facts` | Workflows don't restate what a script owns | 3 | 1 | 1 | 6 | Steer; its shared-condition part Log first | code, YAML |
-| `rerail-pack-data-runtime-names` | Pack-data recipes take runtime names from `gates.yaml` | 8 | 5 | 5 | 5 | Steer; its helper-copy part Log first | code, scripts |
-| `rerail-cli-entry-no-decisions` | A script that runs on import holds no decision logic | 2 | 0 | 4 | 6 | Steer, narrow | code, scripts |
-| `rerail-rule-documents-in-packs` | A rule document is written only inside a pack | 0 | 0 | 2 | 1 | Steer, narrow | command or code |
-| `rerail-language-facts-from-registry` | Language facts come only from the language registry | 2 | 1 | 3 | 3 | Merge into `rerail-language-branching` | code, Rust and TypeScript |
-| `rerail-generator-placement` | A script that writes committed files lives under `scripts/generate/` | 0 | 4 | 1 | 2 | Steer for new scripts; Log first for the 4 today | code, path |
+| Proposed id | Rule | Main | Today | Branch | Review | Shipped | Now | Kind |
+|---|---|--:|--:|--:|--:|---|--:|---|
+| `rerail-language-branching` | Only an Engine Adapter branches on a language or family | 3 | 3 | 4 | 3 | Steer | 4 | code, Rust and TypeScript |
+| `rerail-pack-rule-test-placement` | A test of one pack rule lives in `test/engine/code-rule/pack-rules/` | 8 | 8 | 4 | 0 | Steer | 0 | code, path |
+| `rerail-pack-data-through-publish` | Pack data reaches S3 and the locks only through the publish workflow | 5 | 5 | 0 | 0 | Steer | — | conversation rule |
+| `rerail-ui-color-tokens` | The dashboard defines no raw colours; every colour is a Nera token | 21 | 6 | 2 | 0 | Steer, with an allow-list | 0 | code, CSS and JS |
+| `rerail-provenance-writers` | Licence and provenance records come only from their shared writers | 7 | 0 | 4 | 3 | Steer | 0 | code, scripts |
+| `rerail-no-message-classification` | Failures are classified by code, never by their message text | 6 | 5 | 1 | 6 | Log | 14 | code, Rust and TypeScript |
+| `rerail-workflow-script-facts` | Workflows don't restate what a script owns | 3 | 1 | 1 | 6 | Steer; the shared-condition part ships as `rerail-workflow-shared-conditions`, Log | 2; 6 | code, YAML |
+| `rerail-pack-data-runtime-names` | Pack-data recipes take runtime names from `gates.yaml` | 8 | 5 | 5 | 5 | Steer; the helper-copy part ships as `rerail-pack-data-helper-copies`, Log | 2; 8 | code, scripts |
+| `rerail-cli-entry-no-decisions` | A script that runs on import holds no decision logic | 2 | 0 | 4 | 6 | not shipped | — | code, scripts |
+| `rerail-rule-documents-in-packs` | A rule document is written only inside a pack | 0 | 0 | 2 | 1 | Steer | 0 | code |
+| `rerail-language-facts-from-registry` | Language facts come only from the language registry | 2 | 1 | 3 | 3 | Log, as its own rule | 4 | code, Rust and TypeScript |
+| `rerail-generator-placement` | A script that writes committed files lives under `scripts/generate/` | 0 | 4 | 1 | 2 | Steer | 0 (was 4) | code, path |
 
 ## Candidates
 
@@ -70,10 +72,10 @@ The verdicts:
   branches reached `main` and four were caught on a branch: three in #52 (fixed in `5f2880a54`) and one in #132 (fixed
   in `8dfb1e33d`), each within an hour of the review comment. Thirteen more sit on unmerged branches. The
   `/rerail-create` run in #119 already suggested this rule first.
-- **Today**:
+- **Today**: not fixed by this pull request. Still on `main`:
   - `native/src/code_rule_dsl/tape.rs:1170` `if grammar.lang == GrammarDialect::Blade {` (from `aac1ff237`, #32)
   - `native/src/code_rule_dsl/tape.rs:1278` `if grammar.lang != GrammarDialect::Blade {` (from `1fbb06c7c`, #132)
-  - `native/src/code_rule_dsl/workspace/evaluate.rs:819` `let image = if language == GrammarDialect::Blade {` (from
+  - `native/src/code_rule_dsl/workspace/evaluate.rs:832` `let image = if language == GrammarDialect::Blade {` (from
     `aac1ff237`, #32)
 
   The registry already declares Blade's parser (`"parser": "forte"`), and the engine does not read it.
@@ -81,7 +83,8 @@ The verdicts:
   `matches!` on `Family::`, `GrammarDialect::` or a language name, outside the adapter: `language/adapter*` and the
   per-family modules the adapter's module documentation names (`scope/<family>.rs`, `value/<family>/`, `calls/…`).
 - **Open question**: whether the node-kind checks in `native/src/code_rule_dsl/suppress/rerail.rs:196,230` count as
-  branching on a language. #50's review asked, and nobody answered.
+  branching on a language. #50's review asked, and nobody answered; it is now asked of Timo on
+  [#373](https://github.com/neralabs/rerail/pull/373#issuecomment-6605930141). The rule ignores them for now.
 
 ### `rerail-pack-rule-test-placement`: a pack rule's test lives in `pack-rules/`
 
@@ -92,14 +95,9 @@ The verdicts:
   (`d8f3bd524`, `10f9386b3`, `8cb32875c`, `ae46726be`). #106 then moved the same files to `languages/`, 17 hours
   after `pack-rules/` had reached `main`. Four more flat tests were written on branches and moved before merge (#68,
   #71, #72, #74).
-- **Today**: eight files that test one pack rule sit outside `pack-rules/`.
-  - `test/engine/code-rule/typescript-class-literal-property-style.test.ts` (#67)
-  - Seven byte-identical copies in `test/engine/code-rule/languages/` of files in `pack-rules/`:
-    `javascript-no-unused-vars-after-used`, `php-forbidden-code`, `php-if-always-false-stubs`,
-    `php-size-functions-in-loops`, `python-bandit-b604-shell-keyword`, `python-except-with-non-exception-classes` and
-    `typescript-consistent-generic-constructors` (`.test.ts`). They run twice in CI, and seven later pull requests
-    edited both copies.
-  - Two files in `test/engine/catalog/` are borderline.
+- **Today**: fixed in this pull request. The seven duplicates in `test/engine/code-rule/languages/` are deleted and
+  `typescript-class-literal-property-style.test.ts` (#67) moved to `pack-rules/`. The rule excludes
+  `test/engine/catalog/javascript-rule-options.test.ts`, one of the two borderline files.
 - **Shape**: a code rule over `test/**/*.test.ts` outside `pack-rules/`, matching a test that loads one pack rule
   document. The steer moves the file to `pack-rules/`, or deletes it where a copy is already there.
 
@@ -112,15 +110,15 @@ The verdicts:
   that the uploads "skip the workflow's code-owner approval" (`caf6da36f`, `686100276`, merged as `005ff0041`). #338
   pushed the lizard data the same way (`dd87a1c13`, merged as `69a9373dd`). No review flagged either. The publish bot
   has never set a lock on `main`.
-- **Today**: five locks name archives uploaded from a workstation, each at line 3.
+- **Today**: the five locks still name archives uploaded from a workstation, each at line 3; the shipped conversation
+  rule steers new pushes and does not read the locks.
   - `packs/react/upstream/eslint-plugin-react/test-data.lock`
   - `packs/react/upstream/eslint-plugin-react/samples.lock`
   - `packs/react/upstream/eslint-plugin-react-hooks/test-data.lock`
   - `packs/react/upstream/eslint-plugin-react-hooks/samples.lock`
   - `packs/complexity/upstream/lizard/test-data.lock`
 - **Shape**: a command rule on `npm run fixtures:push`, `pack-fixtures.mjs samples push` and `upload`, steering to
-  staging into `publish/` and dispatching the publish workflow. Every break used one of those commands. Conversation
-  rules are in internal testing.
+  staging into `publish/` and dispatching the publish workflow. Every break used one of those commands.
 
 ### `rerail-ui-color-tokens`: the dashboard defines no raw colours
 
@@ -133,8 +131,8 @@ The verdicts:
   branch commits `0a3ec53d5` and `30ded9c46` that replaced Nera tokens (`--steered`, `--logged`) with raw hex. #353
   replaced 19 with Nera tokens six days later. On #209 a raw `--header-primary` overriding the Nera token was removed
   within half an hour. No code review flagged any of them; the designer's token review on the dashboard tickets did.
-- **Today**: six local tokens hold raw colours, all black alphas for shadows and the scrim, which the header comment in
-  `base.css` and #353 call deliberate "named effects":
+- **Today**: unchanged. Six local tokens hold raw colours, all black alphas for shadows and the scrim, which the header
+  comment in `base.css` and #353 call deliberate "named effects"; the rule allows them by name, so it matches none:
   - `ui/css/base.css:52-54` `--lift`, `--scrim`, `--overlay-shadow`
   - `ui/css/base.css:72-74`, `:86-88`, `:99-101` `--card-shadow`, `--panel-shadow`, `--bar-shadow` in each theme
 - **Shape**: a regex code rule over `ui/**/*.{css,js,html}` except `tokens.generated.css`, forbidding `#hex`, `rgb(`,
@@ -172,7 +170,7 @@ The verdicts:
   (#46), and a dashboard stuck on "Unknown repository" because it matched "answered 404" (#129). In #45 the failure
   codes were too coarse, so the fix matched wording and deleted a note that said "classified by failure code alone,
   never message text".
-- **Today**, after the principle was stated:
+- **Today**, not fixed by this pull request; the shipped rule matches 14. After the principle was stated:
   - `src/engine/code-rule/rerail-steer.ts:101` (and `:40`), called from `src/harness/hook-adapter.ts:167`
   - `src/engine/audit/audit-control.ts:27` `/^Repository scan stopped after reaching \d+ failures$/u`
   - `src/engine/audit/audit.ts:156` `/^\d+ further failures? not recorded$/u`
@@ -183,7 +181,7 @@ The verdicts:
   `src/harness/native-session-client.ts:657,663-665` and `native/src/code_rule_dsl/workspace/persisted.rs:153`.
   `src/setup/updater.ts:305`, which reads an older release's error, is an accepted exception. Also from before it, and
   a judgement call: `src/engine/code-rule/code-rule-enforcer.ts:1337,1820` compare `error.message` with
-  `"WORKSPACE_BUSY"`, a literal the Rust side spells separately.
+  `"WORKSPACE_BUSY"`, a literal the Rust side spells separately. (Line numbers are from `719a600d0`.)
 - **Shape**: a regex code rule over `src/**` and `native/src/**` matching `.message.startsWith(`, `.includes(` or a
   regex test on a message, and duplicated engine message literals. Log first, until the failures carry codes.
 
@@ -201,11 +199,12 @@ The verdicts:
   - #85 hand-listed a 20-leg matrix, replaced by `plan.mjs` before merge.
 
   Six review comments flagged it: 4274743590, 4296436491, 4296436480, 4379796855, 4379796895 and 4381032053.
-- **Today**: the release pull request skip `github.head_ref != 'changeset-release/main'`, once per job, at
-  `.github/workflows/ci.yml:178,229,282,368,551,716,785` and `.github/workflows/release-packs.yml:65`.
+- **Today**: unchanged. The release pull request skip `github.head_ref != 'changeset-release/main'` is still written
+  once per job, seven times in `.github/workflows/ci.yml` and once in `.github/workflows/release-packs.yml:65`.
 - **Shape**: a regex code rule over `.github/workflows/**` forbidding `dist/…-hook.js` literals, `paths:` lists that
   copy what core ships, and hand-listed `pack:` entries or `matrix.pack == '<id>'`. The shared-condition clause (at most
-  one release pull request skip per file) is Log first, until `ci.yml` decides it once.
+  one release pull request skip per file) shipped as `rerail-workflow-shared-conditions` in Log, until `ci.yml` decides
+  it once.
 
 ### `rerail-pack-data-runtime-names`: recipes take runtime names from `gates.yaml`
 
@@ -215,16 +214,17 @@ The verdicts:
 - **History**: a literal versioned runtime name was fixed on `main` five days after it landed, and `complexity.ts`
   built a new one the day after. Five more breaks were fixed on branches (#40, #155 twice, #85, PR #22's branch).
   Review comments 6150967373, 4231223646, 6274453353, 4339536970 and review 5588921453.
-- **Today**:
+- **Today**: unchanged.
   - `scripts/pack-data/recipes/python.ts:27` `` uvRuntime(`${tool}-${pins.version}`, … ) ``
   - `scripts/pack-data/recipes/complexity.ts:19` `` uvRuntime(`lizard-${version}`, … ) ``
-  - `packs/javascript/upstream/generate.mjs:111,117,120` and `packs/typescript/upstream/generate.mjs:128,134,137` keep
-    their own `codePointColumn`, `splitLines` and `lint`.
+  - `packs/javascript/upstream/generate.mjs:111,120` and `packs/typescript/upstream/generate.mjs:128,137` keep their
+    own `codePointColumn` and `lint`.
   - `ECMA_EXTENSIONS` is kept four times, with no shared owner since 2026-10-27.
 - **Shape**: a code rule over `scripts/pack-data/recipes/**` whose runtime argument may be no literal or template other
-  than the unversioned `python`, `php`, `blade` or `parsers`. The helper-copy part is Log first.
+  than the unversioned `python`, `php`, `blade` or `parsers`. The helper-copy part shipped as
+  `rerail-pack-data-helper-copies` in Log.
 
-### `rerail-cli-entry-no-decisions`: a script that runs on import holds no decision logic
+### `rerail-cli-entry-no-decisions`: a script that runs on import holds no decision logic (not approved)
 
 - **Rule**: a script whose top level does work when imported only parses arguments and does I/O; what it decides lives
   in a module beside it that can be imported and tested (`scripts/release/packs.mjs`, `core-paths.mjs`,
@@ -239,19 +239,22 @@ The verdicts:
   `scripts/release/packs-promote-plan.mjs`.
 - **Shape**: a code rule over `scripts/release/**`, `scripts/host/**`, `src/cli/cli.ts` and the recorders, firing when
   a script that runs on import gains a branching function it does not export. Generators are Log.
+- **Not approved**: the drafted rule catches none of the six recorded breaks, which were all written inline rather than
+  as a separate function, and about half its matches are code it should leave alone. See [Considered and not
+  proposed](#considered-and-not-proposed).
 
 ### `rerail-rule-documents-in-packs`: a rule document is written only inside a pack
 
 - **Rule**: a rule document (`rerail.policy/v1`, a conversation rule, or a `{ "kind", "rule" }` draft) is added only
-  under `packs/<id>/rules/` or `packs/<id>/candidates/rules/`, or as a test input under `fixtures/packs/`.
+  under `packs/<id>/rules/`, or as a test input under `fixtures/`.
 - **Stated in**: docs/repository-structure.md metrics 02 and 23. Metric 02 recognises only a top-level
   `"format": "rerail.policy/v1"`, not a conversation rule or a draft.
 - **History**: both breaks were agents writing Rerail's own rules, which is the work this pack is for. #176 put
   `packs/*.draft.json` at the root of `packs/` (`a9fef8062`) until review 4341135728 asked for `packs/rerail`;
   #183 put a conversation-rule draft under `fixtures/host/`. Each was fixed within about 90 minutes.
 - **Today**: none.
-- **Shape**: a command rule on writes to a path outside those folders whose content has a rule's shape, or a code rule
-  over `**/*.json` outside them. The structure check should also learn the two shapes metric 02 misses.
+- **Shape**: a code rule over `**/*.json` outside those folders matching a rule's shape. The structure check should
+  also learn the two shapes metric 02 misses.
 
 ### `rerail-language-facts-from-registry`: language facts come only from the registry
 
@@ -261,12 +264,12 @@ The verdicts:
 - **History**: on the #33 branch the Rust `SOURCE_SUFFIXES` missed `.vue`, so the Git index skipped files the host
   reads; the fix patched the list instead of removing it. ECMA extension tables were written outside the adapter twice
   in #52 and again on open PR #207. A merge on #44 dropped `javascript` from a hand-kept test list.
-- **Today**: `native/src/git_workspace.rs:27-31` `SOURCE_SUFFIXES`; and, as a judgement call,
-  `native/src/code_rule_dsl/module_graph.rs:75` `EXTENSIONS` and `:446-449`, which reached `main` through #52 though
-  review finding F1 asked for the registry.
+- **Today**: unchanged; the shipped rule matches 4. `native/src/git_workspace.rs:27` `SOURCE_SUFFIXES`; and, as a
+  judgement call, `native/src/code_rule_dsl/module_graph.rs:75` `EXTENSIONS` and `:446-449`, which reached `main`
+  through #52 though review finding F1 asked for the registry.
 - **Shape**: a regex code rule flagging a list or match of two or more registry suffixes outside the adapters,
-  generated files and tests. Fold it into `rerail-language-branching` as a second clause; generate `SOURCE_SUFFIXES`
-  from the registry in `build.rs` first.
+  generated files and tests. It shipped as its own rule in Log rather than as a clause of `rerail-language-branching`;
+  generate `SOURCE_SUFFIXES` from the registry in `build.rs` before switching it to Steer.
 
 ### `rerail-generator-placement`: generators live under `scripts/generate/`
 
@@ -277,13 +280,12 @@ The verdicts:
 - **History**: #26 moved 13 generators. A vitest policy builder in #41 was moved before merge (`a9d0adc3d`). In #50,
   21 React rule documents gained `suppress.oxlint` without a change to the builder, which was fixed 12 days later
   (`500790c67`): the outputs are not listed as generated, so the review rule against hand edits never applied.
-- **Today**, from before the convention and never moved:
-  - `packs/next/candidates/build-policies.mjs` (writes `packs/next/rules/`, `conformance.json`, `pack.json`)
-  - `packs/next/candidates/build-probes.mjs` (writes probe rules and fixtures)
-  - `packs/react/candidates/build.mjs` (writes `packs/react/rules/*.json`, `conformance.json`)
-  - `packs/react/candidates/probes/build.mjs` (writes probe rules)
+- **Today**: fixed in this pull request. The four builders from before the convention moved to
+  `scripts/generate/packs/`: `next-policies.mjs` and `next-probes.mjs` (from `packs/next/candidates/build-policies.mjs`
+  and `build-probes.mjs`), `react-policies.mjs` and `react-specs.mjs` (from `packs/react/candidates/build.mjs`), and
+  `react-probes.mjs` (from `packs/react/candidates/probes/build.mjs`).
 - **Shape**: a code rule over `packs/**` and `native/src/**` script files that call a file-write function, steering to
-  `scripts/generate/<area>/` and a README row. Log first for the four above until they move.
+  `scripts/generate/<area>/` and a README row.
 
 ## Second round: design docs and the six shapes
 
@@ -297,18 +299,18 @@ candidates, merged where they overlapped, were checked against history like the 
 Most of them hold today and have never been broken; those are in [Considered and not
 proposed](#considered-and-not-proposed). The ones below have history behind them.
 
-| Proposed id | Rule | Main | Today | Branch | Review | Verdict | Kind |
-|---|---|--:|--:|--:|--:|---|---|
-| `rerail-home-file-names` | A file in the Rerail home is named only by the module that writes it | 7 | 6 | 1 | 2 | Steer on hand-kept name lists; Log first on re-spelled paths | code, TypeScript |
-| `rerail-walk-limits` | Every repository walker takes its ignored folders and limits from the enforcer | 6 | 5 | 3 | 2 | Steer in `src/` once the enforcer exports its limits; Log in `native/` | code, TypeScript and Rust |
-| `rerail-conformance-boundary` | `conformance/` runs programs only through `process.ts`, imports nothing from the authoring path, and reads only pinned data | 3 | 0 | 13 | 0 | Steer on the first two; Log first on pinned data | code, TypeScript |
-| `rerail-fixtures-root` | Rust tests reach `fixtures/` only through `fixtures_dir!()` and `oracle!()` | 1 | 18 lines | 0 | 0 | Log first until the 18 lines are swapped, then Steer | code, Rust |
-| `rerail-command-sigil` | The command sigil (`$` in Codex, `/` elsewhere) is decided in one place | 9 | 6 | 0 | 0 | Log first until the adapter capabilities hold the sigil | code, TypeScript |
-| `rerail-git-no-lazy-fetch` | Every Git process Rerail starts has lazy fetch off | 0 | 1 | 1 | 2 | Log first; fix the open break, then Steer. Merge with the bare-`git` finding | code, TypeScript |
-| `rerail-no-code-execution` | Reading a repository's configuration or a pack's match definition runs no code, and npm runs with `--ignore-scripts` | 0 | 0 | 3 | 5 | Log first: never on `main`, but costly when missed | code, TypeScript |
-| `rerail-origin-ranges` | A byte range that crosses documents is mapped only through `origin.rs` | 0 | 0 | 1 | 1 | Log first | code, Rust |
-| `rerail-pack-package-names` | A pack's npm name is built only by `rulePackPackageName` | 7 | 7 | 1 | 0 | Steer once open #340 lands | code, TypeScript |
-| `rerail-fixed-value-lists` | A fixed value list (hosts, audit scopes and modes) is declared once and used through its constant | 12 | 12 | 0 | 0 | Log first | code, TypeScript |
+| Proposed id | Rule | Main | Today | Branch | Review | Shipped | Now | Kind |
+|---|---|--:|--:|--:|--:|---|--:|---|
+| `rerail-home-file-names` | A file in the Rerail home is named only by the module that writes it | 7 | 6 | 1 | 2 | Steer on hand-kept name lists; the re-spelled paths ship as `rerail-home-file-paths`, Log | 0; 8 | code, TypeScript |
+| `rerail-walk-limits` | Every repository walker takes its ignored folders and limits from the enforcer | 6 | 5 | 3 | 2 | Steer in `src/`; `rerail-walk-limits-native`, Log, in `native/` | 0; 3 | code, TypeScript and Rust |
+| `rerail-conformance-boundary` | `conformance/` runs programs only through `process.ts`, imports nothing from the authoring path, and reads only pinned data | 3 | 0 | 13 | 0 | Steer on the first two; pinned data ships as `rerail-conformance-pinned-data`, Log | 0; 0 | code, TypeScript |
+| `rerail-fixtures-root` | Rust tests reach `fixtures/` only through `fixtures_dir!()` and `oracle!()` | 1 | 18 lines | 0 | 0 | Steer | 0 (was 18 lines) | code, Rust |
+| `rerail-command-sigil` | The command sigil (`$` in Codex, `/` elsewhere) is decided in one place | 9 | 6 | 0 | 0 | Steer | 0 (was 6) | code, TypeScript |
+| `rerail-git-no-lazy-fetch` | Every Git process Rerail starts has lazy fetch off | 0 | 1 | 1 | 2 | Steer | 0 (was 1) | code, TypeScript |
+| `rerail-no-code-execution` | Reading a repository's configuration or a pack's match definition runs no code, and npm runs with `--ignore-scripts` | 0 | 0 | 3 | 5 | Log | 0 | code, TypeScript |
+| `rerail-origin-ranges` | A byte range that crosses documents is mapped only through `origin.rs` | 0 | 0 | 1 | 1 | Log | 0 | code, Rust |
+| `rerail-pack-package-names` | A pack's npm name is built only by `rulePackPackageName` | 7 | 7 | 1 | 0 | Steer, since #340 landed | 1 | code, TypeScript |
+| `rerail-fixed-value-lists` | A fixed value list (hosts, audit scopes and modes) is declared once and used through its constant | 12 | 12 | 0 | 0 | Log | 15 | code, TypeScript |
 
 ### `rerail-home-file-names`: the Rerail home's files are named by their writers
 
@@ -317,17 +319,16 @@ proposed](#considered-and-not-proposed). The ones below have history behind them
 - **History**: uninstall's hand-kept list of home files came in with #222; its first draft lacked four names and had
   two stale ones, fixed 23 minutes later (`89719cc85`), with the hand list kept. #241 (`12d769ab9`) then added the
   daemon's `access-token` (`src/runtime/daemon-control.ts:47`) without adding it to the list.
-- **Today**: the drift is a live bug. `src/cli/setup-cli.ts:224-225` `RERAIL_HOME_ENTRY` does not match
-  `access-token`, which a loopback daemon writes and daemon stop leaves behind, so uninstall reports a dedicated home as
-  holding files that are not Rerail's and leaves the token out of what it deletes (read from `setup-cli.ts:328-338`;
-  uninstall was not run). Paths re-spelled with `join` instead of the owner's constant:
-  `src/setup/harness-registration.ts:390`, `src/setup/coding-agents.ts:39`, `src/setup/rule-pack-store.ts:174`,
-  `src/engine/catalog/rule-catalog.ts:58`, `src/cli/cli.ts:238`, and from before: `harness-registration.ts:200`,
-  `src/engine/native/rerail-build.ts:24,48`.
+- **Today**: the live bug is fixed in this pull request. Uninstall's home-file list is now built from the writers'
+  constants and includes the daemon's `access-token` (`DAEMON_ACCESS_TOKEN_FILE`), so the hand-kept
+  `RERAIL_HOME_ENTRY` pattern is gone. Still open, and matched by `rerail-home-file-paths` in Log (8 today): paths
+  re-spelled with `join` instead of the owner's constant, at `719a600d0` `src/setup/harness-registration.ts:390`,
+  `src/setup/coding-agents.ts:39`, `src/setup/rule-pack-store.ts:174`, `src/engine/catalog/rule-catalog.ts:58`,
+  `src/cli/cli.ts:238`, and from before: `harness-registration.ts:200`, `src/engine/native/rerail-build.ts:24,48`.
 - **Shape**: a regex code rule over `src/**` flagging a literal or pattern that names two or more home files outside
-  their owners (steer), and `join(…, "current" | "versions" | "update-state.json" | "bin")` outside the updater (log
-  first: those names exist only as `Updater` getters, which `engine/` cannot import, so they need exported constants
-  first). A test that every file a writer puts in the home matches uninstall's list would also catch the drift.
+  their owners (steer), and `join(…, "current" | "versions" | "update-state.json" | "bin")` outside the updater
+  (`rerail-home-file-paths`, log: those names exist only as `Updater` getters, which `engine/` cannot import, so they
+  need exported constants first).
 
 ### `rerail-walk-limits`: repository walkers share one set of folders and limits
 
@@ -335,11 +336,14 @@ proposed](#considered-and-not-proposed). The ones below have history behind them
 - **History**: in #52, review 4275893725 found the Rust module-graph walk ignoring the host's folders and limits, and
   review 4297815767 its missing entry cap. Each fix (`0a4090950`, `84a75b580`) copied the host's values instead of
   passing them. No copy has drifted in value yet.
-- **Today**: `src/engine/code-rule/code-rule-bridge.ts:28-31` (ignored folders), `src/cli/rule-draft.ts:42-44`
-  (limits), `native/src/code_rule_dsl/module_graph.rs:39,43,46-61` (limits and folders).
+- **Today**: fixed in `src/` in this pull request. The enforcer exports its walk limits (`AUDIT_MAX_FILES`,
+  `MAX_SOURCE_BYTES`, `AUDIT_MAX_SOURCE_BYTES`) and `src/cli/rule-draft.ts` imports them; the TypeScript copies are
+  gone. Still open, and matched by `rerail-walk-limits-native` in Log (3 today):
+  `native/src/code_rule_dsl/module_graph.rs`'s own limits and folders. `src/engine/code-rule/code-rule-bridge.ts:24`
+  keeps a separate 1 MB per-file limit, which is not the enforcer's (see [Still open](#still-open)).
 - **Shape**: a code rule over `src/**` flagging a set literal holding both `"node_modules"` and `"__pycache__"`, or a
-  `MAX_FILES`/`MAX_FILE_BYTES`/`MAX_SOURCE_BYTES` constant, outside the enforcer; the enforcer must export its limits
-  first. In `native/` log only, pointing at `RepositoryIndexOptions`.
+  `MAX_FILES`/`MAX_FILE_BYTES`/`MAX_SOURCE_BYTES` constant, outside the enforcer. In `native/` log only, pointing at
+  `RepositoryIndexOptions`.
 
 ### `rerail-conformance-boundary`: conformance stays a judge
 
@@ -353,10 +357,11 @@ proposed](#considered-and-not-proposed). The ones below have history behind them
   fork choose its recorded answers (4330551098), and an `unzip` that reused partial trees (4377264352).
 - **Today**: nothing in `conformance/`. As a judgement call, `conformance/ungated.ts:67` fetches the base commit with
   Git. Outside it, `scripts/pack-data/context.ts`, `derive.ts` and `eslint-expected.mjs` call Git directly although
-  `process.ts` says `scripts/pack-data` runs programs through the runner.
-- **Shape**: one code rule over `conformance/**` with three clauses: no `child_process` import outside `process.ts`;
-  no import from `scripts/pack-data`, `scripts/upstream` or a pack generator, and nothing under `conformance/recorders/`;
-  and (log first) no network fetch other than the pinned, checked one.
+  `process.ts` says `scripts/pack-data` runs programs through the runner. Not changed by this pull request.
+- **Shape**: one code rule over `conformance/**` with two clauses: no `child_process` import outside `process.ts`; no
+  import from `scripts/pack-data`, `scripts/upstream` or a pack generator, and nothing under `conformance/recorders/`.
+  The third clause, no network fetch other than the pinned, checked one, shipped as `rerail-conformance-pinned-data`
+  in Log.
 
 ### `rerail-fixtures-root`: Rust tests reach fixtures through the macros
 
@@ -366,12 +371,10 @@ proposed](#considered-and-not-proposed). The ones below have history behind them
 - **History**: the nera-landing import on #1's branch read fixtures through direct `env!` paths, fixed in `38efea8c4`
   and the merge `7e385006e`. #56 added relative `include_str!` paths that are still on `main`; four unmerged branches
   add 31 more lines, and one had to re-count `../` after a move (`3d260c7a8`).
-- **Today**: `native/src/code_rule_dsl/scope/rust/tests.rs:9-17` and `scope/usage/rust/tests.rs:13,16,18-22,24,26`,
-  18 lines. They already read their expected JSON through `oracle!`, so with `RERAIL_ORACLES_DIR` set the two would
-  come from different folders.
+- **Today**: fixed in this pull request. The 18 lines in `native/src/code_rule_dsl/scope/rust/tests.rs` and
+  `scope/usage/rust/tests.rs` now read their fixtures through `oracle!`, the same root as their expected JSON.
 - **Shape**: a regex code rule over `native/**/*.rs` (not `build.rs` or `code_rule_dsl/mod.rs`) flagging `../fixtures/`
   inside `include_str!`, `include_bytes!`, `format!`, `concat!` or `join`, and any direct `env!("RERAIL_ORACLES_DIR")`.
-  Swap the 18 lines to `oracle!` first, or patch metric 14 instead.
 
 ### `rerail-command-sigil`: the command sigil is decided once
 
@@ -379,61 +382,65 @@ proposed](#considered-and-not-proposed). The ones below have history behind them
 - **History**: hard-coded `/` command names were fixed twice for Codex users: `042d82ebb` (#1) fixed in `457d97de8`
   (#61), and #25's `renderStoppedRepo` fixed in #222 (`e3f1c52cf`). Both fixes added another local
   `host === "codex"` check, so a rule written today would flag the fixes too.
-- **Today**: five places decide the sigil (`src/engine/code-rule/rerail-steer.ts:213`,
-  `src/runtime/repository-start.ts:283`, `src/harness/rerail-command-files.ts:143`,
-  `src/harness/setup-screens.ts:666-676`, `src/cli/cli.ts:429`), and `src/harness/setup-screens.ts:621` (#182's
-  `renderNotNow`, which #222 missed) still prints `/rerail-start` to Codex users who answer "Not now".
-- **Shape**: add a `commandSigil` to `ADAPTER_CAPABILITIES` (`src/engine/adapter-contract.ts`) and move the five
-  sites, then a regex code rule over `src/**` outside `src/hosts/**` flagging `=== "codex"` beside a `$` or `/` and
+- **Today**: fixed in this pull request. `ADAPTER_CAPABILITIES` (`src/engine/adapter-contract.ts`) holds a
+  `commandSigil`, and the five sites that decided it (`rerail-steer.ts`, `repository-start.ts`,
+  `rerail-command-files.ts`, `setup-screens.ts`, `cli.ts`) read it. The live bug is fixed too: `setup-screens.ts`'s
+  `renderNotNow` (#182, which #222 missed) now prints `$rerail-start` to Codex users who answer "Not now".
+- **Shape**: a regex code rule over `src/**` outside `src/hosts/**` flagging `=== "codex"` beside a `$` or `/` and
   `/rerail-` literals in agent-facing text.
 
 ### The other second-round candidates
 
-- **`rerail-git-no-lazy-fetch`.** `docs/privacy.md:19` says blob reads run with `GIT_NO_LAZY_FETCH=1`. On #152,
-  `f9722982f` added a `cat-file --batch` without it; `neralabs-ci` flagged it (F4) and `fce7c88cd` fixed it. Open today:
-  `src/engine/audit/audit-control.ts:61-62` runs `git diff --cached --name-only` through `runGit`
-  (`src/engine/git.ts:122-126`), which does not set the variable, and rename detection can then fetch a missing blob
-  from the remote (seen with `GIT_TRACE` on Git 2.54; `--no-renames` avoids it). Review F7 (only Git 2.44+ honours the
-  variable) is unanswered. Rule: every Git spawn in `src/**` sets it, or all Git runs go through `src/engine/git.ts`,
-  which sets it.
-- **`rerail-no-code-execution`.** On #140, `571fb8c21` ran each pack's match checks through `spawnSync` and
+- **`rerail-git-no-lazy-fetch`** (Steer). `docs/privacy.md:19` says blob reads run with `GIT_NO_LAZY_FETCH=1`. On
+  #152, `f9722982f` added a `cat-file --batch` without it; `neralabs-ci` flagged it (F4) and `fce7c88cd` fixed it.
+  Open before this pull request: `src/engine/audit/audit-control.ts:61-62` ran `git diff --cached --name-only` through
+  `runGit`, which did not set the variable, and rename detection could then fetch a missing blob from the remote (seen
+  with `GIT_TRACE` on Git 2.54). Fixed in this pull request: `runGit` sets `GIT_NO_LAZY_FETCH`, the audit's `git diff`
+  passes `--no-renames`, and `src/setup/harness-registration.ts` runs Git through `runGit` instead of by bare name.
+  Review F7 (only Git 2.44+ honours the variable) is unanswered. Rule: every Git spawn in `src/**` sets it, or goes
+  through `src/engine/git.ts`, which sets it.
+- **`rerail-no-code-execution`** (Log). On #140, `571fb8c21` ran each pack's match checks through `spawnSync` and
   `import()`, and uninstalled packs with npm scripts on; blocker 4315170665 and four more comments flagged it and
   `b2dcd0bb7` ("Packs run no code") removed it two hours later. Rule: no `node:child_process`, `node:vm`,
   `node:worker_threads`, computed `import(`, `eval` or `new Function` in `src/engine/catalog/**`,
   `src/setup/rule-pack-store.ts` and `src/cli/packs-cli.ts`; every npm install, uninstall, ci or update argument list
   includes `--ignore-scripts` and a `--` before specs. `src/setup/updater.ts:169-177` installs Rerail itself without
   the flag and would need it or an exception.
-- **`rerail-origin-ranges`.** `origin.rs:13-15`: "No caller maps a byte range itself." In the pull request that created
+- **`rerail-origin-ranges`** (Log). `origin.rs:13-15`: "No caller maps a byte range itself." In the pull request that created
   it (#132), three callers still mapped ranges themselves through `segments.host_span`, which widened spans in Vue
   templates; blocker 4298111569 flagged it and `4e57c59d7` fixed it. Nothing on `main` breaks it; the unmerged
   `jeremybarnes/final-rerail-shape` adds `host_range` back (`d9ab616c5`). Rule: `\.host_(range|span)\(` and
   `fn host_(range|span)` in `native/src/code_rule_dsl/**` outside `origin.rs`, `literal/offsets.rs` and
   `embed/segments.rs`.
-- **`rerail-pack-package-names`.** #140 restated `@neralabs/rerail-pack-<id>` in six places instead of calling
-  `rulePackPackageName`; open #340 changes the naming and has to find and rewrite each one. Steer once #340 lands.
-- **`rerail-fixed-value-lists`.** #45 (`00983ec7f`) replaced three copies of the audit failure codes with one
-  constant. Twelve lists are restated today, two after their constant existed, among them the host list in
-  `src/runtime/event-protocol.ts:9`, `src/setup/harness-registration.ts:39,41` and `src/cli/cli.ts:136`, and the audit
-  scopes and modes in `src/engine/audit/audit-control-schema.ts:5,6,35` and `src/api/operations.ts:110-112,127-128`.
-  None has drifted. Rule: a `z.enum([...])` or union restating a known list outside its owner.
+- **`rerail-pack-package-names`** (Steer, 1 today). #140 restated `@neralabs/rerail-pack-<id>` in six places instead of
+  calling `rulePackPackageName`; #340 rewrote all but the folder join in `src/setup/rule-pack-store.ts` and added
+  `packIdOfPackage` and `RULE_PACK_PACKAGE_NAME`, so the rule steers.
+- **`rerail-fixed-value-lists`** (Log, 15 today). #45 (`00983ec7f`) replaced three copies of the audit failure codes
+  with one constant. Twelve lists were restated at `719a600d0`, two after their constant existed, among them the host
+  list in `src/runtime/event-protocol.ts:9`, `src/setup/harness-registration.ts:39,41` and `src/cli/cli.ts:136`, and
+  the audit scopes and modes in `src/engine/audit/audit-control-schema.ts:5,6,35` and
+  `src/api/operations.ts:110-112,127-128`. None has drifted; this pull request moved none. Rule: a `z.enum([...])` or
+  union restating a known list outside its owner.
 
-Also log-first, with the reason it can't steer yet:
+The rest of the second round, each shipped as its own rule:
 
-| Candidate | Today | Why not Steer |
-|---|---|---|
-| Only `src/runtime/repository-start.ts` turns a checkout's status into a start state | 7 copies, e.g. `src/api/repository-operations.ts:207-210`, `src/harness/hook-host.ts:56`, `src/hosts/omp/extension.ts:80,86`, `src/engine/catalog/rule-configuration.ts:406` | None was ever moved into the owner; one bug (review 4233535404) was fixed in place. The engine copies can't import the runtime owner |
-| The dashboard shows the API's `*Source` fields instead of computing precedence | `ui/derive.js:66-76`, `ui/settings-writes.js:160-162,169` | #50's author fixed six precedence bugs in the dashboard's copy in one evening; the API can't yet say what a pack setting would decide |
-| One helper resolves a session's storage root and model path | 7 model-path and 6 storage-root copies that resolve a relative path differently; `src/daemon/daemon.ts:288-289` ignores both variables | The helper doesn't exist; #221 had to guess the default from a folder name (`src/runtime/runtime.ts:489`) |
-| Only `src/hosts/<host>/` imports a coding agent's SDK | `src/harness/native-semantic-tools.ts:1-3` | One break, unchanged since #26; move its two register functions into the OMP and Pi hosts first, or add package imports to `check-boundaries.mjs` (it skips them at `:150`) |
-| A file is parsed into a tape only by `TapeImage::parse` | `native/src/code_rule_dsl/workspace/evaluate.rs:819-905` | #48 and #132 each edited both copies; routing `encode_tape` through `TapeImage::parse` and making `encode` private lets the compiler enforce it |
-| Stored source and tape are read only in `workspace/documents.rs` | `native/src/code_rule_dsl/workspace/evaluate.rs:164` | The only fix deleted the code; the facts redesign on unmerged branches stores tapes on purpose |
-| `sqlite_master` table probes stay in storage | `src/engine/catalog/setup-review.ts:30`, `src/engine/audit/audit-store.ts:42`, `src/runtime/repository-start.ts:40` | Reviews asked for local probes as often as central ones |
-| The dashboard's pure modules import no I/O module | `ui/repo-rules.js:7-8` | The README that lists it as pure came in the same pull request as the import |
+| Candidate | Shipped | Now | Today, and why it is not Steer |
+|---|---|--:|---|
+| Only `src/runtime/repository-start.ts` turns a checkout's status into a start state | `rerail-start-state`, Log | 6 | 7 copies at `719a600d0`, e.g. `src/api/repository-operations.ts:207-210`, `src/harness/hook-host.ts:56`, `src/hosts/omp/extension.ts:80,86`, `src/engine/catalog/rule-configuration.ts:406`. None was ever moved into the owner; one bug (review 4233535404) was fixed in place. The engine copies can't import the runtime owner |
+| The dashboard shows the API's `*Source` fields instead of computing precedence | `rerail-ui-api-precedence`, Log | 10 | `ui/derive.js:66-76`, `ui/settings-writes.js:160-162,169`. #50's author fixed six precedence bugs in the dashboard's copy in one evening; the API can't yet say what a pack setting would decide |
+| One helper resolves a session's storage root and model path | `rerail-session-paths`, Steer | 0 (was 13) | Fixed in this pull request: `src/runtime/session-paths.ts` resolves both, every copy routes through it, the daemon now reads both variables, and #221's folder-name guess (`src/runtime/runtime.ts:489`) is gone |
+| Only `src/hosts/<host>/` imports a coding agent's SDK | `rerail-host-sdk-imports`, Log | 3 | `src/harness/native-semantic-tools.ts:1-3`. One break, unchanged since #26; move its two register functions into the OMP and Pi hosts first, or add package imports to `check-boundaries.mjs` (it skips them at `:150`) |
+| A file is parsed into a tape only by `TapeImage::parse` | not shipped | — | See [Considered and not proposed](#considered-and-not-proposed) |
+| Stored source and tape are read only in `workspace/documents.rs` | `rerail-store-reads-in-documents`, Log | 1 | `native/src/code_rule_dsl/workspace/evaluate.rs:164`. The only fix deleted the code; the facts redesign on unmerged branches stores tapes on purpose |
+| `sqlite_master` table probes stay in storage | `rerail-table-probes-in-storage`, Log | 3 | `src/engine/catalog/setup-review.ts:30`, `src/engine/audit/audit-store.ts:42`, `src/runtime/repository-start.ts:40`. Reviews asked for local probes as often as central ones |
+| The dashboard's pure modules import no I/O module | `rerail-ui-pure-modules`, Log | 2 | `ui/repo-rules.js:7-8`. The README that lists it as pure came in the same pull request as the import |
 
 ## Considered and not proposed
 
 | Rule | Main | Today | Branch | Review | Why not |
 |---|--:|--:|--:|--:|---|
+| `rerail-cli-entry-no-decisions`: a script that runs on import holds no decision logic (drafted, not approved) | 2 | 0 | 4 | 6 | The draft catches none of its six recorded breaks, which were all written inline, and about half its matches are code it should leave alone |
+| `rerail-tape-parse-once`: a file is parsed into a tape only by `TapeImage::parse` (drafted, not approved) | — | 1 | — | — | The compiler enforces it better: route `encode_tape` (`native/src/code_rule_dsl/workspace/evaluate.rs:822`) through `TapeImage::parse` and make the encoders private. #48 and #132 each edited both copies |
 | Only `src/engine/storage/` opens SQLite | 1 pull request (3 opens) | 3 | 0 | 0 | Never written down or flagged; open #351 deletes the three opens; `src/cli/project-cli.ts`'s pre-update copy looks deliberate |
 | The package root comes from `src/engine/package-root.ts` | 0 | 0 | 0 | 0 | Never broken since #26; the one breakage was a workflow path (`rerail-workflow-script-facts`) |
 | Shell text is quoted by one owner | 3 | 3 | 4 | 5 | Recurs, all on Windows, but the owners disagree with each other; consolidate the quoting first |
@@ -467,20 +474,25 @@ Also log-first, with the reason it can't steer yet:
 
 ## Found on `main` while checking
 
-These came up in the history checks. They are defects or check gaps, not rules:
+These came up in the history checks. They are defects or check gaps, not rules. Fixed in this pull request:
 
-- `src/setup/harness-registration.ts:721-722` runs `git` by bare name, through `PATH`, without `gitExecutable()` or
-  its safe configuration.
-- `cleanupCommand` (`src/cli/setup-cli.ts`) quotes for PowerShell without handling the curly quotes the hook quoter
-  handles, so its hint is wrong for a profile path holding ’.
-- `scripts/check/check-boundaries.mjs:37` (`OUTSIDE_SRC`) and structure metric 17 leave out `e2e/`; `e2e/dashboard-test.ts`
-  sits outside `e2e/support/`.
+- `src/setup/harness-registration.ts:721-722` ran `git` by bare name, through `PATH`, without `gitExecutable()` or
+  its safe configuration; it now runs Git through `runGit`.
+- `src/cli/setup-cli.ts:224-225`: uninstall's list of home files lacked `access-token`; the list is now built from the
+  writers' constants (see `rerail-home-file-names`).
+- `src/engine/audit/audit-control.ts:61-62` could make Git fetch from the remote in a partial clone; `runGit` sets
+  `GIT_NO_LAZY_FETCH` and the `git diff` passes `--no-renames` (see `rerail-git-no-lazy-fetch`).
+- `src/harness/setup-screens.ts:621` printed `/rerail-start` to Codex users (see `rerail-command-sigil`).
+- #228's skill had two broken anchors.
+
+Still open:
+
+- `cleanupCommand` (`src/cli/setup-cli.ts:283`) quotes for PowerShell without handling the curly quotes the hook
+  quoter handles, so its hint is wrong for a profile path holding ’.
+- `scripts/check/check-boundaries.mjs:37` (`OUTSIDE_SRC`) and structure metric 17 leave out `e2e/`;
+  `e2e/dashboard-test.ts` sits outside `e2e/support/`.
 - `src/cli/rule-evidence.ts:302` builds a repository's history ids itself instead of calling `repositoryHistoryIds`.
 - `native/src/git_workspace.rs:27` `SOURCE_SUFFIXES` is hand-kept (see `rerail-language-facts-from-registry`).
-- `src/cli/setup-cli.ts:224-225`: uninstall's list of home files lacks `access-token` (see `rerail-home-file-names`).
-- `src/engine/audit/audit-control.ts:61-62` can make Git fetch from the remote in a partial clone (see
-  `rerail-git-no-lazy-fetch`).
-- `src/harness/setup-screens.ts:621` prints `/rerail-start` to Codex users (see `rerail-command-sigil`).
 - `src/api/operation.ts:3-4` describes a generated web client that never existed; `docs/blade-parser.md:336` says
   `TapeImage::parse` is used for every caller, which `evaluate.rs` contradicts.
 - The Python, TypeScript and JavaScript `PATCHES.md:19` name Blade (deleted in #32) and tree-sitter-generate 0.27.0
@@ -488,13 +500,17 @@ These came up in the history checks. They are defects or check gaps, not rules:
   with `git apply`.
 - The browser-safety test of `src/engine/schemas.ts` covers 2 of its 8 files.
 
-## Before the first rule ships
+## Still open
 
-- **Publishing.** Every `packs/*` directory is an npm workspace, and the release workflow publishes every pack whose
-  version has no tag. Pack validation requires `publishConfig.access` to be `public`, and set-up fetches every pack in
-  `src/engine/catalog/pack-list.generated.ts` from npm. A pack kept off npm needs a release-side exclusion first.
-- **#176.** The open #176 adds this pack's directory with two rules on pack message wording. Its `package.json` sets
-  `publishConfig.access` to `restricted`, which validation now refuses, and its test sits flat in
-  `test/engine/code-rule/`, which `rerail-pack-rule-test-placement` would steer away.
-- **Conversation rules.** `rerail-pack-data-through-publish` and possibly `rerail-rule-documents-in-packs` are command
-  rules, which are in internal testing.
+- **`suppress/rerail.rs` node kinds.** Whether `native/src/code_rule_dsl/suppress/rerail.rs:196,230` branch on a
+  language is asked of Timo on [#373](https://github.com/neralabs/rerail/pull/373#issuecomment-6605930141);
+  `rerail-language-branching` ignores them until he answers.
+- **#176.** The open #176 also adds `packs/rerail`, with two rules on pack message wording; it has to be rebased onto
+  this pack.
+- **`packs/next/pack.json`.** It differs from what `scripts/generate/packs/next-policies.mjs` writes, in key order
+  only.
+- **Per-file limits.** The bridge reads at most 1 MB per file (`src/engine/code-rule/code-rule-bridge.ts:24`), the
+  enforcer 32 MB. `rerail-walk-limits` does not cover it.
+- **Session paths.** The helper in `src/runtime/session-paths.ts` changed behaviour to confirm: an empty variable now
+  counts as unset, which roots get a `.gitignore` changed, and the daemon now reads both variables.
+- **Old Git.** Git before 2.44 ignores `GIT_NO_LAZY_FETCH` (review F7); `--no-renames` covers the audit's diff only.

@@ -22,13 +22,16 @@ never do.
 `<family>/<feature>/`: one directory per language family, then the engine module the data tests, named exactly as
 the module under `native/src/code_rule_dsl/` (`scope/`, `value/`, `compile/`, …). Below the feature, directories are
 kebab-case and name the part of the module that reads them (`php/compile/format-args/` is the oracle of
-`compile/format_args/php.rs`). Three groups are not engine modules:
+`compile/format_args/php.rs`). Four groups are not engine modules:
 
 - `<family>/licenses/<project>/`: third-party records (below).
 - `<family>/upstream/<tool>/`: a language's upstream linter tests and expected findings, made ahead of its pack (below).
 - `host/<area>/` and `packs/<pack>/`: not language families. `host/` holds the TypeScript host tests' data, one
   directory per area; `packs/` holds pack-shaped test inputs: the pack validator's and the conformance runner's
   ([README](packs/README.md)).
+- `rerail/`: the private `rerail` pack's own rule cases, one `<rule id>.cases.json` per rule of `packs/rerail/` (the
+  `caught` and `passed` cases the rule was drafted with, as `rerail rules test` reads a draft's `cases`), with no
+  feature directory. `test/engine/code-rule/pack-rules/rerail-pack.test.ts` runs them.
 
 `node scripts/check-structure/fixtures.mjs` prints the table below from the tree and fails on a feature directory that
 names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/upstream/`.
