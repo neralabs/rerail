@@ -4,6 +4,7 @@
   "checks": [
     "declared_fact_interrogation",
     "executor_publication_repairs",
+    "grammar_mutation_invalidation",
     "history_serverplan_projection",
     "post_op_no_internal_dispatch",
     "publication_registry_writes",
@@ -14,7 +15,7 @@
   "pytest_exit_code": 0,
   "collected_tests": 0,
   "uncaptured_tests": [],
-  "loaded_source_files_checked": 123,
+  "loaded_source_files_checked": 124,
   "events": [
     {
       "test": "probe:batch7:text-lines-and-multiplicity",
@@ -1027,6 +1028,220 @@
           "message": "whether 'f' was overridden is read as what 'f' answers; call it and use the answer"
         }
       ]
+    },
+    {
+      "test": "probe:batch7:helper-cycle-construction",
+      "check": "grammar_mutation_invalidation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def __init__(self): self._a()\n    def _a(self): self._b()\n    def _b(self):\n        self._items.append(1)\n        self._a()\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:helper-cycle-runtime",
+      "check": "grammar_mutation_invalidation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def __init__(self): self._a()\n    def _a(self): self._b()\n    def _b(self):\n        self._items.append(1)\n        self._a()\n    def edit(self): self._b()\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 4,
+          "column": 4,
+          "code": "MUTATION_WITHOUT_INVALIDATION",
+          "message": "SqlSelect._b() mutates '_items' without forget_memoized_render_fragments()."
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:owner-partition",
+      "check": "grammar_mutation_invalidation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def __init__(self): self._a()\n    def _a(self): self._items.append(1)\nclass SqlSelect:\n    def edit(self): self._a()\n    def _a(self): self._items.append(2)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 6,
+          "column": 4,
+          "code": "MUTATION_WITHOUT_INVALIDATION",
+          "message": "SqlSelect._a() mutates '_items' without forget_memoized_render_fragments()."
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:nested-subscript-target",
+      "check": "grammar_mutation_invalidation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def edit(self): self._items[0][1] = 1\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": 4,
+          "code": "MUTATION_WITHOUT_INVALIDATION",
+          "message": "SqlSelect.edit() mutates '_items' without forget_memoized_render_fragments()."
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:walrus-target",
+      "check": "grammar_mutation_invalidation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def edit(self):\n        (temporary := 1)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "probe:batch7:nested-function-mutation",
+      "check": "grammar_mutation_invalidation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def edit(self):\n        def inner(): self._items.append(1)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": 4,
+          "code": "MUTATION_WITHOUT_INVALIDATION",
+          "message": "SqlSelect.edit() mutates '_items' without forget_memoized_render_fragments()."
+        }
+      ]
+    },
+    {
+      "test": "probe:batch7:helper-depth",
+      "check": "grammar_mutation_invalidation",
+      "call": 1,
+      "entry": "check_file",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def __init__(self): self._a()\n    def _a(self): self._b()\n    def _b(self): self._c()\n    def _c(self): self._d()\n    def _d(self): self._items.append(1)\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true
+        }
+      },
+      "findings": []
     }
   ]
 }

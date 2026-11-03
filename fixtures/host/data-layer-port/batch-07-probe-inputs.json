@@ -352,6 +352,83 @@
         }
       ],
       "production_scope": false
+    },
+    {
+      "check": "grammar_mutation_invalidation",
+      "id": "helper-cycle-construction",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def __init__(self): self._a()\n    def _a(self): self._b()\n    def _b(self):\n        self._items.append(1)\n        self._a()\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "grammar_mutation_invalidation",
+      "id": "helper-cycle-runtime",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def __init__(self): self._a()\n    def _a(self): self._b()\n    def _b(self):\n        self._items.append(1)\n        self._a()\n    def edit(self): self._b()\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "grammar_mutation_invalidation",
+      "id": "owner-partition",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def __init__(self): self._a()\n    def _a(self): self._items.append(1)\nclass SqlSelect:\n    def edit(self): self._a()\n    def _a(self): self._items.append(2)\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "grammar_mutation_invalidation",
+      "id": "nested-subscript-target",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def edit(self): self._items[0][1] = 1\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "grammar_mutation_invalidation",
+      "id": "walrus-target",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def edit(self):\n        (temporary := 1)\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "grammar_mutation_invalidation",
+      "id": "nested-function-mutation",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def edit(self):\n        def inner(): self._items.append(1)\n"
+        }
+      ],
+      "production_scope": false
+    },
+    {
+      "check": "grammar_mutation_invalidation",
+      "id": "helper-depth",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class SqlSelect:\n    def __init__(self): self._a()\n    def _a(self): self._b()\n    def _b(self): self._c()\n    def _c(self): self._d()\n    def _d(self): self._items.append(1)\n"
+        }
+      ],
+      "production_scope": false
     }
   ]
 }

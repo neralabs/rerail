@@ -9,7 +9,7 @@ import { fixturesPath } from "../../support/oracles.js";
 // API. This is deliberately not a declaration that batch seven is complete.
 const localChecks = [
   "executor_publication_repairs", "publication_registry_writes", "unknown_contract_defaults",
-  "declared_fact_interrogation", "history_serverplan_projection", "revision_ancestry_invariants",
+  "declared_fact_interrogation", "history_serverplan_projection", "revision_ancestry_invariants", "grammar_mutation_invalidation",
 ];
 
 it.each(localChecks)("preserves original and supplemental %s findings through snapshot and workspace APIs", async check => {
