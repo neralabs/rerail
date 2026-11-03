@@ -187,6 +187,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     phase("stats");
     let modules = Modules::default();
     let mut bound = BTreeSet::new();
+    let mut totals = Totals::default();
     let (mut nodes, mut native, mut chunks) = (0, BTreeSet::new(), 0);
     let mut outputs: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut node_columns: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -223,7 +224,10 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         let sources = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, binding).map_err(|e| Error::Plan(e.to_string()))?;
         phase("batch");
         for (rel, source) in sources {
-            source_statistics(&db, &rel, source.as_ref())?;
+            let measured = source_statistics(&db, &rel, source.as_ref())?;
+            if split.base.contains(&rel) && rel.starts_with("nearest_") {
+                totals.add(&rel, source.len(), &measured);
+            }
             modules.bind(&db, &rel, source)?;
             bound.insert(rel);
         }
@@ -236,7 +240,10 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
             db.execute_batch(&format!("INSERT INTO x.{rel} SELECT {cols} FROM main.{rel}"))?;
         }
         for rel in &split.exports {
-            db.execute_batch(&format!("INSERT OR IGNORE INTO x.{rel} SELECT * FROM temp.{rel}"))?;
+            // Rows another chunk wrote too (a file-local relation without a location column) are kept once.
+            let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT * FROM temp.{rel}"), [])?;
+            let rows = Rows::read(&db, &format!("temp.{rel}"))?;
+            totals.add(rel, inserted, &syntax::statistics(&rows));
         }
         db.execute_batch("COMMIT")?;
         // The chunk's sources are dropped before the next is built.
@@ -250,8 +257,12 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     }
     // The cross-file part's statistics: T's for the base relations, measured on `x` for the rest.
     db.execute_batch("DELETE FROM s.stat_meta; INSERT INTO s.stat_meta SELECT * FROM s.t_meta; DELETE FROM s.stat_col; INSERT INTO s.stat_col SELECT * FROM s.t_col;")?;
-    for rel in split.base.iter().filter(|r| r.starts_with("nearest_")).chain(&split.exports) {
-        table_statistics(&db, rel)?;
+    totals.write(&db)?;
+    // The cross-file pass probes exports on any column: a column's own index (the key serves the first).
+    for rel in &split.exports {
+        for c in 1..lowered.program.decls[rel].len() {
+            db.execute_batch(&format!("CREATE INDEX x.{rel}_c{c} ON {rel}(c{c})"))?;
+        }
     }
     for rel in &split.base {
         for (i, cols) in super::vtab_indexes(rel).iter().enumerate() {
@@ -260,6 +271,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     }
     phase("stats");
     if !cross.program.rules.is_empty() {
+        crate::code_rule_dsl::logic::native::read_in_place(&db, "x")?;
         let got = super::run_atoms_native_over(&cross, &db, "x", "s", modes)?;
         native.extend(gather(got, &mut outputs, &mut node_columns, &|_| true).into_iter().map(|k| format!("cross:{k}")));
     }
@@ -294,24 +306,79 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
 }
 
 /// A bound source's statistics (its rows, and `stat_col`'s per column), in schema `s`: a chunk's own.
-fn source_statistics(db: &Connection, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Result<()> {
+fn source_statistics(db: &Connection, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Result<Vec<(String, i64, i64, i64, i64)>> {
     db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64])?;
-    for (col, rows, ndv, sq, sqd) in syntax::statistics(source) {
+    let measured = syntax::statistics(source);
+    for (col, rows, ndv, sq, sqd) in &measured {
         db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd])?;
     }
-    Ok(())
+    Ok(measured)
 }
 
-/// A table of `x`'s statistics, measured: rows, and per column its distinct values, the sum of its postings' squares,
-/// and that sum by document (`sqd`: postings of (the first column's document, value)).
-fn table_statistics(db: &Connection, rel: &str) -> Result<()> {
-    let cols: Vec<String> = db.prepare(&format!("PRAGMA x.table_info({rel})"))?.query_map([], |r| r.get(1))?.collect::<rusqlite::Result<_>>()?;
-    let rows: i64 = db.query_row(&format!("SELECT count(*) FROM x.{rel}"), [], |r| r.get(0))?;
-    db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), rows])?;
-    for col in &cols {
-        let (ndv, sq): (i64, i64) = db.query_row(&format!("SELECT count(*), coalesce(sum(k * k), 0) FROM (SELECT count(*) AS k FROM x.{rel} GROUP BY {col})"), [], |r| Ok((r.get(0)?, r.get(1)?)))?;
-        let sqd: i64 = db.query_row(&format!("SELECT coalesce(sum(k * k), 0) FROM (SELECT count(*) AS k FROM x.{rel} GROUP BY {} >> 32, {col})", cols[0]), [], |r| r.get(0))?;
-        db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd])?;
+/// The cross-file pass's statistics of what the chunks wrote, summed over the chunks as they are written (no scan at
+/// the end): rows, postings' squares and their per-document sums add exactly (a document is in one chunk). Distinct
+/// values add exactly on a column of locations; elsewhere the sum bounds them above, which the planner reads as an
+/// estimate.
+#[derive(Default)]
+struct Totals(BTreeMap<String, (usize, BTreeMap<String, [i64; 4]>)>);
+impl Totals {
+    fn add(&mut self, rel: &str, rows: usize, measured: &[(String, i64, i64, i64, i64)]) {
+        let entry = self.0.entry(rel.to_owned()).or_default();
+        entry.0 += rows;
+        for (col, rows, ndv, sq, sqd) in measured {
+            let t = entry.1.entry(col.clone()).or_default();
+            for (a, b) in t.iter_mut().zip([rows, ndv, sq, sqd]) {
+                *a += *b;
+            }
+        }
     }
-    Ok(())
+    fn write(&self, db: &Connection) -> Result<()> {
+        for (rel, (rows, cols)) in &self.0 {
+            db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), *rows as i64])?;
+            for (col, [_, ndv, sq, sqd]) in cols {
+                db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, *rows as i64, ndv.max(&1), sq, sqd])?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A chunk's rows of a relation (columns `c0`, `c1`, …), read once to measure them.
+struct Rows {
+    columns: Vec<String>,
+    values: Vec<Vec<i64>>,
+}
+impl Rows {
+    fn read(db: &Connection, table: &str) -> Result<Self> {
+        let mut st = db.prepare(&format!("SELECT * FROM {table}"))?;
+        let columns: Vec<String> = (0..st.column_count()).map(|i| format!("c{i}")).collect();
+        let mut values = vec![Vec::new(); columns.len()];
+        let mut q = st.query([])?;
+        while let Some(r) = q.next()? {
+            for (c, v) in values.iter_mut().enumerate() {
+                v.push(r.get::<_, i64>(c)?);
+            }
+        }
+        Ok(Rows { columns, values })
+    }
+}
+impl crate::code_rule_dsl::facts::vtab::Source for Rows {
+    fn columns(&self) -> Vec<String> {
+        self.columns.clone()
+    }
+    fn len(&self) -> usize {
+        self.values.first().map_or(0, Vec::len)
+    }
+    fn estimated_matches(&self, _: usize, _: bool) -> usize {
+        1
+    }
+    fn indexed(&self, _: usize) -> bool {
+        false
+    }
+    fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+        None
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.values[column][row]
+    }
 }

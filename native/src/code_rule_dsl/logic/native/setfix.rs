@@ -543,7 +543,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let mut new_rows = 0usize;
     // Every relation of the component, whole, is an input of later strata (`r:` sources).
     for rel in &store.rels {
-        DERIVED.lock().unwrap().insert(rel.table.clone(), Arc::new(InRel { k: rel.k, n: rel.n, rows: rel.data.clone(), view: None, base: false, types: rel.types.clone(),
+        DERIVED.lock().unwrap().insert(rel.table.clone(), Arc::new(InRel { k: rel.k, n: rel.n, rows: rel.data.clone(), view: None, lazy: None, base: false, types: rel.types.clone(),
                                                                          stored: rel.stored, idx: Mutex::new(HashMap::default()) }));
     }
     for rel in store.rels.iter().filter(|_| comp.write) {
@@ -764,7 +764,7 @@ pub fn loads() -> String {
 
 /// An input relation: `n` rows flat (`k` columns each), and hash indexes by key-column bitmask. `base`: read from
 /// the facts (or a view of them), not from a derived relation.
-pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, base: bool, types: Vec<u8>, stored: usize, idx: Mutex<HashMap<u64, Arc<Csr>>> }
+pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, lazy: Option<Lazy>, base: bool, types: Vec<u8>, stored: usize, idx: Mutex<HashMap<u64, Arc<Csr>>> }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
 /// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
 pub struct View { src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
@@ -775,6 +775,154 @@ impl View {
         rows.into_iter().filter(|&r| self.eqs.iter().all(|&(c, v)| self.src.value(r, c) == v)).map(|r| r as u32).collect()
     }
 }
+/// Rows per segment of a lazy input.
+const SEG: usize = 4096;
+/// Segments a lazy input may hold (`SEG` rows each: 2^28 rows).
+const SEGS: usize = 1 << 16;
+/// A base input read only where it is probed (`read_in_place`): its rows for each key are fetched from the table by
+/// one indexed query the first time the key is probed, and kept. Once `MISSES` keys have been fetched, the probes
+/// are taken to cover most of the table, and the rest of it is read in one query, ordered by the key. Rows live in
+/// segments that never move, so a key's rows are one id range, found by hashing the key and checked against its first
+/// row; a row is read without a lock. Segments are made under `state`'s lock, and the engine probes from one thread.
+pub struct Lazy {
+    sql: String,
+    /// The whole table, ordered by the key columns (`k_0`, … at the end of each row).
+    all: String,
+    conn: Arc<Mutex<Connection>>,
+    segs: Box<[std::sync::atomic::AtomicPtr<i64>]>,
+    /// Values per segment (`SEG * k`).
+    seg_len: usize,
+    /// The key columns, in probe order.
+    cols: Vec<usize>,
+    state: Mutex<LazyState>,
+}
+/// Keys fetched one by one before the rest of the table is read.
+const MISSES: usize = 1 << 14;
+#[derive(Default)]
+struct LazyState {
+    n: usize,
+    /// Per key with rows: (first row, rows).
+    found: HashTable<(u32, u32)>,
+    /// Keys fetched with no rows, until the whole table is read (then a key not in `found` has none).
+    absent: rustc_hash::FxHashSet<[i64; 4]>,
+    misses: usize,
+    whole: bool,
+}
+impl Lazy {
+    #[inline]
+    fn row(&self, k: usize, id: usize) -> &[i64] {
+        let seg = self.segs[id / SEG].load(std::sync::atomic::Ordering::Acquire);
+        // SAFETY: a segment, once published, holds `SEG * k` values and is freed only with `self`; ids below `n` were
+        // written before their key's range was returned.
+        unsafe { std::slice::from_raw_parts(seg.add(id % SEG * k), k) }
+    }
+    fn push(&self, st: &mut LazyState, k: usize, r: &rusqlite::Row<'_>) {
+        let id = st.n;
+        let slot = &self.segs[id / SEG];
+        let mut seg = slot.load(std::sync::atomic::Ordering::Acquire);
+        if seg.is_null() {
+            seg = Box::into_raw(vec![0i64; SEG * k].into_boxed_slice()).cast::<i64>();
+            slot.store(seg, std::sync::atomic::Ordering::Release);
+        }
+        for c in 0..k {
+            // SAFETY: within the segment; no reader holds this row yet.
+            unsafe { *seg.add(id % SEG * k + c) = r.get::<_, i64>(c).unwrap_or_default() };
+        }
+        st.n += 1;
+    }
+    fn same(&self, k: usize, id: u32, key: &[i64]) -> bool {
+        let row = self.row(k, id as usize);
+        self.cols.iter().zip(key).all(|(&c, &v)| row[c] == v)
+    }
+    /// The id range of `key`'s rows (`key.len()` ≤ 4), fetching them on the first probe.
+    fn find(&self, k: usize, key: &[i64]) -> (u32, u32) {
+        let mut st = self.state.lock().unwrap();
+        let hash = hash_vals(key.iter().copied());
+        if let Some(&(start, len)) = st.found.find(hash, |&(start, _)| self.same(k, start, key)) {
+            return (start, start + len);
+        }
+        let mut padded = [0i64; 4];
+        padded[..key.len()].copy_from_slice(key);
+        if st.whole || st.absent.contains(&padded) {
+            return (0, 0);
+        }
+        let conn = Arc::clone(&self.conn);
+        let conn = conn.lock().unwrap();
+        if st.misses >= MISSES {
+            // The rest of the table, by key: each run not yet fetched is one key's rows.
+            let mut stmt = conn.prepare_cached(&self.all).expect("a lazy input's table");
+            let mut rows = stmt.query([]).expect("a lazy input's rows");
+            let mut run: Option<(u64, u32)> = None;
+            let mut skip: Option<Vec<i64>> = None;
+            let close = |st: &mut LazyState, run: &mut Option<(u64, u32)>, lazy: &Lazy| {
+                if let Some((h, start)) = run.take() {
+                    let len = st.n as u32 - start;
+                    st.found.insert_unique(h, (start, len), |&(s, _)| hash_vals(lazy.cols.iter().map(|&c| lazy.row(k, s as usize)[c])));
+                }
+            };
+            while let Some(r) = rows.next().expect("a lazy input's row") {
+                let key: Vec<i64> = self.cols.iter().map(|&c| r.get::<_, i64>(c).unwrap_or_default()).collect();
+                if skip.as_deref() == Some(&key[..]) {
+                    continue;
+                }
+                let starts_run = run.is_none_or(|(_, start)| !self.same(k, start, &key));
+                if starts_run {
+                    close(&mut st, &mut run, self);
+                    let h = hash_vals(key.iter().copied());
+                    if st.found.find(h, |&(start, _)| self.same(k, start, &key)).is_some() {
+                        skip = Some(key);
+                        continue;
+                    }
+                    skip = None;
+                    run = Some((h, st.n as u32));
+                }
+                self.push(&mut st, k, r);
+            }
+            close(&mut st, &mut run, self);
+            st.whole = true;
+            st.absent = Default::default();
+            return st.found.find(hash, |&(start, _)| self.same(k, start, key)).map_or((0, 0), |&(start, len)| (start, start + len));
+        }
+        st.misses += 1;
+        let start = st.n as u32;
+        let mut stmt = conn.prepare_cached(&self.sql).expect("a lazy input's query");
+        let mut rows = stmt.query(rusqlite::params_from_iter(key.iter())).expect("a lazy input's rows");
+        while let Some(r) = rows.next().expect("a lazy input's row") {
+            self.push(&mut st, k, r);
+        }
+        let len = st.n as u32 - start;
+        if len == 0 {
+            st.absent.insert(padded);
+        } else {
+            st.found.insert_unique(hash, (start, len), |&(s, _)| hash_vals(self.cols.iter().map(|&c| self.row(k, s as usize)[c])));
+        }
+        (start, start + len)
+    }
+}
+impl Drop for Lazy {
+    fn drop(&mut self) {
+        for slot in self.segs.iter() {
+            let seg = slot.load(std::sync::atomic::Ordering::Acquire);
+            if !seg.is_null() {
+                // SAFETY: made by `Box::into_raw` of a boxed slice of `seg_len` values.
+                unsafe { drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(seg, self.seg_len))) };
+            }
+        }
+    }
+}
+/// The schemas whose base inputs are read in place, by database: `corpus::run`'s cross-file pass reads what the
+/// chunks wrote this way, only where it probes.
+static IN_PLACE: LazyLock<Mutex<HashMap<String, (String, Arc<Mutex<Connection>>)>>> = LazyLock::new(Default::default);
+/// Reads `conn`'s base inputs in schema `schema` (an attached file) in place from now on, through a connection of
+/// their own to its file.
+pub fn read_in_place(conn: &Connection, schema: &str) -> Result<()> {
+    let file: String = conn.query_row("SELECT file FROM pragma_database_list WHERE name = ?1", [schema], |r| r.get(0))?;
+    let own = Connection::open_with_flags(&file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let path = conn.path().unwrap_or_default().to_owned();
+    IN_PLACE.lock().unwrap().insert(path, (format!("{schema}."), Arc::new(Mutex::new(own))));
+    Ok(())
+}
+
 /// One row of an input relation: a slice of its flat rows, or a row of its view.
 #[derive(Clone, Copy)]
 pub enum RowRef<'a> { Flat(&'a [i64]), View(&'a View, usize), Source(&'a View, usize) }
@@ -843,6 +991,9 @@ impl InRel {
     fn row(&self, id: usize) -> &[i64] { &self.rows[id * self.k..][..self.k] }
     #[inline]
     fn at(&self, id: usize) -> RowRef<'_> {
+        if let Some(l) = &self.lazy {
+            return RowRef::Flat(l.row(self.k, id));
+        }
         match &self.view { Some(v) => RowRef::View(v, id), None => RowRef::Flat(&self.rows[id * self.k..][..self.k]) }
     }
     fn index(&self, cols: &[usize]) -> Arc<Csr> {
@@ -879,6 +1030,38 @@ pub fn forget_inputs(conn: &Connection) {
     INPUTS.lock().unwrap().retain(|(p, _), _| *p != path);
 }
 
+/// A base input in a schema read in place (`read_in_place`), probed on `cols` (1 to 4 of them): its rows are fetched
+/// per key. `None` for any other input, which is loaded whole (`input`).
+fn lazy_input(conn: &Connection, spec: &str, cols: &[usize]) -> Result<Option<Arc<InRel>>> {
+    let path = conn.path().unwrap_or_default().to_owned();
+    let Some((schema, own)) = IN_PLACE.lock().unwrap().get(&path).cloned() else { return Ok(None) };
+    let parts: Vec<&str> = spec.splitn(4, ':').collect();
+    let [which, table, names, types] = parts[..] else { return Err(err(format!("bad input {spec}"))) };
+    let (table, names) = (unhex(table)?, unhex(names)?);
+    if which != "b" || !table.starts_with(&schema) || cols.is_empty() || cols.len() > 4 || !types.bytes().all(|t| t == b'i') {
+        return Ok(None);
+    }
+    let key = (path, format!("{spec}#{cols:?}"));
+    if let Some(r) = INPUTS.lock().unwrap().get(&key) { return Ok(Some(r.clone())); }
+    let names: Vec<&str> = names.split(", ").collect();
+    let (from, filters) = match table.split_once(" WHERE ") { Some((t, f)) => (t.to_owned(), Some(f.to_owned())), None => (table.clone(), None) };
+    let probes: Vec<String> = cols.iter().enumerate().map(|(i, &c)| format!("{} = ?{}", names[c], i + 1)).collect();
+    let wheres: Vec<String> = filters.iter().cloned().chain(probes).collect();
+    // The attached schema is the database's own name on the reading connection.
+    let from = from.strip_prefix(&schema).unwrap_or(&from).to_owned();
+    let sql = format!("SELECT {} FROM {from} WHERE {}", names.join(", "), wheres.join(" AND "));
+    let order: Vec<&str> = cols.iter().map(|&c| names[c]).collect();
+    let all = format!("SELECT {} FROM {from}{} ORDER BY {}", names.join(", "), filters.as_ref().map_or(String::new(), |f| format!(" WHERE {f}")), order.join(", "));
+    let k = names.len();
+    let lazy = Lazy { sql, all, cols: cols.to_vec(), conn: own, segs: (0..SEGS).map(|_| std::sync::atomic::AtomicPtr::new(std::ptr::null_mut())).collect(), seg_len: SEG * k, state: Mutex::default() };
+    let rel = Arc::new(InRel { k, n: 0, rows: Vec::new(), view: None, lazy: Some(lazy), base: true, types: types.as_bytes().to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
+    if std::env::var_os("RDL_PROFILE").is_some() {
+        eprintln!("      in place on {cols:?}: SELECT {} FROM {table}", names.join(", "));
+    }
+    INPUTS.lock().unwrap().insert(key, rel.clone());
+    Ok(Some(rel))
+}
+
 fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel>> {
     let key = (conn.path().unwrap_or_default().to_owned(), spec.to_owned());
     if let Some(r) = INPUTS.lock().unwrap().get(&key) { return Ok(r.clone()); }
@@ -890,7 +1073,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     if base && types.iter().all(|&t| t == b'i') {
         if let Some(view) = view(conn, &table, &cols) {
             let n = view.ids.as_ref().map_or(view.src.len(), Vec::len);
-            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
+            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), lazy: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
             if std::env::var_os("RDL_PROFILE").is_some() {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
@@ -906,7 +1089,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms)?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
+    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, lazy: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
     {
         let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
         l.0 += thread_cpu() - c0;
@@ -1010,8 +1193,8 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                         Src::In(rel, ix)
                     }
                     t if t.starts_with("t:") => {
-                        let rel = input(conn, &t[2..], syms)?;
                         let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
+                        let rel = match lazy_input(conn, &t[2..], &cols)? { Some(rel) => rel, None => input(conn, &t[2..], syms)? };
                         let ix = rel.index(&cols);
                         Src::In(rel, ix)
                     }
@@ -1108,7 +1291,8 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
         fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)]) -> (Rows<'a>, Cands<'a>) {
             match src {
                 Src::In(rel, ix) => {
-                    if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
+                    if let Some(l) = &rel.lazy { let (a, b) = l.find(rel.k, key); (Rows::In(rel), Cands::Range(a, b)) }
+                    else if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
                     else if ix.source && let Some(v) = &rel.view { (Rows::Source(v), Cands::Owned(v.find(ix.cols[0], key[0]))) }
                     else { (Rows::In(rel), Cands::Slice(ix.get(rel, key))) }
                 }

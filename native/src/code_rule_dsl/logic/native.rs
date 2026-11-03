@@ -23,7 +23,7 @@ mod setfix;
 #[cfg(test)]
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
-pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, register_symbols};
+pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, read_in_place, register_symbols};
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConnection, VTabCursor, VTabKind};
