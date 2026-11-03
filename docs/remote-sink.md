@@ -34,6 +34,9 @@ rerail remote include [--repo <dir>]
 - **`push`** sends everything waiting now, in this process, without the daemon and without waiting for a retry: for
   CI and for hosts that do not run the daemon.
 
+While a remote is set up, set-up's question about reading your sessions says they are sent, to which host, and how
+to stop, instead of "Stays on this computer".
+
 The daemon sends on its own every 10 seconds, on its own connections; a remote that is slow or down never holds up a
 session. `rerail remote add` and `remove` take effect without a restart.
 
