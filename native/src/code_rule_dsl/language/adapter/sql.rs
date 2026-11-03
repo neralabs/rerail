@@ -58,9 +58,9 @@ impl Adapter for Sql {
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
     const STRIPS_BOM: bool = false;
-    /// A `block` (`BEGIN … END`) starts at its `BEGIN`, which is no statement.
     const COMMENT_KINDS: &'static [&'static str] = &["comment"];
     const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    /// A `block` (`BEGIN … END`) starts at its `BEGIN`, which is no statement.
     const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;

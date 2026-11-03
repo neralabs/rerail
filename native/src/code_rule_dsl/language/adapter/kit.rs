@@ -144,10 +144,16 @@ fn kit<A: Adapter>(expect: &Expect) {
         (A::PACKAGE_MANIFESTS, A::JSX_RUNTIMES),
         expect.package_manifests
     );
-    // A kind the family's grammar lacks (a typo, a renamed node) would leave its directives
-    // silently unread.
-    for kind in [A::COMMENT_KINDS, A::PREAMBLE_KINDS, A::BODY_KINDS].concat() {
-        assert_ne!(expect.dialect.kind_id(kind), 0, "{kind} in {}", A::LABEL);
+    // A kind one of the family's grammars lacks (a typo, a renamed node) would leave its
+    // directives silently unread there: every registry dialect of the family has each kind.
+    let dialects = CodeRuleLanguage::ALL
+        .into_iter()
+        .filter(|language| language.family() == A::FAMILY)
+        .flat_map(|language| language.dialects().iter().copied());
+    for dialect in dialects {
+        for kind in [A::COMMENT_KINDS, A::PREAMBLE_KINDS, A::BODY_KINDS].concat() {
+            assert_ne!(dialect.kind_id(kind), 0, "{kind} in {dialect:?}");
+        }
     }
     value_kit::check::<A>(&expect.value, |s| semantic(s, expect.dialect));
     super::calls::kit::check::<A>(&expect.calls, expect.dialect);

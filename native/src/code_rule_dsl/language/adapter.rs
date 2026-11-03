@@ -336,7 +336,8 @@ impl Adapter for Blade {
     /// A template's `<!-- -->` (`comment`) and `{{-- --}}` (`blade_comment`); its embedded PHP's
     /// are read with PHP's family.
     const COMMENT_KINDS: &'static [&'static str] = &["comment", "blade_comment"];
-    const PREAMBLE_KINDS: &'static [&'static str] = &["php_tag"];
+    /// A template's `php_tag` is a whole `<?php … ?>` region, code rather than a preamble.
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
     const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Php;
     type Value = Php;
