@@ -274,6 +274,11 @@ impl AnchorPlan {
                     exact: false,
                 }
             }
+            AstMatcher::Supertype(supertype) => Self {
+                root_kinds: Some(supertype.kinds.iter().copied().collect()),
+                condition: Condition::Always,
+                exact: false,
+            },
             AstMatcher::Kind(kind) => Self {
                 root_kinds: kind
                     .potential_kinds()

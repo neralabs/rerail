@@ -200,6 +200,26 @@ impl KindCatalog {
         }
     }
 
+    /// The concrete kinds under supertype `id`, through nested supertypes: every kind a member of
+    /// it can have (a node's own memberships are a subset; decision 0025).
+    pub(crate) fn supertype_kinds(self, id: u16) -> std::collections::BTreeSet<u16> {
+        let mut kinds = std::collections::BTreeSet::new();
+        let OwnKinds::Grammar(grammar) = self.own else { return kinds };
+        let (mut pending, mut seen) = (vec![id], std::collections::BTreeSet::from([id]));
+        while let Some(supertype) = pending.pop() {
+            for &kind in grammar.subtypes_for_supertype(supertype) {
+                if grammar.node_kind_is_supertype(kind) {
+                    if seen.insert(kind) {
+                        pending.push(kind);
+                    }
+                } else {
+                    kinds.insert(kind);
+                }
+            }
+        }
+        kinds
+    }
+
     pub(crate) fn field_count(self) -> usize {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_count(),
@@ -272,6 +292,10 @@ impl GrammarDialect {
 
     pub(crate) fn kind_is_supertype(self, id: u16) -> bool {
         self.kinds().kind_is_supertype(id)
+    }
+
+    pub(crate) fn supertype_kinds(self, id: u16) -> std::collections::BTreeSet<u16> {
+        self.kinds().supertype_kinds(id)
     }
 
     /// Every dialect, test-only grammars included.

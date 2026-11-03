@@ -2311,6 +2311,9 @@ impl<'a> Builder<'a> {
             MatchTree::Kind(kind) => {
                 self.push(KIND, 0, *kind);
             }
+            MatchTree::Supertype(class, _) => {
+                self.push(SUPERTYPE, 0, *class);
+            }
             MatchTree::Regex(regex) => {
                 let source = self.strings.len();
                 self.strings.push(regex.as_str().as_bytes().to_vec());

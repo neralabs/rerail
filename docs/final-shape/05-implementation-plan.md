@@ -293,8 +293,7 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base, then differential finding keys for interpreter vs JIT vs Metal on a 100–300-file sample.
 
 **Check (list step 19, 2026-11-02).** Profiling build with `--features metal-tests`. Load average was 50–70.
-- N's contract suites (`demand::driver::catalog::`, `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base): 184 passed, 2 ignored under O17, 0 failed; 4.1 s user + 0.9 s sys CPU.
-  - The two ignored tests wait on O17's decision. One is the supertype lowering of abstract kinds. The other is the error-region failure for `clause-syntax-error-unknown`.
+- N's contract suites (`demand::driver::catalog::`, `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base): 186 passed, 0 ignored, 0 failed, after O17's decisions (supertypes match their members, as in N; W's 50% unread rule stays, with that one case re-blessed). The first run, before the decisions, had 184 passed and 2 ignored; 4.1 s user + 0.9 s sys CPU.
 - Differential finding keys (`slice::tests::the_backends_find_the_same_keys_on_real_files`):
   - S7's sample: real upstream Python files (`RERAIL_S7_FIXTURES`, default 150 copied, 250 paths audited) and the pack's 87 lowered clauses, each backend cold in its own store.
   - The CPU interpreter, CPU JIT, Metal interpreter and Metal compiled kernel each find the same 710 keys and the same coverage.

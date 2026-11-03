@@ -394,6 +394,45 @@ fn broken(id: &str) -> Option<(String, CompiledCodeRuleDsl)> {
 /// (O29, SIM300, was the one entry until the sweeps set and cleared their verdicts.)
 const KNOWN: [(&str, &str, &str); 0] = [];
 
+/// A rule naming a grammar supertype (O17: N's semantics) lowers to `SUPERTYPE` over the tape's
+/// memberships, and every backend finds the same members: the two calls, `expression`s holding an
+/// identifier (the assigned `x` is a `pattern`, and no identifier holds one).
+#[test]
+fn a_supertype_rule_finds_the_same_members_on_every_backend() {
+    let policy = |rule: serde_json::Value| {
+        let document = serde_json::json!({
+            "format": "rerail.policy/v1", "id": "supertype", "revision": 1, "mode": "block",
+            "clauses": [{ "id": "c", "forbid": { "ast": { "language": "python", "rule": rule } },
+                          "violation": { "anchor": "witness.span", "code": "X", "message": "m" } }]
+        });
+        ("supertype".to_owned(), CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|error| panic!("{}", error.reason)))
+    };
+    let policies = vec![policy(serde_json::json!({ "kind": "expression", "has": { "kind": "identifier" } }))];
+    let (clauses, _) = lowered(&policies);
+    assert_eq!(clauses.len(), 1, "the supertype clause lowers");
+    let dir = temp("supertype");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = f(y)\nreturn g(x)\n").unwrap();
+    let mut backends = vec![ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit];
+    #[cfg(target_os = "macos")]
+    backends.extend([ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit]);
+    let mut reference = None;
+    for backend in backends {
+        let store = ContentStore::open(&temp("supertype-store").with_extension("sqlite")).unwrap();
+        let mut rules = Rules::lower(&policies, backend).unwrap();
+        let root = directory_root(&store, &dir).unwrap();
+        let found = keys(&audit(&store, WS, root, &mut rules).unwrap());
+        let lines = found.iter().map(|key| key.3).collect::<Vec<_>>();
+        match &reference {
+            None => {
+                assert_eq!(lines, [0, 1], "{backend:?}: `f(y)` (line 0) and `g(x)` (line 1)");
+                reference = Some(found);
+            }
+            Some(first) => assert_eq!(&found, first, "{backend:?}"),
+        }
+    }
+}
+
 /// Phase 4's check (list step 19): the interpreter, the JIT and (on macOS) Metal's interpreter and
 /// compiled kernel find the same finding keys and coverage over S7's sample of real files
 /// (`RERAIL_S7_FIXTURES`, default 150), each cold in its own store.

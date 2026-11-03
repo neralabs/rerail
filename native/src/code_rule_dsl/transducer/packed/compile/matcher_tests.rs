@@ -217,7 +217,7 @@ fn widen_first_neighbor(tree: &mut MatchTree) -> bool {
         MatchTree::Constrained(_, constraints) => {
             constraints.iter_mut().any(|(_, tree)| widen_first_neighbor(tree))
         }
-        MatchTree::Kind(_) | MatchTree::Pattern(_) | MatchTree::Regex(_) | MatchTree::Recur(_) | MatchTree::Never => false,
+        MatchTree::Kind(_) | MatchTree::Supertype(..) | MatchTree::Pattern(_) | MatchTree::Regex(_) | MatchTree::Recur(_) | MatchTree::Never => false,
     }
 }
 

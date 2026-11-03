@@ -79,7 +79,6 @@ fn compile_code_rule_with_capabilities(
 }
 
 #[test]
-#[ignore = "open item O17: W rejects abstract supertype kinds at compile time; N lowered them through tape class memberships"]
 fn abstract_kind_terminals_execute_from_tape_class_memberships() {
     let compiled = code_rule(json!({ "kind": "expression" }));
     assert_eq!(sql_ranges(&compiled, "x = 1\n"), [(4, 5)]);

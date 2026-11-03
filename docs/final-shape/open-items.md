@@ -399,6 +399,11 @@ committed `source-partial` oracle. Closure: decide whether W adopts N's semantic
 lowering, error-region reporting), then re-enable or update the goldens. Also decide whether the
 relational lowering stays test-only or replaces `demand::vtab`'s lowering.
 
+**Closed (2026-11-02, user decisions).** 186 of 186 pass.
+- Supertypes: N's semantics. `kind: <supertype>` compiles to `AstMatcher::Supertype` (`matcher::Supertype`: the class and its transitive concrete kinds, `GrammarDialect::supertype_kinds`). It matches the nodes the parser reported as members, read from the tape (`TapeDoc::transducer_has_supertype`; a tree that is no tape's reads unknown). It lowers to `SUPERTYPE` in the packed runtime (`MatchTree::Supertype`), with the concrete kinds as its domain and anchor, and to N's class-membership terminal in the relational lowering. `slice::tests::a_supertype_rule_finds_the_same_members_on_every_backend` checks the CPU interpreter, JIT and both Metal bindings. The rule reference documents it.
+- Syntax errors: W's 50% unread rule stays. `clause-syntax-error-unknown` is re-blessed in `production_contracts_081_108.json` to W's `source-incomplete` ("error regions cover 91% of it").
+- The relational lowering stays test-only. Whether it replaces `demand::vtab`'s lowering is left to Phase 6.
+
 ## O18. P's relational stage, placed test-only
 
 Placing P's `batch.rs` (Phase 9 row 2) brought its closure: P's relational stage (`relational.rs`,
