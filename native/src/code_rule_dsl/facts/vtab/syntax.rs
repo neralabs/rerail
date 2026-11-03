@@ -543,12 +543,23 @@ impl Batch {
 }
 
 /// `nearest_<set>(n, a)`: `a` is `n`'s nearest strict ancestor of a kind in the set, a row per node that has
-/// one, by `n` and by `a`. Made by the transducer's file-local FIX (`typing::file_local::nearest`).
+/// one, by `n` and by `a`. Made by the transducer's file-local FIX (`typing::file_local::nearest`). Rows are node rows
+/// of the batch (`u32`), ids made on read.
 struct Nearest {
-    /// `(n, a)`, ascending by `n`.
-    rows: Vec<(i64, i64)>,
-    /// The rows ascending by `a`.
-    by_ancestor: Vec<usize>,
+    batch: Arc<Batch>,
+    /// Per row, its node and its ancestor (node rows), ascending by node.
+    node: Vec<u32>,
+    ancestor: Vec<u32>,
+    /// The rows ascending by ancestor.
+    by_ancestor: Vec<u32>,
+}
+
+impl Nearest {
+    /// The node row of id `v`.
+    fn row_of(&self, v: i64) -> Option<u32> {
+        let (doc, local) = self.batch.node(v)?;
+        Some((self.batch.nodes[doc] + local as usize) as u32)
+    }
 }
 
 impl Source for Nearest {
@@ -556,7 +567,7 @@ impl Source for Nearest {
         vec!["n".to_owned(), "a".to_owned()]
     }
     fn len(&self) -> usize {
-        self.rows.len()
+        self.node.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         let per = if column == 0 { 1 } else { 16 };
@@ -568,17 +579,18 @@ impl Source for Nearest {
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let mut out = Vec::new();
         for &v in values {
+            let Some(at) = self.row_of(v) else { continue };
             if column == 0 {
-                out.extend(self.rows.binary_search_by_key(&v, |r| r.0).ok());
+                out.extend(self.node.binary_search(&at).ok());
             } else {
-                let start = self.by_ancestor.partition_point(|&r| self.rows[r].1 < v);
-                out.extend(self.by_ancestor[start..].iter().take_while(|&&r| self.rows[r].1 == v));
+                let start = self.by_ancestor.partition_point(|&r| self.ancestor[r as usize] < at);
+                out.extend(self.by_ancestor[start..].iter().take_while(|&&r| self.ancestor[r as usize] == at).map(|&r| r as usize));
             }
         }
         Some(out)
     }
     fn value(&self, row: usize, column: usize) -> i64 {
-        if column == 0 { self.rows[row].0 } else { self.rows[row].1 }
+        self.batch.id(if column == 0 { self.node[row] } else { self.ancestor[row] } as usize)
     }
 }
 
@@ -600,10 +612,14 @@ pub(crate) fn with_nearest(
     let kinds: Vec<Vec<i64>> = sets.iter().map(|(_, kinds)| kinds.clone()).collect();
     let found = file_local::nearest(&file_local::Trees { parent: &parent, kind: &kind }, &kinds, binding)?;
     for ((name, _), ancestors) in sets.iter().zip(found) {
-        let rows: Vec<(i64, i64)> = ancestors.iter().enumerate().filter(|(_, a)| **a != file_local::NONE).map(|(row, &a)| (batch.id(row), batch.id(a as usize))).collect();
-        let mut by_ancestor: Vec<usize> = (0..rows.len()).collect();
-        by_ancestor.sort_by_key(|&r| (rows[r].1, rows[r].0));
-        out.push((format!("nearest_{name}"), Arc::new(Nearest { rows, by_ancestor })));
+        let (mut node, mut ancestor) = (Vec::new(), Vec::new());
+        for (row, &a) in ancestors.iter().enumerate().filter(|(_, a)| **a != file_local::NONE) {
+            node.push(row as u32);
+            ancestor.push(a);
+        }
+        let mut by_ancestor: Vec<u32> = (0..node.len() as u32).collect();
+        by_ancestor.sort_unstable_by_key(|&r| (ancestor[r as usize], node[r as usize]));
+        out.push((format!("nearest_{name}"), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor })));
     }
     Ok(out)
 }
@@ -612,20 +628,26 @@ pub(crate) fn with_nearest(
 /// document `d = id >> 32`), for a relation made at bind time rather than at ingestion.
 pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
     let rows = source.len();
+    // Postings by sorting (no map per value): a run of equal values is one value's postings.
+    let moments = |mut values: Vec<(i64, i64)>| -> (i64, i64) {
+        values.sort_unstable();
+        let (mut ndv, mut sq, mut at) = (0, 0, 0);
+        while at < values.len() {
+            let run = values[at..].iter().take_while(|v| **v == values[at]).count();
+            ndv += 1;
+            sq += (run * run) as i64;
+            at += run;
+        }
+        (ndv, sq)
+    };
     source
         .columns()
         .into_iter()
         .enumerate()
         .map(|(c, name)| {
-            let mut postings: HashMap<i64, i64> = HashMap::new();
-            let mut by_doc: HashMap<(i64, i64), i64> = HashMap::new();
-            for row in 0..rows {
-                let v = source.value(row, c);
-                *postings.entry(v).or_default() += 1;
-                *by_doc.entry((source.value(row, 0) >> 32, v)).or_default() += 1;
-            }
-            let square = |m: &dyn Fn() -> Vec<i64>| m().iter().map(|n| n * n).sum::<i64>();
-            (name, rows as i64, postings.len() as i64, square(&|| postings.values().copied().collect()), square(&|| by_doc.values().copied().collect()))
+            let (ndv, sq) = moments((0..rows).map(|row| (0, source.value(row, c))).collect());
+            let (_, sqd) = moments((0..rows).map(|row| (source.value(row, 0) >> 32, source.value(row, c))).collect());
+            (name, rows as i64, ndv, sq, sqd)
         })
         .collect()
 }

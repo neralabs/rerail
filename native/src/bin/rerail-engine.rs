@@ -2,10 +2,11 @@
 //!
 //!   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
 //!   rerail-engine asm <file.rir>
+//!   rerail-engine logic <program.rdl> <corpus root> <T facts.sqlite> <out dir> [--modes <modes>] [--metal]
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rdl> <corpus root> <T facts.sqlite> <out dir> [--modes <modes>] [--metal]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -28,8 +29,24 @@ fn run(args: &[String]) -> Result<String, String> {
             [file] => rerail_engine::tools::assemble(&read(file)?),
             _ => Err(USAGE.into()),
         },
+        Some("logic") => logic(&args[1..]),
         _ => Err(USAGE.into()),
     }
+}
+
+/// `logic`: a program over a corpus, its outputs as T's (list step 23).
+fn logic(args: &[String]) -> Result<String, String> {
+    let (mut positional, mut modes, mut metal) = (Vec::new(), "program".to_owned(), false);
+    let mut args = args.iter();
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--metal" => metal = true,
+            "--modes" => modes = args.next().ok_or("--modes requires a value")?.clone(),
+            other => positional.push(other.to_owned()),
+        }
+    }
+    let [program, root, facts, out] = positional.as_slice() else { return Err(USAGE.into()) };
+    rerail_engine::tools::logic(&read(program)?, Path::new(root), Path::new(facts), Path::new(out), &modes, metal)
 }
 
 fn dump(args: &[String]) -> Result<String, String> {

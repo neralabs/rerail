@@ -27,3 +27,20 @@ pub fn assemble(text: &str) -> Result<String, String> {
     let programs = rir::assemble_all(text)?;
     Ok(programs.iter().map(|(program, grammar)| rir::disassemble(program, grammar.as_ref())).collect())
 }
+
+/// `program` (`.rdl` text) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
+/// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS.
+pub fn logic(program: &str, root: &std::path::Path, t_facts: &std::path::Path, out: &std::path::Path, modes: &str, metal: bool) -> Result<String, String> {
+    use super::typing::file_local::Binding;
+    let binding = if metal { Binding::Metal } else { Binding::Cpu };
+    let report = super::logic::plan::corpus::run(program, root, t_facts, out, modes, binding).map_err(|error| error.to_string())?;
+    let mut text = format!("{} files, {} nodes, {} components native ({modes}, nearest on {binding:?})\n", report.files, report.nodes, report.native);
+    for (phase, user, sys, rss) in &report.phases {
+        text += &format!("  {phase:<6} {user:.2} s user + {sys:.2} s sys; peak RSS {rss:.0} MB\n");
+    }
+    for (rel, rows) in &report.rows {
+        text += &format!("  {rel}: {rows} rows\n");
+    }
+    text += "  (planner statistics and node ids read from the T facts file, until the typing programs' ingestion)\n";
+    Ok(text)
+}

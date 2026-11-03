@@ -66,6 +66,7 @@ impl From<super::front::Error> for Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.

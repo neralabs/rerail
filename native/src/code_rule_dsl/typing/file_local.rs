@@ -76,19 +76,27 @@ fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
 /// again whenever a source rises.
 fn solve_cpu(system: &System) -> Vec<i64> {
     let n = system.seeds.len();
-    let mut dependents = vec![Vec::new(); n];
-    let mut sources = vec![Vec::new(); n];
-    for &(cell, source) in &system.copies {
-        dependents[source as usize].push(cell);
-        sources[cell as usize].push(source);
-    }
+    // Sources and dependents as CSR (a cell has one source here; the solver does not rely on it).
+    let csr = |edges: &mut Vec<(u32, u32)>| -> (Vec<u32>, Vec<u32>) {
+        edges.sort_unstable();
+        let mut start = vec![0_u32; n + 1];
+        for &(a, _) in edges.iter() {
+            start[a as usize + 1] += 1;
+        }
+        for at in 0..n {
+            start[at + 1] += start[at];
+        }
+        (start, edges.iter().map(|e| e.1).collect())
+    };
+    let (source_start, sources) = csr(&mut system.copies.clone());
+    let (dependent_start, dependents) = csr(&mut system.copies.iter().map(|&(cell, source)| (source, cell)).collect());
     let join = |a: i64, b: i64| if a == BOT { b } else if b == BOT || a == b { a } else { TOP };
     let mut values = system.seeds.clone();
     let mut work: Vec<u32> = (0..n as u32).filter(|&c| values[c as usize] != BOT).collect();
     while let Some(cell) = work.pop() {
-        for &dependent in &dependents[cell as usize] {
+        for &dependent in &dependents[dependent_start[cell as usize] as usize..dependent_start[cell as usize + 1] as usize] {
             let d = dependent as usize;
-            let value = sources[d].iter().fold(system.seeds[d], |v, &s| join(v, values[s as usize]));
+            let value = sources[source_start[d] as usize..source_start[d + 1] as usize].iter().fold(system.seeds[d], |v, &s| join(v, values[s as usize]));
             if value != values[d] {
                 values[d] = value;
                 work.push(dependent);
@@ -117,12 +125,38 @@ fn solve_device(_: &System) -> StoreResult<Option<Vec<i64>>> {
     Ok(None)
 }
 
+/// Cells of one system at most: a chunk's (list step 17's queue is sized per launch). Larger batches are split at
+/// their documents' roots, a system and a launch each.
+const CELLS: usize = 1 << 20;
+
 /// Per set, per node of `trees`: its nearest strict ancestor whose kind is in the set, or `NONE`.
 pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
     let n = trees.parent.len();
     if n == 0 || sets.is_empty() {
         return Ok(vec![Vec::new(); sets.len()]);
     }
+    let mut out = vec![Vec::with_capacity(n); sets.len()];
+    let per = (CELLS / sets.len()).max(1);
+    let mut start = 0;
+    while start < n {
+        // The next piece ends at a root (a document's first node) once it holds `per` nodes; a tree is never split.
+        let mut end = (start + per).min(n);
+        while end < n && trees.parent[end] != NONE {
+            end += 1;
+        }
+        let parent: Vec<u32> = trees.parent[start..end].iter().map(|&p| if p == NONE { NONE } else { p - start as u32 }).collect();
+        let piece = Trees { parent: &parent, kind: &trees.kind[start..end] };
+        for (set, found) in out.iter_mut().zip(solve(&piece, sets, binding)?) {
+            set.extend(found.into_iter().map(|a| if a == NONE { NONE } else { a + start as u32 }));
+        }
+        start = end;
+    }
+    Ok(out)
+}
+
+/// `nearest` of one system.
+fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+    let n = trees.parent.len();
     let system = system(trees, sets)?;
     let values = match binding {
         Binding::Metal => solve_device(&system)?.map_or_else(|| solve_cpu(&system), |values| values),

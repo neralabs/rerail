@@ -371,6 +371,23 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 
 Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust port on T's 574/331-file workloads; CPU and RSS ≤ T's numbers.
 
+**Check run (2026-11-03, list step 23): outputs reproduced exactly; CPU on par; RSS above T's.** The port is `rerail-engine logic` (`logic::plan::corpus`): a corpus parsed through `facts::core`, T's base relations and the transducer's `nearest_<set>` bound over it, the lowered program in native `program` mode over atoms, outputs written as `rdl.py sql` writes them. T's side is T's own: its exporter (`dl-export`), `stats.py build` and `rdl.py sql` (pure SQL, T's golden mode), and T's native program mode with its extension built from T's sources into the scratchpad. Until the typing programs have their own ingestion (list step 29), the port reads the planner's statistics (atomized) and each document's first node id from T's `facts.sqlite`.
+
+| | Python: CPython 3.13.12 `Lib/`, 574 files, 1,218,597 nodes, `calls.rdl` | Rust: `native/src` (Typing-support), 330 files, 1,153,859 nodes, `calls_rust.rdl` |
+|---|---|---|
+| Outputs against `rdl.py sql` | 7 of 7 identical, 56,956 rows | 4 of 4 identical, 71,054 rows |
+| Fixture score (T's scorer) | 84 agree, 9 departures, 0 failures (T: the same) | 37 agree, 7 departures, 0 wrong (T: the same) |
+| T native program, measured now | 2.68–2.74 s user + 0.10–0.13 s sys; 690–697 MB | 2.42–2.57 s user + 0.06–0.08 s sys; 511 MB |
+| Port, run phase | 2.21 s user + 0.22 s sys | 2.59 s user + 0.09 s sys |
+| Port, end to end (parse, statistics, batch and `nearest`, run) | 4.24 s user + 0.71 s sys; 848 MB | 4.81 s user + 0.46 s sys; 829 MB |
+
+CPU at load 13–27; T's recorded 1.48–1.67 s and 1.13–1.20 s (FINDINGS round 7) were at lower load. T's end to end also needs its exporter and `stats.py` (3.5 s and 3.6 s user on Python), which the port's parse phase replaces.
+- **CPU: on par.** The port's run phase is at or below T's native program run measured at the same time; end to end it is below T's exporter, statistics and run together.
+- **RSS: not met** (848 against 690 MB, 829 against 511 MB; both above the 500 MB budget, T's too). The run phase adds about 450 MB, as T's engine: the native set engine copies its inputs (9.7M rows on Python) and indexes them. What the port adds over T is the batch (+250 MB: the projected trees beside the core facts, and the `nearest_<set>` rows): T climbed the tape natively and memory-mapped its facts, while the transducer's `nearest` is a relation of a row per node with such an ancestor (3.36M rows on Python over three sets), loaded into the engine like any input. The fixes are structural and belong to the steps that own them: `nearest_<set>` rows only where demanded (magic sets over it, as list step 21 does for matches), the native engine reading the vtab sources in place instead of copying them, and file-local strata per chunk (list step 29) rather than the whole corpus in one batch.
+- Fixed on the way: the device's `nearest` system is split at document roots into pieces of at most 2^20 cells (one launch each; the whole corpus overflowed the queue), and `nearest_<set>`'s rows and statistics are compact (`u32` node rows; postings by sorting).
+
+To repeat it (paths as in the run): `dl-export <corpus> <dir>`; `python3 -I stats.py build <dir>/facts.sqlite`; `python3 -I rdl.py sql <program> <dir>/facts.sqlite <golden>`; `rerail-engine logic <program> <corpus> <dir>/facts.sqlite <out> --metal`; compare the CSVs; `score_calls.py`/`score_rust.py` over the fixture's facts and each output directory.
+
 ### Phase 7: SQL-driven waves (§4, §7; E1, E12, E14)
 
 | Copy | From | To | Adaptations |

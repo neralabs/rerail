@@ -128,65 +128,10 @@ fn t_programs_run_natively_like_t() {
     }
 }
 
-/// T's statistics with T's strings lowered as the program's are (decision 0009) and T's node ids as the vtabs':
-/// `stat_kind`/`stat_edge` by kind atoms, `stat_val` by its column's domain, `stat_docrange` as id intervals.
+/// T's statistics atomized (`corpus::atomized_statistics`), for the fixture's Python files.
 fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore, first: &HashMap<i64, i64>) {
-    use lower::Domain;
     let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-    let tag = crate::code_rule_dsl::language::tape_tag(python).unwrap();
-    let kinds = python.kinds();
-    let kind = |s: &str| i64::from(crate::code_rule_dsl::facts::core::kind_atom(tag, kinds.kind_id(s)));
-    let field = |s: &str| kinds.field_id(s).map_or(-1, |f| i64::from(crate::code_rule_dsl::facts::vtab::syntax::field_atom(tag, f)));
-    let name = |s: &str| i64::from(store.intern_atoms(&[s]).unwrap()[0]);
-    let domain = |tbl: &str, col: &str| match (tbl, col) {
-        ("node", "kind") => Domain::Kind,
-        ("field", "f") => Domain::Field,
-        ("text" | "op", "s") | ("doc", "path" | "module") | ("pkg", "p") => Domain::Name,
-        _ => Domain::Int,
-    };
-    db.execute_batch(
-        "ATTACH ':memory:' AS s;
-         CREATE TABLE s.stat_meta(k TEXT PRIMARY KEY, v INTEGER);
-         CREATE TABLE s.stat_col(tbl TEXT, col TEXT, rows INTEGER, ndv INTEGER, sq INTEGER, sqd INTEGER, PRIMARY KEY (tbl, col));
-         CREATE TABLE s.stat_kind(kind INTEGER PRIMARY KEY, n INTEGER, size INTEGER);
-         CREATE TABLE s.stat_edge(pkind INTEGER, ckind INTEGER, field, n INTEGER);
-         CREATE TABLE s.stat_val(tbl TEXT, col TEXT, val, n INTEGER, docs INTEGER, sqd INTEGER, PRIMARY KEY (tbl, col, val));
-         CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER);",
-    )
-    .unwrap();
-    let rows = |sql: &str| -> Vec<Vec<SqlValue>> {
-        let mut st = t.prepare(sql).unwrap();
-        let width = st.column_count();
-        st.query_map([], |r| (0..width).map(|i| r.get::<_, SqlValue>(i)).collect()).unwrap().map(|r| r.unwrap()).collect()
-    };
-    let insert = |table: &str, row: Vec<SqlValue>| {
-        let holes = vec!["?"; row.len()].join(", ");
-        db.execute(&format!("INSERT INTO s.{table} VALUES ({holes})"), rusqlite::params_from_iter(row)).unwrap();
-    };
-    for table in ["stat_meta", "stat_col"] {
-        rows(&format!("SELECT * FROM {table}")).into_iter().for_each(|r| insert(table, r));
-    }
-    for r in rows("SELECT kind, n, size FROM stat_kind") {
-        insert("stat_kind", vec![SqlValue::Integer(kind(&text(&r[0]))), r[1].clone(), r[2].clone()]);
-    }
-    for r in rows("SELECT pkind, ckind, field, n FROM stat_edge") {
-        insert("stat_edge", vec![SqlValue::Integer(kind(&text(&r[0]))), SqlValue::Integer(kind(&text(&r[1]))), r[2].clone(), r[3].clone()]);
-    }
-    for mut r in rows("SELECT tbl, col, val, n, docs, sqd FROM stat_val") {
-        let v = text(&r[2]);
-        r[2] = match domain(&text(&r[0]), &text(&r[1])) {
-            Domain::Kind => SqlValue::Integer(kind(&v)),
-            Domain::Field => SqlValue::Integer(field(&v)),
-            Domain::Name => SqlValue::Integer(name(&v)),
-            _ => r[2].clone(),
-        };
-        insert("stat_val", r);
-    }
-    for r in rows("SELECT d, lo, hi FROM stat_docrange") {
-        let d = int(&r[0]);
-        let id = |n: i64| SqlValue::Integer((d << 32) + n - first[&d]);
-        insert("stat_docrange", vec![r[0].clone(), id(int(&r[1])), id(int(&r[2]))]);
-    }
+    super::corpus::atomized_statistics(t, db, store, first, python).unwrap();
 }
 
 /// `got`'s outputs, node ids as T's (`first`: each document's first node in T's facts), against T's goldens.
