@@ -20,3 +20,11 @@ export function missedSteerDigestEnabled(env: NodeJS.ProcessEnv = process.env): 
 export function steerStrategiesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.RERAIL_EXPERIMENTAL_STEER_STRATEGIES === "1";
 }
+
+/**
+ * Experimental: the first session in a checkout starts one full-repository audit in log mode. Off, a session audits
+ * only what it changes; `rerail scan` still audits the repository when asked.
+ */
+export function firstRepositoryAuditEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT === "1";
+}
