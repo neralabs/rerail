@@ -394,6 +394,42 @@ fn broken(id: &str) -> Option<(String, CompiledCodeRuleDsl)> {
 /// (O29, SIM300, was the one entry until the sweeps set and cleared their verdicts.)
 const KNOWN: [(&str, &str, &str); 0] = [];
 
+/// Phase 4's check (list step 19): the interpreter, the JIT and (on macOS) Metal's interpreter and
+/// compiled kernel find the same finding keys and coverage over S7's sample of real files
+/// (`RERAIL_S7_FIXTURES`, default 150), each cold in its own store.
+#[test]
+fn the_backends_find_the_same_keys_on_real_files() {
+    let policies = policies();
+    let dir = temp("phase4");
+    let (paths, _) = sample(&dir);
+    assert!((100..=300).contains(&paths.len()) || std::env::var_os("RERAIL_S7_FIXTURES").is_some(), "{} files", paths.len());
+    let mut backends = vec![("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)];
+    #[cfg(target_os = "macos")]
+    backends.extend([("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)]);
+    let mut reference: Option<(Keys, BTreeMap<(String, String), Coverage>)> = None;
+    for (name, backend) in backends {
+        let store = ContentStore::open(&temp(&format!("phase4-{name}")).with_extension("sqlite")).unwrap();
+        let mut rules = Rules::lower(&policies, backend).unwrap();
+        let start = cpu();
+        let root = directory_root(&store, &dir).unwrap();
+        let run = audit(&store, WS, root, &mut rules).unwrap();
+        let (found, covered) = (keys(&run), coverage(&run));
+        eprintln!("phase 4 {name}: {} files, {} clauses, {} keys, cpu {:?}", run.paths.len(), rules.clauses(), found.len(), cpu() - start);
+        match &reference {
+            None => {
+                assert!(!found.is_empty(), "the sample finds nothing");
+                reference = Some((found, covered));
+            }
+            Some((keys0, coverage0)) => {
+                let missing = keys0.difference(&found).take(5).collect::<Vec<_>>();
+                let extra = found.difference(keys0).take(5).collect::<Vec<_>>();
+                assert!(missing.is_empty() && extra.is_empty(), "{name} differs from the interpreter: missing {missing:?}, extra {extra:?}");
+                assert_eq!(&covered, coverage0, "{name}: coverage differs from the interpreter");
+            }
+        }
+    }
+}
+
 /// 06 S7's gate. On the sample (`sample`), the slice's cold audit (`audit`, every Python clause
 /// S1/S2 lowers, on the CPU, and on Metal with `RERAIL_S7_BACKENDS`) gives the same finding keys as W's engine for
 /// every (rule, code). Every (rule, file) it leaves `Unknown` is one where W's clause fails. It

@@ -268,7 +268,9 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
       - each pack's members, emit table and fused program;
       - each member's entry (its kind or supertype test, or `-`), its branch start, and the label its captures come from.
     - `setplan` adds the candidates' set plan (`prefilter::sets::dump`), with kinds by name.
-  - **Entry points:**
+  - **Entry points.** The tools are Rust (`code_rule_dsl::tools`, exported as `rerail_engine::tools`) and run without Node:
+    - `rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]` and `rerail-engine asm <file.rir>` (`native/src/bin/rerail-engine.rs`; `cargo build --bin rerail-engine`). The crate builds as `rlib` as well as `cdylib` for this.
+    - The TS wrappers call the same functions, and their output is byte-identical to the binary's:
     - `rerail engine dump --rule <file>... [--clause <id>] [--fused] [--setplan]` (`src/cli/engine-cli.ts`, napi `dumpRir`). It lowers JSON or YAML rule files against the bundled capabilities, with no store. `--clause` selects one clause, by `policy/clause` or by clause id.
     - `rerail engine asm <file.rir>` (napi `assembleRir`). It assembles each program through the verifier and prints it again by its own grammar, or prints the first refusal.
     - `CodeRuleSlice.dump(fused?, setplan?)`.
@@ -289,6 +291,15 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
     - `explain`, `--trace`, replay bundles and `--dump-jit` are L2's other tools (spec-tooling §2.2.3–2.2.5) and are not part of this step.
 
 Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base, then differential finding keys for interpreter vs JIT vs Metal on a 100–300-file sample.
+
+**Check (list step 19, 2026-11-02).** Profiling build with `--features metal-tests`. Load average was 50–70.
+- N's contract suites (`demand::driver::catalog::`, `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base): 184 passed, 2 ignored under O17, 0 failed; 4.1 s user + 0.9 s sys CPU.
+  - The two ignored tests wait on O17's decision. One is the supertype lowering of abstract kinds. The other is the error-region failure for `clause-syntax-error-unknown`.
+- Differential finding keys (`slice::tests::the_backends_find_the_same_keys_on_real_files`):
+  - S7's sample: real upstream Python files (`RERAIL_S7_FIXTURES`, default 150 copied, 250 paths audited) and the pack's 87 lowered clauses, each backend cold in its own store.
+  - The CPU interpreter, CPU JIT, Metal interpreter and Metal compiled kernel each find the same 710 keys and the same coverage.
+  - CPU per audit: 6.7 s, 6.6 s, 3.0 s and 3.0 s. Test total 17.7 s user + 2.2 s sys.
+  - The grid binding (`ExecutionBackend::Metal`) is not on the slice's path (`UnsupportedBackend` there), so it is not in the comparison.
 
 ### Phase 5: the `demand(batch)` vtab (§3, E6)
 

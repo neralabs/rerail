@@ -100,21 +100,17 @@ impl CodeRuleSlice {
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
 pub fn dump_rir(policies: Vec<SlicePolicy>, capabilities_json: String, clause: Option<String>, fused: Option<bool>, setplan: Option<bool>) -> Result<String> {
-    let compiled = policies
-        .into_iter()
-        .map(|policy| Ok((policy.name, CodeRuleDslRuntime::compile(policy.source, policy.format, capabilities_json.clone())?)))
-        .collect::<Result<Vec<_>>>()?;
-    super::dump(&compiled, clause.as_deref(), fused.unwrap_or(false), setplan.unwrap_or(false)).map_err(failed)
+    let policies: Vec<_> = policies.into_iter().map(|policy| (policy.name, policy.source, policy.format)).collect();
+    crate::code_rule_dsl::tools::dump(&policies, &capabilities_json, clause.as_deref(), fused.unwrap_or(false), setplan.unwrap_or(false))
+        .map_err(Error::from_reason)
 }
 
-/// `rir` assembled (list step 18, `rerail engine asm`): every `program` block of `text` through
-/// the verifier, returned as its dump, or the first refusal.
+/// `rir` assembled (`rerail-engine asm`): every `program` block of `text` through the verifier,
+/// returned as its dump, or the first refusal.
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
 pub fn assemble_rir(text: String) -> Result<String> {
-    use crate::code_rule_dsl::transducer::packed::rir;
-    let programs = rir::assemble_all(&text).map_err(Error::from_reason)?;
-    Ok(programs.iter().map(|(program, grammar)| rir::disassemble(program, grammar.as_ref())).collect())
+    crate::code_rule_dsl::tools::assemble(&text).map_err(Error::from_reason)
 }
 
 impl CodeRuleSlice {
