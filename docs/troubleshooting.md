@@ -55,6 +55,7 @@ On a system or processor Rerail has no engine for (FreeBSD, 32-bit ARM), it read
 
 ```
 ✕ Rerail needs Git, and found none where it looks:
+    /home/me/.local/bin/git
     /usr/bin/git
     /usr/local/bin/git
     /opt/homebrew/bin/git
@@ -66,14 +67,15 @@ On a system or processor Rerail has no engine for (FreeBSD, 32-bit ARM), it read
   Then run the same command again.
 ```
 
-Rerail reads every repository through Git, and runs it only from the places listed, never from `PATH`, so a
-repository cannot put its own `git` first. On Windows those are `C:\Program Files\Git\cmd`,
-`C:\Program Files (x86)\Git\cmd`, `~\AppData\Local\Programs\Git\cmd` (Git for Windows installed for one user) and
-`~\scoop\apps\git\current\cmd`. The install command fits the system: `apt-get`, `dnf`, `pacman` or `zypper` (without
-`sudo` when you are root), `xcode-select --install` on macOS, `winget install --id Git.Git -e` on Windows; elsewhere
-it says to use your package manager or https://git-scm.com. A Git that lives anywhere else is not found: install it
-in one of these places. On macOS `/usr/bin/git` is always there, but only as a stub for Apple's developer tools:
-Rerail counts it only once the Command Line Tools are installed (`xcode-select --install`), or Xcode with Git.
+Rerail reads every repository through Git. It runs the first `git` on your `PATH` (`git.exe` on Windows), then the
+usual install locations: the ones listed, and on Windows `C:\Program Files\Git\cmd`, `C:\Program Files (x86)\Git\cmd`,
+`~\AppData\Local\Programs\Git\cmd` (Git for Windows installed for one user) and `~\scoop\apps\git\current\cmd`. So a
+repository cannot put its own `git` first, it skips a `PATH` entry that is relative (`.`, `bin`), inside the
+repository it runs in (direnv's `PATH_add`), or inside a `node_modules` folder; a Git only there is not found. The
+install command fits the system: `apt-get`, `dnf`, `pacman` or `zypper` (without `sudo` when you are root),
+`xcode-select --install` on macOS, `winget install --id Git.Git -e` on Windows; elsewhere it says to use your package
+manager or https://git-scm.com. On macOS `/usr/bin/git` is always there, but only as a stub for Apple's developer
+tools: Rerail counts it only once the Command Line Tools are installed (`xcode-select --install`), or Xcode with Git.
 
 ### Windows PowerShell: `npx.ps1 cannot be loaded`
 

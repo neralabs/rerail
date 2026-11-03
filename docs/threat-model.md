@@ -178,7 +178,9 @@ This boundary holds only for an agent that reaches Rerail through MCP. See T1.
   recheck. Directory walks skip symlinks. `#writeSource` (rewind) writes with `O_EXCL|O_NOFOLLOW`
   (`src/engine/code-rule/code-rule-bridge.ts`).
 - **Git.** `src/engine/git.ts`:
-  - It calls git by a fixed absolute path and never looks it up on `PATH`.
+  - It runs the first `git` on `PATH`, resolved to an absolute path by Rerail itself (so Windows never looks in the
+    current folder first), skipping relative entries, entries inside the repository it runs in and entries inside a
+    `node_modules` folder; then the usual install locations. A repository cannot put its own `git` first that way.
   - Every call sets `core.fsmonitor=false` and `core.hooksPath=/dev/null`, with `GIT_TERMINAL_PROMPT=0` and
     `GIT_NO_LAZY_FETCH=1` where relevant, and a 10 s timeout.
   - It uses no network commands. `cat-file --batch` does not run textconv.
@@ -527,7 +529,8 @@ in two ways:
 - `RERAIL_ENGINE_PATH` is `require`d as a native addon (`src/engine/native/native.ts`).
 - `RERAIL_ENGINE_SOCKET` names where hooks send full events.
 - `RERAIL_HOME`, `RERAIL_STORAGE_ROOT`, `RERAIL_DATABASE` and `RERAIL_CONTENT_STORE_PATH` move data.
-- Git calls inherit `GIT_*` from the environment.
+- Git calls inherit `GIT_*` from the environment, and an absolute `PATH` entry outside the repository decides which
+  `git` runs.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).

@@ -1,18 +1,44 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { posix, win32 } from "node:path";
 
+/** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
+export interface GitSearch {
+  platform: NodeJS.Platform;
+  home: string;
+  /** The `PATH` value, undefined when unset. */
+  path: string | undefined;
+  /** The folder Rerail runs in, normally inside the repository a coding agent works on. */
+  cwd: string;
+}
+
 /**
- * Where a system Git is looked for, in order. PATH is deliberately not consulted: Rerail runs Git from hooks in
- * whatever environment the coding agent started in, inside repositories it does not trust, and a PATH entry a
- * repository controls (a relative entry, `node_modules/.bin`, direnv's `PATH_add`) could put its own `git` first;
- * the same reason the calls below switch off fsmonitor and hooks. The fixed system locations come first, then the
- * per-user installs whose path only the person's account decides: Git for Windows installed for one user and scoop's
- * Git, Linuxbrew's, and a Nix profile's. Every per-user path is built from the account's home, never from the
- * environment: `LOCALAPPDATA` can be set by a repository as easily as PATH.
+ * Where Git is looked for, in order: each `PATH` entry Rerail can trust, then the usual install locations, so a Git
+ * the person put first on `PATH` (MacPorts, mise, a build of their own) is the one Rerail runs. Rerail runs Git from
+ * hooks in whatever environment the coding agent started in, inside repositories it does not trust, so a `PATH` entry
+ * a repository could control is skipped: a relative one (which includes the current folder), one inside the
+ * repository Rerail runs in (direnv's `PATH_add`), and one inside a `node_modules` folder (`node_modules/.bin`). Rerail
+ * resolves the absolute path itself and runs that, so Windows never looks in the current folder first. The fixed
+ * locations come after `PATH`: the system ones, then the per-user installs whose path only the person's account
+ * decides (Git for Windows installed for one user, scoop's Git, Linuxbrew's, a Nix profile's), built from the
+ * account's home, never from the environment: `LOCALAPPDATA` can be set by a repository as easily as PATH.
  */
-export function gitCandidates(platform: NodeJS.Platform = process.platform, home: string = accountHome()): string[] {
+export function gitCandidates(
+  search: GitSearch = { platform: process.platform, home: accountHome(), path: process.env.PATH, cwd: process.cwd() },
+  probe: GitPathProbe = machine,
+): string[] {
+  return [...new Set([...pathCandidates(search, probe), ...installLocations(search.platform, search.home)])];
+}
+
+/** What {@link gitCandidates} asks of the disk; tests pass their own. */
+export interface GitPathProbe {
+  exists(path: string): boolean;
+  /** The path with every symlink resolved, or the path itself when it cannot be resolved. */
+  realpath(path: string): string;
+}
+
+function installLocations(platform: NodeJS.Platform, home: string): string[] {
   if (platform === "win32") {
     return [
       String.raw`C:\Program Files\Git\cmd\git.exe`,
@@ -29,6 +55,38 @@ export function gitCandidates(platform: NodeJS.Platform = process.platform, home
     "/run/current-system/sw/bin/git",
     posix.join(home, ".nix-profile", "bin", "git"),
   ];
+}
+
+function pathCandidates(search: GitSearch, probe: GitPathProbe): string[] {
+  if (search.path === undefined) return [];
+  const windows = search.platform === "win32";
+  const paths = windows ? win32 : posix;
+  const repository = enclosingRepository(paths.resolve(search.cwd), paths, probe);
+  // By the path as written and with symlinks resolved, both sides: macOS's /var is /private/var, and a link in the
+  // repository can point out of it.
+  const repositoryForms = repository === undefined ? [] : [repository, probe.realpath(repository)];
+  return search.path
+    .split(windows ? ";" : ":")
+    // Windows allows a quoted entry, which cmd.exe and CreateProcess unquote.
+    .map(entry => windows ? entry.replace(/^"(.*)"$/, "$1") : entry)
+    .filter(entry => (windows ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(entry) : entry.startsWith("/"))
+      && !entry.split(/[\\/]/).some(part => (windows ? part.toLowerCase() : part) === "node_modules")
+      && ![paths.resolve(entry), probe.realpath(paths.resolve(entry))]
+        .some(form => repositoryForms.some(folder => within(folder, form, paths))))
+    .map(entry => paths.join(entry, windows ? "git.exe" : "git"));
+}
+
+/** The nearest folder at or above `folder` that holds a `.git` entry, read from disk without running Git. */
+function enclosingRepository(folder: string, paths: typeof posix, probe: GitPathProbe): string | undefined {
+  for (let current = folder; ; current = paths.dirname(current)) {
+    if (probe.exists(paths.join(current, ".git"))) return current;
+    if (paths.dirname(current) === current) return undefined;
+  }
+}
+
+function within(folder: string, path: string, paths: typeof posix): boolean {
+  const relative = paths.relative(folder, path);
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${paths.sep}`) && !paths.isAbsolute(relative));
 }
 
 /**
@@ -64,8 +122,15 @@ export interface GitProbe {
   developerDir(): string | undefined;
 }
 
-const machine: GitProbe = {
+const machine: GitProbe & GitPathProbe = {
   exists: existsSync,
+  realpath(path) {
+    try {
+      return realpathSync.native(path);
+    } catch {
+      return path;
+    }
+  },
   developerDir() {
     // Without DEVELOPER_DIR, which overrides the answer and which a repository's environment could set.
     const selected = spawnSync("/usr/bin/xcode-select", ["-p"], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" } });

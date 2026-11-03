@@ -1,7 +1,10 @@
 # Documentation
 
 ## Using Rerail
-- [installation.md](installation.md): what `rerail setup` writes, removal, and the managed-installation layout
+- [installation.md](installation.md): installing Rerail: requirements, what set-up asks and changes, updating,
+  starting and stopping, removal, and what Rerail runs on
+- [how-setup-works.md](how-setup-works.md): each set-up step and what it writes, the managed-installation layout, the
+  database, updates, and removal in detail
 - [troubleshooting.md](troubleshooting.md): what you see when set-up or Rerail goes wrong, and what to do
 - [reference.md](reference.md): how rules and their configuration work, the database, updates, the daemon and its API,
   and audits
