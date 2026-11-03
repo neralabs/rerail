@@ -92,6 +92,11 @@ it.each([false, true])("hydrates only admitted repository source (syntax: %s)", 
       const admitted = JSON.parse(await workspace.resultPageAsync(0, RESULT_PAGE_BYTES));
       expect(admitted.failures).toEqual([]);
       expect(admitted.violations).toMatchObject([{ path: "selected.py" }]);
+    } else {
+      await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 5,
+        files: [{ path: "selected.py", language: "python", source: "selected = 1\n" }], removed: [], quiet: true }));
+      const oversized = JSON.parse(await workspace.resultPageAsync(0, RESULT_PAGE_BYTES));
+      expect(oversized.failures).toMatchObject([{ code: "source-incomplete", message: "relational source snapshot exceeds maxSourceBytes" }]);
     }
   } finally { workspace.close(); }
 });

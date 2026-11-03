@@ -57,7 +57,9 @@ def legacy_clauses(m):
  add('calls',internal+" AND n.callee_kind='attribute' AND n.callee IN "+literals(m.EAGER_EXECUTION_METHODS)+' AND '+no_legacy+' AND '+plan,'LEG-081')
  add('calls',internal+" AND n.callee_kind='attribute' AND n.callee IN "+literals(m.EAGER_EXECUTION_METHODS)+' AND '+no_legacy+' AND NOT '+plan+' AND '+txn,'LEG-080')
  add('calls',internal+" AND n.callee_kind='identifier' AND n.callee IN "+literals(m.LEGACY_EXECUTION_BOUNDARY_CALLS),'LEG-082')
- add('nodes',internal+" AND EXISTS(SELECT 1 FROM eager_anchors e JOIN active_functions f ON f.__path=e.__path AND f.id=e.fn WHERE e.__path=n.__path AND e.anchor=n.id AND NOT f.legacy AND p.path||':'||f.symbol NOT IN "+literals(m.ADMIN_EAGER_TERMINAL_ALLOWLIST)+')','LEG-083')
+ # Start from actual eager anchors. A node-correlated EXISTS can scan every
+ # function for every syntax node even when the anchor relation is empty.
+ rows.append("SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'LEG-083' AS issue,n.id AS identity FROM eager_anchors e JOIN active_functions f ON f.__path=e.__path AND f.id=e.fn JOIN nodes n ON n.__path=e.__path AND n.id=e.anchor JOIN paths p ON p.__path=n.__path WHERE "+internal+" AND NOT f.legacy AND p.path||':'||f.symbol NOT IN "+literals(m.ADMIN_EAGER_TERMINAL_ALLOWLIST))
  add('nodes',internal+" AND EXISTS(SELECT 1 FROM raw_boundaries r WHERE r.__path=n.__path AND r.__start=n.__start AND r.__end=n.__end)",'LEG-084')
  add('calls',internal+" AND n.callee_kind='identifier' AND (n.callee='legacy_execution_boundary' OR EXISTS(SELECT 1 FROM raw_boundaries r WHERE r.__path=n.__path AND r.__start<n.__start AND n.callee=coalesce(r.alias,r.name)))",'LEG-085')
  # Import inventory: direct import aliases each count; a from import counts once.
