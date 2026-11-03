@@ -574,13 +574,9 @@ async function packageVersion(): Promise<string> {
 }
 
 /** What the process entry point (`src/cli/daemon-entry.ts`) supplies from the layers above the daemon. */
-export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents"> & {
-  /** Once the daemon listens: send approved feedback notes an earlier flush could not deliver (offline, say). */
-  flushFeedback?: () => void;
-};
+export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
 
 export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
-  const { flushFeedback, ...daemonServices } = services;
   const arguments_ = parseDaemonArguments(argv);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
   // here naming the first. A checkout's daemon is a dev build with its own content store and takes no lock.
@@ -605,7 +601,7 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     accessTokenFile: join(defaultRerailHome(), DAEMON_ACCESS_TOKEN_FILE),
     uiRoot,
     dev,
-    ...daemonServices,
+    ...services,
     ...(arguments_.stateFile === undefined ? {} : { stateFile: arguments_.stateFile }),
   });
   const health = daemon.health();
@@ -623,7 +619,6 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   for (const skipped of catalog.skipped) {
     process.stdout.write(`rule pack left out: ${skipped.packageName ?? skipped.path}${skipped.version === null ? "" : `@${skipped.version}`}: ${skipped.reason}\n`);
   }
-  flushFeedback?.();
   const shutdown = (): void => {
     daemon.close().then(
       () => {

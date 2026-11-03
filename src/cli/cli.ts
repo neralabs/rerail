@@ -159,8 +159,7 @@ function usage(): string {
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
     "  rerail feedback <rule-id> <reason>",
-    "  rerail feedback answer <note-id> yes|always|no",
-    "  rerail feedback sharing [ask|always|never]",
+    "  rerail feedback list [--rule <rule-id>]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
     "  rerail update",
     "  rerail update check [--channel <tag>]",
@@ -678,7 +677,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "show-me") return runShowMeCommand(args, usage);
   if (command === "packs") return await runPacksCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
-  if (command === "feedback") return await runFeedbackCommand(args, usage, { home, packageVersion: context.packageVersion });
+  if (command === "feedback") return await runFeedbackCommand(args, usage, { packageVersion: context.packageVersion });
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });

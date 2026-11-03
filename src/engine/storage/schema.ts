@@ -334,22 +334,10 @@ export const workLinks = sqliteTable(
 );
 
 /**
- * Where a feedback note stands with the person's answer about sharing it: `ask` waits for that answer, `local` stays
- * on this computer (a later `yes` to that note can still queue it), `queued` is approved and waits for a flush,
- * `sending` is claimed by one flush (`claimed_at`; a claim left behind by a flush that died is queued again), `sent`
- * was accepted by Nera's feedback API, and `rejected` was refused by it as a bad note (400, 413, 422), so it is never
- * retried; any other refusal leaves the note queued.
- */
-export const STEER_FEEDBACK_SHARING = ["ask", "local", "queued", "sending", "sent", "rejected"] as const;
-export type SteerFeedbackSharing = (typeof STEER_FEEDBACK_SHARING)[number];
-
-/**
- * A coding agent's one-line reason for not following a steer (`rerail feedback`), kept for tuning the rule. The
- * repository is the checkout's, and the session is where the rule last steered there, when Rerail found one; like
- * `work_links`, no foreign key, and a reset deletes the repository's notes. Only the note's id, the rule, pack, host,
- * reason, Rerail version and time are ever sent, and only once the person has said yes. `destination` is the endpoint
- * the person was told a yes sends the note to, fixed when the note is approved (`queued`): a flush sends it there and
- * nowhere else, whatever its own environment says; a note kept local again loses it.
+ * A coding agent's one-line reason for not following a steer (`rerail feedback`), kept on this computer for tuning
+ * the rule; `rerail feedback list` prints them for the person to attach to a rule misfire issue. Rerail sends none
+ * anywhere. The repository is the checkout's, and the session is where the rule last steered there, when Rerail found
+ * one; like `work_links`, no foreign key, and a reset deletes the repository's notes.
  */
 export const steerFeedback = sqliteTable(
   "steer_feedback",
@@ -364,16 +352,9 @@ export const steerFeedback = sqliteTable(
     reason: text("reason").notNull(),
     rerailVersion: text("rerail_version").notNull(),
     recordedAt: integer("recorded_at").notNull(),
-    sharing: text("sharing", { enum: STEER_FEEDBACK_SHARING }).notNull(),
-    sentAt: integer("sent_at"),
-    claimedAt: integer("claimed_at"),
-    destination: text("destination"),
   },
   table => [
-    check("steer_feedback_sharing", sql`${table.sharing} IN (${sql.raw(inList(STEER_FEEDBACK_SHARING))})`),
-    check("steer_feedback_destination", sql`${table.sharing} IN ('ask', 'local') OR ${table.destination} IS NOT NULL`),
     index("steer_feedback_rule_recorded").on(table.ruleId, table.recordedAt),
-    index("steer_feedback_sharing_recorded").on(table.sharing, table.recordedAt),
     index("steer_feedback_repository").on(table.repositoryId),
   ],
 );

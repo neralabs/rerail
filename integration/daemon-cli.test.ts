@@ -2,13 +2,11 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
-import { ENTRY_POINTS, openRerailDatabase, steerFeedback } from "../src/engine/index.js";
+import { ENTRY_POINTS } from "../src/engine/index.js";
 import type { DaemonState } from "../src/runtime/index.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 
@@ -109,72 +107,4 @@ describe("Rerail daemon CLI", () => {
       await rm(root, { recursive: true, force: true });
     }
   }, 15_000);
-
-  test("sends an approved feedback note an earlier flush could not deliver once it starts, to where it was approved", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-feedback-"));
-    const received: Array<Record<string, unknown>> = [];
-    const arrived = Promise.withResolvers<void>();
-    // The stand-in feedback API the note was approved for.
-    const api = createServer((request, response) => {
-      const chunks: Buffer[] = [];
-      request.on("data", chunk => chunks.push(chunk));
-      request.on("end", () => {
-        received.push(JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>);
-        response.writeHead(202).end();
-        arrived.resolve();
-      });
-    });
-    api.listen(0, "127.0.0.1");
-    await once(api, "listening");
-    const destination = `http://127.0.0.1:${(api.address() as AddressInfo).port}/feedback`;
-    const databasePath = join(root, "rerail.sqlite");
-    const database = openRerailDatabase(databasePath);
-    database.insert(steerFeedback).values({
-      id: "00000000-0000-4000-8000-000000000001",
-      ruleId: "bandit-b101-assert-used",
-      packId: "python",
-      packVersion: "1.0.0",
-      host: "claude-code",
-      reason: "asserts are this repo's test style",
-      rerailVersion: "9.9.9",
-      recordedAt: Date.now(),
-      sharing: "queued",
-      destination,
-    }).run();
-    database.$client.close();
-    const sharing = (): string | undefined => {
-      const reader = openRerailDatabase(databasePath, { readonly: true });
-      try {
-        return reader.select({ sharing: steerFeedback.sharing }).from(steerFeedback).get()?.sharing;
-      } finally {
-        reader.$client.close();
-      }
-    };
-    let child: ChildProcess | undefined;
-    try {
-      // No RERAIL_FEEDBACK_URL here: the note goes to the destination it was approved for.
-      const { RERAIL_FEEDBACK_URL: _override, ...env } = process.env;
-      child = spawn(process.execPath, [
-        join(process.cwd(), ENTRY_POINTS.daemon),
-        "--dev",
-        "--port", "0",
-        "--state-file", join(root, "daemon.json"),
-      ], { stdio: ["ignore", "pipe", "ignore"], env: { ...env, RERAIL_HOME: root } });
-
-      await Promise.race([
-        arrived.promise,
-        once(child, "close").then(([code]) => { throw new Error(`daemon exited with code ${code}`); }),
-      ]);
-      expect(received).toEqual([expect.objectContaining({ id: "00000000-0000-4000-8000-000000000001", reason: "asserts are this repo's test style" })]);
-      // The detached flush settles the note after the API answers; wait for it before the home goes.
-      await expect.poll(sharing, { timeout: 5_000 }).toBe("sent");
-    } finally {
-      if (child?.exitCode === null) {
-        child.kill("SIGKILL");
-        await once(child, "close");
-      }
-      api.close();
-      await rm(root, { recursive: true, force: true });
-    }
-  }, 20_000);
 });

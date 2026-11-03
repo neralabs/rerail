@@ -130,7 +130,7 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 
 Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 
-When the agent decides not to follow a steer, it records its one-line reason with `rerail feedback`. Rerail keeps the note on your machine and sends it to Nera only if you say yes; see [Steer feedback](docs/reference.md#steer-feedback).
+When the agent decides not to follow a steer, it records its one-line reason with `rerail feedback`. Rerail keeps the note on your machine and sends it nowhere; to tell us a rule keeps getting pushed back on, attach the output of `rerail feedback list --rule <rule-id>` to a [Rule misfire](https://github.com/neralabs/rerail/issues/new?template=2-rule-misfire.yml) issue. See [Steer feedback](docs/reference.md#steer-feedback).
 
 ## Internal testing
 
