@@ -1,7 +1,7 @@
 /**
  * Schemas of the Merge Assist operations: the checkout they act on, and what each change takes. Every operation
  * answers with the checkout's {@link mergeAssistStatusSchema}. Shared by the HTTP routes, the MCP tools and OpenAPI.
- * Internal testing: Merge Assist is experimental (docs/merge-assist-prd.md).
+ * Internal testing: Merge Assist is experimental (docs/merge-assist-v1-build.md).
  */
 import { z } from "zod";
 import { CANDIDATE_ID_PATTERN, CANDIDATE_STATES } from "../engine/merge-assist/candidate.js";

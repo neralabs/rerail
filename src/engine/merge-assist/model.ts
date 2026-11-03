@@ -1,6 +1,6 @@
 /**
  * What Merge Assist reports for one checkout: the shapes the runtime service returns and the API, CLI and dashboard
- * show. See docs/merge-assist-prd.md §5.
+ * show. See docs/merge-assist-v1-build.md §5.
  */
 import { z } from "zod";
 import { CANDIDATE_GENERALITIES, CANDIDATE_STATES } from "./candidate.js";

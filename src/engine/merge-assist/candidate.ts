@@ -3,7 +3,7 @@
  * `.rerail/candidates/<name>.json` on their branch so that it travels with the branch's commits. Candidates are read
  * from other people's branches, so everything here treats a candidate as untrusted input: a strict schema, size and
  * count limits, a fixed id shape, relative scope globs, and decision text cleaned of control characters and links.
- * See docs/merge-assist-prd.md §6–7.
+ * See docs/merge-assist-v1-build.md §6–7.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";

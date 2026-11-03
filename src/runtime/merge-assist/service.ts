@@ -1,5 +1,5 @@
 /**
- * Merge Assist's facade: what the runtime, the API and the CLI call for one checkout. See docs/merge-assist-prd.md.
+ * Merge Assist's facade: what the runtime, the API and the CLI call for one checkout. See docs/merge-assist-v1-build.md.
  */
 import { userInfo } from "node:os";
 import { and, eq } from "drizzle-orm";

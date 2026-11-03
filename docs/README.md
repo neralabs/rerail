@@ -43,4 +43,6 @@
   [transducer-design.md](transducer-design.md): the tape transducer language
 - [in-session-status-line-prd.md](in-session-status-line-prd.md): requirements for in-session visibility
 - [merge-assist-prd.md](merge-assist-prd.md): requirements and design for Merge Assist (internal testing), which
-  shares decisions between branches before they merge
+  shares decisions between branches before they merge, as rules in `.rerail/rules/`;
+  [merge-assist-v1-build.md](merge-assist-v1-build.md) specifies the first build, and
+  [branch-coordination-amp-comparison.md](branch-coordination-amp-comparison.md) compares the approach with Amp

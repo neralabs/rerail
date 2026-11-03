@@ -1653,7 +1653,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Merge Assist's background work for a session (docs/merge-assist-prd.md §5.2–5.3): at its start, apply the
+   * Merge Assist's background work for a session (docs/merge-assist-v1-build.md §5.2–5.3): at its start, apply the
    * checkout's candidates and scan other branches; at a turn end, capture the person's corrections, one capture at a
    * time, and scan again when one was saved. No boundary waits for it; its notes go out at a later one. A turn end while
    * a capture waits to run adds nothing: that capture reads the session's events when it starts. Only where a person

@@ -1,7 +1,7 @@
 /**
  * Merge Assist's judge: runs the person's own coding agent CLI headless, with no tools, to classify a correction or
  * compare decisions. Answers must match a JSON schema and are used only as verdicts. Calls are cached by a hash of their
- * inputs and limited per repository and hour. See docs/merge-assist-prd.md §7 and §9.4.
+ * inputs and limited per repository and hour. See docs/merge-assist-v1-build.md §7 and §9.4.
  */
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";

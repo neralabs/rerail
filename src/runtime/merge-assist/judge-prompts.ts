@@ -1,7 +1,7 @@
 /**
  * The prompts Merge Assist gives the judging agent CLI, and the schemas its answers must match. Everything a person or
  * an agent wrote reaches the prompt only inside a data fence whose marker carries a random nonce, so the text cannot
- * close the fence or pose as Rerail's instructions. See docs/merge-assist-prd.md §7.
+ * close the fence or pose as Rerail's instructions. See docs/merge-assist-v1-build.md §7.
  */
 import { randomBytes } from "node:crypto";
 import { z } from "zod";

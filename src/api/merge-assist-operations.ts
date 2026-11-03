@@ -1,5 +1,5 @@
 /**
- * Merge Assist's operations (docs/merge-assist-prd.md §5.6): the checkout's state, decisions and findings, a scan of
+ * Merge Assist's operations (docs/merge-assist-v1-build.md §5.6): the checkout's state, decisions and findings, a scan of
  * other branches, and the changes a person makes on the dashboard's Merge Assist page. Each acts on one checkout, which
  * the target names as every repository operation's does, and answers with that checkout's status. Turning Merge Assist
  * on or off, adopting, undoing and restoring are people's: each widens what steers a coding agent. A coding agent may

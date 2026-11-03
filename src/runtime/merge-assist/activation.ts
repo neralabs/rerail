@@ -1,6 +1,6 @@
 /**
  * Which candidate rules steer one checkout, and the rule configuration that makes them do so there and nowhere else
- * (docs/merge-assist-prd.md §9.2). A candidate's code rule is stored as a library rule, attached at the top of the
+ * (docs/merge-assist-v1-build.md §9.2). A candidate's code rule is stored as a library rule, attached at the top of the
  * repository with the repository's own setting off, and switched on for the one checkout: a checkout setting wins over
  * the repository's. A checkout inherits its parent checkout's settings, so the checkouts recorded inside it get an
  * explicit off setting for each of its candidate rules, and it gets one for each of its parents'. A checkout's set is

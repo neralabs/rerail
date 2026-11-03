@@ -11,7 +11,7 @@ import {
   type GithubRepository,
 } from "../../../src/runtime/merge-assist/github.js";
 
-/** The limits and format docs/merge-assist-prd.md §6–7 fixes: 64 candidates per branch, 16 KiB per file. */
+/** The limits and format docs/merge-assist-v1-build.md §6–7 fixes: 64 candidates per branch, 16 KiB per file. */
 const CANDIDATE_FORMAT = "rerail.candidate/v1";
 const MAX_CANDIDATE_BYTES = 16 * 1024;
 const MAX_CANDIDATES_PER_BRANCH = 64;

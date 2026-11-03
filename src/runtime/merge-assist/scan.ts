@@ -1,5 +1,5 @@
 /**
- * The scan (docs/merge-assist-prd.md §5.3–5.4): the candidates on the repository's other local branches and open pull
+ * The scan (docs/merge-assist-v1-build.md §5.3–5.4): the candidates on the repository's other local branches and open pull
  * requests, each sorted into a tier for this checkout. Exact checks come first: this branch's changes run against a
  * peer's code rule, and `git merge-tree` names the files the two branches would conflict on. The agent CLI is asked
  * once per peer whether its decisions contradict this branch's own, and only when this branch has decisions.

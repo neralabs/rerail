@@ -1,5 +1,5 @@
 /**
- * Capture (docs/merge-assist-prd.md §5.2): the corrections a person gave their coding agent in one session, turned into
+ * Capture (docs/merge-assist-v1-build.md §5.2): the corrections a person gave their coding agent in one session, turned into
  * candidate rules on the branch. It reads the session's stored events after its cursor, keeps the prompts the
  * correction phrases match (never the session's first prompt, which states the task), and asks the agent CLI whether
  * each records a lasting decision. A decision is written to `.rerail/candidates/` with a code rule when the drafted check

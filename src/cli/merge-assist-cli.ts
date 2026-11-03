@@ -2,7 +2,7 @@
  * `rerail merge-assist`: Merge Assist for the checkout at `--repo` (default the current folder), run in this process
  * against the one Rerail database. It runs as the person, so turning Merge Assist on or off, adopting and undoing are
  * allowed here as they are on the dashboard's Merge Assist page. A coding agent with a shell can run it too, as it can
- * any Rerail command: the people-only guarantee covers the MCP and HTTP API. See docs/merge-assist-prd.md §5.6 and §7.
+ * any Rerail command: the people-only guarantee covers the MCP and HTTP API. See docs/merge-assist-v1-build.md §5.6 and §7.
  * Internal testing: the whole command.
  */
 import { realpathSync } from "node:fs";
@@ -186,7 +186,7 @@ function scanLines(status: MergeAssistStatus, scanRequested: boolean): string[] 
   return lines;
 }
 
-/** What turning Merge Assist on means, before a person does it (docs/merge-assist-prd.md §5.1). */
+/** What turning Merge Assist on means, before a person does it (docs/merge-assist-v1-build.md §5.1). */
 const TURNING_ON = [
   "  Turning it on means:",
   "    Rerail reads the corrections you give your coding agent here and asks your agent's CLI (Claude Code or Codex) to",
