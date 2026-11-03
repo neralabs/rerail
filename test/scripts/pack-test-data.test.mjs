@@ -24,6 +24,7 @@ import {
   inToolSubdirectory,
   isPackFixture,
   licenceAllowed,
+  modeWarning,
   objectTagging,
   PACK_FIXTURE_PATTERNS,
   pack,
@@ -1199,9 +1200,10 @@ describe("pack --from (the publish workflow's prep)", () => {
 
     const manifest = JSON.parse(readFileSync(join(out, "publish.json"), "utf8"));
     expect(manifest).toMatchObject({ format: "rerail.pack-data-publish/v1", commit: git(pr, "rev-parse", "HEAD").trim(), replace: false, remove: Object.keys(publishRequest).sort() });
-    expect(manifest.objects.map(({ kind, pack: id, tool, added, changed, dropped }) => [kind, id, tool, added, changed, dropped])).toEqual([
-      ["test-data", "p", "t", ["fixtures/rerail/new.py"], ["fixtures/rerail/a.py", "provenance.json"], []],
-      ["test-data", "q", "u", ["authored/corpus/d.py"], ["provenance.json"], []],
+    // locked and restaged: of p/t's five locked files, publish/ stages a.py, provenance.json and LICENSES.md again.
+    expect(manifest.objects.map(({ kind, pack: id, tool, added, changed, dropped, locked, restaged: again }) => [kind, id, tool, added, changed, dropped, locked, again])).toEqual([
+      ["test-data", "p", "t", ["fixtures/rerail/new.py"], ["fixtures/rerail/a.py", "provenance.json"], [], 5, 3],
+      ["test-data", "q", "u", ["authored/corpus/d.py"], ["provenance.json"], [], 3, 2],
     ]);
     for (const [object, toolPack] of [[manifest.objects[0], T], [manifest.objects[1], U]]) {
       const file = join(out, object.key.slice("rerail/archives/".length));
@@ -1228,11 +1230,53 @@ describe("pack --from (the publish workflow's prep)", () => {
   it("with replace, archives publish/ alone and lists every file of the locked archive it drops", async () => {
     const context = published();
     branch(context.root, "replace", restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" }, { replace: true }));
-    const { manifest, out } = await packed(context, "replace", { replace: true });
+    const { manifest, out, printed } = await packed(context, "replace", { replace: true });
     const [object] = manifest.objects;
     expect(manifest.replace).toBe(true);
     expect(object.dropped).toEqual(["fixtures/upstream/b.py", "x y.expected.json"]);
     expect(archivedObject(out, object)).toEqual({ "fixtures/rerail/a.py": "changed\n", ...provenanceFiles(["fixtures/rerail/a.py"]) });
+    // publish/ restages three of the five locked files: not few enough for the summary to doubt the replace.
+    expect([object.locked, object.restaged]).toEqual([5, 3]);
+    expect(printed).not.toContain("**Warning:**");
+  });
+
+  it("warns the approver when the mode contradicts what publish/ restages of the locked samples, which no provenance guards", async () => {
+    const context = published();
+    const { root } = context;
+    // Ten locked samples and their LICENSES.md: 21 files, built by a sample builder that wrote the whole set.
+    const sample = (index) => {
+      const text = `export const f${index} = ${index};\n`;
+      const digest = sha256(Buffer.from(text));
+      const id = `demo-src-f${index}-js-${digest.slice(0, 12)}`;
+      const labels = { source: { repo: "fastify/fastify", commit: "0".repeat(40), path: `src/f${index}.js`, license: "MIT", sha256: digest }, labelledBy: { tool: "examplelint", version: "1.0.0", how: "hand-labelled" }, expected: {} };
+      return { [`${id}/src/f${index}.js`]: text, [`${id}/src/f${index}.js.expected.json`]: `${JSON.stringify(labels, null, 2)}\n` };
+    };
+    const samplesSet = Object.assign({ "LICENSES.md": "# Licences\n\n- fastify/fastify: MIT\n" }, ...Array.from({ length: 10 }, (_, index) => sample(index)));
+    const archive = archiveOf(samplesSet);
+    putFile(samplesArchiveCachePath(root, T, archive.sha256), compressArchive(archive.tar));
+    const staged = (content) => Object.fromEntries(Object.entries(content).map(([path, text]) => [`packs/p/upstream/t/publish/samples/${path}`, text]));
+    const lock = { "packs/p/upstream/t/samples.lock": lockText(archive) };
+
+    // The set rebuilt without one sample (19 of the 21 files restaged): an overlay keeps the two files it lacks.
+    const { [`${Object.keys(sample(9))[0]}`]: _file, [`${Object.keys(sample(9))[1]}`]: _labels, ...rebuilt } = samplesSet;
+    branch(root, "rebuilt", { ...lock, ...staged(rebuilt) });
+    const overlay = await packed(context, "rebuilt");
+    expect(overlay.manifest.objects.map(({ kind, locked, restaged: again, dropped }) => [kind, locked, again, dropped])).toEqual([["samples", 21, 19, []]]);
+    expect(overlay.printed).toContain(
+      "**Warning:** `p/t` samples: `publish/` restages all but 2 of the 21 locked files, which this overlay keeps; a set rebuilt without them needs replace. Approve only if the pull request means to keep them; otherwise dispatch again with replace on.",
+    );
+    const replaced = await packed(context, "rebuilt", { replace: true });
+    expect(replaced.manifest.objects[0].dropped).toHaveLength(2);
+    expect(replaced.printed).not.toContain("**Warning:**");
+
+    // One sample added beside the locked set (3 of the 21 files restaged): a replace drops the other 18.
+    branch(root, "added", { ...lock, ...staged({ "LICENSES.md": samplesSet["LICENSES.md"], ...sample(10) }) });
+    const addition = await packed(context, "added", { replace: true });
+    expect(addition.manifest.objects.map(({ kind, locked, restaged: again, dropped }) => [kind, locked, again, dropped.length])).toEqual([["samples", 21, 1, 20]]);
+    expect(addition.printed).toContain(
+      "**Warning:** `p/t` samples: replace drops 20 of the 21 locked files, which `publish/` does not restage (it restages 1); an overlay keeps them. Approve only if the pull request means to drop them; otherwise dispatch again with replace off.",
+    );
+    expect((await packed(context, "added")).printed).not.toContain("**Warning:**");
   });
 
   it("refuses a publish/ path no archive takes, listing each, and writes nothing", async () => {
@@ -1314,15 +1358,32 @@ describe("pack --from (the publish workflow's prep)", () => {
     const context = published();
     // The overlay adds cases.json, but publish/ carries the locked provenance.json, which does not record it.
     branch(context.root, "missing-key", { "packs/p/upstream/t/publish/cases.json": "[]\n", "packs/p/upstream/t/publish/provenance.json": context.data["packs/p/upstream/t/provenance.json"] });
-    expect(await packFailure(context, "missing-key")).toContain("does not describe the archive: it does not record 1 path(s) the archive would hold (cases.json): derive the tool-pack again");
+    expect(await packFailure(context, "missing-key")).toContain(
+      "does not describe the archive: it does not record 1 path(s) the archive would hold (cases.json): if publish/ holds the whole set, publish with replace, which archives it alone; otherwise derive the tool-pack again",
+    );
 
     const many = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`fixtures/gone/${index}.py`, { source: "rerail", how: "authored" }]));
     const edits = restage(context, T, { "packs/p/upstream/t/publish/cases.json": "[]\n" });
     const recorded = JSON.parse(edits["packs/p/upstream/t/publish/provenance.json"]);
     branch(context.root, "extra-key", { ...edits, "packs/p/upstream/t/publish/provenance.json": `${JSON.stringify({ ...recorded, files: { ...recorded.files, ...many, "provenance.json": {} } })}\n` });
     expect(await packFailure(context, "extra-key")).toContain(
-      "it records 8 path(s) the archive would not hold (fixtures/gone/0.py, fixtures/gone/1.py, fixtures/gone/2.py, fixtures/gone/3.py, fixtures/gone/4.py and 3 more)",
+      "it records 8 path(s) the archive would not hold (fixtures/gone/0.py, fixtures/gone/1.py, fixtures/gone/2.py, fixtures/gone/3.py, fixtures/gone/4.py and 3 more): derive the tool-pack again",
     );
+  });
+
+  it("names the other mode when provenance.json shows the publish was dispatched with the wrong one", async () => {
+    const context = published();
+    // publish/ holds one changed file with the provenance of the whole locked set: an overlay, dispatched with replace.
+    branch(context.root, "overlay-as-replace", restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" }));
+    expect(await packFailure(context, "overlay-as-replace", { replace: true })).toContain(
+      "it records 2 path(s) the archive would not hold (fixtures/upstream/b.py, x y.expected.json): if publish/ holds only what is new or changed, publish with replace off, which lays it over the locked archive; otherwise derive the tool-pack again",
+    );
+    // The whole set, regenerated without b.py, dispatched as an overlay: the overlay keeps b.py, which the provenance no longer records.
+    branch(context.root, "regenerated-as-overlay", restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n", "packs/p/upstream/t/publish/x y.expected.json": "{}\n" }, { replace: true }));
+    expect(await packFailure(context, "regenerated-as-overlay")).toContain(
+      "it does not record 1 path(s) the archive would hold (fixtures/upstream/b.py): if publish/ holds the whole set, publish with replace, which archives it alone; otherwise derive the tool-pack again",
+    );
+    expect((await packed(context, "regenerated-as-overlay", { replace: true })).manifest.objects[0].dropped).toEqual(["fixtures/upstream/b.py"]);
   });
 
   it("leaves a samples-only publish alone: no test data archive, so no provenance is asked of it", async () => {
@@ -1556,6 +1617,25 @@ describe("the approver's publish summary", () => {
   it("refuses an archive path that could break out of a code span or a table cell", () => {
     for (const path of ["x`<!--.js", "a|b.js", "<b>.js"]) expect(() => buildArchive([{ path, bytes: Buffer.from("x") }]), path).toThrow("which the publish summary cannot show safely");
     expect(licenceAllowed("MIT OR <!--", new Set(["MIT"]))).toBe(false);
+  });
+
+  it("warns of a replace that restages under half of the locked files, and of an overlay that restages all but a tenth of them", () => {
+    const object = (locked, restaged) => ({ kind: "samples", pack: "p", tool: "t", locked, restaged });
+    expect(modeWarning(object(10, 4), true)).toContain("replace drops 6 of the 10 locked files, which `publish/` does not restage (it restages 4)");
+    expect(modeWarning(object(10, 5), true)).toBeUndefined();
+    expect(modeWarning(object(10, 9), false)).toContain("`publish/` restages all but 1 of the 10 locked files, which this overlay keeps");
+    expect(modeWarning(object(10, 8), false)).toBeUndefined();
+    expect(modeWarning(object(10, 10), false)).toBeUndefined();
+    expect(modeWarning(object(10, 10), true)).toBeUndefined();
+    expect(modeWarning(object(9, 8), false)).toBeUndefined();
+    // No locked archive read (no lock, or S3 lacks it): nothing to compare with.
+    for (const replace of [true, false]) expect(modeWarning(object(null, 0), replace), String(replace)).toBeUndefined();
+    const manifest = (replace, locked, restaged) => ({ commit: "1".repeat(40), replace, remove: [], objects: [{ ...object(locked, restaged), sha256: "0".repeat(64), files: 2, bytes: 4, licences: { MIT: 2 }, sources: {}, base: "2".repeat(64), added: [], changed: [], dropped: [] }] });
+    const [heading, blank, warning] = publishSummary(manifest(true, 10, 4)).split("\n");
+    expect(heading).toBe(`### Pack data to publish from ${"1".repeat(40)} (replace)`);
+    expect(blank).toBe("");
+    expect(warning).toMatch(/^\*\*Warning:\*\* `p\/t` samples: replace drops 6 of the 10 locked files/u);
+    expect(publishSummary(manifest(true, 10, 5))).not.toContain("Warning");
   });
 
   it("lists each samples archive's repositories with their licences, as inert text", () => {

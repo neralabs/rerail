@@ -3,16 +3,18 @@ name: Pack data publish request
 # Keeps one sticky comment on a pull request that has pack data to publish: it tracks a
 # packs/<pack>/upstream/<tool>/publish/ directory, or it removes authored rows (rows naming files under
 # upstream/<tool>/, the rows pack-fixtures.mjs's listedAuthored reads) from a tool's UPSTREAM.md, which an overlay
-# publish of that tool-pack turns into the file's removal from the archive. The comment is the "waiting" state, with
-# how to run the publish workflow (pack-data-publish.yml) by hand and with the gh CLI. The publish workflow writes the
-# comment's other states (published, action needed, failed) over the same marker; this workflow deletes only a comment
-# still in the waiting state, once the pull request has nothing left to publish.
+# publish of that tool-pack turns into the file's removal from the archive. The comment is the "waiting" state
+# (scripts/s3/pack-data-publish.mjs comment waiting), with how to run the publish workflow (pack-data-publish.yml) by
+# hand and with the gh CLI, and which `replace` value the counts recommend. The publish workflow writes the comment's
+# other states (published, action needed, failed) over the same marker; this workflow deletes only a comment still in
+# the waiting state, once the pull request has nothing left to publish.
 #
-# pull_request_target, so it also runs for forks, with the base branch's workflow: it checks out nothing, runs nothing
-# of the pull request, and holds only a GITHUB_TOKEN that can write pull request comments. A fork's pull request is a
-# proposal, published only once a maintainer ports it, so its comment lists the data without the publish steps. File names and patches are
-# untrusted: only the validated pack/tool directories and their counts are rendered, never a name, and nothing reaches
-# a shell but through env. Structure metric #3, not this comment, is what blocks the merge.
+# pull_request_target, so it also runs for forks, with the base branch's workflow: it checks out the base branch's code
+# alone (never the pull request's), runs nothing of the pull request, and holds only a GITHUB_TOKEN that can write pull
+# request comments. A fork's pull request is a proposal, published only once a maintainer ports it, so its comment lists
+# the data without the publish steps. File names and patches are untrusted: only the validated pack/tool directories,
+# their counts and the `files` counts of their locks (read through the API as data) are rendered, never a name, and
+# nothing reaches a shell but through env. Structure metric #3, not this comment, is what blocks the merge.
 
 on:
   pull_request_target:
@@ -31,8 +33,23 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: read # GET environments/test-data-upload needs Actions read
+      contents: read # the checkout of the base branch
       pull-requests: write
     steps:
+      # The base branch's code (on pull_request_target, github.sha is its head), for the comment script. Nothing of
+      # the pull request is fetched.
+      - name: Checkout the base branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # pack-data-publish.mjs needs Node 22.15 or newer (zlib's zstd, through pack-fixtures.mjs) and no npm packages.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
       - name: Update the sticky comment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -40,130 +57,98 @@ jobs:
           CHANGED: ${{ github.event.pull_request.changed_files }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           # The pull request files endpoint lists at most 3,000 files; past that, absence cannot be proved. It omits
           # the patch of a very large diff, whose removed rows then go unseen.
           files_cap=3000
-          # An upstream bump or re-snapshot pull request (upstream-bump-publish.yml, from this repository's
-          # auto/bump-upstream or auto/resnapshot-upstream) stages each tool-pack's whole derived set: it publishes with
-          # replace.
-          replace_step="Leave **replace** off to lay these files over the current data (overlay). Turn it on to make each tool-pack's data exactly what \`publish/\` holds (for deletions or a full regeneration)."
-          replace_flag=""
-          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] && { [ "$HEAD_REF" = "auto/bump-upstream" ] || [ "$HEAD_REF" = "auto/resnapshot-upstream" ]; }; then
-            replace_step="Turn **replace** on: this upstream bump's \`publish/\` holds each tool-pack's whole derived set, and replace makes each tool-pack's data exactly that."
-            replace_flag=" -f replace=true"
+          if ! [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::the pull request's head is no commit"
+            exit 1
           fi
           # TOOL_ID in scripts/s3/pack-fixtures.mjs: a pack or tool directory name.
           id_class='[a-z0-9][a-z0-9._-]*'
           gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" \
             --jq '.[] | {filename, status, patch} | @json' > "$RUNNER_TEMP/files.jsonl"
-          # One "<pack>/<tool> <files in publish/> <authored rows removed>" line per tool-pack with anything to publish.
+          # One object per tool-pack with anything to publish (requestedToolPacks in scripts/s3/pack-data-publish.mjs):
+          # its files in publish/ (how many are test data, how many samples, whether provenance.json is one of them)
+          # and its authored rows removed. Counts and flags alone, never a file name.
           # shellcheck disable=SC2016 # literal backticks: a jq regex, not a shell expansion
-          toolpacks="$(jq -rs --arg id "$id_class" '
+          toolpacks="$(jq -cs --arg id "$id_class" '
             def authored($sign; $tool):
               [(.patch // "") | split("\n")[] | select(startswith($sign)) | .[1:]
                 | capture("^\\|\\s*`(?<file>[^`]+)`").file | select(startswith("upstream/\($tool)/"))] | unique;
             ([.[] | select(.status != "removed")
-                | .filename | capture("^packs/(?<pack>" + $id + ")/upstream/(?<tool>" + $id + ")/publish/.")
-                | {key: "\(.pack)/\(.tool)", files: 1, lost: 0}]) as $publish
+                | .filename | capture("^packs/(?<pack>" + $id + ")/upstream/(?<tool>" + $id + ")/publish/(?<path>.+)$")
+                | (.path | startswith("samples/")) as $sample
+                | {pack, tool, files: 1, testData: (if $sample then 0 else 1 end), samples: (if $sample and .path != "samples/REUSE.toml" then 1 else 0 end), provenance: (.path == "provenance.json"), lost: 0}]) as $publish
             | ([.[] | . as $file
                 | .filename | capture("^packs/(?<pack>" + $id + ")/upstream/(?<tool>" + $id + ")/UPSTREAM\\.md$")
                 | . as $record
                 | ($file | (authored("-"; $record.tool) - authored("+"; $record.tool)) | length) as $lost
-                | select($lost > 0) | {key: "\($record.pack)/\($record.tool)", files: 0, lost: $lost}]) as $removed
-            | $publish + $removed | group_by(.key)[] | "\(.[0].key) \(map(.files) | add) \(map(.lost) | add)"
+                | select($lost > 0) | {pack: $record.pack, tool: $record.tool, files: 0, testData: 0, samples: 0, provenance: false, lost: $lost}]) as $removed
+            | [$publish + $removed | group_by(.pack + "/" + .tool)[]
+                | {pack: .[0].pack, tool: .[0].tool, files: (map(.files) | add), testData: (map(.testData) | add), samples: (map(.samples) | add), provenance: (map(.provenance) | any), lost: (map(.lost) | add), locked: {testData: null, samples: null}}]
           ' "$RUNNER_TEMP/files.jsonl")"
-          marker="<!-- rerail-pack-data-publish"
+          fork=false
+          bump=false
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            # A fork's pull request is a proposal (CONTRIBUTING.md, "Proposing a change from your fork"): its data is
+            # published from the pull request that ports it to a branch here, never from the fork, so its comment
+            # recommends nothing and its locks are not read.
+            fork=true
+          elif [ "$HEAD_REF" = "auto/bump-upstream" ] || [ "$HEAD_REF" = "auto/resnapshot-upstream" ]; then
+            # An upstream bump or re-snapshot pull request (upstream-bump-publish.yml, from this repository's
+            # auto/bump-upstream or auto/resnapshot-upstream) stages each tool-pack's whole derived set: it publishes
+            # with replace.
+            bump=true
+          fi
+          # A lock's `files` count at the pull request's head, read through the API as data (the ids in the path were
+          # validated by the capture above): null when the head has no such file (GitHub's plain Not Found; a missing
+          # commit is a 404 naming the ref) or holds no lock there. Any other failure fails the step: a count guessed
+          # at would recommend the wrong value.
+          lock_files() {
+            local content
+            if ! content="$(gh api "repos/$GITHUB_REPOSITORY/contents/$1?ref=$HEAD_SHA" --jq .content 2> "$RUNNER_TEMP/lock-error.txt")"; then
+              if grep -qx "gh: Not Found (HTTP 404)" "$RUNNER_TEMP/lock-error.txt"; then
+                echo null
+                return 0
+              fi
+              echo "::error::reading $1 at $HEAD_SHA failed: $(tr '\n' ' ' < "$RUNNER_TEMP/lock-error.txt")"
+              return 1
+            fi
+            base64 -d <<< "$content" 2> /dev/null | jq 'if type == "object" and (.files | type) == "number" and .files == (.files | floor) and .files >= 0 then .files else null end' 2> /dev/null || echo null
+          }
+          if [ "$toolpacks" != "[]" ] && [ "$fork" = false ]; then
+            toolpacks="$(jq -c '.[]' <<< "$toolpacks" | while read -r toolpack; do
+              pack="$(jq -r .pack <<< "$toolpack")"
+              tool="$(jq -r .tool <<< "$toolpack")"
+              test_data=null
+              samples=null
+              if [ "$(jq -r .testData <<< "$toolpack")" -gt 0 ]; then test_data="$(lock_files "packs/$pack/upstream/$tool/test-data.lock")"; fi
+              if [ "$(jq -r .samples <<< "$toolpack")" -gt 0 ]; then samples="$(lock_files "packs/$pack/upstream/$tool/samples.lock")"; fi
+              jq -c --argjson testData "$test_data" --argjson samples "$samples" '. + {locked: {testData: $testData, samples: $samples}}' <<< "$toolpack"
+            done | jq -cs .)"
+          fi
           comment="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
             --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rerail-pack-data-publish"))) | {id, waiting: (.body | startswith("<!-- rerail-pack-data-publish state=waiting"))} | @json] | first // empty' | sed -n '1p')"
           id="$(jq -r '.id // empty' <<< "${comment:-null}")"
           waiting="$(jq -r '.waiting // false' <<< "${comment:-null}")"
 
-          if [ -z "$toolpacks" ] && [ "$CHANGED" -le "$files_cap" ]; then
+          if [ "$toolpacks" = "[]" ] && [ "$CHANGED" -le "$files_cap" ]; then
             if [ -n "$id" ] && [ "$waiting" = "true" ]; then
               gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$id" > /dev/null
             fi
             exit 0
           fi
 
-          if [ -z "$toolpacks" ]; then
-            rows="| (this pull request changes more than $files_cap files, so its pack data cannot be listed) | | |"
-          else
-            # shellcheck disable=SC2016 # literal backticks: markdown code spans
-            rows="$(while read -r toolpack files lost; do printf '| `%s` | %s | %s |\n' "$toolpack" "$files" "$lost"; done <<< "$toolpacks")"
+          environment=""
+          if [ "$fork" = false ]; then
+            environment="$(gh api "repos/$GITHUB_REPOSITORY/environments/test-data-upload" --jq .id)"
           fi
-          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
-            # A fork's pull request is a proposal (CONTRIBUTING.md, "Proposing a change from your fork"): its data is
-            # published from the pull request that ports it to a branch here, never from the fork. Same marker and
-            # state, so the comment goes once the fork stops staging data.
-            body="$(cat <<EOF
-          ${marker} state=waiting -->
-          ### Pack data in a proposal from a fork
-
-          This pull request is from a fork, so it is a proposal: its pack data is not published from it. If a maintainer takes the change, they port it to a branch here, and the data is published from that pull request ([how it works](https://github.com/$GITHUB_REPOSITORY/blob/main/CONTRIBUTING.md#proposing-a-change-from-your-fork)).
-
-          | Tool-pack | Files in \`publish/\` | Authored rows removed from \`UPSTREAM.md\` |
-          |---|---|---|
-          ${rows}
-          EOF
-            )"
-            if [ -n "$id" ]; then
-              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
-            else
-              gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$body" > /dev/null
-            fi
-            exit 0
-          fi
-          environment="$(gh api "repos/$GITHUB_REPOSITORY/environments/test-data-upload" --jq .id)"
-          body="$(cat <<EOF
-          ${marker} state=waiting -->
-          ### Pack data waiting to publish
-
-          This pull request has pack data to publish. It can't merge until the data is in S3 and the locks name it.
-
-          | Tool-pack | Files in \`publish/\` | Authored rows removed from \`UPSTREAM.md\` |
-          |---|---|---|
-          ${rows}
-
-          **By hand**
-
-          1. Open the [publish workflow](https://github.com/$GITHUB_REPOSITORY/actions/workflows/pack-data-publish.yml) and click **Run workflow** (branch \`main\`).
-          2. Type **\`$PR\`** as the pull request number. GitHub can't pre-fill workflow inputs from a link, so type it yourself.
-          3. ${replace_step}
-          4. Wait for a code owner (@Moti-Velz or @jeffreysnell) to approve the \`test-data-upload\` deployment. They read the run's **prep** summary first.
-          5. When the run is green, pull this branch: the workflow has committed the new locks and removed \`publish/\`. If someone pushed to the branch meanwhile, this comment shows the locks to commit instead.
-
-          **With the gh CLI (for agents)**
-
-          \`\`\`sh
-          # 1. Start the publish (-f replace=true for replace mode).
-          gh workflow run pack-data-publish.yml -R $GITHUB_REPOSITORY -f pr=$PR${replace_flag}
-
-          # 2. Find the run. Its title is "Publish pack data for #$PR"; wait a few seconds after step 1.
-          gh run list -R $GITHUB_REPOSITORY --workflow pack-data-publish.yml --event workflow_dispatch --limit 5 \\
-            --json databaseId,status,url,displayTitle,createdAt
-          RUN=<databaseId of the newest run titled "Publish pack data for #$PR">
-
-          # 3. Read prep's summary (archives, sha256, files, bytes, what changed) from its log.
-          gh run view "\$RUN" -R $GITHUB_REPOSITORY --log --job "\$(gh run view "\$RUN" -R $GITHUB_REPOSITORY --json jobs --jq '.jobs[] | select(.name == "prep") | .databaseId')"
-
-          # 4. Approval. A code owner approves in the run's page, or, if your gh user is a required reviewer:
-          gh api repos/$GITHUB_REPOSITORY/actions/runs/"\$RUN"/pending_deployments \\
-            --jq '.[] | {environment: .environment.name, id: .environment.id, can_approve: .current_user_can_approve}'
-          echo '{"environment_ids":[$environment],"state":"approved","comment":"Reviewed the prep summary"}' |
-            gh api -X POST repos/$GITHUB_REPOSITORY/actions/runs/"\$RUN"/pending_deployments --input -
-
-          # 5. Wait for the run to finish; it must succeed.
-          gh run watch "\$RUN" -R $GITHUB_REPOSITORY --exit-status
-
-          # 6. Pull the branch and confirm: publish/ is gone and the locks changed.
-          git pull --ff-only
-          git ls-files 'packs/*/upstream/*/publish/**'                    # prints nothing
-          git log -1 --stat -- 'packs/*/upstream/*/test-data.lock' 'packs/*/upstream/*/samples.lock'
-          \`\`\`
-          EOF
-          )"
+          body="$(REPOSITORY="$GITHUB_REPOSITORY" TOOL_PACKS="$toolpacks" FORK="$fork" BUMP="$bump" ENVIRONMENT="$environment" FILES_CAP="$files_cap" \
+            node scripts/s3/pack-data-publish.mjs comment waiting)"
           if [ -n "$id" ]; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
           else
