@@ -5580,3 +5580,128 @@ The reduced tests and all ten candidate gates pass on addon `550fb2943642d50f268
 The edit harness passes 40 oracle edit transitions and ten removals compared with a fresh empty workspace.
 A closed-domain rule can report an absence after removal; the harness does not assume an empty finding set.
 Legacy interruptions remain under investigation. The cumulative gate has not passed.
+
+
+## 2026-11-03 — Compatibility: identify and remove the correlated legacy scan
+
+The complete legacy intent source reproduces an interrupted final query.
+The unchanged pinned reporter returns zero findings on that same file.
+The regression reuses the full source already present in `batch-06-recording.json`.
+Its byte count and SHA-256 are recorded in the [engine regression receipt](../fixtures/host/data-layer-port/batch-07-engine-regressions.json).
+
+SQL instrumentation identifies the `LEG-083` arm.
+It starts from syntax nodes and asks a correlated question over eager anchors and active functions.
+SQLite scans functions repeatedly, even when the eager-anchor relation is empty.
+The interrupted result statement executes 72,992,521 VM instructions and 2,538,677 full-scan steps.
+It consumes 660.179 milliseconds of thread CPU before interruption.
+An extra index on `function_symbols` does not clear the failure. That experiment was removed.
+
+The corrected arm joins from the existing eager anchors to functions and syntax nodes.
+It retains the source condition, allowlist, diagnostic span, identity, and work budget.
+The result statement completes with 657,518 VM instructions and 124,773 full-scan steps.
+It uses 7.300 milliseconds of thread CPU on the same complete source file.
+This is a statement-level comparison, not an end-to-end performance claim.
+The production-API regression passes, and the generator reproduces the corrected policy exactly.
+
+The state-analysis diagnostic also passes across all 9,021 files after deferred source preparation.
+It reports zero findings, zero differences, and zero failures.
+Cold CPU is 73.063 seconds; wall time is 75.983 seconds; reported peak RSS is 2,651,701,248 bytes.
+That single-rule diagnostic preserves the complete repository domain.
+
+The integrated frontend had also removed fields still implemented by its native compiler.
+Compatibility now restores validation for source gates, line scans, capture columns, helper closures, and relational clauses.
+All 70 candidates pass the selected frontend and native compiler.
+Modern embedded-language schema behavior is retained.
+The selected implementation still executes legacy relations through the compatibility evaluator, outside the wave/GPU lowering path.
+A durable integrated-schema compile harness records all policy and addon identities.
+The corrected cumulative run is in progress; no final performance or parity claim is made here.
+
+
+## 2026-11-03 — Corrected 70-rule repository gate
+
+All 70 candidates now match the complete 9,021-file oracle domain.
+Expected and actual findings both equal 24,993, with zero extra findings, missing findings, or engine failures.
+All ten new rules are clean on this production repository; the separate positive corpus remains required.
+The source pin and workload SHA-256 match the earlier rejected run.
+All final policy digests are present in the local full-run receipt.
+
+| Measurement | First rejected run | Corrected run |
+| --- | ---: | ---: |
+| Compile CPU | 1.418 s | 1.723 s |
+| Compile wall | 1.475 s | 1.741 s |
+| Cold CPU | 646.248 s | 465.234 s |
+| Cold wall | 567.704 s | 382.467 s |
+| OS peak RSS through close | 14.284 GB | 15.323 GB |
+| Engine failures | 22 | 0 |
+
+The first column is an incomplete execution, not an accepted performance baseline.
+The corrected run restores coverage while memory increases. It does not close the memory gate.
+The pinned Python oracle uses 152.746 seconds of analyzer CPU and 1.948 GB peak RSS.
+The native cold phase remains about three times that CPU and eight times that peak memory.
+The timing boundaries differ: native includes ingestion and workspace execution; Python reports shared analyzer execution.
+These measurements do not establish an improvement against the historical 60-rule baseline.
+
+The corrected addon is `550fb2943642d50f268fa420ad5a433956c9f61b777878a99e224ab3b9fe15fa`.
+The local receipt is `.rerail/data-layer-batch-seven/suite-70-admitted-result.json`, with a separate close receipt and OS log.
+RSS is already about 12.5 GB after file ingestion, before repository clauses run.
+That localizes most retained memory to preparation/workspace state rather than the final SQL query alone.
+A future memory investigation must measure retained evidence and capture ownership at that boundary.
+This delivery does not reopen the broader optimizer program or claim wave/GPU migration.
+
+
+## 2026-11-03 — Broader restart regression gates
+
+The first-50 conformance tests pass alongside all ten batch-seven tests and the production compatibility regressions: 41 tests pass.
+The sixth-batch corpus passes all 1,259 independent observations: 417 positive and 842 clean.
+Its 24 diagnostic shards preserve every observation's complete file domain.
+All findings, multiplicities, and snapshot/workspace results agree, with zero engine failures.
+Per-shard positive/clean gaps are aggregated across the complete corpus rather than treated as detector failures.
+
+The integrated frontend's existing schema/options tests and new compatibility tests pass all 32 tests.
+The candidate and integrated worktrees both pass typechecking.
+The full native suite initially reports 2,509 passes and seven failures.
+Six failures result from missing pack fixtures, including a widened-walk sentinel with an empty corpus.
+After restoring Python, SQL, and Vue fixtures with matching lock files, all six affected tests pass.
+A complete rerun reports 2,515 passes, one failure, and 67 ignored tests in 58.71 seconds.
+
+The remaining failure is the inherited admission experiment's snapshot-hash guard.
+Both files it checks are unchanged from `9bc955cc5`, and the base already contains the same mismatch.
+The actual region hashes to `25dd37caf0584afab85c4ed54d00c5d6e34e3f456ec3de2cec916eee29cfae0f`.
+The retained experiment expects `f9b8077c59090eefd5d84c92a2323114889733610a5780d65c452ff63de27b50`.
+This work does not refresh an unrelated experiment snapshot to make the broad suite green.
+This qualification remains separate from the passing data-layer gates.
+
+The integrated compatibility implementation is committed as `d627273f67aaa3504e92905a677de2ea6370bc56`.
+The production addon is being rebuilt from that sealed commit for the final reproducible receipt.
+The earlier accepted complete run used the same execution changes before the profiling-only exhaustive-match fix.
+Its source-derived build identity therefore differs; its checksum and measurements remain recorded rather than relabeled.
+
+
+## 2026-11-03 — Seal batch seven against the committed engine
+
+The final production addon is built from the committed native sources at `d627273f67aaa3504e92905a677de2ea6370bc56`.
+Its SHA-256 is `fee334990d0f21843779fd305f720598b49965b1b0e3258d20596b60185a2126`.
+The profiling-only match fix changes the source-derived build identity, so the earlier addon was not relabeled.
+The complete final run again matches all 24,993 findings over 9,021 files, with zero engine failures.
+Compile CPU is 1.356929 seconds; compile wall time is 1.350852 seconds.
+Cold CPU is 395.518833 seconds; cold wall time is 321.603251 seconds.
+OS peak RSS through close is 15,398,617,088 bytes.
+
+The preceding accepted measurement used 465.234 CPU seconds and 382.467 wall seconds on the same execution changes.
+There is no additional execution optimization between these accepted runs.
+The spread remains unexplained; host conditions and process variation are possible causes, not established explanations.
+Do not present this repeat as a further optimization gain.
+Memory remains far above the Python oracle and the historical memory gate.
+
+The final addon passes all 41 first-50, batch-seven, and production compatibility tests.
+It also passes all 1,259 sixth-batch observations, all 210 seventh-batch observations, and all 50 edit/removal transitions.
+The 24 sixth-batch shards retain complete observation domains and aggregate positive/clean coverage across all ten checks.
+Both worktrees pass typechecking. The 32 integrated frontend/schema/options tests pass.
+The broad native test qualification remains: 2,515 passes, one inherited snapshot failure, and 67 ignored tests.
+
+The [batch receipt](../fixtures/host/data-layer-port/batch-07-evidence.json) records coverage, retained calls, source identities, and policy hashes.
+The [engine pin](../fixtures/host/data-layer-port/batch-07-engine.json) records the companion branch and build contract.
+The [full measurement](performance-decisions/data-layer-batch-seven-20261103.json) retains the complete execution and close receipts.
+There are now 70 candidate policies out of the pinned 142 checks, leaving 72.
+The pack remains inactive. Signing workflows, uncaptured integration tests, and wave/GPU migration remain separate contracts.
+No Linear issue was created.

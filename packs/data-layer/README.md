@@ -1,8 +1,9 @@
 # Data-layer candidate rules
 
-This private pack contains sixty authored candidates from the pinned data-layer revision.
-All six batches pass their recorded source-detection gates; retained integration contracts remain documented.
-The [restart plan](../../docs/data-layer-port-restart.md) identifies batch seven and the remaining 82 checks.
+This private pack contains seventy authored candidates from the pinned data-layer revision.
+All seven batches pass their recorded source-detection gates. The complete 70-rule repository gate matches all findings without engine failures.
+The [seventh-batch report](../../docs/data-layer-batch-seven.md) records compatibility, retained contracts, and the unresolved memory cost.
+The [restart plan](../../docs/data-layer-port-restart.md) identifies the remaining 72 checks.
 The policies are in `candidates/rules/` and are not activated by the pack manifest.
 
 Run the original tests with `scripts/dsl/data_layer_record.py`.

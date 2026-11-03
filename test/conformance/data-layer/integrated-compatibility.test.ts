@@ -67,7 +67,7 @@ it.each([false, true])("hydrates only admitted repository source (syntax: %s)", 
       ...(syntax ? { syntax: { name: "nodes", gate: "gate", columns: ["__path", "__start", "__end", "id", "kind"] } } : {}),
       query: syntax
         ? "SELECT __path path,__start start_byte,__end end_byte FROM nodes WHERE kind='module'"
-        : "SELECT __path path,__start start_byte,__end end_byte FROM gate WHERE source_text(__path,0,8)='selected'",
+        : "SELECT __path path,__start start_byte,__end end_byte FROM gate WHERE length(source_text('other0.py',0,80)||source_text('other1.py',0,80))>0",
       key: ["path"],
     }, violation: { code: "admitted-source", message: "Admitted source", anchor: "witness.span" } }],
   };
@@ -93,6 +93,7 @@ it.each([false, true])("hydrates only admitted repository source (syntax: %s)", 
       expect(admitted.failures).toEqual([]);
       expect(admitted.violations).toMatchObject([{ path: "selected.py" }]);
     } else {
+      // This query actually demands more than 128 bytes from other files.
       await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 5,
         files: [{ path: "selected.py", language: "python", source: "selected = 1\n" }], removed: [], quiet: true }));
       const oversized = JSON.parse(await workspace.resultPageAsync(0, RESULT_PAGE_BYTES));
