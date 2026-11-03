@@ -645,6 +645,20 @@ its parser.c from its grammar.json with tree-sitter-generate 0.27.0.
 
 ----------------------------------------------------------------------
 
+Bundled grammar: tree-sitter/tree-sitter-python 0.25.0, patched
+Files: native/grammars/tree-sitter-python/ (LICENSE byte-identical to upstream;
+  src/scanner.c patched; src/grammar.json regenerated from the patched grammar;
+  src/tree_sitter/{alloc,array,parser}.h written by tree-sitter-cli 0.27.0)
+Revision: 293fdc02038ee2bf0e2e206711b69c90ac0d413f
+Source: https://github.com/tree-sitter/tree-sitter-python
+License: MIT (the verbatim upstream LICENSE is in that directory)
+
+The patches, why each is carried and how grammar.json is regenerated are in
+native/grammars/tree-sitter-python/PATCHES.md. native/build.rs generates
+its parser.c from its grammar.json with tree-sitter-generate 0.27.0.
+
+----------------------------------------------------------------------
+
 Logos (documentation only, not in the published package): lobehub/lobe-icons 1.101.0
 Files: docs/images/agents/{claude-code,codex,cursor,pi}.svg
 Source: https://github.com/lobehub/lobe-icons (@lobehub/icons-static-svg: claudecode-color.svg, codex-color.svg,
