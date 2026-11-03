@@ -270,7 +270,7 @@ pub(super) fn compile(
     let mut stages = Vec::new();
     let mut last_uses = BTreeMap::new();
     let mut input_fields = relational::FieldReads::new();
-    let mut reads_source = syntax.is_some();
+    let mut reads_source = false;
     if let Some(value) = spec.get("stages") {
         let values = value
             .as_array()

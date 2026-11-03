@@ -710,14 +710,16 @@ pub(super) fn evaluate_batched_relations(
                     keys.push((index, clause.id.clone(), Some((key, version, path))));
                 }
             } else {
-                // Queue metadata only. Source hydration belongs after complete-empty admission.
-                let mut files = snapshot.files.clone();
-                if plan.reads_source {
-                    let empty = std::sync::Arc::new(String::new());
-                    for file in &mut files {
-                        file.source = std::sync::Arc::clone(&empty);
-                    }
-                }
+                // Queue file identities only; admission precedes source hydration.
+                let empty = std::sync::Arc::new(String::new());
+                let files = state.files.values().map(|file| &file.input)
+                    .chain(state.evicted_inputs.values())
+                    .filter(|file| code_rule.scope.matches(&file.path))
+                    .map(|file| {
+                        let mut input = file.clone();
+                        input.source = std::sync::Arc::clone(&empty);
+                        input
+                    }).collect();
                 jobs.push(Job {
                     code_rule,
                     clause,
