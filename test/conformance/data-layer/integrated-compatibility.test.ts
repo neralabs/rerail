@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { codeRuleSchema, loadNativeBinding } from "../../../src/engine/index.js";
+import { codeRuleSchema, encodeCodeRuleWorkspaceRequest, loadNativeBinding, RESULT_PAGE_BYTES } from "../../../src/engine/index.js";
 import { capabilitiesJson } from "../../../conformance/engine.js";
 import { fixturesPath } from "../../support/oracles.js";
 
@@ -55,4 +55,43 @@ it("retains declared diagnostic anchors on relational input rows", () => {
   const result = JSON.parse(compiled.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 1, facts: [], files: [{ path: "example.py", language: "python", source: "\n\ndef f():\n    pass\n" }] }), "report"));
   expect(result.failures).toEqual([]);
   expect(result.violations).toMatchObject([{ span: { startByte: 0, startLine: 0 } }]);
+});
+
+it.each([false, true])("hydrates only admitted repository source (syntax: %s)", async syntax => {
+  const native = loadNativeBinding();
+  const input = (pattern: string) => ({ evidence: { as: "file", query: { ast: { language: "python", rule: { kind: "module", regex: pattern } } }, project: { path: "file.path" } } });
+  const policy = {
+    format: "rerail.policy/v1", id: "admitted-source-contract", revision: 1, mode: "block",
+    scope: { include: ["**/*.py"], exclude: [] }, clauses: [{ id: "admitted-source", relational: {
+      inputs: { gate: input("^selected") }, requireNonemptyInput: "gate",
+      ...(syntax ? { syntax: { name: "nodes", gate: "gate", columns: ["__path", "__start", "__end", "id", "kind"] } } : {}),
+      query: syntax
+        ? "SELECT __path path,__start start_byte,__end end_byte FROM nodes WHERE kind='module'"
+        : "SELECT __path path,__start start_byte,__end end_byte FROM gate WHERE source_text(__path,0,8)='selected'",
+      key: ["path"],
+    }, violation: { code: "admitted-source", message: "Admitted source", anchor: "witness.span" } }],
+  };
+  const capabilities = JSON.parse(capabilitiesJson());
+  capabilities.limits.maxSourceBytes = 128;
+  const compiled = native.CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(policy)), "json", JSON.stringify(capabilities));
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(compiled);
+    for (let index = 0; index < 3; index++) {
+      await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: index + 1,
+        files: [{ path: `other${index}.py`, language: "python", source: `other = '${"x".repeat(70)}'\n` }], removed: [], quiet: true, deferGlobal: true }));
+    }
+    await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 4, files: [], removed: [], quiet: true }));
+    const empty = JSON.parse(await workspace.resultPageAsync(0, RESULT_PAGE_BYTES));
+    expect(empty.failures).toEqual([]);
+    expect(empty.violations).toEqual([]);
+    if (syntax) {
+      // Syntax consumers demand one file, not all source covered by the rule.
+      await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 5,
+        files: [{ path: "selected.py", language: "python", source: "selected = 1\n" }], removed: [], quiet: true }));
+      const admitted = JSON.parse(await workspace.resultPageAsync(0, RESULT_PAGE_BYTES));
+      expect(admitted.failures).toEqual([]);
+      expect(admitted.violations).toMatchObject([{ path: "selected.py" }]);
+    }
+  } finally { workspace.close(); }
 });
