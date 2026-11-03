@@ -247,18 +247,46 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
   - **(g) `R[tid]`** (`prefilter::terms`, 03 §16): a walk's text slot is read as a node set. Its predicate runs once over the language's vocabulary (`vocabulary_term`, the prefilter's `VOCABULARY` stages; a literal is a join on its atom), its bits on a tape are the matched terms' postings plus the uncovered nodes (`term_coverage.missing`) confirmed on their text, filtered by the slot's kind. The rows ride on the wave's tapes (`TapeDoc::with_texts`), keyed by `Micro::slot_key`; a Lua pattern is computed on the text as before. No per-node structure is stored (decision 0026).
   - **Measured** (S7, load ~60, with `RERAIL_TEXTS_CHECK`, which also scans each indexed slot): 710 keys = W on CPU (audit CPU 7.1 s) and Metal (3.3 s, 44 launches, 209 MB peak). Slots read from the index: CPU 16,009, Metal 18,500, all equal to the scan (`texts.check_differ` 0); scanned (Lua or unconfirmed) 1,094 and 2,205. `demand.texts` 391 ms / 299 ms (vocabulary 77 ms, postings 130 ms, rows 165 ms). The times include the check's scans; no speedup is claimed (architecture first).
 - **The text dump and assembler (list step 18, 2026-11-02),** item (h); L2, P `spec-tooling.md` §2.2.1–2.2.2.
-  - **`rir`** (`transducer::packed::rir`): a program as UTF-8 lines, with its content digest as the only hash. Its tables print in index order: mode (set, query), strings (escaped), labels, longs, text predicates, capture assertions, directives, and the ast-grep pattern as an s-expression. Then its words: mnemonic, mode, and an operand typed by its prefix (`@` jump, `L` label, `P` predicate, `A` assertion), with label names as comments.
-  - **The assembler** (`rir::assemble`, `assemble_all` for every `program` block of a dump) rebuilds the program's components, lowers its derived tables (value, capture and output programs), and runs the verifier (`Program::validate`, which every constructor runs). A stated digest must be the assembled program's; `program -` is a hand-written one. Round trip: the same digest, which covers every component, and the same text.
-  - **The wave's dump** (`LoweredWave::dump`, `Wave::dump`, `Rules::dump`):
-    - its plan identity;
-    - each clause's root program, label table, steps, recursive groups and borrowed labels;
-    - the plan's passes by step and level with the packs they fuse into (`Packs::groups`, `fusion::Fused`);
-    - every program once, by digest;
-    - each pack's members, emit table and fused program;
-    - the candidates' set plan (`prefilter::sets::dump`, `S<n> = op`, outputs).
-  - **Entry points:** napi `CodeRuleSlice.dump()` (`rerail engine dump`) and `assembleRir(text)` (`rerail engine asm`: each program verified, returned as its dump).
-  - **Goldens:** `waves/matches/wave.rir` is the S7 pack's wave: 87 clauses, 470 labels, 45 packs, 476 programs, a 439-op set plan, 352 KB. It is rewritten only with `RERAIL_BLESS=1`. `the_wave_dumps_as_rir_and_assembles_back`: every block assembles to its digest, and the dump is the same for every binding. `rir::tests`: every table and assertion kind, escapes, an ast-grep pattern, and the verifier refusing a word out of its tables, a stale digest and rows out of order.
-  - **Not in this step:** kind and field names in comments (the dump prints grammar numbers; the grammar's digest in the header), `explain`, `--trace`, replay bundles and `--dump-jit` (L2's other tools), and assembler fuzzing (spec-tooling §2.4.3).
+  - **`rir`** (`transducer::packed::rir`): a program as UTF-8 lines.
+    - Header: `program sha256:<digest> ir=7 grammar=<dialect>@<16 hex>|none caps=interp[,micro][,pattern]`. The digest is the only hash. `ir` is the format version. `grammar` names the dialect plus a SHA-256 over its kind and field tables (`rir::Names`). `caps` lists what can run the program: the interpreter always, the micro-op form where `Micro::of` lowers it, and the ast-grep pattern matcher where it carries a pattern. The JIT is not listed, because only compiling decides it.
+    - Tables print in index order: mode (set, query), strings (escaped), labels, longs, text predicates, capture assertions, directives, and the ast-grep pattern as an s-expression. Lists are bracketed.
+    - Then the words: mnemonic, mode, and an operand typed by its prefix (`@` jump, `L` label, `P` predicate, `A` assertion), with label names as comments.
+    - Names: with a grammar, kinds print as names (a quoted name for an anonymous kind), and fields print as names. Ids without a name, and derived classes, print as `#id`. Without a grammar, everything prints as `#id`.
+  - **The assembler** (`rir::assemble`; `assemble_named`; `assemble_all` for every `program` block of a dump):
+    - It resolves names against the header's grammar, and refuses a dump whose grammar tables have changed since it was written.
+    - It rebuilds the program's components and lowers its derived tables (value, capture and output programs).
+    - It runs the verifier (`Program::validate`, which every constructor runs).
+    - It checks a stated digest, `ir` and `caps` against the assembled program. `program -` marks a hand-written program.
+    - Round trip: the same digest, which covers every component, and the same text.
+  - **The wave's dump** (`LoweredWave::dump`, `Wave::dump(fused, setplan)`, `Rules::dump`, `slice::dump`):
+    - Always included:
+      - its plan identity;
+      - each clause's root program, label table, steps, recursive groups and borrowed labels, with domain kinds by name;
+      - every program once, by digest.
+    - `fused` adds:
+      - the plan's passes by step and level, with the packs they fuse into;
+      - each pack's members, emit table and fused program;
+      - each member's entry (its kind or supertype test, or `-`), its branch start, and the label its captures come from.
+    - `setplan` adds the candidates' set plan (`prefilter::sets::dump`), with kinds by name.
+  - **Entry points:**
+    - `rerail engine dump --rule <file>... [--clause <id>] [--fused] [--setplan]` (`src/cli/engine-cli.ts`, napi `dumpRir`). It lowers JSON or YAML rule files against the bundled capabilities, with no store. `--clause` selects one clause, by `policy/clause` or by clause id.
+    - `rerail engine asm <file.rir>` (napi `assembleRir`). It assembles each program through the verifier and prints it again by its own grammar, or prints the first refusal.
+    - `CodeRuleSlice.dump(fused?, setplan?)`.
+  - **Goldens.** Both are rewritten only with `RERAIL_BLESS=1`.
+    - `waves/matches/wave.rir`, the S7 pack's wave: 87 clauses, 470 labels, 45 packs, 476 programs, a 439-op set plan, 400 KB. Checked by `the_wave_dumps_as_rir_and_assembles_back` (every block assembles to its digest, and the dump is the same for every binding) and `a_dump_names_one_clause`.
+    - `transducer/packed/rir_goldens.rir`: one golden per frontend, 12 programs. It covers ast-grep patterns (one with several captures), an ast-grep literal, a regex, navigation, set mode, and tree-sitter queries with fields, `#eq?`, `#match?` over an alternation, a quantifier, directives and an offset.
+  - **Tests** (`rir::tests`):
+    - every program table, and every table and assertion kind, round trip;
+    - kinds and fields print by name;
+    - an ast-grep pattern program round trips;
+    - the verifier refuses a word out of its tables, a stale digest, a changed grammar, wrong caps, rows out of order and an old `ir`;
+    - a generated-program property test: 3000 attempts, more than 500 accepted, with and without names;
+    - a mutation fuzzer over dumps: 8000 mutations, including hand-written `program -` blocks. Every mutated dump it accepts reassembles to the same digest.
+  - **Limits:**
+    - `caps` is static, from what the program carries, not from what a run used.
+    - The fuzzing is the in-test mutation fuzzer. There is no `cargo-fuzz` target, because cargo-fuzz is not installed here.
+    - Many pack members print `entry=-`, because their first word is not a kind or supertype test.
+    - `explain`, `--trace`, replay bundles and `--dump-jit` are L2's other tools (spec-tooling §2.2.3–2.2.5) and are not part of this step.
 
 Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base, then differential finding keys for interpreter vs JIT vs Metal on a 100–300-file sample.
 

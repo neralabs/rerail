@@ -735,22 +735,20 @@ impl LoweredWave {
     }
 
     /// The wave as `rir` (list step 18; P `spec-tooling.md` §2.2.1): its plan identity, each
-    /// clause's root program, label table, steps and borrowed labels, the plan's passes by step
-    /// and level with the packs they fuse into, then every program once, by digest, and each
-    /// pack's fused program. `names` are the clauses' names, in order.
-    pub(in crate::code_rule_dsl) fn dump(&self, names: &[String]) -> Result<String, Error> {
+    /// clause's root program, label table, steps and borrowed labels, then every program once, by
+    /// digest; with `fused`, also the plan's passes by step and level with the packs they fuse
+    /// into, and each pack's group (its members' dispatch, emit table and fused program).
+    /// `names` are the clauses' names, in order; `grammar` names the kinds and fields.
+    pub(in crate::code_rule_dsl) fn dump(&self, names: &[String], grammar: Option<&super::rir::Names>, fused_section: bool) -> Result<String, Error> {
         use std::fmt::Write as _;
         let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
         let domain = |domain: &Domain| match domain {
             Domain::All => "all".to_owned(),
-            Domain::Kinds(kinds) => format!("kinds[{}]", kinds.iter().map(u16::to_string).collect::<Vec<_>>().join(" ")),
+            Domain::Kinds(kinds) => format!("kinds{}", super::rir::kinds(grammar, kinds)),
             Domain::Label(label) => format!("L{label}"),
         };
         let mut programs = BTreeMap::<String, &Program>::new();
-        let mut program = |program: &'_ Program| -> String {
-            let digest = program.plain_digest().to_owned();
-            format!("sha256:{digest}")
-        };
+        let mut program = |program: &'_ Program| -> String { format!("sha256:{}", program.plain_digest()) };
         let mut out = String::new();
         let _ = writeln!(out, "wave sha256:{} clauses={} labels={}", hex(&self.identity().0), self.clauses.len(), self.labels);
         let label = |out: &mut String, id: u16, def: &Label, program: &mut dyn FnMut(&Program) -> String| {
@@ -798,14 +796,20 @@ impl LoweredWave {
             }
         }
         // The plan's passes as `labelled` runs them, and the packs (`Packs::groups`).
+        let mut fused = Vec::new();
+        if !fused_section {
+            for program in programs.values() {
+                out.push_str(&super::rir::disassemble(program, grammar));
+            }
+            return Ok(out);
+        }
         let clauses = self.clauses.iter().collect::<Vec<_>>();
         let (steps, chains) = levels(&clauses, |clause, id| Ok((clause, id)))?;
         let at = |clause: &LoweredMatcher| self.clauses.iter().position(|c| std::ptr::eq(c, clause)).expect("a clause of the wave");
-        let mut fused = Vec::new();
         out.push_str("plan\n");
         for (number, ((recursive, levels), (kinds, siblings))) in steps.iter().zip(&chains).enumerate() {
             if *recursive {
-                let kinds = kinds.as_ref().map_or("any".to_owned(), |kinds| format!("[{}]", kinds.iter().map(u16::to_string).collect::<Vec<_>>().join(" ")));
+                let kinds = kinds.as_ref().map_or("any".to_owned(), |kinds| super::rir::kinds(grammar, kinds));
                 let _ = writeln!(out, "  step {number} recursive kinds={kinds} siblings={}", u8::from(*siblings));
             } else {
                 let _ = writeln!(out, "  step {number} single");
@@ -823,10 +827,10 @@ impl LoweredWave {
             }
         }
         for program in programs.values() {
-            out.push_str(&super::rir::disassemble(program));
+            out.push_str(&super::rir::disassemble(program, grammar));
         }
         for (pack, members) in &fused {
-            out.push_str(&super::rir::fused(pack, members));
+            out.push_str(&super::rir::fused(pack, members, grammar));
         }
         Ok(out)
     }

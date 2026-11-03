@@ -28,6 +28,8 @@ pub(in crate::code_rule_dsl) struct Fused {
     pub(in crate::code_rule_dsl) captures: Vec<u16>,
     /// How many leading words the members share (the trie's shared path).
     pub(in crate::code_rule_dsl) prefix: usize,
+    /// Per member, where its branch starts in the fused program (the dispatch past the prefix).
+    pub(in crate::code_rule_dsl) starts: Vec<usize>,
 }
 
 impl Fused {
@@ -73,7 +75,7 @@ impl Fused {
             let name = *members[k].labels.get(usize::from(arg))?;
             labels.push(u16::try_from(usize::from(name) + string_bases[k]).ok()?);
         }
-        let mut captures = Vec::new();
+        let (mut captures, mut starts) = (Vec::new(), Vec::new());
         words.extend_from_slice(&members[0].words[..prefix]);
         let last = members.len() - 1;
         for (k, member) in members.iter().enumerate() {
@@ -104,6 +106,7 @@ impl Fused {
                 words.push(0);
             }
             let base = words.len();
+            starts.push(base);
             let at = |pc: u16| -> Option<u16> {
                 let pc = usize::from(pc);
                 (pc >= prefix).then(|| u16::try_from(base + pc - prefix).ok()).flatten()
@@ -130,7 +133,7 @@ impl Fused {
             program = program.in_set_mode();
         }
         super::Micro::of(&program)?;
-        Some(Self { program, emits, captures, prefix })
+        Some(Self { program, emits, captures, prefix, starts })
     }
 }
 

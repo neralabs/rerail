@@ -232,7 +232,7 @@ impl Program {
 
 /// The plans' set program as `rir` (list step 18; P `spec-tooling.md` §2.2.1, `setplan`): each
 /// operation `S<n>` on the earlier ones, then each plan's output.
-pub(in crate::code_rule_dsl) fn dump(plans: &[&AnchorPlan]) -> String {
+pub(in crate::code_rule_dsl) fn dump(plans: &[&AnchorPlan], grammar: Option<&crate::code_rule_dsl::transducer::packed::rir::Names>) -> String {
     use std::fmt::Write as _;
     let program = Program::lower(plans);
     let sets = |ids: &[usize]| format!("[{}]", ids.iter().map(|id| format!("S{id}")).collect::<Vec<_>>().join(" "));
@@ -242,7 +242,8 @@ pub(in crate::code_rule_dsl) fn dump(plans: &[&AnchorPlan]) -> String {
         let body = match op {
             Op::Empty => "empty".to_owned(),
             Op::All => "all".to_owned(),
-            Op::Kinds(kinds) => format!("kinds [{}]", kinds.iter().map(u16::to_string).collect::<Vec<_>>().join(" ")),
+            // A leaf's kinds are the grammar's (0 labels no node).
+            Op::Kinds(kinds) => format!("kinds {}", crate::code_rule_dsl::transducer::packed::rir::kinds(grammar, kinds)),
             Op::Terms { expression, literal } => {
                 let quoted = crate::code_rule_dsl::transducer::packed::rir::quote(expression.as_bytes());
                 format!("terms {} {quoted}", if *literal { "literal" } else { "regex" })

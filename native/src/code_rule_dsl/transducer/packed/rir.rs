@@ -1,30 +1,49 @@
 //! `rir`, the Rerail IR's text form (list step 18; 05 Phase 4 (h), L2; P `spec-tooling.md`
 //! §2.2.1–2.2.2): one stable format every tool reads and writes. A program prints as UTF-8 lines,
-//! its tables in index order, then its words, with no addresses and no hashes but its content
-//! digest, so two dumps diff cleanly. The assembler reads it back: `assemble(disassemble(p))` is
+//! its tables in index order, then its words, with no addresses and no hashes but content
+//! digests, so two dumps diff cleanly. The assembler reads it back: `assemble(disassemble(p))` is
 //! `p` (equal digests; the digest covers every component a program is built from), and it builds
 //! through the verifier (`Program::validate`, which every constructor runs), so a hand-written
 //! program cannot bypass it.
 //!
 //! ```text
-//! program sha256:<plain digest>
+//! program sha256:<plain digest> ir=7 grammar=python@<digest> caps=interp,micro
 //!   mode set=0 query=0
 //!   string 0 "match"
 //!   label 0 s0
 //!   long 0 100000
 //!   predicate 0 regex s3
-//!   assert 0 text L1 P0 negated=0 any=0
+//!   assert 0 kinds L1 [identifier "("] negated=0
 //!   directive 0 set s4 -
-//!   pattern (internal 12 (terminal 3 named "x") (single $A named) (ellipsis -))
-//!   0000 KIND 145
-//!   0001 FORK @0004
-//!   0002 CAPTURE L0  ; match
+//!   pattern (internal call (terminal "(" any "(") (single "A" named) (ellipsis -))
+//!   0000 KIND function_definition
+//!   0001 FIELD name
+//!   0002 FORK @0004
+//!   0003 CAPTURE L0  ; match
 //! ```
 //!
-//! Text after `;` is a comment. A header of `program -` takes no digest (a hand-written program);
-//! otherwise the assembled program's digest must equal it.
+//! - **Names.** With a grammar (`Names`) a kind prints as its name, bare where named and quoted
+//!   where anonymous, and a field as its name, wherever the name maps back to that one id (the
+//!   grammar's other names for an id, aliases, print as `#id`, as does a derived class). The
+//!   header names the grammar and its digest (over its kind and field tables); the assembler
+//!   reads names with that grammar and refuses a dump whose grammar's tables have changed.
+//!   Without one every kind and field is `#id`.
+//! - **Capabilities** (`caps`): what the program's shape admits, statically. `interp`, always (the
+//!   reference); `micro` where it is a micro walk (`Micro::of`: host label walks and Metal's
+//!   device passes); `pattern` where it carries an ast-grep pattern (the host's matcher). Whether
+//!   the CPU or Metal JIT compiles a program is decided by compiling it (`compilation`), not
+//!   from its text, so it is not a capability here.
+//! - Text after `;` is a comment. A header of `program -` takes no digest (a hand-written
+//!   program); otherwise the assembled program's digest must equal it, and a stated `caps` must
+//!   be the program's.
 
 use super::*;
+use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
+use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
+use std::collections::HashMap as Map;
+
+/// The format's version: the program digest's (`tempo-program-v7`).
+pub(in crate::code_rule_dsl) const IR: u32 = 7;
 
 /// The opcodes' mnemonics.
 const OPCODES: &[(u8, &str)] = &[
@@ -55,15 +74,115 @@ const OPCODES: &[(u8, &str)] = &[
     (EMIT, "EMIT"),
 ];
 
-/// An operand's prefix by opcode: a jump target, a label, a text predicate, a capture assertion.
-fn prefix(opcode: u8) -> &'static str {
+/// How an opcode's operand prints.
+#[derive(Clone, Copy, PartialEq)]
+enum Operand {
+    Number,
+    Target,
+    Label,
+    Predicate,
+    Assert,
+    Kind,
+    Field,
+}
+
+fn operand(opcode: u8) -> Operand {
     match opcode {
-        FORK | GOTO => "@",
-        CAPTURE | EMIT => "L",
-        TEXT => "P",
-        ASSERT => "A",
-        _ => "",
+        FORK | GOTO => Operand::Target,
+        CAPTURE | EMIT => Operand::Label,
+        TEXT => Operand::Predicate,
+        ASSERT => Operand::Assert,
+        KIND | SUPERTYPE => Operand::Kind,
+        FIELD | ABSENT_FIELD => Operand::Field,
+        _ => Operand::Number,
     }
+}
+
+/// A grammar's kind and field names, as `rir` prints and reads them.
+pub(in crate::code_rule_dsl) struct Names {
+    dialect: GrammarDialect,
+    catalog: KindCatalog,
+    /// (name, named) to the one id it prints for.
+    kinds: Map<(&'static str, bool), u16>,
+    digest: String,
+}
+
+/// A dialect's name in a header: its file label.
+fn dialect_name(dialect: GrammarDialect) -> String {
+    crate::code_rule_dsl::language::label(dialect).map_or_else(|| format!("{dialect:?}").to_lowercase(), str::to_owned)
+}
+
+impl Names {
+    pub(in crate::code_rule_dsl) fn of(dialect: GrammarDialect) -> Self {
+        let catalog = dialect.kinds();
+        let mut kinds = Map::new();
+        let mut digest = Sha256::new();
+        digest.update(b"rir-grammar-v1\0");
+        for id in 0..catalog.kind_count() as u16 {
+            let named = catalog.kind_is_named(id);
+            if let Some(name) = catalog.kind_name(id) {
+                kinds.entry((name, named)).or_insert(id);
+                digest.update(id.to_le_bytes());
+                digest.update([u8::from(named)]);
+                digest.update(name.as_bytes());
+                digest.update([0]);
+            }
+        }
+        for id in 1..=catalog.field_count() as u16 {
+            if let Some(name) = catalog.field_name(id) {
+                digest.update(id.to_le_bytes());
+                digest.update(name.as_bytes());
+                digest.update([0]);
+            }
+        }
+        let digest = format!("{:x}", digest.finalize())[..16].to_owned();
+        Self { dialect, catalog, kinds, digest }
+    }
+
+    /// The header's `grammar=` value.
+    fn header(&self) -> String {
+        format!("{}@{}", dialect_name(self.dialect), self.digest)
+    }
+
+    fn bare(name: &str) -> bool {
+        name.chars().next().is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    /// A kind as it prints.
+    fn kind(&self, id: u16) -> String {
+        let named = self.catalog.kind_is_named(id);
+        match self.catalog.kind_name(id) {
+            Some(name) if self.kinds.get(&(name, named)) == Some(&id) && (!named || Self::bare(name)) => {
+                if named { name.to_owned() } else { quote(name.as_bytes()) }
+            }
+            _ => format!("#{id}"),
+        }
+    }
+
+    fn field(&self, id: u16) -> String {
+        match self.catalog.field_name(id) {
+            Some(name) if self.catalog.field_id(name) == Some(id) && Self::bare(name) => name.to_owned(),
+            _ => format!("#{id}"),
+        }
+    }
+}
+
+/// A kind as it prints with `names` (a derived class, or without a grammar, as `#id`).
+pub(in crate::code_rule_dsl) fn kind(names: Option<&Names>, id: u16) -> String {
+    match names {
+        Some(names) if id < DERIVED_CLASS_BASE => names.kind(id),
+        _ => format!("#{id}"),
+    }
+}
+
+fn field(names: Option<&Names>, id: u16) -> String {
+    names.map_or_else(|| format!("#{id}"), |names| names.field(id))
+}
+
+/// Kinds as a list.
+pub(in crate::code_rule_dsl) fn kinds(names: Option<&Names>, ids: &[u16]) -> String {
+    format!("[{}]", ids.iter().map(|&id| kind(names, id)).collect::<Vec<_>>().join(" "))
 }
 
 /// `bytes` as a quoted string: printable ASCII as itself, `"` and `\` escaped, the rest `\xNN`.
@@ -88,37 +207,51 @@ fn flag(value: bool) -> u8 {
     u8::from(value)
 }
 
-fn list(prefix: &str, items: &[u16]) -> String {
-    format!("[{}]", items.iter().map(|item| format!("{prefix}{item}")).collect::<Vec<_>>().join(" "))
+fn strings(items: &[u16]) -> String {
+    format!("[{}]", items.iter().map(|item| format!("s{item}")).collect::<Vec<_>>().join(" "))
 }
 
-fn pattern(out: &mut String, node: &PackedPattern) {
+/// The program's capabilities (the module's `caps`).
+pub(in crate::code_rule_dsl) fn caps(program: &Program) -> String {
+    let mut caps = vec!["interp"];
+    if Micro::of(program).is_some() {
+        caps.push("micro");
+    }
+    if program.ast_pattern.is_some() {
+        caps.push("pattern");
+    }
+    caps.join(",")
+}
+
+fn pattern(out: &mut String, node: &PackedPattern, names: Option<&Names>) {
     let name = |name: &Option<String>| name.as_ref().map_or("-".to_owned(), |name| quote(name.as_bytes()));
+    let named = |named: bool| if named { "named" } else { "any" };
     match node {
-        PackedPattern::Terminal { text, named, kind } => {
-            let _ = write!(out, "(terminal {kind} {} {})", if *named { "named" } else { "any" }, quote(text.as_bytes()));
+        PackedPattern::Terminal { text, named: is_named, kind: id } => {
+            let _ = write!(out, "(terminal {} {} {})", kind(names, *id), named(*is_named), quote(text.as_bytes()));
         }
-        PackedPattern::Single { name: single, named } => {
-            let _ = write!(out, "(single {} {})", name(single), if *named { "named" } else { "any" });
+        PackedPattern::Single { name: single, named: is_named } => {
+            let _ = write!(out, "(single {} {})", name(single), named(*is_named));
         }
         PackedPattern::Ellipsis(ellipsis) => {
             let _ = write!(out, "(ellipsis {})", name(ellipsis));
         }
-        PackedPattern::Internal { kind, children } => {
-            let _ = write!(out, "(internal {kind}");
+        PackedPattern::Internal { kind: id, children } => {
+            let _ = write!(out, "(internal {}", kind(names, *id));
             for child in children {
                 out.push(' ');
-                pattern(out, child);
+                pattern(out, child, names);
             }
             out.push(')');
         }
     }
 }
 
-/// The program as `rir`.
-pub(in crate::code_rule_dsl) fn disassemble(program: &Program) -> String {
+/// The program as `rir`, its kinds and fields named by `names` where given.
+pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Names>) -> String {
     let mut out = String::new();
-    let _ = writeln!(out, "program sha256:{}", program.plain_digest());
+    let grammar = names.map_or("none".to_owned(), Names::header);
+    let _ = writeln!(out, "program sha256:{} ir={IR} grammar={grammar} caps={}", program.plain_digest(), caps(program));
     let _ = writeln!(out, "  mode set={} query={}", flag(program.set_mode), flag(program.tree_sitter_query));
     for (at, string) in program.strings.iter().enumerate() {
         let _ = writeln!(out, "  string {at} {}", quote(string));
@@ -146,18 +279,18 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program) -> String {
             CapturePredicate::Text { capture, predicate, negated, any } => {
                 format!("text L{capture} P{predicate} negated={} any={}", flag(*negated), flag(*any))
             }
-            CapturePredicate::AnyOf { capture, strings, negated, any } => {
-                format!("any-of L{capture} {} negated={} any={}", list("s", strings), flag(*negated), flag(*any))
+            CapturePredicate::AnyOf { capture, strings: of, negated, any } => {
+                format!("any-of L{capture} {} negated={} any={}", strings(of), flag(*negated), flag(*any))
             }
-            CapturePredicate::Kind { capture, kind, negated, any } => {
-                format!("kind L{capture} {kind} negated={} any={}", flag(*negated), flag(*any))
+            CapturePredicate::Kind { capture, kind: id, negated, any } => {
+                format!("kind L{capture} {} negated={} any={}", kind(names, *id), flag(*negated), flag(*any))
             }
-            CapturePredicate::Kinds { capture, kinds, negated } => format!("kinds L{capture} {} negated={}", list("", kinds), flag(*negated)),
-            CapturePredicate::Contains { capture, strings, negated, any } => {
-                format!("contains L{capture} {} negated={} any={}", list("s", strings), flag(*negated), flag(*any))
+            CapturePredicate::Kinds { capture, kinds: ids, negated } => format!("kinds L{capture} {} negated={}", kinds(names, ids), flag(*negated)),
+            CapturePredicate::Contains { capture, strings: of, negated, any } => {
+                format!("contains L{capture} {} negated={} any={}", strings(of), flag(*negated), flag(*any))
             }
-            CapturePredicate::Relation { capture, kinds, ancestor, negated } => {
-                format!("relation L{capture} {} ancestor={} negated={}", list("", kinds), flag(*ancestor), flag(*negated))
+            CapturePredicate::Relation { capture, kinds: ids, ancestor, negated } => {
+                format!("relation L{capture} {} ancestor={} negated={}", kinds(names, ids), flag(*ancestor), flag(*negated))
             }
             CapturePredicate::SameLine { left, right, negated } => format!("same-line L{left} L{right} negated={}", flag(*negated)),
         };
@@ -180,24 +313,28 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program) -> String {
     }
     if let Some(node) = &program.ast_pattern {
         out.push_str("  pattern ");
-        pattern(&mut out, node);
+        pattern(&mut out, node, names);
         out.push('\n');
     }
     for (pc, &instruction) in program.words.iter().enumerate() {
-        let (opcode, mode, operand) = split(instruction);
+        let (opcode, mode, arg) = split(instruction);
         let name = OPCODES.iter().find(|(code, _)| *code == opcode).map(|(_, name)| (*name).to_owned());
         let name = name.unwrap_or_else(|| format!("OP_{opcode:02x}"));
         let _ = write!(out, "  {pc:04} {name}");
         if mode != 0 {
             let _ = write!(out, " m={mode}");
         }
-        if matches!(opcode, FORK | GOTO) {
-            let _ = write!(out, " @{operand:04}");
-        } else {
-            let _ = write!(out, " {}{operand}", prefix(opcode));
-        }
-        if matches!(opcode, CAPTURE | EMIT)
-            && let Some(name) = program.label_name(operand)
+        let _ = match operand(opcode) {
+            Operand::Target => write!(out, " @{arg:04}"),
+            Operand::Label => write!(out, " L{arg}"),
+            Operand::Predicate => write!(out, " P{arg}"),
+            Operand::Assert => write!(out, " A{arg}"),
+            Operand::Kind => write!(out, " {}", kind(names, arg)),
+            Operand::Field => write!(out, " {}", field(names, arg)),
+            Operand::Number => write!(out, " {arg}"),
+        };
+        if operand(opcode) == Operand::Label
+            && let Some(name) = program.label_name(arg)
         {
             let _ = write!(out, "  ; {name}");
         }
@@ -206,79 +343,86 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program) -> String {
     out
 }
 
-/// A token of a `rir` line: a word, a quoted string, or a parenthesis.
+/// A token of a `rir` line: a word, a quoted string, a parenthesis or a bracket.
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Word(String),
     Quoted(Vec<u8>),
     Open,
     Close,
+    OpenList,
+    CloseList,
 }
 
 fn tokens(line: &str) -> Result<Vec<Token>, String> {
     let bytes = line.as_bytes();
     let (mut out, mut at) = (Vec::new(), 0);
     while at < bytes.len() {
-        match bytes[at] {
+        let single = match bytes[at] {
             b';' => break,
-            b' ' | b'\t' => at += 1,
-            b'(' => {
-                out.push(Token::Open);
+            b' ' | b'\t' => {
                 at += 1;
+                continue;
             }
-            b')' => {
-                out.push(Token::Close);
-                at += 1;
-            }
-            b'"' => {
-                at += 1;
-                let mut text = Vec::new();
-                loop {
-                    match bytes.get(at) {
-                        None => return Err("an unterminated string".into()),
-                        Some(b'"') => {
-                            at += 1;
-                            break;
-                        }
-                        Some(b'\\') => {
-                            match bytes.get(at + 1) {
-                                Some(b'"') => text.push(b'"'),
-                                Some(b'\\') => text.push(b'\\'),
-                                Some(b'x') => {
-                                    let hex = line.get(at + 2..at + 4).ok_or("a short \\x escape")?;
-                                    text.push(u8::from_str_radix(hex, 16).map_err(|_| "a bad \\x escape")?);
-                                    at += 2;
-                                }
-                                _ => return Err("an unknown escape".into()),
+            b'(' => Some(Token::Open),
+            b')' => Some(Token::Close),
+            b'[' => Some(Token::OpenList),
+            b']' => Some(Token::CloseList),
+            _ => None,
+        };
+        if let Some(token) = single {
+            out.push(token);
+            at += 1;
+            continue;
+        }
+        if bytes[at] == b'"' {
+            at += 1;
+            let mut text = Vec::new();
+            loop {
+                match bytes.get(at) {
+                    None => return Err("an unterminated string".into()),
+                    Some(b'"') => {
+                        at += 1;
+                        break;
+                    }
+                    Some(b'\\') => {
+                        match bytes.get(at + 1) {
+                            Some(b'"') => text.push(b'"'),
+                            Some(b'\\') => text.push(b'\\'),
+                            Some(b'x') => {
+                                let hex = line.get(at + 2..at + 4).ok_or("a short \\x escape")?;
+                                text.push(u8::from_str_radix(hex, 16).map_err(|_| "a bad \\x escape")?);
+                                at += 2;
                             }
-                            at += 2;
+                            _ => return Err("an unknown escape".into()),
                         }
-                        Some(&byte) => {
-                            text.push(byte);
-                            at += 1;
-                        }
+                        at += 2;
+                    }
+                    Some(&byte) => {
+                        text.push(byte);
+                        at += 1;
                     }
                 }
-                out.push(Token::Quoted(text));
             }
-            _ => {
-                let start = at;
-                while at < bytes.len() && !matches!(bytes[at], b' ' | b'\t' | b'(' | b')' | b'"' | b';') {
-                    at += 1;
-                }
-                out.push(Token::Word(line[start..at].to_owned()));
-            }
+            out.push(Token::Quoted(text));
+            continue;
         }
+        let start = at;
+        while at < bytes.len() && !matches!(bytes[at], b' ' | b'\t' | b'(' | b')' | b'[' | b']' | b'"' | b';') {
+            at += 1;
+        }
+        out.push(Token::Word(line.get(start..at).ok_or("a word splits a character")?.to_owned()));
     }
     Ok(out)
 }
 
-/// A line's tokens, read in order.
-struct Line {
-    tokens: std::vec::IntoIter<Token>,
+/// A line's tokens, read in order, with the grammar's names.
+struct Line<'a> {
+    tokens: std::iter::Peekable<std::vec::IntoIter<Token>>,
+    names: Option<&'a Names>,
 }
 
-impl Line {
+impl Line<'_> {
     fn next(&mut self) -> Result<Token, String> {
         self.tokens.next().ok_or_else(|| "a missing operand".to_owned())
     }
@@ -318,18 +462,44 @@ impl Line {
         word.strip_prefix(prefix).and_then(|number| number.parse().ok()).map(Some).ok_or_else(|| format!("a bad operand `{word}`"))
     }
 
-    fn list(&mut self, prefix: &str) -> Result<Vec<u16>, String> {
-        let first = self.word()?;
-        let mut words = vec![first];
-        while !words.last().is_some_and(|word| word.ends_with(']')) {
-            words.push(self.word()?);
+    /// A kind: `#id`, a named kind's name, or an anonymous kind's quoted name.
+    fn kind(&mut self) -> Result<u16, String> {
+        match self.next()? {
+            Token::Word(word) if word.starts_with('#') => word[1..].parse().map_err(|_| format!("a bad kind `{word}`")),
+            Token::Word(word) => self.lookup(&word, true),
+            Token::Quoted(text) => self.lookup(&String::from_utf8(text).map_err(|_| "a kind's name is UTF-8")?, false),
+            other => Err(format!("expected a kind, found {other:?}")),
         }
-        let joined = words.join(" ");
-        let inner = joined.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')).ok_or_else(|| format!("a bad list `{joined}`"))?;
-        inner
-            .split_whitespace()
-            .map(|item| item.strip_prefix(prefix).and_then(|number| number.parse().ok()).ok_or_else(|| format!("a bad list item `{item}`")))
-            .collect()
+    }
+
+    fn lookup(&self, name: &str, named: bool) -> Result<u16, String> {
+        let names = self.names.ok_or_else(|| format!("kind `{name}` without a grammar"))?;
+        names.kinds.get(&(name, named)).copied().ok_or_else(|| format!("no {} kind `{name}` in {}", if named { "named" } else { "anonymous" }, names.header()))
+    }
+
+    fn field(&mut self) -> Result<u16, String> {
+        let word = self.word()?;
+        if let Some(id) = word.strip_prefix('#') {
+            return id.parse().map_err(|_| format!("a bad field `{word}`"));
+        }
+        let names = self.names.ok_or_else(|| format!("field `{word}` without a grammar"))?;
+        names.catalog.field_id(&word).ok_or_else(|| format!("no field `{word}` in {}", names.header()))
+    }
+
+    /// A bracketed list of items read by `item`.
+    fn list(&mut self, mut item: impl FnMut(&mut Self) -> Result<u16, String>) -> Result<Vec<u16>, String> {
+        if self.next()? != Token::OpenList {
+            return Err("a list opens with `[`".into());
+        }
+        let mut out = Vec::new();
+        while self.tokens.peek() != Some(&Token::CloseList) {
+            if self.tokens.peek().is_none() {
+                return Err("a list closes with `]`".into());
+            }
+            out.push(item(self)?);
+        }
+        self.next()?;
+        Ok(out)
     }
 
     fn end(&mut self) -> Result<(), String> {
@@ -340,18 +510,21 @@ impl Line {
     }
 }
 
-fn parse_pattern(line: &mut Line) -> Result<PackedPattern, String> {
+fn parse_pattern(line: &mut Line<'_>, depth: usize) -> Result<PackedPattern, String> {
+    if depth > 256 {
+        return Err("a pattern nested past 256 levels".into());
+    }
     if line.next()? != Token::Open {
         return Err("a pattern node opens with `(`".into());
     }
-    let name = |line: &mut Line| -> Result<Option<String>, String> {
+    let name = |line: &mut Line<'_>| -> Result<Option<String>, String> {
         match line.next()? {
             Token::Word(word) if word == "-" => Ok(None),
             Token::Quoted(text) => String::from_utf8(text).map(Some).map_err(|_| "a capture name is UTF-8".to_owned()),
             other => Err(format!("expected a name, found {other:?}")),
         }
     };
-    let named = |line: &mut Line| -> Result<bool, String> {
+    let named = |line: &mut Line<'_>| -> Result<bool, String> {
         match line.word()?.as_str() {
             "named" => Ok(true),
             "any" => Ok(false),
@@ -360,7 +533,7 @@ fn parse_pattern(line: &mut Line) -> Result<PackedPattern, String> {
     };
     let node = match line.word()?.as_str() {
         "terminal" => {
-            let kind = line.number("")?;
+            let kind = line.kind()?;
             let named = named(line)?;
             let text = String::from_utf8(line.quoted()?).map_err(|_| "a terminal's text is UTF-8")?;
             PackedPattern::Terminal { text, named, kind }
@@ -371,13 +544,12 @@ fn parse_pattern(line: &mut Line) -> Result<PackedPattern, String> {
         }
         "ellipsis" => PackedPattern::Ellipsis(name(line)?),
         "internal" => {
-            let kind = line.number("")?;
+            let kind = line.kind()?;
             let mut children = Vec::new();
             loop {
-                let mut ahead = line.tokens.clone();
-                match ahead.next() {
+                match line.tokens.peek() {
                     Some(Token::Close) => break,
-                    Some(Token::Open) => children.push(parse_pattern(line)?),
+                    Some(Token::Open) => children.push(parse_pattern(line, depth + 1)?),
                     other => return Err(format!("expected a child or `)`, found {other:?}")),
                 }
             }
@@ -395,6 +567,7 @@ fn parse_pattern(line: &mut Line) -> Result<PackedPattern, String> {
 #[derive(Default)]
 struct Parts {
     digest: Option<String>,
+    caps: Option<String>,
     set_mode: bool,
     query: bool,
     strings: Vec<Vec<u8>>,
@@ -408,7 +581,7 @@ struct Parts {
 }
 
 /// Checks a table row's index: the rows are in order from 0.
-fn index(line: &mut Line, count: usize, what: &str) -> Result<(), String> {
+fn index(line: &mut Line<'_>, count: usize, what: &str) -> Result<(), String> {
     let at: usize = line.number("")?;
     if at != count {
         return Err(format!("{what} {at} out of order (expected {count})"));
@@ -416,7 +589,8 @@ fn index(line: &mut Line, count: usize, what: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn row(parts: &mut Parts, line: &mut Line, keyword: &str) -> Result<(), String> {
+fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), String> {
+    let string = |line: &mut Line<'_>| line.number::<u16>("s");
     match keyword {
         "mode" => {
             parts.set_mode = line.keyed("set")?;
@@ -444,11 +618,11 @@ fn row(parts: &mut Parts, line: &mut Line, keyword: &str) -> Result<(), String> 
             let predicate = match line.word()?.as_str() {
                 "equal" => CapturePredicate::Equal { left: line.number("L")?, right: line.number("L")?, negated: line.keyed("negated")?, any: line.keyed("any")? },
                 "text" => CapturePredicate::Text { capture: line.number("L")?, predicate: line.number("P")?, negated: line.keyed("negated")?, any: line.keyed("any")? },
-                "any-of" => CapturePredicate::AnyOf { capture: line.number("L")?, strings: line.list("s")?, negated: line.keyed("negated")?, any: line.keyed("any")? },
-                "kind" => CapturePredicate::Kind { capture: line.number("L")?, kind: line.number("")?, negated: line.keyed("negated")?, any: line.keyed("any")? },
-                "kinds" => CapturePredicate::Kinds { capture: line.number("L")?, kinds: line.list("")?, negated: line.keyed("negated")? },
-                "contains" => CapturePredicate::Contains { capture: line.number("L")?, strings: line.list("s")?, negated: line.keyed("negated")?, any: line.keyed("any")? },
-                "relation" => CapturePredicate::Relation { capture: line.number("L")?, kinds: line.list("")?, ancestor: line.keyed("ancestor")?, negated: line.keyed("negated")? },
+                "any-of" => CapturePredicate::AnyOf { capture: line.number("L")?, strings: line.list(string)?, negated: line.keyed("negated")?, any: line.keyed("any")? },
+                "kind" => CapturePredicate::Kind { capture: line.number("L")?, kind: line.kind()?, negated: line.keyed("negated")?, any: line.keyed("any")? },
+                "kinds" => CapturePredicate::Kinds { capture: line.number("L")?, kinds: line.list(Line::kind)?, negated: line.keyed("negated")? },
+                "contains" => CapturePredicate::Contains { capture: line.number("L")?, strings: line.list(string)?, negated: line.keyed("negated")?, any: line.keyed("any")? },
+                "relation" => CapturePredicate::Relation { capture: line.number("L")?, kinds: line.list(Line::kind)?, ancestor: line.keyed("ancestor")?, negated: line.keyed("negated")? },
                 "same-line" => CapturePredicate::SameLine { left: line.number("L")?, right: line.number("L")?, negated: line.keyed("negated")? },
                 other => return Err(format!("an unknown assertion `{other}`")),
             };
@@ -488,7 +662,7 @@ fn row(parts: &mut Parts, line: &mut Line, keyword: &str) -> Result<(), String> 
             if parts.pattern.is_some() {
                 return Err("a second pattern".into());
             }
-            parts.pattern = Some(parse_pattern(line)?);
+            parts.pattern = Some(parse_pattern(line, 0)?);
         }
         pc => {
             let pc: usize = pc.parse().map_err(|_| format!("an unknown row `{pc}`"))?;
@@ -503,29 +677,57 @@ fn row(parts: &mut Parts, line: &mut Line, keyword: &str) -> Result<(), String> 
                     .and_then(|hex| u8::from_str_radix(hex, 16).ok())
                     .ok_or_else(|| format!("an unknown opcode `{name}`"))?,
             };
-            let mut operand = line.word()?;
             let mut mode = 0_u8;
-            if let Some(value) = operand.strip_prefix("m=") {
-                mode = value.parse().map_err(|_| format!("a bad mode `{operand}`"))?;
-                operand = line.word()?;
+            if let Some(Token::Word(word)) = line.tokens.peek()
+                && let Some(value) = word.strip_prefix("m=")
+            {
+                mode = value.parse().map_err(|_| format!("a bad mode `{word}`"))?;
+                line.next()?;
             }
-            let operand = operand
-                .strip_prefix(prefix(opcode))
-                .and_then(|number| number.parse::<u16>().ok())
-                .ok_or_else(|| format!("a bad operand `{operand}` for {name}"))?;
-            parts.words.push(word(opcode, mode, operand));
+            let prefixed = |line: &mut Line<'_>, prefix: &str| line.number::<u16>(prefix);
+            let arg = match operand(opcode) {
+                Operand::Target => prefixed(line, "@")?,
+                Operand::Label => prefixed(line, "L")?,
+                Operand::Predicate => prefixed(line, "P")?,
+                Operand::Assert => prefixed(line, "A")?,
+                Operand::Kind => line.kind()?,
+                Operand::Field => line.field()?,
+                Operand::Number => prefixed(line, "")?,
+            };
+            parts.words.push(word(opcode, mode, arg));
         }
     }
     line.end()
 }
 
+/// The header's grammar: `none`, or a dialect and the digest of the tables it was dumped with.
+fn grammar(value: &str) -> Result<Option<Names>, String> {
+    if value == "none" {
+        return Ok(None);
+    }
+    let (name, digest) = value.split_once('@').ok_or("a grammar is `name@digest` or `none`")?;
+    let dialect = crate::code_rule_dsl::language::dialect_by_label(name).ok_or_else(|| format!("an unknown grammar `{name}`"))?;
+    let names = Names::of(dialect);
+    if names.digest != digest {
+        return Err(format!("the grammar's tables changed since the dump ({} now, {value} then)", names.header()));
+    }
+    Ok(Some(names))
+}
+
 /// One program from `rir`, through the verifier.
 pub(in crate::code_rule_dsl) fn assemble(text: &str) -> Result<Program, String> {
+    assemble_named(text).map(|(program, _)| program)
+}
+
+/// One program from `rir`, through the verifier, with the grammar its header names.
+pub(in crate::code_rule_dsl) fn assemble_named(text: &str) -> Result<(Program, Option<Names>), String> {
     let mut parts = Parts::default();
+    let mut names = None;
     let mut header = false;
     for (number, raw) in text.lines().enumerate() {
         let context = |error: String| format!("line {}: {error}", number + 1);
-        let mut line = Line { tokens: tokens(raw).map_err(context)?.into_iter() };
+        let tokens = tokens(raw).map_err(context)?;
+        let mut line = Line { tokens: tokens.into_iter().peekable(), names: names.as_ref() };
         let Some(first) = line.tokens.next() else { continue };
         let Token::Word(keyword) = first else { return Err(context("a row starts with a word".into())) };
         if !header {
@@ -537,7 +739,19 @@ pub(in crate::code_rule_dsl) fn assemble(text: &str) -> Result<Program, String> 
                 "-" => None,
                 _ => Some(digest.strip_prefix("sha256:").ok_or_else(|| context("a digest is `sha256:…` or `-`".into()))?.to_owned()),
             };
-            line.end().map_err(context)?;
+            let mut found = None;
+            while line.tokens.peek().is_some() {
+                let field = line.word().map_err(context)?;
+                let (key, value) = field.split_once('=').ok_or_else(|| context(format!("a header field is `key=value`, not `{field}`")))?;
+                match key {
+                    "ir" if value == IR.to_string() => {}
+                    "ir" => return Err(context(format!("ir={value}; this assembler reads ir={IR}"))),
+                    "grammar" => found = grammar(value).map_err(context)?,
+                    "caps" => parts.caps = Some(value.to_owned()),
+                    other => return Err(context(format!("an unknown header field `{other}`"))),
+                }
+            }
+            names = found;
             header = true;
             continue;
         }
@@ -546,7 +760,7 @@ pub(in crate::code_rule_dsl) fn assemble(text: &str) -> Result<Program, String> 
     if !header {
         return Err("no program".into());
     }
-    build(parts)
+    Ok((build(parts)?, names))
 }
 
 fn build(parts: Parts) -> Result<Program, String> {
@@ -616,12 +830,17 @@ fn build(parts: Parts) -> Result<Program, String> {
     {
         return Err(format!("the program's digest is sha256:{}, not sha256:{digest}", program.plain_digest()));
     }
+    if let Some(stated) = parts.caps
+        && stated != caps(&program)
+    {
+        return Err(format!("the program's caps are {}, not {stated}", caps(&program)));
+    }
     Ok(program)
 }
 
 /// Every `program` block of `text` (a dump may hold other sections): each from its `program`
 /// line to the next line that is not indented.
-pub(in crate::code_rule_dsl) fn assemble_all(text: &str) -> Result<Vec<Program>, String> {
+pub(in crate::code_rule_dsl) fn assemble_all(text: &str) -> Result<Vec<(Program, Option<Names>)>, String> {
     let mut blocks: Vec<(usize, String)> = Vec::new();
     let mut open = false;
     for (number, line) in text.lines().enumerate() {
@@ -638,23 +857,30 @@ pub(in crate::code_rule_dsl) fn assemble_all(text: &str) -> Result<Vec<Program>,
     }
     blocks
         .into_iter()
-        .map(|(number, block)| assemble(&block).map_err(|error| format!("the program at line {}: {error}", number + 1)))
+        .map(|(number, block)| assemble_named(&block).map_err(|error| format!("the program at line {}: {error}", number + 1)))
         .collect()
 }
 
-/// A fused pack (`fusion::Fused`) as `rir`: its members (by digest), its emit table (each fused
-/// label's member and the member's own label), where each member's captures start, the members'
-/// shared prefix, then the fused program.
-pub(in crate::code_rule_dsl) fn fused(pack: &super::fusion::Fused, members: &[&Program]) -> String {
+/// A fused pack (`fusion::Fused`) as `rir`: its members by digest, each with its dispatch (its
+/// entry test, `fusion::entry_key`, and where its branch starts past the shared prefix) and where
+/// its captures start; its emit table (each fused label's member and the member's own label);
+/// then the fused program.
+pub(in crate::code_rule_dsl) fn fused(pack: &super::fusion::Fused, members: &[&Program], names: Option<&Names>) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "group members={} prefix={}", members.len(), pack.prefix);
     for (at, member) in members.iter().enumerate() {
-        let _ = writeln!(out, "  member {at} sha256:{} captures-from=L{}", member.plain_digest(), pack.captures.get(at).copied().unwrap_or(0));
+        let entry = super::fusion::entry_key(member).map_or("-".to_owned(), |first| {
+            let (opcode, _, arg) = split(first);
+            format!("{}:{}", if opcode == KIND { "kind" } else { "supertype" }, kind(names, arg))
+        });
+        let start = pack.starts.get(at).copied().unwrap_or(0);
+        let captures = pack.captures.get(at).copied().unwrap_or(0);
+        let _ = writeln!(out, "  member {at} sha256:{} entry={entry} branch=@{start:04} captures-from=L{captures}", member.plain_digest());
     }
     for (at, (member, label)) in pack.emits.iter().enumerate() {
         let _ = writeln!(out, "  emit L{at} member={member} L{label}");
     }
-    out.push_str(&disassemble(&pack.program));
+    out.push_str(&disassemble(&pack.program, names));
     out
 }
 

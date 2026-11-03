@@ -116,12 +116,16 @@ impl Wave {
         &self.lowered
     }
 
-    /// The wave as `rir` (list step 18): the lowered wave (`LoweredWave::dump`) and its
-    /// candidates' set plan (`prefilter::sets::dump`).
-    pub(in crate::code_rule_dsl) fn dump(&self) -> StoreResult<String> {
-        let mut out = self.lowered.dump(&self.names).map_err(invalid)?;
-        let plans = self.plans.iter().map(|plan| plan.as_ref()).collect::<Vec<_>>();
-        out.push_str(&crate::code_rule_dsl::prefilter::sets::dump(&plans));
+    /// The wave as `rir` (list step 18, `rerail engine dump`), its kinds and fields named by
+    /// its grammar: the lowered wave (`LoweredWave::dump`; with `fused` its plan, packs and
+    /// groups), and with `setplan` its candidates' set plan (`prefilter::sets::dump`).
+    pub(in crate::code_rule_dsl) fn dump(&self, fused: bool, setplan: bool) -> StoreResult<String> {
+        let grammar = crate::code_rule_dsl::transducer::packed::rir::Names::of(GrammarDialect::Python);
+        let mut out = self.lowered.dump(&self.names, Some(&grammar), fused).map_err(invalid)?;
+        if setplan {
+            let plans = self.plans.iter().map(|plan| plan.as_ref()).collect::<Vec<_>>();
+            out.push_str(&crate::code_rule_dsl::prefilter::sets::dump(&plans, Some(&grammar)));
+        }
         Ok(out)
     }
 

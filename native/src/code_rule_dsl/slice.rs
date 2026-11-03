@@ -63,15 +63,30 @@ impl Rules {
         Ok(Self { wave: Wave::new(&clauses, backend)?, digest: layer.digest(), layer, backing: Backing::default() })
     }
 
-    /// The lowered rules as `rir` (list step 18): the wave's programs, labels, packs and set plan.
-    pub(in crate::code_rule_dsl) fn dump(&self) -> StoreResult<String> {
-        self.wave.dump()
+    /// The lowered rules as `rir` (list step 18): the wave's programs and label tables, with
+    /// `fused` its packs and groups, with `setplan` its set plan.
+    pub(in crate::code_rule_dsl) fn dump(&self, fused: bool, setplan: bool) -> StoreResult<String> {
+        self.wave.dump(fused, setplan)
     }
 
     /// How many clauses lowered.
     pub(in crate::code_rule_dsl) fn clauses(&self) -> usize {
         self.layer.shapes().len()
     }
+}
+
+/// `policies` lowered and dumped as `rir` (list step 18, `rerail engine dump --rule …`): the
+/// wave of their clauses, or of the one named `clause` (its `policy/clause` name, or its clause
+/// id), with `fused` and `setplan` as `Wave::dump`'s. No store: a dump reads only the rules.
+pub(in crate::code_rule_dsl) fn dump(policies: &[(String, CompiledCodeRuleDsl)], clause: Option<&str>, fused: bool, setplan: bool) -> StoreResult<String> {
+    let (mut clauses, _) = lowered(policies);
+    if let Some(name) = clause {
+        clauses.retain(|clause| clause.name == name || clause.name.rsplit('/').next() == Some(name));
+        if clauses.is_empty() {
+            return Err(crate::content_store::StoreError::Invalid(format!("no lowered clause `{name}`")));
+        }
+    }
+    Wave::new(&clauses, ExecutionBackend::CpuInterpreter)?.dump(fused, setplan)
 }
 
 /// The Python `forbid` clauses of `policies` whose `ast` matcher lowers, with each one's shape.

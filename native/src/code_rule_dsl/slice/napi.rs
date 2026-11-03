@@ -68,11 +68,11 @@ impl CodeRuleSlice {
         self.rules.clauses() as u32
     }
 
-    /// The lowered rules as `rir` (list step 18, `rerail engine dump`): programs, label tables,
-    /// fused packs and the set plan.
+    /// The lowered rules as `rir` (list step 18): programs and label tables, with `fused` the
+    /// packs and groups, with `setplan` the set plan.
     #[napi]
-    pub fn dump(&self) -> Result<String> {
-        self.rules.dump().map_err(failed)
+    pub fn dump(&self, fused: Option<bool>, setplan: Option<bool>) -> Result<String> {
+        self.rules.dump(fused.unwrap_or(false), setplan.unwrap_or(false)).map_err(failed)
     }
 
     /// A cold audit of `scope` at `directory`, as `observer` sees it: `"directory"` (the default,
@@ -95,13 +95,26 @@ impl CodeRuleSlice {
     }
 }
 
+/// `policies` lowered and dumped as `rir` (list step 18, `rerail engine dump --rule <file>
+/// [--clause <id>] [--fused] [--setplan]`), without a store.
+#[napi]
+#[cfg_attr(test, allow(dead_code))]
+pub fn dump_rir(policies: Vec<SlicePolicy>, capabilities_json: String, clause: Option<String>, fused: Option<bool>, setplan: Option<bool>) -> Result<String> {
+    let compiled = policies
+        .into_iter()
+        .map(|policy| Ok((policy.name, CodeRuleDslRuntime::compile(policy.source, policy.format, capabilities_json.clone())?)))
+        .collect::<Result<Vec<_>>>()?;
+    super::dump(&compiled, clause.as_deref(), fused.unwrap_or(false), setplan.unwrap_or(false)).map_err(failed)
+}
+
 /// `rir` assembled (list step 18, `rerail engine asm`): every `program` block of `text` through
 /// the verifier, returned as its dump, or the first refusal.
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
 pub fn assemble_rir(text: String) -> Result<String> {
-    let programs = crate::code_rule_dsl::transducer::packed::rir::assemble_all(&text).map_err(Error::from_reason)?;
-    Ok(programs.iter().map(crate::code_rule_dsl::transducer::packed::rir::disassemble).collect())
+    use crate::code_rule_dsl::transducer::packed::rir;
+    let programs = rir::assemble_all(&text).map_err(Error::from_reason)?;
+    Ok(programs.iter().map(|(program, grammar)| rir::disassemble(program, grammar.as_ref())).collect())
 }
 
 impl CodeRuleSlice {

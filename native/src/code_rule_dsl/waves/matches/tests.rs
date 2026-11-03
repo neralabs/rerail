@@ -176,27 +176,45 @@ fn the_wave_has_one_plan_identity_for_every_binding() {
     assert_ne!(fewer, plans[0], "a different wave is a different plan");
 }
 
-/// The wave as `rir` (list step 18): every program block of its dump assembles back through the
-/// verifier to the digest it is printed with, the dump does not depend on the binding, and it is
-/// the golden (`wave.rir`; `RERAIL_BLESS=1` rewrites it, deliberately).
+/// The wave as `rir` (list step 18, `rerail engine dump --fused --setplan`): every program block
+/// of its dump assembles back through the verifier to the digest it is printed with, with the
+/// grammar's names; the dump does not depend on the binding; without `--fused` and `--setplan`
+/// it is the label tables and programs only; and it is the golden (`wave.rir`; `RERAIL_BLESS=1`
+/// rewrites it, deliberately).
 #[test]
 fn the_wave_dumps_as_rir_and_assembles_back() {
     use crate::code_rule_dsl::transducer::packed::rir::{assemble_all, disassemble};
     let (clauses, _) = clauses();
-    let dump = Wave::new(&clauses, ExecutionBackend::CpuInterpreter).unwrap().dump().unwrap();
+    let wave = Wave::new(&clauses, ExecutionBackend::CpuInterpreter).unwrap();
+    let dump = wave.dump(true, true).unwrap();
     let programs = assemble_all(&dump).unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(programs.len(), dump.lines().filter(|line| line.starts_with("program ")).count());
-    assert!(programs.iter().all(|program| dump.contains(&disassemble(program))), "each block is its program's dump");
-    assert_eq!(dump, Wave::new(&clauses, ExecutionBackend::CpuJit).unwrap().dump().unwrap(), "one dump for every binding");
-    for section in ["wave sha256:", "\nclause 0 ", "\nplan\n", "      pack ", "\ngroup members=", "\nsetplan ops="] {
+    assert!(programs.iter().all(|(program, grammar)| grammar.is_some() && dump.contains(&disassemble(program, grammar.as_ref()))), "each block is its program's dump");
+    assert_eq!(dump, Wave::new(&clauses, ExecutionBackend::CpuJit).unwrap().dump(true, true).unwrap(), "one dump for every binding");
+    for section in ["wave sha256:", "\nclause 0 ", "\nplan\n", "      pack ", "\ngroup members=", " entry=kind:", "\nsetplan ops=", " grammar=python@"] {
         assert!(dump.contains(section), "{section}");
     }
+    let tables = wave.dump(false, false).unwrap();
+    assert!(!tables.contains("\nplan\n") && !tables.contains("\ngroup ") && !tables.contains("\nsetplan") && tables.contains("\nprogram "));
     let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/waves/matches/wave.rir");
     if std::env::var_os("RERAIL_BLESS").is_some() {
         std::fs::write(&golden, &dump).unwrap();
     }
     let expected = std::fs::read_to_string(&golden).unwrap_or_default();
     assert!(expected == dump, "the dump differs from {} (RERAIL_BLESS=1 to accept it)", golden.display());
+}
+
+/// `rerail engine dump --rule … --clause <id>`: one clause's wave, by its name or its id.
+#[test]
+fn a_dump_names_one_clause() {
+    let policies = policies();
+    let all = crate::code_rule_dsl::slice::dump(&policies, None, false, false).unwrap();
+    let first = all.lines().find(|line| line.starts_with("clause 0 ")).unwrap().split('"').nth(1).unwrap().to_owned();
+    let one = crate::code_rule_dsl::slice::dump(&policies, Some(&first), false, false).unwrap();
+    assert!(one.contains("clauses=1") && one.contains(&first), "{}", &one[..200.min(one.len())]);
+    let id = first.rsplit('/').next().unwrap();
+    assert!(crate::code_rule_dsl::slice::dump(&policies, Some(id), false, false).unwrap().contains(&first));
+    assert!(crate::code_rule_dsl::slice::dump(&policies, Some("no-such-clause"), false, false).is_err());
 }
 
 /// Chunks of one document each: a chunk's batch maps its files to its own documents.
