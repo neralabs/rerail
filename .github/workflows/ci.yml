@@ -651,7 +651,11 @@ jobs:
       - name: Score shard ${{ matrix.shard }} of 4
         env:
           SHARD: ${{ matrix.shard }}
-        run: npm run conformance:languages:check -- --shard "$SHARD/4" --results-out "$RUNNER_TEMP/conformance-results"
+        run: |
+          nproc; free -m; lscpu | grep -E 'Model name|Thread|Core|Socket'
+          vmstat 5 > "$RUNNER_TEMP/vmstat.log" &
+          npm run conformance:languages:check -- --shard "$SHARD/4" --results-out "$RUNNER_TEMP/conformance-results"
+          cat "$RUNNER_TEMP/vmstat.log"
 
       - name: Upload the shard's results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -192,11 +192,17 @@ export class WorkerPool {
     return promise;
   }
 
+  /**
+   * A free worker takes the first plan asked for, since jobs wait on it; else the first request for a pack it has
+   * planned; else the first.
+   */
   #next(): void {
     while (this.#failure === undefined && this.#idle.length > 0 && this.#waiting.length > 0) {
       const child = this.#idle.pop()!;
       const planned = this.#planned.get(child)!;
-      const [pending] = this.#waiting.splice(Math.max(0, this.#waiting.findIndex(({ request }) => planned.has(request.directory))), 1);
+      const plan = this.#waiting.findIndex(({ request }) => request.kind === "jobs");
+      const index = plan !== -1 ? plan : this.#waiting.findIndex(({ request }) => planned.has(request.directory));
+      const [pending] = this.#waiting.splice(Math.max(0, index), 1);
       planned.add(pending!.request.directory);
       this.#busy.set(child, pending!);
       child.send(pending!.request);
@@ -220,14 +226,15 @@ function unexpected(response: WorkerResponse): Error {
 }
 
 /**
- * Runs `shard` of every pack's jobs on `pool` and writes their results under `directory`. Each source's share goes out
- * in chunks of a quarter of a worker's share or so, the sources' chunks taken in turn, so they all finish about together.
+ * Runs `shard` of every pack's jobs on `pool` and writes their results under `directory`, a pack's as soon as its plan
+ * says what its jobs are; resolves to how many jobs it ran. Each source's share goes out in chunks of a quarter of a
+ * worker's share or so, the sources' chunks taken in turn.
  */
-export async function evaluateShard(pool: WorkerPool, directories: readonly string[], options: PlanOptions, shard: Shard, directory: string): Promise<void> {
-  const packs = await Promise.all(
+export async function evaluateShard(pool: WorkerPool, directories: readonly string[], options: PlanOptions, shard: Shard, directory: string): Promise<number> {
+  const counts = await Promise.all(
     directories.map(async packDirectory => {
       const jobs = await pool.jobs(packDirectory, options);
-      const blocks = shardJobs(jobs, shard).map(block => {
+      const sources = shardJobs(jobs, shard).map(block => {
         const target = block.reduce((sum, index) => sum + jobs[index]!.weight, 0) / (4 * pool.size);
         const chunks: number[][] = [];
         let weight = Infinity;
@@ -241,23 +248,14 @@ export async function evaluateShard(pool: WorkerPool, directories: readonly stri
         }
         return chunks;
       });
-      return { packDirectory, pack: loadPack(packDirectory).pack.pack, planned: jobs.length, blocks };
+      const turns = Math.max(0, ...sources.map(chunks => chunks.length));
+      const chunks = Array.from({ length: turns }, (_, turn) => sources.flatMap(chunksOf => (turn < chunksOf.length ? [chunksOf[turn]!] : []))).flat();
+      const evaluated = await Promise.all(chunks.map(chunk => pool.evaluate(packDirectory, options, chunk)));
+      writeResults(directory, loadPack(packDirectory).pack.pack, shard, jobs.length, chunks.flat(), evaluated.flat());
+      return chunks.flat().length;
     }),
   );
-  const sources = packs.flatMap(({ packDirectory, blocks }) => blocks.map(chunks => chunks.map(jobs => ({ packDirectory, jobs }))));
-  const turns = Math.max(0, ...sources.map(chunks => chunks.length));
-  const chunks = Array.from({ length: turns }, (_, turn) => sources.flatMap(chunksOf => (turn < chunksOf.length ? [chunksOf[turn]!] : []))).flat();
-  const evaluated = await Promise.all(chunks.map(({ packDirectory, jobs }) => pool.evaluate(packDirectory, options, jobs)));
-  for (const { packDirectory, pack, planned } of packs) {
-    const jobs: number[] = [];
-    const results: JobResult[] = [];
-    for (const [at, chunk] of chunks.entries()) {
-      if (chunk.packDirectory !== packDirectory) continue;
-      jobs.push(...chunk.jobs);
-      results.push(...evaluated[at]!);
-    }
-    writeResults(directory, pack, shard, planned, jobs, results);
-  }
+  return counts.reduce((sum, count) => sum + count, 0);
 }
 
 /** Each pack's report from the results under `results`, and the verdicts of its gated tool-packs, in path order. */

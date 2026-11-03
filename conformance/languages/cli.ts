@@ -165,7 +165,10 @@ async function check(directories: readonly string[], options: PlanOptions, paths
   const temporary = paths.results === undefined && paths.shard === undefined ? mkdtempSync(join(tmpdir(), "rerail-conformance-")) : undefined;
   try {
     if (paths.shard !== undefined) {
-      await evaluateShard(pool, directories, options, paths.shard.shard, paths.shard.out);
+      const { shard, out } = paths.shard;
+      const started = performance.now();
+      const jobs = await evaluateShard(pool, directories, options, shard, out);
+      console.log(`shard ${shard.index}/${shard.count}: ${jobs} evaluation(s) of ${directories.length} pack(s) on ${pool.size} worker(s) in ${Math.round((performance.now() - started) / 1000)} s, results in ${out}`);
       return true;
     }
     if (temporary !== undefined) await evaluateShard(pool, directories, options, { index: 1, count: 1 }, temporary);
