@@ -33,7 +33,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O30 | Phase 4 / 10 | S7's sample (250 files, 1.5 MB) on the CPU: peak RSS 972 MB against a 500 MB budget; labels 24 s of a 32 s cold audit, single-threaded (06 S7) | closed (2026-10-31, decision 0022): S7's engine-only footprint peak is 477 MB on Metal (was 0.99 GB) and 447 MB on the CPU backend (was 575–607), measured as `phys_footprint_peak` after the audit. Freed heap pages are returned at stage ends; SQLite allocates from jemalloc; the GPU's label prefix, scratch and counts are sized by the run; roots stream into rows with digested structure keys. Left: the driver's fixed ~170 MB per GPU execution, and sparse host labels if the corpus grows |
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
-| O33 | Phase 4 | G's grid executor (`ExecutionBackend::Metal`, not on the production path) exceeds the 99-launch bound on five parity tests | open: its parity is skipped where it refuses; production Metal is the label passes and set steps |
+| O33 | Phase 4 | G's grid executor (`ExecutionBackend::Metal`, not on the production path) exceeds the 99-launch bound on five parity tests | closed 2026-11-02: superseded by 0024 (decision 0028); kept as a copy until step 31 |
 
 ## O1. Stale-fact detection after a crash
 
@@ -909,6 +909,8 @@ label passes (44 launches on S7) and the set steps (1).
 **Closure:** the grid executor's frontier waves planned from the batch (its plan counts its
 launches, as `label_passes` does), or run on list step 17's device work queue (decision 0027). Otherwise it is removed
 with the copies it belongs to (list step 31).
+
+**Closed (2026-11-02, user decision; decision 0028).** Superseded by 0024: the grid executor is neither ported to the work queue nor put on the audit path. The pack census finds that 71 of about 15,600 lowered programs need a general executor. Four of its ideas are kept, with file pointers, for a small work-queue executor if that share grows: digit-ordered terminals, exact duplicate removal of active states, bulk closure scans and exact page boundaries. The code stays as a copy until list step 31.
 
 ## O34. Device rounds for groups whose members are other pipelines
 

@@ -394,6 +394,70 @@ fn broken(id: &str) -> Option<(String, CompiledCodeRuleDsl)> {
 /// (O29, SIM300, was the one entry until the sweeps set and cleared their verdicts.)
 const KNOWN: [(&str, &str, &str); 0] = [];
 
+/// The packs' census (decision 0028): over every pack's rules and candidates, how many `forbid`
+/// `ast` clauses lower (any language), and of their programs (root and label) how many are micro
+/// walks, the device's shape (0024), against those that need a general executor.
+#[test]
+#[ignore = "the packs' census; run with --ignored --nocapture"]
+fn pack_census() {
+    use crate::code_rule_dsl::matcher::match_tree;
+    use crate::code_rule_dsl::transducer::packed::{LoweredMatcher, Micro};
+    let packs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
+    let mut names = std::fs::read_dir(&packs).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| e.path()).collect::<Vec<_>>();
+    names.sort();
+    // The data-layer pack, the architecture's hardest test, lives in its own worktree (read only).
+    let data_layer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Data-layer-rule-expressivity/packs/data-layer");
+    if data_layer.is_dir() {
+        names.push(data_layer);
+    }
+    let mut total = BTreeMap::<String, [usize; 2]>::new();
+    for dir in names {
+        let pack = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let mut documents = Vec::new();
+        files(&dir.join("rules"), "json", &mut documents);
+        files(&dir.join("candidates/rules"), "json", &mut documents);
+        let (mut rules, mut refused, mut clauses, mut unlowered) = (0, 0, 0, 0);
+        let mut by = BTreeMap::<String, [usize; 2]>::new();
+        let mut examples = Vec::new();
+        let mut reasons = Vec::new();
+        for path in documents {
+            let text = std::fs::read_to_string(&path).unwrap();
+            let compiled = match CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()) {
+                Ok(compiled) => compiled,
+                Err(error) => {
+                    refused += 1;
+                    if reasons.len() < 3 {
+                        reasons.push(error.reason.chars().take(160).collect::<String>());
+                    }
+                    continue;
+                }
+            };
+            rules += 1;
+            for clause in &compiled.inner.clauses {
+                let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
+                for grammar in matchers {
+                    clauses += 1;
+                    let Some(matcher) = match_tree(grammar).ok().and_then(|tree| LoweredMatcher::lower(&tree).ok()) else {
+                        unlowered += 1;
+                        continue;
+                    };
+                    for (kind, program) in matcher.census() {
+                        let micro = Micro::of(program).is_some();
+                        let entry = by.entry(format!("{kind}/{}", crate::code_rule_dsl::language::label(grammar.language).unwrap_or("?"))).or_default();
+                        entry[usize::from(!micro)] += 1;
+                        total.entry(kind.to_owned()).or_default()[usize::from(!micro)] += 1;
+                        if !micro && kind != "pattern" && kind != "constrained" && examples.len() < 3 {
+                            examples.push(format!("{}#{} {kind}", path.file_stem().unwrap().to_string_lossy(), clause.id));
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("census {pack}: {rules} rules ({refused} refused), {clauses} forbid-ast matchers, {unlowered} not lowered; [micro, general] by label kind/language: {by:?}; general examples {examples:?}; refusals {reasons:?}");
+    }
+    eprintln!("census total [micro, general] by kind: {total:?}");
+}
+
 /// A rule naming a grammar supertype (O17: N's semantics) lowers to `SUPERTYPE` over the tape's
 /// memberships, and every backend finds the same members: the two calls, `expression`s holding an
 /// identifier (the assigned `x` is a `pattern`, and no identifier holds one).

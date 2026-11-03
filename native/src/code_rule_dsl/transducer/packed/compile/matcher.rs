@@ -2593,3 +2593,22 @@ impl<'a> Builder<'a> {
         Ok(self.label(Label::Targets(program, starts)))
     }
 }
+
+#[cfg(test)]
+impl LoweredMatcher {
+    /// The root program and each label's program, by label kind (the packs' census, decision 0028).
+    pub(in crate::code_rule_dsl) fn census(&self) -> Vec<(&'static str, &Program)> {
+        let mut programs = vec![("root", &self.program)];
+        for label in &self.labels.defs {
+            match label {
+                Label::Pattern(program, _) => programs.push(("pattern", program)),
+                Label::Constrained(program, _, _) => programs.push(("constrained", program)),
+                Label::Roots(program, _) => programs.push(("roots", program)),
+                Label::Targets(program, _) => programs.push(("targets", program)),
+                Label::Count { program, .. } => programs.push(("count", program)),
+                Label::Complement(_) | Label::Empty => {}
+            }
+        }
+        programs
+    }
+}
