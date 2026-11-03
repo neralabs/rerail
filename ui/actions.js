@@ -29,7 +29,7 @@ function addedRulesText(id) {
 }
 
 /** After a switch in the review. */
-const keptMessage = (id, keep) => `${packName(id)} ${keep ? "on" : "off"}.`;
+const keptMessage = (id, keep) => `${packName(id)} ${keep ? "kept" : "left out"}.`;
 
 /**
  * After a pack is removed: its rules that stay are the ones added to the repository on their own. No view lists them

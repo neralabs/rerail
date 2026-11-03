@@ -250,6 +250,7 @@ const ruleActivitySchema = z.object({
   loggedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those recorded in Log mode at the time, whatever the rule's mode is now."),
   rerails: z.number().int().nonnegative(),
   ...inactiveField,
+  removed: z.literal(true).optional().describe("Set on a rule no longer among the rules reported (taken out of the repository, or no longer installed or in the library) that has violations in range: listed for its history, with nothing to turn off."),
 }).strict();
 
 const violationRecordSchema = z.object({
@@ -361,7 +362,7 @@ export const operations: readonly Operation[] = [
     id: "rules_activity",
     method: "GET",
     path: "/api/rules/activity",
-    summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many audits evaluated it, and how many steering deliveries it drove. Use it to find rules worth disabling or rules that never fire.",
+    summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many audits evaluated it, and how many steering deliveries it drove. A rule taken out of the repository is listed, with `removed: true`, while it has violations in range. Use it to find rules worth disabling or rules that never fire.",
     query: z.object({ since: sinceParameter, ...repositoryFilter }).strict(),
     output: z.object({
       since: z.number().int().nonnegative(),
@@ -391,6 +392,11 @@ export const operations: readonly Operation[] = [
           rerails: kind === "conversation" ? 0 : rerails.get(id) ?? 0,
           ...(inactive === undefined ? {} : { inactive }),
         };
+      }
+      // A rule taken out since keeps its violations: History still lists it, marked removed.
+      for (const [id, totals] of activity) {
+        if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
+        rules[id] = { measured: true, ...totals, rerails: rerails.get(id) ?? 0, removed: true };
       }
       return {
         since: input.since,
