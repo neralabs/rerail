@@ -247,8 +247,8 @@ export function renderTimeline(tl, rail, sess, turns, cs, page) {
   const rulesPending = codeRulesPendingBoundaries(sess);
   const gaps = [
     ...(dropped === 0 ? [] : [`${fmt(dropped)} ${plural(dropped, "event")} never reached Rerail`]),
-    ...(unchecked === 0 ? [] : [`shell edits reached rules late ${fmt(unchecked)} ${plural(unchecked, "time")}`]),
-    ...(rulesPending === 0 ? [] : [`code rules weren’t ready ${fmt(rulesPending)} ${plural(rulesPending, "time")}`]),
+    ...(unchecked === 0 ? [] : [`rules had not yet seen shell edits at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
+    ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
   ].join("; ");
   setText(t.empty.querySelector("p"), gaps === ""
     ? `Rerail audited the whole session: ${fmt(sess.eventCount)} events.`

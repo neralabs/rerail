@@ -6,7 +6,7 @@
  */
 import { h, setAttr, setText, setContent, syncChildren, icon } from "../dom.js";
 import { fmt, plural, dayLabel, daysAgo, shortSessionId, whenLabel } from "../format.js";
-import { data, ui, rangeLabel, allFires, activityAllOf } from "../state.js";
+import { data, ui, ALL_TIME, rangeLabel, allFires, activityAllOf } from "../state.js";
 import { MODE_LABEL, ruleMode, messageText } from "../derive.js";
 import { loadMoreFindings, refreshNow } from "../poll.js";
 import { invalidate, loadMore } from "../shell.js";
@@ -14,8 +14,6 @@ import { rangeControl, syncRange } from "../render/range.js";
 import { OUTCOME_CHIPS, inRange, rankedRules, filterRanked, historyRuleId, historyTitle, historyOrigin, historyEmpty } from "../history-model.js";
 
 export const needs = ["rules", "packs", "activity", "findings"];
-
-const ALL_TIME = 9999;
 
 /** The icon and colour of each mode's chip: what Rerail does on it. Block steers until blocking ships, so it shows as steered. */
 const MODE_OUTCOME = { log: "logged", steer: "steered", block: "steered" };

@@ -92,7 +92,9 @@ export const data = {
   loaded: false,
 };
 
-export const RANGES = [[0, "Today"], [7, "7 days"], [30, "30 days"], [9999, "Since install"]];
+/** The Since install range: every range button's `data-i` is its days, and this one reaches back to the first record. */
+export const ALL_TIME = 9999;
+export const RANGES = [[0, "Today"], [7, "7 days"], [30, "30 days"], [ALL_TIME, "Since install"]];
 
 export const ui = {
   /** Set by `setScope` before the first poll; `null` lists repositories. */
@@ -144,7 +146,7 @@ export const ui = {
 const QUANTUM = 600_000;
 export function sinceFor(range = ui.range) {
   if (range === 0) return startOfDay();
-  if (range >= 9999) return 0;
+  if (range >= ALL_TIME) return 0;
   return Math.floor((Date.now() - range * 86_400_000) / QUANTUM) * QUANTUM;
 }
 

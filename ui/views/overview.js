@@ -6,7 +6,7 @@
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon } from "../dom.js";
 import { ago, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
 import { awaitingApproval, isFromPack, isRunning, worktreeLeftOut } from "../derive.js";
-import { data, ui, activityAllOf, fires, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
+import { data, ui, ALL_TIME, activityAllOf, fires, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
@@ -17,8 +17,6 @@ export const needs = ["rules", "packs", "activity", "recentSessions"];
 
 /** How many of the range's newest sessions Recent sessions lists. */
 const RECENT_SESSIONS = 5;
-/** The Since install range (`RANGES` in `state.js`): what a range without violations offers to widen to. */
-const ALL_TIME = 9999;
 
 /* ---------- what the page knows ---------- */
 
