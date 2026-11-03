@@ -126,7 +126,7 @@ From a Rerail checkout, `just rerail` runs the same set-up. To start in another 
 Prerequisites:
 
 - Node.js 24 or newer.
-- Git on your `PATH`. Rerail reads every repository through it, skipping a `git` inside the repository or a `node_modules` folder so a repository can't put its own first; when `PATH` has none, it looks in the usual install locations.
+- Git on your `PATH`. Rerail reads every repository through it, skipping a `git` inside the repository or a `node_modules` folder so a repository's own `bin/` can't put its `git` first; when `PATH` has none, it looks in the usual install locations.
 - macOS (arm64, x64), Linux with glibc 2.28 or newer, as Node 24 needs (arm64, x64), or Windows MSVC (arm64, x64). The package carries prebuilt native kernels for those targets; nothing is compiled on your machine. Alpine and other musl Linux are not supported.
 - [npmjs](https://www.npmjs.com/), the only registry Rerail is published to. The package is public: no npm account is needed.
 
