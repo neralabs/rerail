@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
+import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 
@@ -77,7 +78,7 @@ describe("headless rerail scan", () => {
     expect(new Set(after).size).toBe(2);
   });
 
-  it("runs the rules at --rules-ref at their own mode and ignores the working tree's rules", async () => {
+  it("runs the rules at --rules-ref, not the working tree's, in Log until a person approves that content", async () => {
     const root = checkout();
     git(root, "checkout", "--quiet", "-b", "feature");
     // The change under review weakens the rule and adds one of its own; neither may judge it.
@@ -85,10 +86,41 @@ describe("headless rerail scan", () => {
     writeRule(root, "extra.json", needle("extra", "x"));
     git(root, "add", ".");
     git(root, "commit", "--quiet", "-m", "weaken");
-    const report = await scan(root, { rulesRef: "main" });
-    expect(report.rulesSource).toEqual({ kind: "ref", ref: "main" });
-    expect(report.rules).toEqual([expect.objectContaining({ ruleId: "needle", mode: "steer", source: { kind: "ref", id: "needle", packId: null, ref: "main" } })]);
-    expect(report.violations).toEqual([expect.objectContaining({ ruleId: "needle", mode: "steer", path: "a.py" })]);
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const databasePath = join(home, "rerail.sqlite");
+    const quiet = { stdout: { write: () => true } };
+
+    const unapproved = await scan(root, { rulesRef: "main", databasePath });
+    expect(unapproved.rulesSource).toEqual({ kind: "ref", ref: "main" });
+    expect(unapproved.rules).toEqual([expect.objectContaining({ ruleId: "needle", mode: "log", source: { kind: "ref", id: "needle", packId: null, ref: "main" } })]);
+    expect(unapproved.violations).toEqual([expect.objectContaining({ ruleId: "needle", mode: "log", path: "a.py" })]);
+
+    // Approving the pull request's own content approves nothing the base branch runs.
+    runRuleApproveCommand(["needle", "--repo", root], () => "usage", quiet, databasePath);
+    expect((await scan(root, { rulesRef: "main", databasePath })).violations[0]!.mode).toBe("log");
+
+    // Approving the base branch's content, from a checkout of it, does.
+    const base = join(home, "base");
+    git(root, "worktree", "add", "--quiet", "--detach", base, "main");
+    runRuleApproveCommand(["needle", "--repo", base], () => "usage", quiet, databasePath);
+    const approved = await scan(root, { rulesRef: "main", databasePath });
+    expect(approved.rules).toEqual([expect.objectContaining({ ruleId: "needle", mode: "steer" })]);
+    expect(approved.violations).toEqual([expect.objectContaining({ ruleId: "needle", mode: "steer", path: "a.py" })]);
+  });
+
+  it("runs the working tree's own rules at their mode once a person approved them in the Rerail home", async () => {
+    const root = checkout();
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const databasePath = join(home, "rerail.sqlite");
+    runRuleApproveCommand(["needle", "--repo", root], () => "usage", { stdout: { write: () => true } }, databasePath);
+    expect((await scan(root, { databasePath })).violations).toEqual([expect.objectContaining({ mode: "steer" })]);
+  });
+
+  it("refuses a --pack that is not installed rather than scanning without it", async () => {
+    const root = checkout();
+    await expect(scan(root, { packs: ["@neralabs/rerail-pack-nope"] })).rejects.toThrow("--pack @neralabs/rerail-pack-nope is not installed");
   });
 
   it("refuses a --rules-ref that is not a commit rather than scanning with no rules", async () => {

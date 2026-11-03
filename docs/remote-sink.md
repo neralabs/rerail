@@ -10,7 +10,7 @@ violations, the rules they ran, and [headless scans](headless-scan.md). It lets 
 own; you point it at a service that implements the protocol below.
 
 ```sh
-rerail remote add <url> [--name <name>] (--token-stdin | --token-file <file>) [--no-content]
+rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]
 rerail remote list [--json]
 rerail remote remove <name|url>
 rerail remote status [--json]
@@ -64,7 +64,7 @@ stored in a plain file, not the system keychain: the daemon reads it unattended.
 {"type":"event","id":"<machineId>:<sequence>","sessionId":"…","eventId":"…","kind":"user-prompt","observedAt":…,"sequence":42,"payload":{…}}
 {"type":"rule","id":"sha256:…","ruleId":"no-todo","kind":"code","mode":"steer","document":{…}}
 {"type":"audit","id":"<audit id>","sessionId":"…","workspaceRoot":"…","scope":"repository","mode":"log","status":"completed","startedAt":…,"finishedAt":…,"ruleRevisions":[…],"ruleProvenance":[…],"paths":[…],"failures":[…],"failureCount":0}
-{"type":"violation","id":"<audit id>:<ordinal>","auditId":"…","sessionId":"…","ruleId":"…","violationKey":"…","logged":true,"code":"…","clauseId":"…","mode":"log","message":"…","path":"…","span":{…},"payloadHash":"sha256:…"}
+{"type":"violation","id":"<audit id>:<ordinal>","auditId":"…","sessionId":"…","ruleId":"…","violationKey":"…","logged":true,"code":"…","clauseId":"…","mode":"log","message":"…","path":"…","start":{"line":3,"column":5},"end":{"line":3,"column":9},"span":{…},"payloadHash":"sha256:…"}
 {"type":"scan","id":"<scanId>", …the rerail.scan/1 report…}
 {"type":"gap","id":"…","stream":"event","fromSequence":7,"toSequence":9,"reason":"deleted-locally"}
 ```
@@ -74,6 +74,11 @@ stored in a plain file, not the system keychain: the daemon reads it unattended.
   answer can be stored once.
 - What a record refers to comes before it, in the same batch or an earlier one: repositories, rules and sessions
   before events, audits and violations.
+- Positions: a violation's `start` and `end` are **1-based**, `end` just past the match, as in a
+  [scan report](headless-scan.md#the-report-rerailscan1). Its `span` is the engine's own, as audits store it: lines,
+  columns and bytes **0-based**, ends exclusive. A `scan` record's positions are the report's (1-based).
+- `machineLabel` is the computer's name (on macOS its Computer Name, elsewhere its host name), or the `--label` the
+  remote was added with.
 - An event's payload is its stored JSON; `"content":"omitted"` with `--no-content`, `"content":"unrepresentable"` with
   a null payload for the rare one stored only in Node's binary form.
 - Rule documents are sent for the rules audits and scans ran, when Rerail can still find the exact content (an

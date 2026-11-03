@@ -546,7 +546,7 @@ export class RemoteOutbox {
       protocol: SINK_PROTOCOL,
       batchId: batchIdOf(records),
       machineId: machineId(this.#home),
-      machineLabel: machineLabel(),
+      machineLabel: remote.label ?? machineLabel(),
       rerailVersion: rerailVersion(),
       sentAt: this.#now(),
     };
@@ -691,6 +691,10 @@ function violationRecords(audit: AuditRecord, keys: ReadonlyMap<number, { violat
       mode: violation.mode,
       message: violation.message,
       path: violation.path ?? null,
+      // 1-based, `end` just past the match: the positions of a headless scan's report (`rerail.scan/1`).
+      start: violation.span === undefined ? null : { line: violation.span.startLine + 1, column: violation.span.startColumn + 1 },
+      end: violation.span === undefined ? null : { line: violation.span.endLine + 1, column: violation.span.endColumn + 1 },
+      // The engine's own span, as audits store it: lines and columns 0-based, bytes 0-based, ends exclusive.
       span: violation.span ?? null,
       payloadHash: hashes.get(violation.ruleId) ?? null,
     };

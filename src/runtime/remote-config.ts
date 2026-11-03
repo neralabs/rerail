@@ -8,6 +8,7 @@
  *   database (support bundles and `rerail scrub` read the database) and never printed.
  * - `<home>/machine-id` (`0600`): a random UUID made once, which names this machine to every remote.
  */
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
@@ -21,6 +22,8 @@ export interface RemoteEntry {
   readonly url: string;
   /** False: events go without their payloads (`"content":"omitted"`). */
   readonly content: boolean;
+  /** What this machine is called to this remote (`--label`); the computer's name when absent. */
+  readonly label?: string;
   readonly addedAt: number;
 }
 
@@ -99,7 +102,7 @@ export function defaultRemoteName(url: string): string {
 }
 
 export function addRemote(
-  options: { url: string; token: string; name?: string; content: boolean },
+  options: { url: string; token: string; name?: string; content: boolean; label?: string },
   home: string = defaultRerailHome(),
   now: number = Date.now(),
 ): RemoteEntry {
@@ -115,7 +118,9 @@ export function addRemote(
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   keepPrivate(folder);
   writePrivate(tokenFile(home, name), `${token}\n`);
-  const entry: RemoteEntry = { name, url, content: options.content, addedAt: now };
+  const label = options.label?.trim();
+  if (label !== undefined && (label === "" || label.length > 100 || /[\p{Cc}]/u.test(label))) throw new Error("A label is 1 to 100 characters, with no control characters");
+  const entry: RemoteEntry = { name, url, content: options.content, addedAt: now, ...(label === undefined ? {} : { label }) };
   writeRemoteConfig(home, { ...config, remotes: [...config.remotes, entry] });
   return entry;
 }
@@ -158,6 +163,20 @@ export function machineId(home: string = defaultRerailHome()): string {
   return id;
 }
 
+let computerName: string | undefined;
+
+/**
+ * What a person calls this machine: on macOS its Computer Name (System Settings › General › Sharing), since its host
+ * name is often one the network handed out; elsewhere, and when that cannot be read, its host name.
+ */
 export function machineLabel(): string {
-  return hostname();
+  if (computerName !== undefined) return computerName;
+  computerName = hostname();
+  if (process.platform === "darwin") {
+    try {
+      const name = execFileSync("/usr/sbin/scutil", ["--get", "ComputerName"], { encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] }).trim();
+      if (name !== "") computerName = name;
+    } catch { /* the host name stands */ }
+  }
+  return computerName;
 }

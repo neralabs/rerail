@@ -79,11 +79,23 @@ describe("remote sink outbox", () => {
     expect(events.map(item => item.id)).toEqual([1, 2, 3, 4].map(sequence => `${machine}:${sequence}`));
     expect(events[1]).toMatchObject({ sessionId, kind: "user-prompt", payload: { text: "Add a users page that calls /api/users." } });
     expect(records.find(item => item.type === "audit")).toMatchObject({ id: auditId, status: "completed", scope: "repository" });
-    expect(records.find(item => item.type === "violation")).toMatchObject({ id: `${auditId}:0`, auditId, ruleId: "no-todo", path: "a.ts", violationKey: expect.any(String) });
+    expect(records.find(item => item.type === "violation")).toMatchObject({
+      id: `${auditId}:0`, auditId, ruleId: "no-todo", path: "a.ts", violationKey: expect.any(String),
+      // 1-based with an exclusive end, as a scan reports; `span` keeps the engine's 0-based one.
+      start: { line: 1, column: 1 }, end: { line: 1, column: 5 }, span: { startLine: 0, startColumn: 0, endColumn: 4 },
+    });
     // Dependencies first: what a record refers to arrives before it or in the same batch.
     const order = records.map(item => item.type);
     expect(order.indexOf("session")).toBeLessThan(order.indexOf("event"));
     expect(order.indexOf("audit")).toBeLessThan(order.indexOf("violation"));
+  });
+
+  it("names this machine by the remote's --label when it has one", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true, label: "Jeff's laptop" }, home);
+    await outbox().sync({ force: true });
+    expect(sink.requests[0]!.header.machineLabel).toBe("Jeff's laptop");
+    expect(() => addRemote({ url: sink.url, token: "t", content: true, name: "other", label: "bad\nlabel" }, home)).toThrow(/control characters/u);
   });
 
   it("sends only what changed since the last acknowledged batch", async () => {

@@ -9,8 +9,8 @@
  *   approvals, settings), and neither `--pack` nor `--rules-ref` is given.
  * - Otherwise a throwaway database: the checkout's own `.rerail/rules/` (unapproved, so they run in Log), plus each
  *   `--pack` installed in the Rerail home. With `--rules-ref <ref>` the rules come from `.rerail/rules/` at that Git
- *   ref instead of the working tree, and run at their own mode: they are merged code, which the change under review
- *   cannot edit.
+ *   ref instead of the working tree, which the change under review cannot edit. Either way the approval policy is a
+ *   session's: content no one approved in the Rerail home (`rerail rules approve`) runs in Log.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
@@ -20,8 +20,9 @@ import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
 import { checkoutStatus, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
-import { approve, ruleSubject } from "../engine/catalog/rule-approval.js";
+import { approve, type RuleApprovalSubject } from "../engine/catalog/rule-approval.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { rulePackPackageOf } from "../engine/catalog/rule-packs.js";
 import { setRuleSetting, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { parseRuleDocument } from "../engine/catalog/rule-documents.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
@@ -33,7 +34,7 @@ import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rul
 import { runGit } from "../engine/git.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
-import { repositories } from "../engine/storage/schema.js";
+import { repositories, ruleApprovals } from "../engine/storage/schema.js";
 import { setRepositoryStarted } from "../runtime/repository-start.js";
 
 export const SCAN_SCHEMA = "rerail.scan/1";
@@ -155,6 +156,25 @@ function rulesAtRef(root: string, ref: string): Array<{ name: string; document: 
   });
 }
 
+/**
+ * Each `--pack` as the id of a pack installed in the Rerail home, given by its id (`complexity`) or its package name
+ * (`@neralabs/rerail-pack-complexity`). One that is not installed is an error: a scan must not pass with its rules
+ * silently missing.
+ */
+function installedPackIds(requested: readonly string[]): string[] {
+  if (requested.length === 0) return [];
+  const catalog = loadRuleCatalog();
+  const installed = [...catalog.packs.values()];
+  return requested.map(name => {
+    const found = installed.find(pack => pack.id === name || pack.packageName === name || pack.packageName === rulePackPackageOf(name));
+    if (found === undefined) {
+      const known = installed.map(pack => pack.id).sort().join(", ") || "none";
+      throw new Error(`--pack ${name} is not installed in the Rerail home (installed: ${known}); install it with rerail packs add ${name}`);
+    }
+    return found.id;
+  });
+}
+
 /** Home database eligibility: recorded, started and set up. Read-only; an absent file is not eligible. */
 function homeIsEligible(databasePath: string, root: string): boolean {
   if (!existsSync(databasePath)) return false;
@@ -172,9 +192,29 @@ function homeIsEligible(databasePath: string, root: string): boolean {
   }
 }
 
+/**
+ * The approvals made on this machine (`rerail rules approve`), into the throwaway database: approval is of content, by
+ * its digest, so a rule read from a ref, a worktree's rule or a pack from a folder steers here exactly when a person
+ * approved that content in the Rerail home, as it would in a session.
+ */
+function readApprovalSubjects(database: ReturnType<typeof openRerailDatabase>): RuleApprovalSubject[] {
+  return database.select().from(ruleApprovals).all().map(row => ({ kind: row.subjectKind, id: row.subjectId, digest: row.digest }));
+}
+
+function copyApprovals(homeDatabasePath: string, database: ReturnType<typeof openRerailDatabase>): void {
+  if (!existsSync(homeDatabasePath)) return;
+  const home = openRerailDatabase(homeDatabasePath, { readonly: true });
+  try {
+    for (const subject of readApprovalSubjects(home)) approve(database, subject);
+  } finally {
+    home.$client.close();
+  }
+}
+
 /** Sets up `root` in a throwaway database: its repository started and set up with `packs` and the ref's rules. */
 function prepareScratchDatabase(
   databasePath: string, root: string, packs: readonly string[], rulesRef: string | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
+  homeDatabasePath: string,
 ): Set<string> {
   const refRuleIds = new Set<string>();
   const database = openRerailDatabase(databasePath);
@@ -187,7 +227,6 @@ function prepareScratchDatabase(
       for (const { document } of documents) {
         const stored = upsertLibraryRule(database, catalog, document, "code");
         const ruleId = stored.document.rule.id;
-        approve(database, ruleSubject(ruleId, stored.payloadHash));
         refRuleIds.add(ruleId);
         ruleDocuments?.set(stored.payloadHash, stored.document);
         libraryRules.push({ sourceKind: "library_rule", sourceId: ruleId, folder: "" });
@@ -199,6 +238,7 @@ function prepareScratchDatabase(
       setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "", targetKind: "pack", targetId: WORKTREE_PACK_ID, on: false, mode: null });
     }
     setRepositoryStarted(database, repositoryKey, true);
+    copyApprovals(homeDatabasePath, database);
   } finally {
     database.$client.close();
   }
@@ -263,14 +303,15 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   if (options.paths !== undefined && options.scope !== "repository") throw new Error("--path and --paths-from apply only to --scope repository");
 
   const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
-  const useHome = options.rulesRef === undefined && options.packs.length === 0 && homeIsEligible(homeDatabase, root);
+  const packs = installedPackIds(options.packs);
+  const useHome = options.rulesRef === undefined && packs.length === 0 && homeIsEligible(homeDatabase, root);
   const scratch = mkdtempSync(join(tmpdir(), "rerail-scan-"));
   const previousStore = process.env.RERAIL_CONTENT_STORE_PATH;
   // The machine-wide content store belongs to the daemon; this process keeps its own, thrown away after.
   if (previousStore === undefined || previousStore === "") process.env.RERAIL_CONTENT_STORE_PATH = join(scratch, "content.sqlite");
   try {
     const databasePath = useHome ? homeDatabase : join(scratch, "rerail.sqlite");
-    const refRuleIds = useHome ? new Set<string>() : prepareScratchDatabase(databasePath, root, options.packs, options.rulesRef, options.ruleDocuments);
+    const refRuleIds = useHome ? new Set<string>() : prepareScratchDatabase(databasePath, root, packs, options.rulesRef, options.ruleDocuments, homeDatabase);
     const repository = repositoryOf(databasePath, root);
 
     let base: ScanReport["base"] = null;

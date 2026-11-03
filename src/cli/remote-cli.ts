@@ -19,7 +19,7 @@ export interface RemoteCliOptions {
   outbox?: RemoteOutbox;
 }
 
-const USAGE = "rerail remote add <url> [--name <name>] (--token-stdin | --token-file <file>) [--no-content] | list | remove <name|url> | status | push | exclude [--repo <dir>] | include [--repo <dir>]";
+const USAGE = "rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content] | list | remove <name|url> | status | push | exclude [--repo <dir>] | include [--repo <dir>]";
 
 async function readAll(stream: NodeJS.ReadableStream): Promise<string> {
   const chunks: Buffer[] = [];
@@ -70,12 +70,15 @@ export async function runRemoteCommand(args: readonly string[], options: RemoteC
   if (action === "add") {
     const [url, ...flagArgs] = rest;
     if (url === undefined || url.startsWith("--")) throw new Error(`rerail remote add needs a URL\nUsage: ${USAGE}`);
-    const parsed = parseArguments(flagArgs, { flags: ["--token-stdin", "--no-content"], options: ["--name", "--token-file"] }, unknown);
+    const parsed = parseArguments(flagArgs, { flags: ["--token-stdin", "--no-content"], options: ["--name", "--token-file", "--label"] }, unknown);
     const tokenFile = parsed.options.get("--token-file");
     if ((tokenFile === undefined) === !parsed.flags.has("--token-stdin")) throw new Error("Give the token with exactly one of --token-stdin or --token-file <file>");
     const token = tokenFile !== undefined ? readFileSync(resolve(tokenFile), "utf8") : await (options.readStdin ?? (() => readAll(process.stdin)))();
     const name = parsed.options.get("--name");
-    const entry = addRemote({ url, token, content: !parsed.flags.has("--no-content"), ...(name === undefined ? {} : { name }) }, options.home);
+    const label = parsed.options.get("--label");
+    const entry = addRemote({
+      url, token, content: !parsed.flags.has("--no-content"), ...(name === undefined ? {} : { name }), ...(label === undefined ? {} : { label }),
+    }, options.home);
     out.write(`Added remote ${entry.name} (${entry.url})${entry.content ? "" : ", without event content"}. Rerail sends this machine's sessions, events, audits and scans to it from now on, starting with what it already holds.\n`);
     return 0;
   }
