@@ -139,6 +139,12 @@ impl Wave {
         Self::with_logic(clauses, super::policies::Logic::per_clause(clauses), backend)
     }
 
+    /// Whether the demand statement reads a `py.*` family: the wave then reads it before its batch.
+    pub(in crate::code_rule_dsl) fn demand_reads_py(&self) -> bool {
+        let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::PY.contains(&rel);
+        self.logic.demand.as_ref().is_some_and(|p| p.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| py(&a.rel)))))
+    }
+
     /// The wave of `clauses` running the policies' rules `logic` (`policies::lower`).
     pub(in crate::code_rule_dsl) fn with_logic(clauses: &[Clause], logic: super::policies::Logic, backend: ExecutionBackend) -> StoreResult<Self> {
         #[cfg(target_os = "macos")]

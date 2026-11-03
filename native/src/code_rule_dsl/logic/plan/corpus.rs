@@ -208,6 +208,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
     let sets = lowered.transduce_nearest();
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
+    let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
     let (local, cross) = (part(split.local), part(split.cross));
     atomized_statistics(&t, &db, &store, &first, dialect)?;
@@ -329,6 +330,13 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         chunks += 1;
         let mut stats = t_stats.clone();
         for (rel, source) in sources {
+            // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
+            // family's first read makes them (decision 0029).
+            if !read.contains(&rel) {
+                modules.bind(&db, &rel, source)?;
+                bound.insert(rel);
+                continue;
+            }
             if let Some((_, names)) = stored.iter().find(|(r, _)| *r == rel) {
                 let have = source.columns();
                 let held = base_rows.entry(rel.clone()).or_insert_with(|| (have.clone(), vec![None; have.len()]));

@@ -44,6 +44,8 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "tape" => &["n", "par", "size", "depth"],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`).
         rel if rel.starts_with("nearest_") => &["n", "a"],
+        // The `py.*` families (`facts::vtab::syntax::PY`).
+        rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::PY.iter().position(|&p| p == rel).map(|i| crate::code_rule_dsl::facts::vtab::syntax::PY_COLUMNS[i])?,
         _ => return None,
     })
 }
@@ -230,8 +232,9 @@ enum Columns<'a> {
 
 fn columns<'a>(relation: &Relation, ctes: &'a BTreeMap<&str, Vec<Option<String>>>) -> Result<Columns<'a>, String> {
     Ok(match relation {
-        Relation::Input { rel, .. } => input_columns(rel).map_or(Columns::Positional, |names| Columns::Named(names.to_vec())),
-        Relation::Derived { .. } | Relation::Batch { .. } | Relation::Bound { .. } => Columns::Positional,
+        // A batch source of a named input (a `py.*` family read by the demand statement) keeps its names.
+        Relation::Input { rel, .. } | Relation::Batch { rel, .. } => input_columns(rel).map_or(Columns::Positional, |names| Columns::Named(names.to_vec())),
+        Relation::Derived { .. } | Relation::Bound { .. } => Columns::Positional,
         Relation::DocRange { .. } => Columns::Named(vec!["d", "lo", "hi"]),
         Relation::Integers => Columns::Named(vec!["i"]),
         Relation::Cte(name) => Columns::Named(

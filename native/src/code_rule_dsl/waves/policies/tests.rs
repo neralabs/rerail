@@ -88,6 +88,34 @@ fn magic_sets_demand_each_clause_where_its_rules_read_it() {
     assert_eq!(rows, [(0, 5), (0, 7), (1, 7), (2, 5), (2, 7)]);
 }
 
+/// A `py.*` family is bound before the batch, so a rule that reads one before its atom narrows that
+/// atom's demand: clause 0 is demanded only on the documents with a call (`py_call`).
+#[test]
+fn py_families_narrow_demand_before_the_batch() {
+    let rule = |clause: &str, body: Vec<Literal>| Rule {
+        head: Atom { rel: "violation".to_owned(), args: vec![Term::Str("p".to_owned()), Term::Str(clause.to_owned()), var("D"), var("N")], neg: false, gated: false },
+        body: std::iter::once(atom(WAVE, vec![var("D")])).chain(body).collect(),
+    };
+    let calls = atom("py_call", vec![var("D"), var("C"), var("F")]);
+    let prog = Program { rules: vec![rule("a", vec![calls, atom("ast_0", vec![var("D"), var("N")])])], ..Program::default() };
+    let mut wave = Program { rules: prog.rules.clone(), ..Program::default() };
+    declare_violation(&mut wave);
+    declare_py(&mut wave);
+    assert_eq!(wave.decls["py_call"].iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>(), ["d", "call", "callee"]);
+    let demand = demand_program(prog, &wave, 1).unwrap().unwrap();
+    let logic = Logic { rules: String::new(), demand: Some(demand) };
+    let sql = logic.demand_statement(&store()).unwrap().expect("one statement");
+    assert!(sql.contains("py_call"), "{sql}");
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        "CREATE TEMP TABLE wave_document(position INTEGER, d INTEGER); INSERT INTO temp.wave_document VALUES (0, 5), (1, 7);
+         CREATE TABLE py_call(d INTEGER, call INTEGER, callee INTEGER); INSERT INTO py_call VALUES (7, 30064771073, 30064771074)",
+    )
+    .unwrap();
+    let rows = db.prepare(&sql).unwrap().query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+    assert_eq!(rows, [(0, 7)]);
+}
+
 /// Rules equal once their variables are renamed and their constants taken out are one rule over a table of
 /// their constants; a rule of its own shape is kept as written.
 #[test]

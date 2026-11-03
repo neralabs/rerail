@@ -141,3 +141,34 @@ fn steps_read_the_chunks_demand_batch() {
     let err = run(&lease, &store, &program, "/w", docs, &limits, &mut none).unwrap_err();
     assert!(err.to_string().contains("without a batch"), "{err}");
 }
+
+/// A program that reads a `py.*` family records each document's derivation the first time (its digest the
+/// rows' own) and reads it as an input of its families: a rerun records nothing and changes nothing.
+#[test]
+fn a_program_reading_py_families_records_them_once() {
+    use crate::code_rule_dsl::facts::families::{py_name, py_producer};
+    let (store, docs) = store("py", 3);
+    let calls = Program {
+        name: "calls".into(),
+        relations: vec![("called".into(), 1)],
+        steps: vec![step("called", 0, &["py_call"], "INSERT OR IGNORE INTO new_called SELECT callee FROM py_call")],
+        file_local: true,
+        partitions: Vec::new(),
+        lattices: Vec::new(),
+    };
+    let backing = Backing::default();
+    for (round, changed) in [(0, 1), (1, 0)] {
+        let scope = backing.enter(&store);
+        let lease = scope.pool().take().unwrap();
+        let out = run(&lease, &store, &calls, "/w", docs.clone(), &Limits::default(), &mut none).unwrap();
+        assert_eq!(out.changed.len(), changed, "round {round}");
+        assert!(count(&lease, "SELECT count(*) FROM called") > 0);
+        assert_eq!(count(&lease, "SELECT count(*) FROM called"), count(&lease, "SELECT count(DISTINCT callee) FROM py_call"));
+    }
+    for d in &docs {
+        let name = py_name("/w", &d.path);
+        assert!(store.binding(&name).unwrap().is_some(), "{name}");
+        let read = store.derivations_reading(&[d.core.clone()]).unwrap();
+        assert!(read.iter().any(|r| r.output == name && r.producer == py_producer()), "{name}");
+    }
+}

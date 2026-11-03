@@ -23,6 +23,7 @@
 use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
 use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, kind_atom};
+use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
@@ -220,7 +221,28 @@ pub(crate) struct Batch {
     nodes: Vec<usize>,
     children: Vec<usize>,
     fields: Vec<usize>,
+    /// The `py.*` families of the batch's Python documents, made on their first read (list step 25).
+    py: Option<Py>,
 }
+
+/// The `py.*` families (`facts::producers::python::families`): the producer's grammar, the atoms of its
+/// names, and the rows, made on the first read of any of them: a program that reads none does no work.
+struct Py {
+    grammar: py::Grammar,
+    contexts: [i64; 5],
+    spreads: [i64; 3],
+    rows: std::sync::OnceLock<Vec<Relation>>,
+}
+
+/// The `py.*` families' tables and columns (all integers; `-1` is none), as `PY_COLUMNS[i]` is `PY[i]`'s.
+pub(crate) const PY: [&str; 5] = ["py_call", "py_call_site", "py_exec_context", "py_call_arg", "py_attribute"];
+pub(crate) const PY_COLUMNS: [&[&str]; 5] = [
+    &["d", "call", "callee"],
+    &["d", "report", "call", "ref"],
+    &["d", "call", "owner", "kind"],
+    &["d", "call", "arg", "ordinal", "keyword", "spread", "value"],
+    &["d", "node", "object", "name"],
+];
 
 /// Which view a source serves.
 #[derive(Clone, Copy)]
@@ -299,8 +321,18 @@ impl Batch {
             }
             docs.push(p);
         }
+        let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
+        let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
+            (py::CONTEXTS.map(|name| string(name) as i64), py::SPREADS.map(|name| string(name) as i64))
+        });
         let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
         let atom = |i: i64| i64::from(atoms[i as usize]);
+        let py = vocabulary.zip(python).map(|((contexts, spreads), tag)| Py {
+            grammar: py::Grammar::new(tag, &dialects[&tag].catalog),
+            contexts: contexts.map(atom),
+            spreads: spreads.map(atom),
+            rows: Default::default(),
+        });
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
             let mut r = Relation::new(columns);
             rows.for_each(|row| r.push(&row));
@@ -321,7 +353,7 @@ impl Batch {
         let nodes = offsets(&|p| p.core.len());
         let children = offsets(&|p| p.core.len().saturating_sub(1));
         let fields = offsets(&|p| p.fielded.len());
-        Ok((Arc::new(Batch { docs, dialects, nodes, children, fields }), relations))
+        Ok((Arc::new(Batch { docs, dialects, nodes, children, fields, py }), relations))
     }
 
     fn offsets(&self, view: View) -> &[usize] {
@@ -508,15 +540,112 @@ pub(crate) fn field_atom(tag: u8, code: u16) -> u32 {
     u32::from(tag) << 16 | u32::from(code)
 }
 
-/// T's nine base relations over `documents`, by table name.
+/// T's nine base relations over `documents`, and the `py.*` families, by table name.
 pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
     let (batch, relations) = Batch::build(store, documents)?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> =
         relations.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)).collect();
-    for (name, view) in [("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape)] {
-        out.push((name, Arc::new(Viewed { batch: Arc::clone(&batch), view })));
-    }
+    out.extend(views(&batch));
     Ok(out)
+}
+
+/// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
+fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
+    let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
+    for (name, view) in [("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape)] {
+        out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view })));
+    }
+    for (family, name) in PY.into_iter().enumerate() {
+        out.push((name, Arc::new(PyFamily { batch: Arc::clone(batch), family })));
+    }
+    out
+}
+
+impl Batch {
+    /// The `py.*` families' relations (empty without Python documents), made on the first call.
+    fn py(&self) -> &[Relation] {
+        static EMPTY: std::sync::OnceLock<Vec<Relation>> = std::sync::OnceLock::new();
+        let Some(py) = &self.py else {
+            return EMPTY.get_or_init(|| PY_COLUMNS.iter().map(|columns| Relation::new(columns)).collect());
+        };
+        py.rows.get_or_init(|| {
+            let started = std::time::Instant::now();
+            let mut out: Vec<Relation> = PY_COLUMNS.iter().map(|columns| Relation::new(columns)).collect();
+            let mut skipped = 0;
+            for p in self.docs.iter().filter(|p| p.tag == py.grammar.tag()) {
+                let rows = py::rows(&py.grammar, &p.facts);
+                let d = i64::from(p.key);
+                // A node id, `-1` for none; `None` for a node the projection leaves out.
+                let id = |core: u32| -> Option<i64> {
+                    if core == NONE {
+                        return Some(-1);
+                    }
+                    let local = p.local[core as usize];
+                    (local != NONE).then(|| p.global(local))
+                };
+                let mut push = |family: usize, row: Option<Vec<i64>>| match row {
+                    Some(row) => out[family].push(&row),
+                    None => skipped += 1,
+                };
+                for &[call, callee] in &rows.call {
+                    push(0, (|| Some(vec![d, id(call)?, id(callee)?]))());
+                }
+                for &[report, call, reference] in &rows.site {
+                    push(1, (|| Some(vec![d, id(report)?, id(call)?, id(reference)?]))());
+                }
+                for &[call, owner, kind] in &rows.context {
+                    push(2, (|| Some(vec![d, id(call)?, id(owner)?, py.contexts[kind as usize]]))());
+                }
+                for &[call, arg, ordinal, keyword, spread, value] in &rows.arg {
+                    push(3, (|| Some(vec![d, id(call)?, id(arg)?, i64::from(ordinal), id(keyword)?, py.spreads[spread as usize], id(value)?]))());
+                }
+                for &[node, object, name] in &rows.attribute {
+                    push(4, (|| Some(vec![d, id(node)?, id(object)?, id(name)?]))());
+                }
+            }
+            crate::code_rule_dsl::prof::count("py.rows", out.iter().map(|r| r.len()).sum());
+            crate::code_rule_dsl::prof::count("py.skipped", skipped);
+            crate::code_rule_dsl::prof::count("py.us", started.elapsed().as_micros() as usize);
+            out
+        })
+    }
+}
+
+/// One `py.*` family of a batch (`PY[family]`), served from the rows its first read makes.
+struct PyFamily {
+    batch: Arc<Batch>,
+    family: usize,
+}
+impl PyFamily {
+    fn rows(&self) -> &Relation {
+        &self.batch.py()[self.family]
+    }
+}
+impl Source for PyFamily {
+    fn columns(&self) -> Vec<String> {
+        PY_COLUMNS[self.family].iter().map(|c| (*c).to_owned()).collect()
+    }
+    fn len(&self) -> usize {
+        self.rows().len()
+    }
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        self.rows().estimated_matches(column, batch)
+    }
+    fn indexed(&self, column: usize) -> bool {
+        self.rows().indexed(column)
+    }
+    fn range_indexed(&self, column: usize) -> bool {
+        self.rows().range_indexed(column)
+    }
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+        self.rows().range_lookup(column, lower, upper)
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        self.rows().lookup(column, values)
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.rows().value(row, column)
+    }
 }
 
 impl Batch {
@@ -611,9 +740,7 @@ pub(crate) fn with_nearest(
     use crate::code_rule_dsl::typing::file_local;
     let (batch, relations) = Batch::build(store, documents)?;
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
-    for (name, view) in [("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape)] {
-        out.push((name.to_owned(), Arc::new(Viewed { batch: Arc::clone(&batch), view })));
-    }
+    out.extend(views(&batch).into_iter().map(|(name, source)| (name.to_owned(), source)));
     let (parent, kind) = batch.trees();
     let kinds: Vec<Vec<i64>> = sets.iter().map(|(_, kinds)| kinds.clone()).collect();
     let found = file_local::nearest(&file_local::Trees { parent: &parent, kind: &kind }, &kinds, binding)?;

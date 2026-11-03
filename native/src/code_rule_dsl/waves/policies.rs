@@ -93,7 +93,14 @@ impl Logic {
     /// `demand_sql`'s statement, or why it has none.
     fn demand_statement(&self, store: &ContentStore) -> Result<Option<String>, String> {
         let Some(prog) = &self.demand else { return Ok(None) };
-        let batch = HashMap::from([(WAVE.to_owned(), ("(SELECT d AS c0 FROM temp.wave_document)".to_owned(), 100.0))]);
+        let mut batch = HashMap::from([(WAVE.to_owned(), ("(SELECT d AS c0 FROM temp.wave_document)".to_owned(), 100.0))]);
+        // The `py.*` families are read where they are bound (`main`), as the chunk's base relations are,
+        // each priced at a thousand rows: no statistics exist before the chunk's first read (decision 0029).
+        for rel in prog.inputs.iter().filter(|rel| is_py(rel)) {
+            let columns = crate::code_rule_dsl::logic::sql::select::input_columns(rel).expect("a py family's columns");
+            let select = columns.join(", ");
+            batch.insert(rel.clone(), (format!("(SELECT {select} FROM main.{rel})"), 1000.0));
+        }
         let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
         let emitted = emit::emit_program(prog, "demand", &batch, intern).and_then(|emitted| emit::single(emitted, DEMANDED)).map_err(|e| e.to_string())?;
         let sql = &emitted.program.steps[0].sql;
@@ -117,6 +124,21 @@ fn atom(rel: &str, args: Vec<Term>) -> Literal {
 /// `match(i, $d, $n)`: clause `i`'s matches.
 fn matched(i: usize, document: &str, node: &str) -> Literal {
     atom(MATCH, vec![Term::Int(i as i64), var(document), var(node)])
+}
+
+/// Whether `rel` is one of the `py.*` families (`facts::vtab::syntax::PY`).
+fn is_py(rel: &str) -> bool {
+    crate::code_rule_dsl::facts::vtab::syntax::PY.contains(&rel)
+}
+
+/// Declares each `py.*` family the rules read and do not declare: integer columns, as bound.
+fn declare_py(prog: &mut Program) {
+    use crate::code_rule_dsl::facts::vtab::syntax::{PY, PY_COLUMNS};
+    let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).filter(|rel| is_py(rel)).collect();
+    for rel in read {
+        let columns = PY_COLUMNS[PY.iter().position(|p| *p == rel).expect("a py family")];
+        prog.decls.entry(rel).or_insert_with(|| columns.iter().map(|c| ((*c).to_owned(), "int".to_owned())).collect());
+    }
 }
 
 fn declare_violation(prog: &mut Program) {
@@ -353,6 +375,7 @@ pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]
         demand.rules.push(Rule { head: rule.head.clone(), body });
     }
     declare_violation(&mut wave);
+    declare_py(&mut wave);
     let shared: Vec<(String, String)> = clauses.iter().map(|clause| clause.key.clone()).collect();
     if let Some(key) = shared.iter().enumerate().find_map(|(at, key)| shared[..at].contains(key).then_some(key)) {
         return Err(invalid(format!("clause {}/{} lowers twice: its violations would not tell its matchers apart", key.0, key.1)));
@@ -378,9 +401,11 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
         prog.demand.push(format!("ast_{i}"));
     }
     let magic = magic::magic_sets(prog, &magic::Options::default()).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
-    // What the batch has not derived yet: the atoms, and every relation that reads one.
+    // What the batch has not derived yet: the atoms, every input but the chunk's documents and the
+    // `py.*` families (bound with the chunk's base relations, before the batch), and every relation
+    // that reads one.
     let mut unavailable: BTreeSet<String> = (0..atoms).map(|i| format!("ast_{i}")).collect();
-    unavailable.extend(magic.inputs.iter().filter(|rel| *rel != WAVE && !rel.starts_with("ast_")).cloned());
+    unavailable.extend(magic.inputs.iter().filter(|rel| *rel != WAVE && !rel.starts_with("ast_") && !is_py(rel)).cloned());
     loop {
         let more = magic
             .rules
@@ -422,7 +447,9 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
         decls.entry(format!("magic_ast_{i}")).or_insert_with(|| vec![int("d")]);
     }
     let facts = magic.facts.iter().filter(|(rel, _)| referenced.contains(*rel)).map(|(r, f)| (r.clone(), f.clone())).collect();
-    let demand = Program { decls, facts, rules, inputs: vec![WAVE.to_owned()], outputs: vec![DEMANDED.to_owned()], ..Program::default() };
+    // The chunk's documents and the `py.*` families the magic rules read are its inputs.
+    let inputs = std::iter::once(WAVE.to_owned()).chain(referenced.iter().filter(|rel| is_py(rel)).cloned()).collect();
+    let demand = Program { decls, facts, rules, inputs, outputs: vec![DEMANDED.to_owned()], ..Program::default() };
     front::strata(&demand).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
     Ok(Some(demand))
 }

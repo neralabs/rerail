@@ -360,7 +360,7 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
   - A demand program needing recursion or setup demands everything (`wave.demand.all`).
   - For YAML rules every pair is demanded. Rules whose literals before an atom are available narrow it; `magic_sets_demand_each_clause_where_its_rules_read_it` gives demand (0,5), (0,7), (1,7), (2,5), (2,7) for a document filter and a widened atom.
 - **Measured** (load 43): `the_backends_find_the_same_keys_on_real_files` gives 710 keys on all four backends, CPU per audit 6.4/6.4/3.0/2.9 s, unchanged within noise. `waves::`, `slice::`, `logic::` and `tools::`: 150 passed.
-- **Not yet:** inputs a wave could read before its batch (the `py.*` families, list step 25) are what will narrow demand on the data-layer rules.
+- **Not yet:** inputs a wave could read before its batch (the `py.*` families, list step 25) are what will narrow demand on the data-layer rules. Done in list step 25 (decision 0029): the families are bound before the batch and the demand program reads them.
 - **Rules of one shape are one rule (`policies::merged`).** A rule's constants in its head and positive atoms become variables read from the shape's constant table (`violation_shape_k`, one row per rule); rules equal once their variables are renamed in order share it. The Python pack's 87 forbid rules are one rule and one table: 2 statements per chunk, not 87. The four backends find the same 710 keys, CPU per audit 4.3 / 4.2 / 2.3 / 2.0 s at load 25 (6.4 / 6.4 / 3.0 / 2.9 s at load 43 before; the load differs, so the drop is not all the merge's). A data-layer rule with its own filters is its own shape; how many shapes the 142 have is measured when they are rewritten (list step 30).
 - **Compiled plans in memory are per store.** `stats::plans` kept its memory cache by plan id alone, so a store that had never compiled a plan was answered from another's and its `compiled_plans` stayed empty (`the_statistics_loop_runs_on_the_slices_path` failed under parallel tests). The cache is keyed by the store's file and the plan.
 
@@ -500,6 +500,21 @@ What was left, and how each was closed (2026-11-03, the user's choice for the fi
 | Oracle | S `async_reference.rs`, `native_oracle.rs`, `tests.rs` | `findings/tests/` | Kept as test oracle only. |
 
 **Status (2026-10-27): copies done (`69371b1c`, `0689eb25`, `6c0e860e`, `8190c8fa`, `0e4a64c3`); adaptations outstanding. S's oracle lives in `query/plan/async_reference/{native_oracle.rs, tests.rs}`, not beside `async_reference.rs`. Placed in the module tree with path changes only: rows 1 (`40ef4d49`, `facts::producers::python`), 3 (`4514b3f4`, `findings::shape`) and 4 (`be038523`, `findings::contract`). Row 5 (oracle) placed test-only as `findings::async_reference` (`3d260c7a`), compared against W's matcher (O15); 2026-10-29: S's oracle as copied placed beside it as `findings::tests::s_native_oracle`, on P's corpus (`matcher::p_anchors`, O19).**
+
+**List step 25 (2026-11-03): the `py.*` families (row 1, decision 0029).**
+- **The families:** five integer relations bound with each chunk's base relations, in the syntax layer's node ids:
+  - `py_call(d, call, callee)`;
+  - `py_call_site(d, report, call, ref)`;
+  - `py_exec_context(d, call, owner, kind)`;
+  - `py_call_arg(d, call, arg, ordinal, keyword, spread, value)`;
+  - `py_attribute(d, node, object, name)`.
+- **The producer** (`facts::producers::python::families`) reads core facts from the `call` postings, not a tape scan. Its rows equal S's `collect` plus `collect_arguments`' on S's sources and the 169 fixture files (`py_families_equal_s_producers`). S's producers stay as the oracle.
+- **Made on first read:** a program that reads no family makes no rows. The corpus path now measures only the relations a rule reads.
+- **Derivations:** each document's `#py:<path>` derivation reads its `#core:` name, and its digest is over the rows. A wave that reads a family records the derivations it lacks and takes them as inputs (`families::py_inputs`). `a_program_reading_py_families_records_them_once` checks this. Propagation re-runs a derivation through `Families::recompute`.
+- **Demand:** the policies declare the families their rules read. The demand program counts them as available before the batch, so a magic rule keeps a family literal and narrows its clause (`py_families_narrow_demand_before_the_batch`).
+- **Measured** (load 42):
+  - Python's standard library: a program over the families finds 775 calls by name in async functions and 103 keyword arguments. The `local` phase, including the families, took 0.06 s user.
+  - T's programs derive T's outputs unchanged: Python 7 of 7, Rust 4 of 4, and the fixture 7 of 7.
 
 ### Phase 9: residency and the pinned GPU cache (§5; F3–F8, K1)
 
