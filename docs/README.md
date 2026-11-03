@@ -42,8 +42,6 @@
   (`npm run check:structure`) that enforces them
 
 ## Design notes
-- [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
-  [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store
-- [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md) and
-  [transducer-design.md](transducer-design.md): the tape transducer language
-- [in-session-status-line-prd.md](in-session-status-line-prd.md): requirements for in-session visibility
+- [content-addressed-workspace-store.md](content-addressed-workspace-store.md): how the machine-wide content store
+  works
+- [transducer-design.md](transducer-design.md): the tape transducer language, which tests and benchmarks use

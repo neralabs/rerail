@@ -42,7 +42,7 @@ outputs:
     description: >-
       One line per archive this run used, `<pack> <tool> <kind> <sha256>` (kind test-data or samples): the pull's, or,
       for a fetching job whose key the cache holds (it runs no pull), the locks the key names. Replay a run from it
-      (CONTRIBUTING.md, "Pack test data").
+      (docs/upstream.md, "Replay a commit").
     value: ${{ steps.pull.outputs.archives || steps.entry.outputs.archives }}
 
 runs:

@@ -15,7 +15,7 @@ Every pack lives under `packs/` in this repository and is published from there (
 | Cyclomatic complexity (limit 6) | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
 | JavaScript and TypeScript (ESLint core and eslint-plugin-unicorn) | language | 121 (36) | JavaScript or TypeScript source: ESLint's core rules apply to both; its eslint-plugin-unicorn rules run on JavaScript files only. |
 | TypeScript | language | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
-| Python | language | 160 (135) | Python source outside tests, scripts and docs |
+| Python | language | 246 (171) | Python source outside tests, scripts and docs |
 | PHP | language | 15 (5) | PHP source: `*.php` files, not Blade views |
 | Blade | language | 10 (8) | Blade templates: `*.blade.php` files |
 | Rust | language | 33 (17) | `*.rs` files |
@@ -23,7 +23,9 @@ Every pack lives under `packs/` in this repository and is published from there (
 | Next.js | framework | 21 (21) | a `next` dependency |
 | Node.js | framework | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | 23 (21) | `*.vue` files |
-| React | framework | 0 | never yet: every port is still a candidate, and a pack with no rule that starts on is never recommended |
+| React | framework | 40 (21) | a `react` dependency, or `*.jsx` files |
+
+Rerail recommends a pack only when at least one of its rules starts on: adding a pack whose rules all start off would run nothing.
 
 A pack for a project's own conventions is made the same way: a `repository` pack directory with its rule documents in `rules/`, a `pack.json` that lists them with a match definition naming the files or dependencies that identify the project, and a `package.json` named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` with core's range under `peerDependencies`. It is installed from its folder with `rerail packs add <folder>`, and is a third party's pack like any not published by Rerail.
 
@@ -37,8 +39,23 @@ A rule honours its linter's suppression comments only where its document says so
 
 Packs are installed into one npm prefix in the Rerail home, `$RERAIL_HOME/packs`, never into a project's `node_modules` (one Rerail serves every repository on the machine, and a Python or PHP repository has none) nor into core's own install (`rerail update` replaces it). Installing uses the person's npm login, as installing Rerail does: whoever can read `@neralabs/rerail` can read every pack.
 
-- **Set-up** (`npx @neralabs/rerail setup` in a repository, or `/rerail-start` in one that is not set up) fetches every listed pack under the update channel's npm dist-tag (`latest` by default, where each new pack version is published, see [pack format](pack-format.md#release); `next` for a pack that has no `latest` version) into a staging folder of its own under `$RERAIL_HOME/packs/staging`, which installs nothing and is removed once the packs are read, and checks each one as the catalog does (below). Fetching reads nothing in the repository; matching the packs against it waits until the person has said Rerail may read it. A pack installed at a newer version than the one under the tag (`rerail packs add typescript@next`) is offered at that version, never replaced by an older one; when that newer version does not load (its core range, after setting up an older core again say), the pack is named among those set-up could not use, with why, and not offered. An answer that names an older version than the installed one is refused (`rerail packs add` downgrades). The confirm question lists each pack that fits with its rule count and why it fits, says when a yes replaces an installed version (which every repository on the computer runs), and lists the rules the repository's lint config turns off or configures. A pack with no rule that starts on is never offered, since adding it would run nothing; the confirm question names those that would fit as having no rules yet, and "Skip, I'll pick packs" names every such pack. Nothing is installed before an answer that installs, and an answer installs only what it carries: "Yes" installs the versions shown (an answer run by a coding agent carries them as `--packs typescript@0.1.1,…`), from npm's cache where discovery left them, and "Change rule packs…" (`--answer choose`) installs only the packs the person picks from every pack set-up fetched, replacing any an earlier dashboard review added; it is not offered when set-up could fetch no pack. "Not now" (`--answer not-now`) installs nothing, and asking again after a bad answer installs nothing. "Skip, I'll pick packs" reads nothing in the repository: it lists every pack set-up fetched, installs the ones the person picks and adds each for the whole repository without its lint config, or none ("None for now", `--packs none`). After installing, set-up makes sure the catalog loads every pack named, and still loads every pack it loaded before; when npm fails or a pack is left out (its core range, a rule another pack holds), every pack the install changed is put back as npm recorded it (a pack added from a folder from that folder) or removed, and set-up asks again, saying why: no read access, npm not logged in, the registry unreachable, or why the pack was left out. An installed version stands in for a pack npm cannot give.
-- **`rerail packs`**: `list` shows the installed packs with their versions (Rerail's own by id, a third party's by package name) and any left out, with why; `add <id[@version]> …` installs one of Rerail's packs by id, or any pack by its package name (`@neralabs/rerail-pack-typescript`, `@acme/rerail-pack-sql`, `rerail-pack-lint`), at a version, range or dist-tag, or from a tarball or folder that exists, and refuses anything else (npm options, `npm:` aliases, git and URL specs); `remove <id | package> …` uninstalls a package by its name, or by a pack id every installed package that holds that id; `recommend [--repo <dir>]` runs set-up's discovery and prints what fits, installing nothing. `add` is checked as set-up's install is: when a pack it installed is left out, or another stops loading, what changed is put back and the command fails with why. `remove` by package name refuses to remove the package that holds a pack id (the one that loads under it, or Rerail's own) while another installed package holding that id stays, since every repository that adds the id would then run the other; `remove <id>` removes them all. npm runs no install script in any of them.
+- **Set-up** (`npx @neralabs/rerail setup` in a repository, or `/rerail-start` in one that is not set up):
+  - **Fetch.** It fetches every listed pack under the update channel's npm dist-tag: `latest` by default, where each new pack version is published ([pack format](pack-format.md#release)), or `next` for a pack that has no `latest` version. Packs go into a staging folder of its own under `$RERAIL_HOME/packs/staging`, which installs nothing and is removed once the packs are read, and each is checked as the catalog does (below). Fetching reads nothing in the repository; matching the packs against it waits until the person has said Rerail may read it.
+  - **Installed versions.** A pack installed at a newer version than the one under the tag (`rerail packs add typescript@next`) is offered at that version, never replaced by an older one. When that newer version does not load (its core range, after setting up an older core again say), set-up names the pack among those it could not use, with why, and does not offer it. An answer that names an older version than the installed one is refused; `rerail packs add` downgrades.
+  - **The question.** It lists each pack that fits with its rule count and why it fits, says when a yes replaces an installed version (which every repository on the computer runs), and lists the rules the repository's lint config turns off or configures. A pack that would fit but has no rule that starts on is named as having no rules yet, and "Skip, I'll pick packs" names every such pack.
+  - **The answers.** Nothing is installed before an answer that installs, and an answer installs only what it carries.
+    - "Yes" installs the versions shown, from npm's cache where discovery left them. An answer run by a coding agent carries them as `--packs typescript@0.1.1,…`.
+    - "Change rule packs…" (`--answer choose`) installs only the packs the person picks from every pack set-up fetched, replacing any an earlier dashboard review added. It is not offered when set-up could fetch no pack.
+    - "Not now" (`--answer not-now`) installs nothing, and asking again after a bad answer installs nothing.
+    - "Skip, I'll pick packs" reads nothing in the repository: it lists every pack set-up fetched, installs the ones the person picks and adds each for the whole repository without its lint config, or none ("None for now", `--packs none`).
+  - **After installing.** Set-up makes sure the catalog loads every pack named, and still loads every pack it loaded before. When npm fails or a pack is left out (its core range, a rule another pack holds), every pack the install changed is put back as npm recorded it (a pack added from a folder from that folder) or removed. Set-up then asks again, saying why: no read access, npm not logged in, the registry unreachable, or why the pack was left out. An installed version stands in for a pack npm cannot give.
+- **`rerail packs`**:
+  - `list` shows the installed packs with their versions (Rerail's own by id, a third party's by package name) and any left out, with why.
+  - `add <id[@version]> …` installs one of Rerail's packs by id, or any pack by its package name (`@neralabs/rerail-pack-typescript`, `@acme/rerail-pack-sql`, `rerail-pack-lint`). It takes a version, range or dist-tag, or a tarball or folder that exists, and refuses anything else (npm options, `npm:` aliases, git and URL specs). It is checked as set-up's install is: when a pack it installed is left out, or another stops loading, what changed is put back and the command fails with why.
+  - `remove <id | package> …` uninstalls a package by its name, or, given a pack id, every installed package that holds that id. By package name it refuses to remove the package that holds a pack id (the one that loads under it, or Rerail's own) while another installed package holding that id stays, since every repository that adds the id would then run the other.
+  - `recommend [--repo <dir>]` runs set-up's discovery and prints what fits, installing nothing.
+
+  npm runs no install script in any of them.
 
 Only one change to the installed packs runs at a time: set-up's install and `rerail packs add` and `remove` hold a lock on the prefix (`$RERAIL_HOME/packs/.lock`), and one that finds it held waits for up to five minutes. A lock whose process has gone is taken over.
 
@@ -60,10 +77,20 @@ Why a pack is left out is said for the person who sees it in set-up, `rerail pac
 
 Anyone can publish a rule pack to npm: a package named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, where `<id>` is the `id` in its `pack.json`, that passes the checks above. Rerail loads one installed with `rerail packs add <package>` (or from its tarball or folder) as it loads its own. Rerail has not reviewed such a pack: its rules run in every repository that adds it, and the text they steer with reaches the coding agent there.
 
-- **Publisher.** A pack's publisher is `rerail` for `@neralabs/*`, else its npm scope (`@acme`), else its package name (`rerail-pack-lint`). `rerail packs list` names a third party's pack by its package name; the dashboard labels its rules and its pack `By @acme · not reviewed` where Rerail's say `By Rerail`, so a scope that reads like Rerail's (`@rerail`) is still marked as a third party's, and names its publisher wherever it names such a pack (a rule's origin, History, the rules of a pack not added). A rule whose pack is no longer installed is `From a rule pack`, claiming no publisher. The steer note names it (`From the Acme SQL rule pack by @acme, which Rerail has not reviewed.`).
+- **Publisher.** A pack's publisher is `rerail` for `@neralabs/*`, else its npm scope (`@acme`), else its package name (`rerail-pack-lint`). Each surface names it:
+  - `rerail packs list` names a third party's pack by its package name.
+  - The dashboard labels the pack and its rules `By @acme · not reviewed` where Rerail's say `By Rerail`, and names the publisher wherever it names such a pack (a rule's origin, History, the rules of a pack not added). A scope that reads like Rerail's (`@rerail`) is still marked as a third party's.
+  - The steer note names it: `From the Acme SQL rule pack by @acme, which Rerail has not reviewed.`
+  - A rule whose pack is no longer installed is `From a rule pack`, claiming no publisher.
 - **Warning.** `rerail packs add` says, once for each third party's pack it installs, that Rerail has not reviewed it, that its rules run in Log until a person approves this version, and that from then on their steer text reaches the coding agent.
 - **Approval.** Its rules run in Log until a person approves what this version ships (`rerail rules approve <package>`, or Approve on its sheet in the dashboard); each new version waits again ([approval](rule-scoping.md#approval)). `rerail packs list` marks it `waiting for approval`, and `GET /api/rule-packs` gives it `approval`. Rerail's own packs from npm need none.
-- **Packs from a folder or tarball.** A pack installed from a folder or tarball (`rerail packs add <folder>`, which npm records as `file:<path>`) is named as one wherever it shows, whatever its `package.json` calls it, `@neralabs/*` included: no one published it, and Rerail has not reviewed it. `rerail packs list` adds `(from the folder <path>)`; `rerail packs add` warns about it as about a third party's pack (`… was installed from the folder <path>, not from npm, and Rerail has not reviewed it.`); `GET /api/rule-packs` gives it `installedFrom: "folder"` (or `"tarball"`); the dashboard labels it `From a folder · not reviewed` (a third party's: `By @acme · From a folder · not reviewed`), never `By Rerail`; set-up's table names it `SQL (from a folder)` with the same warning before the question; and its steer note says `From the SQL rule pack, installed from a folder, which Rerail has not reviewed.` It still loads, and clashes, by the package name its folder gives.
+- **Packs from a folder or tarball.** A pack installed from a folder or tarball (`rerail packs add <folder>`, which npm records as `file:<path>`) counts as unpublished and not reviewed, whatever its `package.json` calls it, `@neralabs/*` included. It still loads, and clashes, by the package name its folder gives. Each surface says where it came from:
+  - `rerail packs list` adds `(from the folder <path>)`.
+  - `rerail packs add` warns as for a third party's pack: `… was installed from the folder <path>, not from npm, and Rerail has not reviewed it.`
+  - `GET /api/rule-packs` gives it `installedFrom: "folder"` (or `"tarball"`).
+  - The dashboard labels it `From a folder · not reviewed` (a third party's: `By @acme · From a folder · not reviewed`), never `By Rerail`.
+  - Set-up's table names it `SQL (from a folder)`, with the same warning before the question.
+  - Its steer note says `From the SQL rule pack, installed from a folder, which Rerail has not reviewed.`
 - **Clashes.** Pack ids and rule ids are not namespaced: a repository adds a pack by its id. When a third party's pack has the pack id of one of Rerail's, or a rule id one of Rerail's packs has, Rerail's loads and the other is left out with why; `rerail packs add` puts such a pack back and fails.
 - **Set-up and updates.** Set-up fetches only Rerail's own packs. A third party's pack that is installed already is offered too, wherever it fits, named with its publisher in the table (`Acme SQL (by @acme)`) and with a line before the question saying Rerail has not reviewed it, that its rules run in Log until the person approves them, and that then their steer text reaches the coding agent; `--packs` names it by its package name (`@acme/rerail-pack-sql@1.0.0`). `rerail update` updates no pack; `rerail packs add <package>` does.
 
@@ -73,22 +100,29 @@ A checkout can carry rules of its own: every `.json` file directly in `<checkout
 
 - **Rules.** Each rule starts on, in its document's mode; its title is its `description`, else its id, and its group is "This worktree". Settings name the pack and its rules by id as for any pack: a checkout setting on pack `worktree` turns the whole folder off in that worktree, and a repository setting on it applies to every checkout's own rules.
 - **Edits.** The folder is read again whenever a file in it is added, removed or changed, so an edit applies at the next event of a running session, without touching anything else.
-- **Checks.** Each file is checked on its own, and one that fails is left out, with why, while the others load: it must be a regular file (a symbolic link is never followed, nor a symlinked `.rerail` or `rules` folder) of at most 1 MiB holding valid JSON without duplicate keys and a valid rule document; its id must be in no other file of the folder (the first by file name keeps it) and in no installed pack (the installed pack's rule wins); a code rule must compile, unless the engine refuses it only as `language-not-supported`. A library rule with the same id wins over it, as over any pack rule. When an installed pack has the pack id `worktree`, that pack loads and the folder does not.
-- **Where it shows.** The session footer reads `R E R A I L ● 27 rules · worktree` while they are in force ([in-session surfaces](in-session-surfaces.md#what-the-footer-means)); `rerail packs list` run in the checkout lists its own rules and what was left out, with a `Not running:` line while Rerail is off there or the repository is not set up; `rerail rules test <file>` checks one of its files as it is, validating it and running the repository pass with no cases; `GET /api/rule-packs?checkout=<path>` (`rule_packs_list`, which an MCP call scopes to the calling agent's checkout) lists the pack with publisher `worktree` and the left-out files in `skipped`; `GET /api/repository/rules` for the checkout lists its rules as the pack's; the dashboard scoped to the checkout shows the pack as **In this worktree**, never in the catalog of packs to add and with no Remove pack, and its Overview names each left-out file with why. The dashboard's switches for the pack and its rules write this checkout's settings, never the repository's, where every other pack's write the repository's. A steer from one of its rules says `From this worktree's own rules.`
+- **Checks.** Each file is checked on its own: one that fails is left out, with why, and the others load. A file must:
+  - be a regular file of at most 1 MiB (a symbolic link is never followed, nor a symlinked `.rerail` or `rules` folder);
+  - hold valid JSON without duplicate keys, and a valid rule document;
+  - have an id that no other file of the folder has (the first by file name keeps it) and no installed pack has (the pack's rule wins);
+  - compile, for a code rule, unless the engine refuses it only as `language-not-supported`.
+
+  A library rule with the same id wins over it, as over any pack rule. When an installed pack has the pack id `worktree`, that pack loads and the folder does not.
+- **Where it shows.**
+  - The session footer reads `R E R A I L ● 27 rules · worktree` while they are in force ([in-session surfaces](in-session-surfaces.md#what-the-footer-means)).
+  - `rerail packs list`, run in the checkout, lists its own rules and the files left out, with a `Not running:` line while Rerail is off there or the repository is not set up.
+  - `rerail rules test <file>` checks one of its files as it is: it validates the file and runs the repository pass with no cases.
+  - `GET /api/rule-packs?checkout=<path>` (`rule_packs_list`; an MCP call is scoped to the calling agent's checkout) lists the pack with publisher `worktree`, and the left-out files in `skipped`. `GET /api/repository/rules` for the checkout lists its rules as the pack's.
+  - The dashboard, scoped to the checkout, shows the pack as **In this worktree**, never in the catalog of packs to add and with no Remove pack. Its Overview names each left-out file with why. The switches for the pack and its rules write this checkout's settings, where every other pack's write the repository's.
+  - A steer from one of its rules says `From this worktree's own rules.`
 - **Trust.** The folder is read from the working tree, so whatever a branch commits there runs in every checkout of that branch that is started, and its text reaches the coding agent there. Rerail has not reviewed it, as it has not reviewed a third party's pack, so each rule runs in Log until a person approves its content (`rerail rules approve <id>`, run in the checkout), and again after each edit ([approval](rule-scoping.md#approval)). Keep the folder out of Git (`.git/info/exclude`) to keep rules to one worktree.
 
 ## Where a pack's rules live
 
 An installed pack's files are its rules. Core reads each installed pack's `pack.json` and the rule documents it lists,
-keeps them in memory, and reads them again when the installed packs change; nothing copies them into the database. The database holds what people decide
-about them: which packs and rules each repository adds (attachments), the `on`, `mode`, `suppressions` and option
-values (`config`) set for them (settings), and the rules people write or copy and edit (the library). All of these name
-a pack or rule by its id.
-
-The alternative, copying a pack's rules into the database when it is installed and tracking which rows still match
-their pack, was rejected: every case below would need code to reconcile the copies with what is installed, edits and
-upgrades would collide in one row, and a `rules.json` dump would have to carry pack rules. With the files as the rules,
-each case is "whatever is installed now":
+keeps them in memory, and reads them again when the installed packs change; nothing copies them into the database. The
+database holds what people decide about them: which packs and rules each repository adds (attachments), the `on`,
+`mode`, `suppressions` and option values (`config`) set for them (settings), and the rules people write or copy and
+edit (the library). All of these name a pack or rule by its id, so each case below is "whatever is installed now":
 
 | Case | What happens |
 |---|---|
@@ -103,57 +137,17 @@ each case is "whatever is installed now":
 
 ## Format
 
-This is the pack format, `rerail.rule-pack/v1`. Where packs live in this repository and what each must prove is
-specified in [pack-format.md](pack-format.md).
-
-A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<id>/rules/`. The TypeScript pack (`packs/typescript/`), with one of its rules:
-
-```json
-{
-  "format": "rerail.rule-pack/v1",
-  "id": "typescript",
-  "name": "TypeScript",
-  "category": "language",
-  "covers": "typescript-eslint rules for safe, idiomatic TypeScript.",
-  "reason": "matches TypeScript",
-  "match": {
-    "any": [
-      { "dependencies": { "ecosystem": "npm", "names": ["typescript"] } },
-      { "files": ["**/*.ts", "**/*.mts", "**/*.cts"], "exclude": ["**/*.d.ts"], "label": "*.ts files" },
-      { "files": ["**/*.tsx"], "label": "*.tsx files" }
-    ]
-  },
-  "rules": [
-    { "id": "typescript-eslint-ban-tslint-comment", "document": "rules/typescript-eslint-ban-tslint-comment.json", "title": "typescript-eslint ban-tslint-comment: Disallow `// tslint:<rule-flag>` comments", "group": "typescript-eslint", "on": false }
-  ]
-}
-```
-
-- `covers` is the line the dashboard shows under the pack's name: one sentence on what the rules are for and where they come from, such as `typescript-eslint rules for safe, idiomatic TypeScript.` It counts no rules and says nothing of which start on; the dashboard shows both beside it.
-- `category` is `language`, `framework` or `repository`. It drives the kind chips of the dashboard's rule pack catalog. Packs are listed languages first, then frameworks, then repository packs.
-- `match` (required) is `{ "any": [signal, …] }`: what set-up recommends the pack for. A signal is one of:
-  - `{ "files", "exclude"?, "label" }`: repository-relative globs. `**` crosses folders, `*` and `?` stay within one, and `{a,b}` gives alternatives.
-  - `{ "dependencies": { "ecosystem", "names" } }`: any manifest in the repository that depends on one of the packages. `npm` reads `package.json` (`dependencies`, `devDependencies`, `peerDependencies`, `optionalDependencies`); `pypi` reads `requirements*.txt` and `pyproject.toml` (PEP 621 `dependencies` and `optional-dependencies`, Poetry's `dependencies` less `python`, its `group.<name>.dependencies`, and the `dev-dependencies` of Poetry before 1.2), comparing names normalised as PEP 503 does; `composer` reads `composer.json` (`require`, `require-dev`), case-insensitively.
-- `reason` is the pack's own summary. The reason shown for a repository is built from what matched: `matches the typescript dependency in package.json and *.ts files in src`. It names at most two signals. A file signal names the folder its files share, which lets a person see when a pack was picked only because of a stray folder.
-- `honourSuppressionComments` (optional, default `true`): whether the pack's rules start out honouring their linters' suppression comments, the pack's start for the `suppressions` rule setting. With `false`, no linter's comment silences them until a repository or checkout sets `suppressions: "honour"`; Rerail's own `rerail-ignore` always does.
-- `rules` lists the pack's rules; each rule belongs to exactly one pack. A pack may list no rules while all its ports are still candidates, and such a pack is never recommended; neither is a pack whose rules all start off.
-  - `id` is lowercase letters, digits and dashes, the upstream tool's name then its rule (`eslint-eqeqeq`, `ruff-b011-assert-false`); every pack uses this one style. It names the rule's document and its port in `conformance.json`, and people turn the rule on and off by it, so it does not change once the pack is published.
-  - `title` and `group` are what the dashboard shows.
-  - `mode` (optional) is the rule mode the pack starts the rule in; without it the rule keeps its document's mode. No shipped pack sets one.
-  - `on` (optional, default `true`) is whether the pack starts the rule on.
-  - `examples` (optional) is one caught and one passing example, `{ "caught": { "path"?, "text" }, "passes": { … } }`, with a path for a code rule and none for a conversation rule. The complexity pack has one pair per rule.
-  - `document` is the rule's document, `rules/<id>.json`, relative to the pack; it must carry the rule's id
-    ([pack format](pack-format.md#packjson)).
-
-`test/engine/catalog/packs.test.ts` holds every pack under `packs/` to the [validation contract](pack-format.md#the-validation-contract), and `test/engine/catalog/rule-packs.test.ts` holds what a pack's match and examples promise: every rule starts in its document's mode, and every example is caught or passes as it says.
+A pack is `packs/<id>/pack.json`, in the `rerail.rule-pack/v1` format, beside the rule documents it lists in
+`packs/<id>/rules/`. Every field of `pack.json`, with an example, is in [pack-format.md, "pack.json"](pack-format.md#packjson);
+what every pack must prove is its [validation contract](pack-format.md#the-validation-contract).
 
 ## Matching
 
-`recommendRulePacks(checkoutRoot)` lists the checkout's files once and matches every pack against that list:
+Rerail lists the checkout's files once and matches every pack against that list:
 - Under Git it uses `git ls-files --cached --others --exclude-standard`, less files deleted from the worktree and files a sparse checkout leaves off disk (skip-worktree entries). Outside Git it walks at most 200,000 files.
 - Dependency and build-output folders (`node_modules`, `dist`, `.venv`, `vendor`, …) and test-data folders (`fixtures`, `__fixtures__`, `testdata`, `test-fixtures`) are left out.
 
-It then reads every dependency manifest (`package.json`, `requirements*.txt`, `pyproject.toml`, `composer.json`) that is left and is a regular file inside the repository of at most 1 MiB; a symlinked manifest (which Git lists like any tracked file) or a larger one is skipped unread. It returns each fitting pack with its rule count (the rules that start on), reason and folder. No source text is read. On a repository of about 4,700 source files a match takes about 90 ms; on cal.com (6,700) about 500 ms.
+It then reads every dependency manifest (`package.json`, `requirements*.txt`, `pyproject.toml`, `composer.json`) that is left and is a regular file inside the repository of at most 1 MiB; a symlinked manifest (which Git lists like any tracked file) or a larger one is skipped unread. It returns each fitting pack with its rule count (the rules that start on), reason and folder. No source text is read.
 
 The folder is where set-up adds the pack. A language or framework pack goes in the folder that holds everything it matched (`web` when only `web/` has TypeScript; the whole repository when matches are spread across it). A repository pack goes in the whole repository.
 
@@ -176,7 +170,7 @@ It differs from the study in when and how often the agent hears about it:
 
 The daemon serves the packs, and each call is also an MCP tool:
 - `GET /api/rule-packs` (`rule_packs_list`): every installed pack with its version, `packageName`, `publisher` (`rerail` for Rerail's own, else the npm scope or the unscoped package name) and rules, and `skipped`: each installed pack left out, with its path, package name, version and why.
-- `GET /api/rule-packs/recommendations` (`rule_packs_recommend`): the installed packs that fit a target checkout (`repository` or `checkout`; an MCP call defaults to the calling agent's checkout), each with its rule count (the rules that start on), reason and folder. When the checkout is not on disk the repository's main checkout is scanned, else its most recently seen one. The scan runs synchronously in the daemon (about 0.3 to 0.5 s on a large repository), so a checkout is rescanned at most once a minute; a pack installed or removed shows at once.
+- `GET /api/rule-packs/recommendations` (`rule_packs_recommend`): the installed packs that fit a target checkout (`repository` or `checkout`; an MCP call defaults to the calling agent's checkout), each with its rule count (the rules that start on), reason and folder. When the checkout is not on disk the repository's main checkout is scanned, else its most recently seen one. The scan blocks the daemon while it runs, so a checkout is rescanned at most once a minute; a pack installed or removed shows at once.
 - `GET /api/rerail-rules` (`rerail_rules_list`) gives each By Rerail rule its `packId`: the pack that lists it, or `null`.
 
 Packs are added to a repository with `PUT /api/repository/attachments` (`repository_attachments_set`), in a folder or for the whole repository; the first addition sets the repository up.

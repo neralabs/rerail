@@ -16,9 +16,9 @@ names:
 Either kind changes through a pull request that stages the new data, and reaches S3 through one workflow on main once
 a code owner approves ([Publishing pack data](#publishing-pack-data)). The files, the locks and the archives are
 described in [pack-format.md, "Pack data"](pack-format.md#pack-data), and how each copied file's licence is decided in
-[pack-format.md, "Licensing"](pack-format.md#licensing). The step-by-step for each actor (contributor, maintainer,
-approver) is in [CONTRIBUTING.md, "Pack test data"](../CONTRIBUTING.md#pack-test-data) and [REVIEW.md](../REVIEW.md);
-this page is the reference.
+[pack-format.md, "Licensing"](pack-format.md#licensing). A contributor's commands are in
+[CONTRIBUTING.md, "Pack test data"](../CONTRIBUTING.md#pack-test-data), and what a reviewer and an approver check is in
+[REVIEW.md](../REVIEW.md).
 
 What the rules must pass is the conformance check (`npm run test:conformance`), described with each of its checks in
 [conformance/README.md](../conformance/README.md#the-gate). Each gated tool-pack's `gates.yaml` is its upstream
@@ -44,8 +44,8 @@ tool-pack fails its whole pack's conformance check, which catches typos), a main
 sample builders: it loads the set, changes it, and writes the samples to add or replace into `publish/samples/` with
 `writeSampleSet` (`scripts/samples/pack.ts`), which checks them as the publish does and writes a `REUSE.toml` that
 licenses the staged copy. The same pull request updates `SAMPLES.md`, and the set is then published like any pack data.
-The builders are a library API that tests and such scripts call. There is no command for them yet, and no standing
-policy for trimming a set: a `SAMPLES.md` says how its set was trimmed, where it was, when it was built.
+The builders are a library API, with no command of their own. No rule says how far to trim a set; a `SAMPLES.md` says
+how its set was trimmed when it was built, if it was.
 
 ### Sample licences
 
@@ -217,11 +217,23 @@ either of these:
 | `publish/samples/<sample-id>/<path>`, `publish/samples/LICENSES.md` | samples archive entry `<sample-id>/<path>`, `LICENSES.md` |
 | `publish/samples/REUSE.toml` | nothing: licensing for the tracked copy only |
 
+```mermaid
+flowchart LR
+  A["Contributor:<br/>stage publish/, open the PR"] --> B["Waiting comment;<br/>CI judges the data"]
+  B --> C["Maintainer:<br/>dispatch Publish pack data"]
+  C --> D["prep:<br/>pack, check licences, summary"]
+  D --> E["Code owner:<br/>approve test-data-upload"]
+  E --> F["upload:<br/>put create-only, verify"]
+  F --> G["finish:<br/>commit the locks, remove publish/"]
+  G --> H["Merge"]
+```
+
 Anything else under `publish/` fails the publish. To make the request, make the data in the pulled layout (cases
-written by hand, the sample builders, or derive once it resumes), then `npm run fixtures:stage -- --pack <id> --tool
+written by hand, the sample builders, or `fixtures:derive`). Then `npm run fixtures:stage -- --pack <id> --tool
 <tool>` copies every file the locked archive lacks or holds differently into `publish/` (`--all`: the whole set, for a
-`replace` publish; an overlay cannot delete a file). Commit `publish/` and open the pull request. Its CI lays
-`publish/` over the pulled data and judges it, and structure metric #3 blocks the merge while any `publish/` is tracked.
+`replace` publish; an overlay cannot delete a file). Commit `publish/` and open the pull request. Review sees the bytes
+in the diff, with `*.expected.json` collapsed. The pull request's CI lays `publish/` over the pulled data and judges
+it, and structure metric #3 blocks the merge while any `publish/` is tracked.
 
 ### The publish workflow
 
@@ -236,9 +248,12 @@ Two workflows carry a request. Neither runs any code of the pull request.
    with no publish steps. It deletes the comment, while it is still waiting, once nothing is left to publish. The
    comment blocks nothing; structure metric #3 does.
 2. **The dispatch.** A maintainer, or an agent with write access, dispatches **Publish pack data**
-   (`pack-data-publish.yml`) on main with the pull request's number. With `replace` off (the default) each tool-pack's
-   archive is the locked one, less the files of removed authored rows, with `publish/` laid over it; with `replace`
-   on it is exactly what `publish/` holds. The run is titled "Publish pack data for #<n>".
+   (`pack-data-publish.yml`) on main with the pull request's number, from the workflow's page (**Run workflow**) or
+   with `gh`. With `replace` off (the default) each tool-pack's archive is the locked one, less the files of removed
+   authored rows, with `publish/` laid over it; with `replace` on it is exactly what `publish/` holds. Turn `replace`
+   on when the pull request stages whole sets (`fixtures:stage --all`), to remove files or regenerate a set; a bump or
+   re-snapshot pull request always publishes with it ([Bump pull requests](#bump-pull-requests)). The run is titled
+   "Publish pack data for #<n>".
 
    ```sh
    gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=<n> [-f replace=true]
@@ -249,9 +264,9 @@ Two workflows carry a request. Neither runs any code of the pull request.
    protected one. It fetches `refs/pull/<n>/head` as objects, which must be the head GitHub names, and packs every
    `publish/` from those git blobs (`scripts/s3/pack-fixtures.mjs pack --from`), never checking the pull request out.
    Staged samples go through `publishedSamples` ([Sample licences](#sample-licences)). Every file going to S3 must be
-   under a licence the allowlist takes: test data as pack check 6 decides it, through the same classifier
    ([pack-format.md, "Licensing"](pack-format.md#licensing)), samples by their recorded licence. A refusal fails prep,
-   and no approval is asked. prep then writes the approver's summary: per archive its kind, tool-pack, sha256, files,
+   and no approval is asked: its log says what it refused, so fix the pull request and dispatch again. prep then writes
+   the approver's summary: per archive its kind, tool-pack, sha256, files,
    bytes, its licences with their file counts and a Sources column (a samples archive's repositories with their
    licences; for test data, the `licenses/*/UPSTREAM.md` records), then what each archive adds, changes and drops (up
    to 50 paths per list; a replace publish's dropped files appear nowhere else), and how many `publish/` files the
@@ -280,6 +295,21 @@ already holds once it verifies.
 Once the locks are committed, **Pack test data is in S3** passes and the conformance check runs on the published data
 ([CI](#ci)).
 
+### Merging (maintainers)
+
+A pull request with pack data to publish has the **Pack data waiting to publish** comment. Read the pull request
+first: its pack data is reviewed like its code ([REVIEW.md](../REVIEW.md#what-blocks-a-merge-here)). Then dispatch
+**Publish pack data** for it (step 2 above), and have a code owner approve the upload. Once the comment reads
+"published", CI runs again on the branch; merge when **CI result** passes. On "action needed" or "failed", act as
+above.
+
+### Approving a data upload (code owners)
+
+The code owners are the `test-data-upload` environment's required reviewers, and the approver is recorded on every
+object uploaded. No CI job derives the data again, so read the run's prep summary against the pull request's diff
+before you approve ([REVIEW.md, "Approving a pack data upload"](../REVIEW.md#approving-a-pack-data-upload)). Reject
+the deployment when anything in it does not follow from the pull request.
+
 ### Forks
 
 A fork's pull request runs no CI: maintainers don't approve fork runs, since CI is costly to run. Its data is not
@@ -291,12 +321,18 @@ project does not publish from forks.
 
 ### Removing data
 
-A file the archive holds is not in the pull request's diff, so an overlay cannot delete it. An authored file goes with
-its row: the pull request deletes the file's row from the tool's `UPSTREAM.md`, and an overlay publish of that
-tool-pack drops it. The removed row alone makes the tool-pack a publish request, with nothing staged in `publish/`:
-the request comment counts it, and prep drops every authored file the record listed at the merge base with main and no
-longer lists. Anything else goes with a `replace` publish of the whole set (`fixtures:stage --all`). The old archive
-stays in S3 for the commits that name it.
+A file the archive holds is not in the pull request's diff, so an overlay cannot delete it. Any removal changes the
+archive's file set, which `provenance.json` must match or prep refuses the archive, so derive the tool-pack again after
+the removal (`fixtures:derive`, on the pinned toolchain; Linux for `rust/clippy`) and stage what changed.
+
+- An authored file the tool's `UPSTREAM.md` lists goes with its row: delete the row before deriving, and an overlay
+  publish drops the file. The removed row alone makes the tool-pack a publish request, with nothing staged in
+  `publish/`: the request comment counts it, and prep drops every authored file the record listed at the merge base
+  with main and no longer lists.
+- Any other file, one under `authored/` included, goes with a `replace` publish: delete it after a pull, derive, and
+  stage the whole set (`fixtures:stage --all`).
+
+The old archive stays in S3 for the commits that name it.
 
 ### `fixtures:push`
 
@@ -469,10 +505,9 @@ never runs in main's cache scope or next to a credential, and the work is split 
    opens or updates the pull request. It publishes nothing, and the app needs no Actions permission. `work-branch` then
    deletes the work branch.
 
-A maintainer then publishes the pull request's data as for any pull request
-([CONTRIBUTING.md, "Merging"](../CONTRIBUTING.md#merging-maintainers)): run **Publish pack data**
-(`pack-data-publish.yml`) on `main` for the pull request with `replace` on, since each `publish/` holds the tool-pack's
-whole derived set:
+A maintainer then publishes the pull request's data as for any pull request ([Merging](#merging-maintainers)): run
+**Publish pack data** (`pack-data-publish.yml`) on `main` for the pull request with `replace` on, since each
+`publish/` holds the tool-pack's whole derived set:
 
 ```sh
 gh workflow run pack-data-publish.yml --ref main -f pr=<n> -f replace=true

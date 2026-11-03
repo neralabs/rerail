@@ -34,34 +34,30 @@ person says yes.
    processor), or without Git, set-up stops before changing anything and says
    what to do. Which Git and Node set-up looks for is under
    [Which Git and Node Rerail runs](#which-git-and-node-rerail-runs).
-1. **Install** — `ManagedUpdater.install()` runs `npm install @neralabs/rerail@<this version>`
-   into `versions/<version>` (a staging directory until validation passes),
-   checks the package identity, loads the native kernel and runs a real
-   event-stream round-trip, then activates it. `current` is re-pointed
-   atomically and `bin/rerail` is (re)written. The npx copy is never referenced
-   again. Installing turns nothing on, connects no coding agent and starts no
-   daemon. A run from the version `current` already points at skips this step.
-   So does an answer (`--answer`, `--repo`) or a `/rerail-start` step once any
-   version is installed: OMP and Pi run those from the session's own package,
-   which may be older than `current`, and installing it would undo
-   `/rerail-update`.
+1. **Install** — set-up runs `npm install @neralabs/rerail@<this version>`
+   into `versions/<version>`, a staging folder until it passes validation:
+   the package identity, the native kernel loading, and a real event-stream
+   round-trip. It then re-points `current` atomically and (re)writes
+   `bin/rerail`; the npx copy is never used again. Installing turns nothing
+   on, connects no coding agent and starts no daemon. Set-up skips this step
+   when it runs from the version `current` already points at. Once any
+   version is installed, an answer run (`--answer`, `--repo`) and
+   `/rerail-start` skip it too: OMP and Pi run those from the session's own
+   package, which may be older than `current`.
    - **May Rerail read your sessions** — once per computer, before set-up
      reads a repository or connects a coding agent, it asks whether Rerail may
      read the sessions of the coding agents it connects to (what you ask, what
-     they do, the files they edit) to check them against your rules and show
+     they do, the files they edit), to check them against your rules and show
      their events in the dashboard. "Yes" (`--answer allow`) is kept in
-     `~/.rerail/consent.json` and never asked again; it carries the folder the
-     run was for (`--repo`), and set-up still asks before reading it. "No"
-     (`--answer decline`) stops set-up with nothing new connected or started
-     and removes an earlier yes, so the next set-up asks again; coding agents
+     `~/.rerail/consent.json`, with the folder the run was for (`--repo`), and
+     never asked again; set-up still asks before reading that folder. "No"
+     (`--answer decline`) stops set-up with nothing new connected or started,
+     and removes an earlier yes so the next set-up asks again. Coding agents
      connected before stay connected until `rerail install --remove`. The
-     install above has already happened by then (a coding agent's answers run
-     the launcher it writes), so Rerail stays installed, off, with `rerail` on
-     `PATH`, and the screen says so: `rerail install --remove` takes it off
-     the computer.
-     `rerail start` in a repository that is not set up asks it too. An
-     update's health check (`start --repo <empty scratch folder> --answer
-     pick-myself`, no coding agent) is not asked.
+     install above has already happened, so Rerail stays installed and off,
+     with `rerail` on `PATH`, and the screen says `rerail install --remove`
+     takes it off the computer. `rerail start` in a repository that is not set
+     up asks this too; an update's health check does not.
 2. **Ask before reading** — set-up names the Git repository it ran in and asks
    whether it may read it. Outside a repository (or in your home folder) it
    asks which folder to start with instead (type the folder, or skip for now),
@@ -83,44 +79,28 @@ person says yes.
    is the question before ("Skip, I'll pick packs", `--answer pick-myself`:
    no code is read). See [Rule scoping](rule-scoping.md#set-up) for how each
    answer attaches packs.
-5. **Start, in this repository** — the chosen coding agents (all found,
-   unless named) are connected, the recommended or chosen packs are attached
-   to the repository, and the repository is started:
-   every checkout of it, the one set-up ran in included, that has not been
-   stopped on its own. Other repositories stay off. Connecting writes persistent registrations, all pointing at
-   `~/.rerail/current`, so hooks follow an update without being rewritten; `rerail update` registers the new version
-   again only with the coding agents already connected, to bring its new commands and skills:
-   - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`. When OMP also has its own plugin install of Rerail (`omp plugin install @neralabs/rerail`), set-up changes nothing of it and its summary says to run `omp plugin uninstall @neralabs/rerail`
-   - Pi: `packages` entry in `~/.pi/agent/settings.json`. An `npm:@neralabs/rerail` entry, at any version, as Pi's gallery writes it, is replaced by this one in its place; in the `{ "source": … }` form only its `source` changes, so its filters stay. When an entry for this install is there already, it keeps its place and filters and the npm entry is removed. Other `npm:` entries, rule packs included, stay
-   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), sandbox and permission denies that keep the agent out of Rerail's data (see [Sandbox and permission entries](#sandbox-and-permission-entries)), and the Rerail commands (`/rerail`, `/rerail-manage`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-uninstall`, `/rerail-help`, `/rerail-show-me`) under `~/.claude/commands/` (`/rerail-manage` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
-   - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage`, and so on
-   - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-manage` opens the dashboard as a tab in the Cursor window before falling back to the system browser), and, when the Cursor CLI has written `~/.cursor/cli-config.json`, permission denies for Rerail's data in it
+5. **Start, in this repository** — set-up connects the chosen coding agents (all it found, unless `--agents` names
+   others), attaches the recommended or chosen packs to the repository, and starts it: every checkout of it that has
+   not been stopped on its own, the one set-up ran in included. Other repositories stay off. Every registration points
+   at `~/.rerail/current`, so hooks follow an update without being rewritten; `rerail update` registers again only
+   with the coding agents already connected, to bring the new version's commands and skills. Per coding agent:
+   - OMP: the link `~/.omp/agent/extensions/rerail` → `current`, and a `rerail` MCP server in `~/.omp/agent/mcp.json`.
+     An OMP plugin install of Rerail is left alone; the summary says to remove it.
+   - Pi: a `packages` entry in `~/.pi/agent/settings.json`, which takes the place of any gallery
+     `npm:@neralabs/rerail` entry, keeping its filters.
+   - Claude Code: hooks, the status line (wrapping any you had) and the
+     [sandbox and permission denies](#sandbox-and-permission-entries) in `~/.claude/settings.json`, and the Rerail
+     commands in `~/.claude/commands/`. On Windows the hooks run without Git Bash.
+   - Codex: hooks in `~/.codex/hooks.json` (trusted once with `/hooks` in Codex), and one skill per Rerail command in
+     `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage` and so on.
+   - Cursor: hooks in `~/.cursor/hooks.json`, the Rerail commands in `~/.cursor/commands/`, and permission denies in
+     `~/.cursor/cli-config.json` when the Cursor CLI has written that file.
 
-   Existing entries from other tools are kept, with their content unchanged,
-   but the file is written back as JSON indented by two spaces, so its
-   formatting may change. A config that is not plain JSON (a comment, a
-   trailing comma) is never rewritten: set-up leaves that coding agent
-   unconnected, connects the others and starts the repository, and its summary
-   names the file, the parser's reason and what to do (`rerail install` stops
-   with the same reason and writes nothing). Entries
-   another install of this package wrote (identified by the `package.json`
-   beside the script they run) are replaced, not duplicated; that includes a
-   Claude status line such an install composed, and because what it wrapped is
-   recorded only in that install's home, removing Rerail then leaves no status
-   line there. A hook, status line
-   or MCP bridge entry of the shape setup writes is also replaced when its
-   install is gone, with neither its script nor a `package.json` beside it on
-   disk, since it can never run again. So is an OMP extension link or Pi
-   package that names a gone root of the shape setup registers (a Rerail
-   home's `current`, such as `~/.rerail/current` or `$RERAIL_HOME/current`, or
-   `node_modules/@neralabs/rerail`) that no longer resolves; a path that still
-   resolves stays unless it holds this package, and so does a missing path of
-   any other shape, such as a gone checkout. Setup's report names the target of each link it removes. The retired `/rerail-session`, `/rerail-disable` and
-   `/rerail-enable` command files are removed when they run this install,
-   another install of this package or one that is gone; anyone else's stay, and
-   removing Rerail removes only this install's. A backup
-   `<file>.<timestamp>.bak` is written only when a file changes. Re-running is
-   a no-op.
+   Other tools' entries are kept as they are, though the file is written back as JSON indented by two spaces.
+   Rerail's own entries, from this install, another install of this package, or one whose install is gone, are
+   replaced, not duplicated. A config that is not plain JSON (a comment, a trailing comma) is left alone: set-up
+   connects the other coding agents and starts the repository, and its summary names the file, the reason and what
+   to do. A `<file>.<timestamp>.bak` is written only when a file changes. Re-running is a no-op.
 6. **Summary** — the rule packs added (by name, "TSLint in web" when added in
    one folder), the rules on, the other repositories Rerail is on in, the
    dashboard link (`#rules`, its Overview, scoped to the repository and
@@ -181,27 +161,22 @@ Set-up writes, per coding agent:
 Rerail nowhere. Set-up run again in a repository that is set up never asks
 again: it connects the coding agents found since (named in the summary as "Now
 also connected"), then shows the summary, or says Rerail is stopped there.
-Which agents count as found since is kept in `~/.rerail/coding-agents.json`
-(`{ "seen": [<agent id>, …] }`): every coding agent set-up connected, left out
-or found, and every one `rerail install` found or was named, except one that
-could not be connected, so set-up run again tries it once more. Without the
-file every coding agent found counts as new. Rerail stays off
-in every other repository until you start it there (see
-[Start and stop](installation.md#start-and-stop)); starting a repository that is not set up runs steps 2 to 6
-for it.
+`~/.rerail/coding-agents.json` lists every coding agent set-up or `rerail
+install` has seen, except one that could not be connected, so the next set-up
+tries it again; without the file every coding agent found counts as new.
+Rerail stays off in every other repository until you start it there (see
+[Start and stop](installation.md#start-and-stop)); starting a repository that
+is not set up runs steps 2 to 6 for it.
 
 ## `rerail` on your PATH
 
 Every set-up run also puts `~/.rerail/bin` (the Windows launcher is
 `rerail.cmd`, with an sh launcher `rerail` beside it for Git Bash, which runs
 neither `.cmd` nor `.bat` files by bare name) on `PATH`, so `rerail` runs
-from a new terminal. So does every
-`rerail update`, through the `rerail install --refresh` it ends with, for an
-install whose set-up predates this step (0.1.0-next.2 or earlier): it gets the
-entry on its next update, once. Set-up records that it handled `PATH` in
+from a new terminal. Set-up records that it handled `PATH` in
 `~/.rerail/launcher-path.json`, and from then on `PATH` is yours: a block you
-take out stays out of later updates, and only `rerail setup` run again adds
-it back. On macOS and
+take out stays out, and only `rerail setup` run again adds it back.
+`rerail update` adds the entry only when that record is missing. On macOS and
 Linux it appends a block between `# >>> rerail >>>` and `# <<< rerail <<<` to
 the startup file `$SHELL` (else the account's login shell) reads: `$ZDOTDIR/.zshrc` (else `~/.zshrc`) for zsh;
 `~/.bashrc` and the first of `~/.bash_profile`, `~/.bash_login`,
@@ -250,7 +225,7 @@ instead of a prompt waiting on input.
 
 **In a coding agent's own UI**, `--json` on `rerail setup` and on `rerail
 start` prints one JSON object per run and nothing else on stdout:
-`{ step, screen, question }` (`SetupStep` in `src/harness/setup-step.ts`). `step` is
+`{ step, screen, question }`. `step` is
 `sessions`, `read-repo`, `confirm-packs`, `pick-packs` or `no-repo` at a question, else `done`,
 `stopped`, or `error` (exit 1); `screen` is plain text for the person; each of
 the question's options carries its answer key, label, `detail`, the arguments
@@ -321,15 +296,13 @@ rerail install --remove --delete-data  # the same, deleting the database, backup
 Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
 `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`,
 `/rerail-uninstall`, `/rerail-help`, `/rerail-show-me` and `/rerail-bug-report` (`$rerail`,
-`$rerail-manage`, and so on in Codex). `rerail install` also removes the
-`rerail-ui` and `rerail-rage-quit` files an earlier build wrote. `rerail update`
-then runs `rerail install --refresh` from the version it activated: every coding
-agent already connected gets that version's commands, skills and hooks, and loses
-the ones it retired; a coding agent never connected is left alone. Command files
-and skills Rerail generated are replaced without a `.bak` copy. Updating from
-0.1.0-next.2 or earlier runs that version's update, which does not do this: run
-`rerail install --refresh` once afterwards.
-Settings, scans, status, update checks and reset are the CLI commands above.
+`$rerail-manage`, and so on in Codex). In Claude Code and Cursor, `/rerail-manage`
+opens the dashboard as a tab in the Orca or Cursor window it runs in, else in
+the system browser. After `rerail update` activates a version, it runs that
+version's `rerail install --refresh`: every coding agent already connected
+gets its commands, skills and hooks and loses the ones it retired; a coding
+agent never connected is left alone. Command files and skills Rerail generated
+are replaced without a `.bak` copy.
 Restart the coding agent after installing or rebuilding to load the commands.
 A scan or settings invocation must supply the exact session
 identity. See the [scan and settings contract](reference.md#scan-and-settings-controls)
@@ -358,22 +331,12 @@ update goes on.
 
 ## The database
 
-Rerail keeps one database, `~/.rerail/rerail.sqlite` (`$RERAIL_HOME/rerail.sqlite`),
-holding each repository's rule configuration, the rules you created, and the
-sessions, events, and work links of every repository on the machine; each
-session is attributed to its repository (`rerail status` names the file). The
-daemon serves every repository; its pages are scoped to one with
-`?repository=<key>&checkout=<path>`. The rules of the rule packs you install
-(`$RERAIL_HOME/packs`, see [Rule packs](rule-packs.md#installing-packs)) run only
-in repositories that add them (see [Rule scoping](rule-scoping.md)).
-`rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`
-(kept only when the update changes the version), the database as it was before
-the version now active, to put back by hand if you need it (see
-[Database compatibility](#database-compatibility));
-`rerail rules export [--output <file>]` and `rerail rules import <file>` move
-your rules and each repository's configuration by hand; `--approve` approves the
-imported rules as they are imported, so a dump of your own rules runs at once.
-`rerail seed` fills the database with mock rules to work against.
+Rerail keeps one database for every repository on the computer, `~/.rerail/rerail.sqlite`
+(`$RERAIL_HOME/rerail.sqlite`); `rerail status` names the file. [Rerail database](reference.md#rerail-database)
+says what it holds and what `rerail reset` and `rerail scrub` do to it, and
+[Deleting your data](privacy.md#deleting-your-data) how to remove it. `rerail update` first copies it to
+`rerail.sqlite.pre-update` beside it, kept only when the update changes the version: the database as it was before
+the version now active, to put back by hand (see [Database compatibility](#database-compatibility)).
 
 ## The content store
 
@@ -407,7 +370,7 @@ and start again.
 Everything else in the managed installation goes through that daemon rather
 than evaluating in-process: the Claude Code, Codex, and Cursor hooks, OMP and
 Pi sessions, and `rerail events` streams (in internal testing) send their events
-to it, starting it when it is not running (unless `RERAIL_AUTOSTART=0`), and CLI
+to it, starting it when it is not running, after a reboot too (unless `RERAIL_AUTOSTART=0`), and CLI
 commands such as `rerail settings` and `rerail scan` (in internal testing) use its API. Any process other than the lock holder that tries to
 open the machine-wide store gets an error and a failed policy run instead of a
 second writer. Development builds never take the lock and never open that
@@ -422,79 +385,28 @@ whichever daemon is running and never brings its own version back.
 
 ## Database compatibility
 
-`rerail.sqlite` records its compatibility floor in `PRAGMA user_version`: the
-oldest schema version a Rerail must read to open it, 3 in this release. Which
-migration steps the file has run is recorded in its `schema_migrations` table.
+`rerail.sqlite` records its compatibility floor in `PRAGMA user_version`: the oldest schema version a Rerail must be
+able to read to open it.
 
-When a newer Rerail first opens the file (the daemon, `rerail start`, set-up,
-or a command, hook or status line that only reads), it runs the steps the file
-has not run, in one transaction: a step that fails leaves the file as it was.
-A process that only reads and cannot write the file (its permissions) gets an
-error naming those steps instead, and the file, its mode included, is left as
-it was.
-Most steps add a column or a table, which older versions read correctly, so
-they keep the floor and an older Rerail still opens the file; a hook or the
-status line runs them before reading. A step an older version would misread
-raises the floor and waits for the new version's daemon or a command that
-writes (until then a hook or the status line says to start Rerail, `rerail
-daemon start`); from then on older versions refuse the file. To run an older
-version against it anyway, put back the copy `rerail update` took before that
-version change: stop Rerail (`rerail daemon stop`, and close the coding agent
-sessions that have it open), keep `rerail.sqlite` elsewhere if you need what
-changed since the update, then copy `rerail.sqlite.pre-update` over it. An
-update that finds nothing newer, or fails, keeps the copy of the last change;
-one that changes the version but cannot keep a copy removes the last one, which
-is not the database as it was before the version now active.
+When a newer Rerail first opens the file (the daemon, `rerail start`, set-up, or a command, hook or status line that
+only reads), it runs the migration steps the file has not run, in one transaction: a step that fails leaves the file
+as it was. A process that cannot write the file gets an error naming those steps, and the file is left as it was.
 
-A database written by 0.1.0-next.1 (stamped 1, before the migration path) is
-adopted: the first Rerail process that opens it records the baseline and stamps
-it 3, keeping everything in it. 0.1.0-next.1 then no longer opens it. A database file written by a newer Rerail (a
-floor above this release's), by other software, by 0.1.0-next.0 (stamped 1, in
-an older shape) or by a development build (stamped 2) is refused with an error
-and left untouched. Move such a file aside (or point `RERAIL_HOME` elsewhere)
-and start again, then re-import rules with `rerail rules import`.
+Most steps add a column or a table, which older versions read correctly, so the floor stays and an older Rerail still
+opens the file; a hook or the status line runs such steps itself. A step an older version would misread raises the
+floor, and waits for the new version's daemon or a command that writes; until then a hook or the status line says to
+run `rerail daemon start`. From then on older versions refuse the file. To run an older version against it anyway,
+put back the copy `rerail update` took before that version change:
 
-## Resetting session history
+1. Stop Rerail (`rerail daemon stop`) and close the coding agent sessions that have it open.
+2. Keep `rerail.sqlite` elsewhere if you need what changed since the update.
+3. Copy `rerail.sqlite.pre-update` over `rerail.sqlite`.
 
-To clear a repository's recorded sessions, run `rerail reset` from any of its
-checkouts (safe to repeat).
+An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
+version but cannot take a copy removes the old one, which no longer holds the database before the version now active.
 
-It deletes that repository's ended sessions and every session's events, work
-links, audits, and audit requests in one transaction. Rules, settings, and
-other repositories are untouched; the file is never unlinked, so open daemons
-and harness sessions keep working, and running sessions keep recording.
-It then rewrites the database in place (a WAL checkpoint, `VACUUM`, and a
-second checkpoint that empties `rerail.sqlite-wal`), so the deleted history
-cannot be read back from the file's bytes; every writer also runs with
-`secure_delete` on, which zeroes what any delete frees. When another Rerail
-process is reading the database at that moment, `rerail reset` says the
-`-wal` file may still hold deleted history. When the rewrite itself fails (the
-database stays busy, or the disk has no room for `VACUUM`'s second copy of
-the file), the history is still deleted and `rerail reset` says what may
-remain. Either way it exits 1; run it again once Rerail is idle. The
-`.rerail/sessions` ledgers in your checkouts are not touched by
-`rerail reset`.
-
-## Redacting secrets from stored history
-
-Rerail redacts secrets it recognizes (provider API keys and tokens, private
-keys, JWTs, the password of a URL, `Authorization` credentials, and a value
-assigned to a key such as `password` or `api_key`) from everything it writes
-to disk: stored session events, session ledgers, audit findings and
-`daemon.log`. Rules and steers still read the original text in memory. A
-secret becomes `[redacted:<kind>:<hash>]`, the hash the first six hex digits
-of its SHA-256, or `[redacted:<kind>]` for a value under a secret-like key.
-
-History stored before that is redacted by `rerail scrub` (safe to repeat;
-`rerail update` suggests it once). It rewrites the database's events, audit
-findings and audit errors in batches, then the file in place as `rerail reset`
-does; the session ledgers and held steers of every checkout the database
-records, never through a link; and `daemon.log`. It prints how many of each it
-changed. The daemon and running sessions carry on meanwhile: a line they
-append to a ledger or `daemon.log` during the scrub is kept, and a held steer
-is rewritten under the same lock its hook takes. A step that fails is reported
-and the others still run; the command then exits 1, and running it again
-finishes the job.
+A file stamped by a newer Rerail, or written by other software, is refused with an error and left untouched. Move it
+aside (or point `RERAIL_HOME` elsewhere), start again, then re-import your rules with `rerail rules import`.
 
 ## Removing Rerail in detail
 
@@ -582,9 +494,3 @@ and starts the checkout's dev daemon on the default home; its hooks name
 again (with a backup). Run
 `npx @neralabs/rerail setup` to return to the published package. Restart
 harness sessions after every rebuild.
-
-## What is not automated yet
-
-- Activation (`rerail activate`), in internal testing, is optional until a control plane exists.
-- A service unit (launchd/systemd) so the daemon survives reboots; today
-  adapters restart it on the next session.
