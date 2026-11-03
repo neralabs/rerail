@@ -154,6 +154,7 @@ impl Modules {
             stats: Arc::new(Counters::default()),
         };
         register(db, name, binding.clone())?;
+        BOUND.lock().insert((unsafe { db.handle() } as usize, name.to_owned()), binding.clone());
         bindings.insert(name.into(), binding);
         Ok(())
     }
@@ -163,6 +164,7 @@ impl Modules {
     /// Releases the table without a schema write or a retained row source.
     pub(crate) fn unregister(&self, db: &Connection, name: &str) -> Result<()> {
         self.bindings.borrow_mut().remove(name);
+        BOUND.lock().remove(&(unsafe { db.handle() } as usize, name.to_owned()));
         let name = CString::new(name).map_err(|_| failure("invalid native module name"))?;
         // SAFETY: the live connection owns its module. SQLite releases its auxiliary
         // data and keeps any already-open cursor's Arc ownership intact.
@@ -174,6 +176,15 @@ impl Modules {
         }
         Ok(())
     }
+}
+
+/// The tables bound on each live connection (by its handle), for readers on that connection that read a source in
+/// place rather than through SQL: the native engine's base inputs (`logic::native`).
+static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
+
+/// The source bound now to the table `name` on `db`'s connection, if one is.
+pub(crate) fn bound_source(db: &Connection, name: &str) -> Option<Arc<dyn Source>> {
+    BOUND.lock().get(&(unsafe { db.handle() } as usize, name.to_owned())).map(Binding::current)
 }
 
 #[repr(C)]

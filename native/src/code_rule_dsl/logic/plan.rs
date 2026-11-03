@@ -1542,6 +1542,16 @@ impl Run<'_> {
             }
             let is_const = |t: &Term| matches!(t, Term::Int(_) | Term::Str(_));
             let keep: Vec<usize> = (0..l.args.len()).filter(|&c| !is_const(&l.args[c])).collect();
+            // A view that only projects an input (`kind($n, $k) :- node(_, $n, $k, _, _)`) is read from the input,
+            // in place: its columns are the input's.
+            let projected = self.model.view_src.get(&l.rel).filter(|(_, vc)| vc.iter().all(Option::is_some)).filter(|_| {
+                let rules: Vec<&Rule> = prog.rules.iter().filter(|r| r.head.rel == l.rel).collect();
+                matches!(rules.as_slice(), [r] if matches!(r.body.as_slice(), [Literal::Atom(a)] if {
+                    let vars: Vec<&String> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
+                    a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && vars.iter().collect::<HashSet<_>>().len() == vars.len()
+                }))
+            });
+            let sql_col = |rel: &str, c: usize| match projected { Some((_, vc)) => vc[c].clone().unwrap(), None => sql_col(rel, c) };
             let cols = keep.iter().map(|&c| sql_col(&l.rel, c)).collect::<Vec<_>>().join(", ");
             let cols = if cols.is_empty() { "1".to_owned() } else { cols };
             let mut wheres = Vec::new();
@@ -1552,7 +1562,7 @@ impl Run<'_> {
             }
             let types: String = keep.iter().map(|&c| sym_char(&self.model.inputs, &prog.decls[&l.rel][c].1)).collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
-            let mut sel = self.model.relation(prog, &l.rel, false).render();
+            let mut sel = self.model.relation(prog, projected.map_or(&l.rel, |(base, _)| base), false).render();
             if !wheres.is_empty() {
                 sel += &format!(" WHERE {}", wheres.join(" AND "));
             }

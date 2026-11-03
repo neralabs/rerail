@@ -386,6 +386,19 @@ CPU at load 13–27; T's recorded 1.48–1.67 s and 1.13–1.20 s (FINDINGS roun
 - **RSS: not met** (848 against 690 MB, 829 against 511 MB; both above the 500 MB budget, T's too). The run phase adds about 450 MB, as T's engine: the native set engine copies its inputs (9.7M rows on Python) and indexes them. What the port adds over T is the batch (+250 MB: the projected trees beside the core facts, and the `nearest_<set>` rows): T climbed the tape natively and memory-mapped its facts, while the transducer's `nearest` is a relation of a row per node with such an ancestor (3.36M rows on Python over three sets), loaded into the engine like any input. The fixes are structural and belong to the steps that own them: `nearest_<set>` rows only where demanded (magic sets over it, as list step 21 does for matches), the native engine reading the vtab sources in place instead of copying them, and file-local strata per chunk (list step 29) rather than the whole corpus in one batch.
 - Fixed on the way: the device's `nearest` system is split at document roots into pieces of at most 2^20 cells (one launch each; the whole corpus overflowed the queue), and `nearest_<set>`'s rows and statistics are compact (`u32` node rows; postings by sorting).
 
+**Memory fixes (2026-11-03, after list step 23): RSS met, under T's and the budget; outputs still identical.**
+
+| | Python (`calls.rdl`) | Rust (`calls_rust.rdl`) |
+|---|---|---|
+| Outputs against `rdl.py sql` | 7 of 7 identical | 4 of 4 identical |
+| Port, run phase | 1.70 s user + 0.23 s sys | 1.31 s user + 0.02 s sys |
+| Port, peak RSS (end to end) | 385 MB (was 848; T 690) | 392 MB (was 829; T 511) |
+
+CPU at load 30–32. The peak is now the run phase over the batch (parse 135–148 MB, batch and `nearest` +140–160 MB, run +90 MB).
+- **Base inputs read in place** (`logic::native::setfix::View`). A base input of the native engine over a bound vtab (`main.<table>` with `<col> = <int>` filters) is the source itself: its rows (all, or the ids passing the filters), never its values. A probe on one column the source indexes uses the source's index (`View::find`); other probes build the usual hash index over the source's rows. The source is found by connection and table (`facts::vtab::bound_source`). A view that only projects an input (`kind`, `docof` over `node`) is read from the input, in place (`plan.rs`, the join spec's `projected`). Engine loads went from 9.7M rows copied to 25 views and a few hundred small derived rows.
+- **`nearest_<set>` sorted by ancestor only on demand.** The reverse order is made on the first lookup by `a`; T's programs only climb (`n` bound) and never make it. The device's pieces are 2^18 cells (the queue is about 4 × (cells + 2 × edges) slots: about 100 MB at 2^20 cells, transient).
+- **File-local strata per chunk: not done; it needs a decision.** The classifier is in place (`typing::file_local::split`, R0): `calls.rdl` has 29 file-local relations of 86, `calls_rust.rdl` 20 of 53, `workload.rdl` 20 of 30. The cross-file strata read the base relations `child`, `field` and `text` directly, not only the file-local outputs (for example `pv` and `vpos` walk expressions under bindings that come from imports). Per-chunk evaluation therefore frees the batch only if those reads are also carried out of each chunk. That is either the cross-file reads' filtered base rows persisted per chunk with the file-local outputs, or the base kept resident for the cross-file pass, which frees only the file-local working set.
+
 To repeat it (paths as in the run): `dl-export <corpus> <dir>`; `python3 -I stats.py build <dir>/facts.sqlite`; `python3 -I rdl.py sql <program> <dir>/facts.sqlite <golden>`; `rerail-engine logic <program> <corpus> <dir>/facts.sqlite <out> --metal`; compare the CSVs; `score_calls.py`/`score_rust.py` over the fixture's facts and each output directory.
 
 ### Phase 7: SQL-driven waves (§4, §7; E1, E12, E14)

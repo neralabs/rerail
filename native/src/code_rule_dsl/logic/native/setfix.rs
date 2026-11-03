@@ -226,14 +226,15 @@ impl Rel {
 }
 
 /// Candidate row ids: a range, a list, or a posting chain (newest first, down to `stop`).
-#[derive(Clone, Copy)]
-enum Cands<'a> { Range(u32, u32), Slice(&'a [u32]), Chain { head: u32, next: &'a [u32], stop: u32 } }
+#[derive(Clone)]
+enum Cands<'a> { Range(u32, u32), Slice(&'a [u32]), Owned(Vec<u32>), Chain { head: u32, next: &'a [u32], stop: u32 } }
 impl Cands<'_> {
     /// Calls `f` on each id until it returns true; returns whether one did.
     fn any(self, mut f: impl FnMut(u32) -> bool) -> bool {
         match self {
             Cands::Range(lo, hi) => (lo..hi).any(f),
             Cands::Slice(ids) => ids.iter().any(|&id| f(id)),
+            Cands::Owned(ids) => ids.into_iter().any(f),
             Cands::Chain { head, next, stop } => {
                 let mut id = head;
                 while id != NIL && id >= stop {
@@ -542,7 +543,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let mut new_rows = 0usize;
     // Every relation of the component, whole, is an input of later strata (`r:` sources).
     for rel in &store.rels {
-        DERIVED.lock().unwrap().insert(rel.table.clone(), Arc::new(InRel { k: rel.k, n: rel.n, rows: rel.data.clone(), base: false, types: rel.types.clone(),
+        DERIVED.lock().unwrap().insert(rel.table.clone(), Arc::new(InRel { k: rel.k, n: rel.n, rows: rel.data.clone(), view: None, base: false, types: rel.types.clone(),
                                                                          stored: rel.stored, idx: Mutex::new(HashMap::default()) }));
     }
     for rel in store.rels.iter().filter(|_| comp.write) {
@@ -763,14 +764,38 @@ pub fn loads() -> String {
 
 /// An input relation: `n` rows flat (`k` columns each), and hash indexes by key-column bitmask. `base`: read from
 /// the facts (or a view of them), not from a derived relation.
-pub struct InRel { k: usize, n: usize, rows: Vec<i64>, base: bool, types: Vec<u8>, stored: usize, idx: Mutex<HashMap<u64, Arc<Csr>>> }
+pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, base: bool, types: Vec<u8>, stored: usize, idx: Mutex<HashMap<u64, Arc<Csr>>> }
+/// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
+/// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
+pub struct View { src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
+impl View {
+    /// The source's rows whose view column `c` is `v` and which pass the filters, through the source's own index.
+    fn find(&self, c: usize, v: i64) -> Vec<u32> {
+        let rows = self.src.lookup(self.cols[c], &[v]).unwrap_or_default();
+        rows.into_iter().filter(|&r| self.eqs.iter().all(|&(c, v)| self.src.value(r, c) == v)).map(|r| r as u32).collect()
+    }
+}
+/// One row of an input relation: a slice of its flat rows, or a row of its view.
+#[derive(Clone, Copy)]
+pub enum RowRef<'a> { Flat(&'a [i64]), View(&'a View, usize), Source(&'a View, usize) }
+impl RowRef<'_> {
+    #[inline]
+    fn at(self, c: usize) -> i64 {
+        match self {
+            RowRef::Flat(r) => r[c],
+            RowRef::View(v, id) => v.src.value(v.ids.as_ref().map_or(id, |ids| ids[id] as usize), v.cols[c]),
+            RowRef::Source(v, row) => v.src.value(row, v.cols[c]),
+        }
+    }
+}
 /// A hash index of an immutable relation on `cols`: each key's row ids are one run of `ids`, found from the key's
 /// first row (`rep`) and its run (`start`, `len`). Two passes over the rows, no allocation per key.
-pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32> }
+/// Over a view whose source indexes the one key column, the source's index serves (`source`), and nothing is built.
+pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool }
 impl Csr {
     fn build(rel: &InRel, cols: &[usize]) -> Csr {
-        let key = |id: usize| cols.iter().map(move |&c| rel.rows[id * rel.k + c]);
-        let same = |a: usize, b: usize| cols.iter().all(|&c| rel.rows[a * rel.k + c] == rel.rows[b * rel.k + c]);
+        let key = |id: usize| cols.iter().map(move |&c| rel.at(id).at(c));
+        let same = |a: usize, b: usize| cols.iter().all(|&c| rel.at(a).at(c) == rel.at(b).at(c));
         let hashes: Vec<u64> = (0..rel.n).map(|id| hash_vals(key(id))).collect();
         let mut table: HashTable<(u32, u32, u32)> = HashTable::new();
         for id in 0..rel.n {
@@ -787,11 +812,11 @@ impl Csr {
             ids[(e.1 + e.2) as usize] = id as u32;
             e.2 += 1;
         }
-        Csr { cols: cols.to_vec(), table, ids }
+        Csr { cols: cols.to_vec(), table, ids, source: false }
     }
     /// `key` holds the values of `cols`, in order.
     fn get<'a>(&'a self, rel: &InRel, key: &[i64]) -> &'a [u32] {
-        self.table.find(hash_vals(key.iter().copied()), |&(rep, _, _)| self.cols.iter().zip(key).all(|(&c, &v)| rel.rows[rep as usize * rel.k + c] == v))
+        self.table.find(hash_vals(key.iter().copied()), |&(rep, _, _)| self.cols.iter().zip(key).all(|(&c, &v)| rel.at(rep as usize).at(c) == v))
             .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
     }
 }
@@ -814,14 +839,26 @@ pub fn materialize(conn: &Connection, table: &str) -> Result<i64> {
 }
 impl InRel {
     fn len(&self) -> usize { self.n }
+    /// A flat relation's row (a derived one: views are base inputs only).
     fn row(&self, id: usize) -> &[i64] { &self.rows[id * self.k..][..self.k] }
+    #[inline]
+    fn at(&self, id: usize) -> RowRef<'_> {
+        match &self.view { Some(v) => RowRef::View(v, id), None => RowRef::Flat(&self.rows[id * self.k..][..self.k]) }
+    }
     fn index(&self, cols: &[usize]) -> Arc<Csr> {
         let mask = cols.iter().fold(0u64, |m, &c| m | 1 << c);
         let mut idx = self.idx.lock().unwrap();
         idx.entry(mask).or_insert_with(|| {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
-            let m = if cols.is_empty() { Csr { cols: Vec::new(), table: HashTable::new(), ids: Vec::new() } } else { Csr::build(self, cols) };
+            let empty = |source| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source };
+            let m = if cols.is_empty() {
+                empty(false)
+            } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) {
+                empty(true)
+            } else {
+                Csr::build(self, cols)
+            };
             let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
             l.0 += thread_cpu() - c0;
             if std::env::var_os("RDL_PROFILE").is_some() {
@@ -850,6 +887,18 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     let base = which == "b";
     let (table, cols, types) = (unhex(table)?, unhex(cols)?, types.as_bytes());
     let (t0, c0) = (Instant::now(), thread_cpu());
+    if base && types.iter().all(|&t| t == b'i') {
+        if let Some(view) = view(conn, &table, &cols) {
+            let n = view.ids.as_ref().map_or(view.src.len(), Vec::len);
+            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
+            LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
+            if std::env::var_os("RDL_PROFILE").is_some() {
+                eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
+            }
+            INPUTS.lock().unwrap().insert(key, rel.clone());
+            return Ok(rel);
+        }
+    }
     let mut st = conn.prepare(&format!("SELECT {cols} FROM {table}"))?;
     let mut q = st.query([])?;
     let (mut rows, mut n) = (Vec::new(), 0);
@@ -857,7 +906,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms)?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { k: types.len(), n, rows, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
+    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
     {
         let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
         l.0 += thread_cpu() - c0;
@@ -868,6 +917,30 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     }
     INPUTS.lock().unwrap().insert(key, rel.clone());
     Ok(rel)
+}
+
+/// A base input over a bound vtab, read in place: `main.<table>` with `<col> = <int>` filters (joined by AND), its
+/// columns named. `None` when the table is not a bound source or the select is another shape (it is copied then).
+fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
+    let rest = table.strip_prefix("main.")?;
+    let (name, filters) = match rest.split_once(" WHERE ") { Some((n, f)) => (n, Some(f)), None => (rest, None) };
+    let src = crate::code_rule_dsl::facts::vtab::bound_source(conn, name)?;
+    let names = src.columns();
+    let column = |c: &str| names.iter().position(|n| n == c.trim());
+    let cols: Vec<usize> = cols.split(',').map(column).collect::<Option<_>>()?;
+    let mut eqs = Vec::new();
+    for f in filters.map(|f| f.split(" AND ").collect::<Vec<_>>()).unwrap_or_default() {
+        let (c, v) = f.split_once(" = ")?;
+        eqs.push((column(c)?, v.trim().parse::<i64>().ok()?));
+    }
+    let ids = if eqs.is_empty() {
+        None
+    } else {
+        let (c, v) = eqs.iter().copied().find(|&(c, _)| src.indexed(c)).unwrap_or(eqs[0]);
+        let cands: Vec<usize> = src.lookup(c, &[v]).unwrap_or_else(|| (0..src.len()).collect());
+        Some(cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect())
+    };
+    Some(View { src, cols, ids, eqs })
 }
 
 #[derive(Clone, Copy)]
@@ -1009,9 +1082,11 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
-    enum Rows<'a> { In(&'a InRel), Comp(&'a Rel) }
+    enum Rows<'a> { In(&'a InRel), Comp(&'a Rel), Source(&'a View) }
     impl<'a> Rows<'a> {
-        fn row(self, id: u32) -> &'a [i64] { match self { Rows::In(r) => r.row(id as usize), Rows::Comp(r) => r.row(id as usize) } }
+        fn row(self, id: u32) -> RowRef<'a> {
+            match self { Rows::In(r) => r.at(id as usize), Rows::Comp(r) => RowRef::Flat(r.row(id as usize)), Rows::Source(v) => RowRef::Source(v, id as usize) }
+        }
     }
     fn go<'a>(cx: &mut Ctx<'a>, i: usize, slots: &mut [i64]) {
         let (j, store): (&'a JoinRule, &'a Store) = (cx.j, cx.store);
@@ -1034,6 +1109,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             match src {
                 Src::In(rel, ix) => {
                     if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
+                    else if ix.source && let Some(v) = &rel.view { (Rows::Source(v), Cands::Owned(v.find(ix.cols[0], key[0]))) }
                     else { (Rows::In(rel), Cands::Slice(ix.get(rel, key))) }
                 }
                 Src::FullMulti(r, cols) => {
@@ -1060,9 +1136,9 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 let (rows, cands) = candidates(src, store, &cx.key, keys);
                 let found = cands.any(|id| {
                     let row = rows.row(id);
-                    if !keys.iter().all(|&(c, k)| row[c] == val(slots, k)) || !tests.iter().all(|&(c, c0)| row[c] == row[c0]) { return false; }
+                    if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
                     if *neg { return true; }
-                    for &(c, s) in binds { slots[s] = row[c]; }
+                    for &(c, s) in binds { slots[s] = row.at(c); }
                     go(cx, i + 1, slots);
                     false
                 });
@@ -1075,7 +1151,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 let mut n = 0i64;
                 cands.any(|id| {
                     let row = rows.row(id);
-                    if keys.iter().all(|&(c, k)| row[c] == val(slots, k)) && tests.iter().all(|&(c, c0)| row[c] == row[c0]) { n += 1 }
+                    if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { n += 1 }
                     false
                 });
                 if *bind { slots[*out] = n } else if slots[*out] != n { return }

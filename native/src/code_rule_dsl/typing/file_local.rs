@@ -127,7 +127,7 @@ fn solve_device(_: &System) -> StoreResult<Option<Vec<i64>>> {
 
 /// Cells of one system at most: a chunk's (list step 17's queue is sized per launch). Larger batches are split at
 /// their documents' roots, a system and a launch each.
-const CELLS: usize = 1 << 20;
+const CELLS: usize = 1 << 18;
 
 /// Per set, per node of `trees`: its nearest strict ancestor whose kind is in the set, or `NONE`.
 pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
@@ -179,3 +179,114 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 
 #[cfg(test)]
 mod tests;
+
+/// The relations a program derives within one document (list step 29's split, R0): a relation is file-local when
+/// each of its rules joins only one document's rows. A rule is when every relation it reads (positive, negated or
+/// aggregated) is a base relation, a constant one, or file-local, each with a location (a node, or a document) of the
+/// rule's one component: locations are joined within an atom of a base or file-local relation (`node(d, n, …)`,
+/// `child(p, c, _)`, `nearest_<set>(n, a)`), and nothing else joins them. A symbol shared by two atoms (`text($a,
+/// $x), text($b, $x)`) does not: those may be two files. The relations are the greatest set closed under this, so a
+/// recursion within a document is file-local. Evaluated per chunk of documents, a file-local relation's rows are the
+/// union of the chunks'.
+pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    use std::collections::{BTreeMap, BTreeSet};
+    let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    // A base relation's location columns: node columns, and the document column of `node`, `doc` and `pkg`.
+    let base_locations = |rel: &str| -> Vec<usize> {
+        let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
+        if matches!(rel, "node" | "doc" | "pkg") {
+            columns.push(0);
+        }
+        columns
+    };
+    // A derived relation's location columns: those every rule fills from a location.
+    let mut locations: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let location_vars = |rule: &crate::code_rule_dsl::logic::front::Rule, locations: &BTreeMap<String, Vec<usize>>| -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for literal in &rule.body {
+            if let Some(a) = literal.atom().filter(|a| !a.neg) {
+                let columns = if derived.contains(a.rel.as_str()) { locations.get(&a.rel).cloned().unwrap_or_default() } else { base_locations(&a.rel) };
+                for c in columns {
+                    if let Some(Term::Var(v)) = a.args.get(c) {
+                        out.insert(v.clone());
+                    }
+                }
+            }
+        }
+        out
+    };
+    // Location columns to a fixpoint (a column is one if every rule's head fills it from a location variable).
+    let mut changed = true;
+    for rel in &derived {
+        let width = prog.decls.get(*rel).map_or(0, Vec::len);
+        locations.insert((*rel).to_owned(), (0..width).collect());
+    }
+    while changed {
+        changed = false;
+        for rel in &derived {
+            let rules: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == *rel).collect();
+            let kept: Vec<usize> = locations[*rel]
+                .iter()
+                .copied()
+                .filter(|&c| rules.iter().all(|r| matches!(r.head.args.get(c), Some(Term::Var(v)) if location_vars(r, &locations).contains(v))))
+                .collect();
+            if kept != locations[*rel] {
+                locations.insert((*rel).to_owned(), kept);
+                changed = true;
+            }
+        }
+    }
+    let mut local: BTreeSet<String> = derived.iter().map(|r| (*r).to_owned()).collect();
+    loop {
+        let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> bool {
+            // Each read relation's location variables; the rule's locations must form one component.
+            let mut groups: Vec<BTreeSet<String>> = Vec::new();
+            for literal in &rule.body {
+                let atom = match literal {
+                    Literal::Atom(a) | Literal::Agg { atom: a, .. } => a,
+                    Literal::Ast { .. } => return false,
+                    Literal::Nearest { n, a, .. } => {
+                        groups.push(BTreeSet::from([n.clone(), a.clone()]));
+                        continue;
+                    }
+                    Literal::Cmp { .. } => continue,
+                };
+                let constant = !derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel);
+                if constant {
+                    continue;
+                }
+                if derived.contains(atom.rel.as_str()) && !local.contains(&atom.rel) {
+                    return false;
+                }
+                let columns = if derived.contains(atom.rel.as_str()) { locations[&atom.rel].clone() } else { base_locations(&atom.rel) };
+                let vars: BTreeSet<String> = columns.iter().filter_map(|&c| if let Some(Term::Var(v)) = atom.args.get(c) { Some(v.clone()) } else { None }).collect();
+                if vars.is_empty() {
+                    // A read with no location variable (`field(_, "left", _)`'s rows, a count over them): any file's.
+                    return false;
+                }
+                groups.push(vars);
+            }
+            // Merge groups sharing a variable; one group left is one document.
+            let mut merged: Vec<BTreeSet<String>> = Vec::new();
+            for group in groups {
+                let (joined, rest): (Vec<_>, Vec<_>) = merged.into_iter().partition(|m| !m.is_disjoint(&group));
+                let mut all = group;
+                for j in joined {
+                    all.extend(j);
+                }
+                merged = rest;
+                merged.push(all);
+            }
+            merged.len() <= 1
+        };
+        let before = local.len();
+        let failing: Vec<String> = prog.rules.iter().filter(|r| local.contains(&r.head.rel) && !rule_local(r)).map(|r| r.head.rel.clone()).collect();
+        for rel in failing {
+            local.remove(&rel);
+        }
+        if local.len() == before {
+            return local;
+        }
+    }
+}

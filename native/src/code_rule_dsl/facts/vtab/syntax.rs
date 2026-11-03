@@ -550,8 +550,9 @@ struct Nearest {
     /// Per row, its node and its ancestor (node rows), ascending by node.
     node: Vec<u32>,
     ancestor: Vec<u32>,
-    /// The rows ascending by ancestor.
-    by_ancestor: Vec<u32>,
+    /// The rows ascending by ancestor, made on the first lookup by ancestor: a program that only climbs (`n` bound,
+    /// as T's do) never sorts them.
+    by_ancestor: std::sync::OnceLock<Vec<u32>>,
 }
 
 impl Nearest {
@@ -583,8 +584,13 @@ impl Source for Nearest {
             if column == 0 {
                 out.extend(self.node.binary_search(&at).ok());
             } else {
-                let start = self.by_ancestor.partition_point(|&r| self.ancestor[r as usize] < at);
-                out.extend(self.by_ancestor[start..].iter().take_while(|&&r| self.ancestor[r as usize] == at).map(|&r| r as usize));
+                let by_ancestor = self.by_ancestor.get_or_init(|| {
+                    let mut rows: Vec<u32> = (0..self.node.len() as u32).collect();
+                    rows.sort_unstable_by_key(|&r| (self.ancestor[r as usize], self.node[r as usize]));
+                    rows
+                });
+                let start = by_ancestor.partition_point(|&r| self.ancestor[r as usize] < at);
+                out.extend(by_ancestor[start..].iter().take_while(|&&r| self.ancestor[r as usize] == at).map(|&r| r as usize));
             }
         }
         Some(out)
@@ -617,9 +623,7 @@ pub(crate) fn with_nearest(
             node.push(row as u32);
             ancestor.push(a);
         }
-        let mut by_ancestor: Vec<u32> = (0..node.len() as u32).collect();
-        by_ancestor.sort_unstable_by_key(|&r| (ancestor[r as usize], node[r as usize]));
-        out.push((format!("nearest_{name}"), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor })));
+        out.push((format!("nearest_{name}"), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
     }
     Ok(out)
 }
