@@ -490,7 +490,12 @@ jobs:
         with:
           built: "true"
 
+      # The pack validation's check 4 leaves scoring the fixtures to the conformance job (the tools job below), which
+      # scores the same fixtures through the same runner and fails on the same failures, so they are scored once
+      # (test/engine/catalog/packs.test.ts). The pack publish gate (release-packs.yml) still scores them itself.
       - name: Unit tests
+        env:
+          RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
         run: npm test -- --shard=${{ matrix.shard }}/2
 
   # The dashboard in Chromium over seeded scenario databases (e2e/README.md). Each worker runs the daemon from source
@@ -654,9 +659,11 @@ jobs:
           auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
           git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$BASE" || true
 
-      # Offline: every pack's ported rules scored on its test data and samples, then every rule of each gated tool-pack
-      # through loads, compact and the conformance checks. A shipped rule that fails, fails the job; candidates are only
-      # reported. The summary and the pull request comment go to the conformance-summary artifact.
+      # Offline: every pack's ported rules scored on its test data and samples, the packs side by side in a process each
+      # (one per core), then every rule of each gated tool-pack through loads, compact and the conformance checks. A
+      # shipped rule that fails, fails the job; candidates are only reported. The fixtures scored here are the pack
+      # validation's check 4 too, which the unit tests leave to this job. The summary and the pull request comment go to
+      # the conformance-summary artifact.
       - name: Conformance
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}

@@ -1,6 +1,8 @@
+import { fork, type ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ProcessCommandRunner } from "../process.js";
 import { loadEngine } from "./checks/engine.js";
@@ -10,7 +12,11 @@ import { gatedToolPacks } from "./manifest.js";
 import { REPORTS_DIRECTORY, listPortedPacks, loadPack, PACKS_ROOT, RERAIL_ROOT, type LoadedPack } from "./pack.js";
 import { reportJson, type T4Report } from "./report.js";
 import { reportFailures, runPack } from "./runner.js";
+import type { ScoreRequest, ScoreResponse } from "./score-pack.js";
 import { summarize, writeSummary } from "./summary.js";
+
+/** The module `scorePacks` forks per pack. */
+const SCORE_PACK = fileURLToPath(new URL("./score-pack.ts", import.meta.url));
 
 const USAGE = `Language-pack rule conformance (T4).
 
@@ -136,6 +142,46 @@ export function parseCli(args: readonly string[]) {
   return { values, directories };
 }
 
+/**
+ * Each pack's report, in `directories`' order. One pack is scored here; several are scored in a process each
+ * (score-pack.ts), as many at once as the machine has cores, since the engine evaluates one workspace at a time per
+ * process. Each report is the one scoring the pack here gives: the same runner over the same data, in a process of its
+ * own. The first failure stops the rest.
+ */
+function scorePacks(directories: readonly string[], options: ScoreRequest["options"]): Promise<T4Report>[] {
+  if (directories.length === 1) return [runPack(loadPack(directories[0]!), options)];
+  const reports = directories.map(() => Promise.withResolvers<T4Report>());
+  const children = new Set<ChildProcess>();
+  let next = 0;
+  /** The first failure: every report not in yet fails with it, and no more packs start. */
+  let failure: Error | undefined;
+  const scoreNext = (): void => {
+    if (failure !== undefined || next >= directories.length) return;
+    const index = next++;
+    const directory = directories[index]!;
+    const child = fork(SCORE_PACK, { execArgv: process.execArgv, serialization: "advanced" });
+    children.add(child);
+    let response: ScoreResponse | undefined;
+    child.once("message", (message: ScoreResponse) => (response = message));
+    child.once("exit", (code, signal) => {
+      children.delete(child);
+      if (failure === undefined && response !== undefined && "report" in response) {
+        reports[index]!.resolve(response.report);
+        scoreNext();
+        return;
+      }
+      if (failure === undefined) {
+        failure = new Error(response !== undefined && "error" in response ? response.error : `scoring ${relative(RERAIL_ROOT, directory)} exited with ${signal ?? code}`);
+        for (const other of children) other.kill();
+      }
+      for (const pending of reports) pending.reject(failure);
+    });
+    child.send({ directory, options } satisfies ScoreRequest);
+  };
+  for (let slot = 0; slot < Math.min(availableParallelism(), directories.length); slot += 1) scoreNext();
+  return reports.map(({ promise }) => promise);
+}
+
 async function main(): Promise<void> {
   const { values, directories } = parseCli(process.argv.slice(2));
   if (values.help) {
@@ -146,14 +192,17 @@ async function main(): Promise<void> {
   const everySource = values.check || (!values.fixtures && !values.samples);
   let failed = false;
   const scored = new Map<string, { loaded: LoadedPack; report: T4Report }>();
-  for (const directory of directories) {
+  const reports = scorePacks(directories, {
+    ...(values.rule === undefined ? {} : { rules: values.rule }),
+    fixtures: everySource || values.fixtures,
+    samples: everySource || values.samples,
+    date: values.date,
+  });
+  // Nothing waits on a report until its turn below; one rejected meanwhile is not left unhandled.
+  for (const report of reports) report.catch(() => undefined);
+  for (const [index, directory] of directories.entries()) {
     const loaded = loadPack(directory);
-    const report = await runPack(loaded, {
-      ...(values.rule === undefined ? {} : { rules: values.rule }),
-      fixtures: everySource || values.fixtures,
-      samples: everySource || values.samples,
-      date: values.date,
-    });
+    const report = await reports[index]!;
     print(report, values.rule !== undefined);
     scored.set(loaded.pack.pack, { loaded, report });
     failed ||= !report.pass;
