@@ -187,9 +187,11 @@ This boundary holds only for an agent that reaches Rerail through MCP. See T1.
   recheck. Directory walks skip symlinks. `#writeSource` (rewind) writes with `O_EXCL|O_NOFOLLOW`
   (`src/engine/code-rule/code-rule-bridge.ts`).
 - **Git.** `src/engine/git.ts`:
-  - It runs the first `git` on `PATH`, resolved to an absolute path by Rerail itself (so Windows never looks in the
-    current folder first), skipping relative entries, entries inside the repository it runs in and entries inside a
-    `node_modules` folder; then the usual install locations. A repository cannot put its own `git` first that way.
+  - It runs the first `git` on `PATH` that is a regular file it may execute, resolved to an absolute path by Rerail
+    itself (so Windows never looks in the current folder first), skipping relative entries, entries inside the
+    repository it runs in (the nearest folder above its working folder with a `.git`) and entries inside a
+    `node_modules` folder; then the usual install locations. This keeps a repository's own `bin/` or
+    `node_modules/.bin` from going first; it does not cover every route (T11).
   - Every call sets `core.fsmonitor=false` and `core.hooksPath=/dev/null`, with `GIT_TERMINAL_PROMPT=0` and
     `GIT_NO_LAZY_FETCH=1` where relevant, and a 10 s timeout.
   - It uses no network commands. `cat-file --batch` does not run textconv.
@@ -546,7 +548,9 @@ in two ways:
 - `RERAIL_ENGINE_SOCKET` names where hooks send full events.
 - `RERAIL_HOME`, `RERAIL_STORAGE_ROOT`, `RERAIL_DATABASE` and `RERAIL_CONTENT_STORE_PATH` move data.
 - Git calls inherit `GIT_*` from the environment, and an absolute `PATH` entry outside the repository decides which
-  `git` runs.
+  `git` runs. "The repository" is only the nearest one above the process's working folder, so these entries are not
+  skipped: one inside an outer checkout around a nested worktree or submodule, and any repository's when the process
+  started outside it. The daemon finds Git once, from the folder and `PATH` it started with, and keeps it.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).

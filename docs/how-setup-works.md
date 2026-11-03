@@ -276,7 +276,8 @@ Code, Codex and Cursor relay the questions as text.
 
 Rerail reads every repository through Git. It runs the first `git` it finds on `PATH` (`git.exe` on Windows),
 skipping entries that are relative, inside the repository Rerail runs in (the nearest folder above it with a `.git`),
-or inside a `node_modules` folder, so a repository cannot put its own `git` first. When `PATH` has none, it falls back to the usual
+or inside a `node_modules` folder, so a repository's own `bin/` cannot put its `git` first; a folder named `git` or a
+`git` without its execute bit is passed over, as a shell does. When `PATH` has none, it falls back to the usual
 install locations: Homebrew, Linuxbrew and Nix on macOS and Linux, Git for Windows and scoop on Windows. On macOS the
 `/usr/bin/git` stub counts only with the Command Line Tools or Xcode installed.
 

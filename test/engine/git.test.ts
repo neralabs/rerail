@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -112,10 +112,29 @@ describe("gitCandidates", () => {
     const search = { platform: "linux" as const, home: "/home/me", path: "/home/me/bin", cwd: "/home/me" };
     expect(gitCandidates(search, disk([]))[0]).toBe("/home/me/bin/git");
   });
+
+  it("still lists PATH and the install locations from a working folder that was deleted", async () => {
+    const gone = await mkdtemp(join(tmpdir(), "rerail-git-gone-"));
+    const before = process.cwd();
+    process.chdir(gone);
+    try {
+      await rm(gone, { recursive: true });
+      expect(() => process.cwd()).toThrow();
+      vi.stubEnv("PATH", "/opt/local/bin");
+      expect(gitCandidates()).toContain("/opt/local/bin/git");
+    } finally {
+      vi.unstubAllEnvs();
+      process.chdir(before);
+    }
+  });
 });
 
 describe("gitInstalled", () => {
-  const probe = (files: readonly string[], developerDir?: string) => ({ exists: (path: string) => files.includes(path), developerDir: () => developerDir });
+  const probe = (files: readonly string[], developerDir?: string) => ({
+    exists: (path: string) => files.includes(path),
+    runnable: (path: string) => files.includes(path),
+    developerDir: () => developerDir,
+  });
 
   it("takes macOS's /usr/bin/git, always present as a stub, only with Apple's developer tools that carry Git", () => {
     // No Command Line Tools and no Xcode: the stub would open the installer, so Rerail says Git is missing.
@@ -130,5 +149,20 @@ describe("gitInstalled", () => {
     expect(gitInstalled("/opt/homebrew/bin/git", "darwin", probe(["/opt/homebrew/bin/git"]))).toBe(true);
     expect(gitInstalled("/usr/bin/git", "linux", probe(["/usr/bin/git"]))).toBe(true);
     expect(gitInstalled("/usr/local/bin/git", "linux", probe([]))).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("passes over a folder named git and a git without its execute bit, as a shell does", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-git-runnable-"));
+    roots.push(root);
+    await mkdir(join(root, "folder", "git"), { recursive: true });
+    await mkdir(join(root, "plain"));
+    await writeFile(join(root, "plain", "git"), "#!/bin/sh\n");
+    await mkdir(join(root, "runs"));
+    await writeFile(join(root, "runs", "git"), "#!/bin/sh\n");
+    await chmod(join(root, "runs", "git"), 0o755);
+
+    expect(gitInstalled(join(root, "folder", "git"), "linux")).toBe(false);
+    expect(gitInstalled(join(root, "plain", "git"), "linux")).toBe(false);
+    expect(gitInstalled(join(root, "runs", "git"), "linux")).toBe(true);
   });
 });
