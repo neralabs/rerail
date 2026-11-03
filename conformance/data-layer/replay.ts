@@ -7,6 +7,7 @@ import { z } from "zod";
 import { codeRuleSchema, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES, type NativeCompiledCodeRuleDsl, type NativeCodeRuleDslExecution } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
 import { escapeHatchSignatureFailure } from "./signed-allowlist.js";
+import { replayExecution } from "./execution.js";
 
 const findingSchema = z.object({ path: z.string(), line: z.number(), column: z.number().nullable(), code: z.string(), message: z.string(), tag: z.string().nullable().optional() });
 const eventSchema = z.object({
@@ -75,7 +76,7 @@ async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: E
 }
 
 export async function replay(recordingPath: string | string[], outputPath: string, policies = "packs/data-layer/candidates/rules"): Promise<boolean> {
-  const execution = new (loadNativeBinding().CodeRuleDslExecution)();
+  const execution = replayExecution();
   try { return await replayOwned(recordingPath, outputPath, policies, execution); }
   finally { execution.close(); }
 }
