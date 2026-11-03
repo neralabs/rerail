@@ -1,0 +1,1 @@
+A `rerail-ignore` comment on its own line before a SQL `BEGIN … END` block, or a labelled Rust block such as `'a: { … }`, now covers the whole block. Before, it covered only the `BEGIN` keyword or the label, so violations inside the block were still reported.

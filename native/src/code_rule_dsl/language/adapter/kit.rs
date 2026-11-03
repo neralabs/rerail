@@ -98,8 +98,9 @@ impl Drop for Package {
 }
 
 /// Runs the generic suite over family `A` against `expect`: its identity (`family`, `label`,
-/// `terminators`), name normalisation, the regions of each document, module paths, and each
-/// concern's own kit. A new family adds one `#[test]` function calling `kit::<Family>(&Expect { .. })`.
+/// `terminators`), name normalisation, the regions of each document, module paths, the node kinds
+/// `rerail-ignore` is read by, and each concern's own kit. A new family adds one `#[test]` function
+/// calling `kit::<Family>(&Expect { .. })`.
 fn kit<A: Adapter>(expect: &Expect) {
     assert_eq!(A::FAMILY, expect.family);
     assert_eq!(with_adapter!(expect.family, B => B::LABEL), expect.label);
@@ -143,6 +144,11 @@ fn kit<A: Adapter>(expect: &Expect) {
         (A::PACKAGE_MANIFESTS, A::JSX_RUNTIMES),
         expect.package_manifests
     );
+    // A kind the family's grammar lacks (a typo, a renamed node) would leave its directives
+    // silently unread.
+    for kind in [A::COMMENT_KINDS, A::PREAMBLE_KINDS, A::BODY_KINDS].concat() {
+        assert_ne!(expect.dialect.kind_id(kind), 0, "{kind} in {}", A::LABEL);
+    }
     value_kit::check::<A>(&expect.value, |s| semantic(s, expect.dialect));
     super::calls::kit::check::<A>(&expect.calls, expect.dialect);
     super::arguments::kit::check::<A>(&expect.arguments, expect.semantic, |s| {

@@ -56,6 +56,11 @@ impl Adapter for Rust {
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
     const STRIPS_BOM: bool = false;
+    /// A `shebang` is passed over by its `#!` text, as in every grammar; a `block` starts at its
+    /// `{` or label, never at its first statement.
+    const COMMENT_KINDS: &'static [&'static str] = &["line_comment", "block_comment"];
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
