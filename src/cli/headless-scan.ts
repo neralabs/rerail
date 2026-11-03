@@ -13,28 +13,25 @@
  *   session's: content no one approved in the Rerail home (`rerail rules approve`) runs in Log.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
 import { checkoutStatus, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
-import { approve, type RuleApprovalSubject } from "../engine/catalog/rule-approval.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { rulePackPackageOf } from "../engine/catalog/rule-packs.js";
 import { setRuleSetting, setUpRepository } from "../engine/catalog/rule-configuration.js";
-import { parseRuleDocument } from "../engine/catalog/rule-documents.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
-import { WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER } from "../engine/catalog/worktree-pack.js";
+import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import type { CodeRuleViolation } from "../engine/code-rule/code-rule.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { runGit } from "../engine/git.js";
-import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
-import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
-import { repositories, ruleApprovals } from "../engine/storage/schema.js";
+import { readGitBlobs, runGit } from "../engine/git.js";
+import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
+import { repositories } from "../engine/storage/schema.js";
 import { setRepositoryStarted } from "../runtime/repository-start.js";
 
 export const SCAN_SCHEMA = "rerail.scan/1";
@@ -140,21 +137,66 @@ function diffPaths(root: string, against: string): string[] {
   return [...new Set([...changed, ...untracked])].sort((left, right) => left.localeCompare(right));
 }
 
+/** A rule read from `--rules-ref`, and what loading the ref's rules left out (each with why), as a session would. */
+interface RefRules {
+  readonly documents: RuleDocument[];
+  readonly skipped: ScanFailure[];
+}
+
 /**
- * The rule documents in `.rerail/rules/` at `ref`, by file name; none when the commit has no such folder. Only code
- * rules are kept. A ref that is not a commit throws: a typo must not pass as a scan with no rules.
+ * The rule documents in `.rerail/rules/` at `ref`, loaded exactly as a checkout's own rules are
+ * (`worktreeRuleCatalog`): the ref's files are written to a folder of their own and read from there, so a file that is
+ * not a regular file, is too large, does not parse or compile, repeats an earlier file's id (the first by file name
+ * keeps it) or takes the id of an installed pack's rule is left out with why, and the others load. A ref that is not a
+ * commit throws: a typo must not pass as a scan with no rules.
  */
-function rulesAtRef(root: string, ref: string): Array<{ name: string; document: unknown }> {
+async function rulesAtRef(root: string, ref: string, scratch: string): Promise<RefRules> {
   const resolved = gitMaybe(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
   if (resolved === null) throw new Error(`--rules-ref ${ref} is not a commit in ${root}`);
-  if (runGit(root, ["cat-file", "-e", `${resolved}:${WORKTREE_RULES_FOLDER}`]).status !== 0) return [];
-  const names = nulList(git(root, ["ls-tree", "-z", "--name-only", `${resolved}:${WORKTREE_RULES_FOLDER}`]).replace(/\n/gu, "\0"));
-  return names.filter(name => name.endsWith(".json")).sort().flatMap(name => {
-    const text = git(root, ["show", `${resolved}:${WORKTREE_RULES_FOLDER}/${name}`]);
-    const parsed = parseRuleDocument(parseJsonWithoutDuplicateKeys(text, `${ref}:${WORKTREE_RULES_FOLDER}/${name}`), name);
-    return parsed.kind === "code" ? [{ name, document: parsed.rule }] : [];
+  if (runGit(root, ["cat-file", "-e", `${resolved}:${WORKTREE_RULES_FOLDER}`]).status !== 0) return { documents: [], skipped: [] };
+  const copy = join(scratch, "rules-ref");
+  const folder = join(copy, WORKTREE_RULES_FOLDER);
+  mkdirSync(folder, { recursive: true });
+  // `<mode> <type> <object>\t<name>`: regular files are written as they are, anything else as what it is, so the
+  // loader leaves it out as it would leave it out of a checkout.
+  const entries = nulList(git(root, ["ls-tree", "-z", `${resolved}:${WORKTREE_RULES_FOLDER}`])).flatMap(entry => {
+    const match = /^(\d+) (\w+) ([0-9a-f]+)\t(.+)$/su.exec(entry);
+    if (match === null) return [];
+    const [, mode, type, object, name] = match as unknown as [string, string, string, string, string];
+    return name.includes("/") || name === "." || name === ".." ? [] : [{ mode, type, object, name }];
   });
+  const blobs = await readGitBlobs(root, entries.filter(entry => entry.type === "blob").map(entry => entry.object), { maxBlobBytes: MAX_REF_RULE_BYTES });
+  for (const { mode, type, object, name } of entries) {
+    const target = join(folder, name);
+    const blob = blobs.get(object);
+    if (type === "blob" && mode === "120000") symlinkSync(blob?.toString("utf8") ?? "missing", target);
+    else if (type === "blob" && blob !== undefined) writeFileSync(target, blob);
+    else if (type === "blob") {
+      // Larger than the loader reads: a file of that size, which it leaves out as too large.
+      writeFileSync(target, "");
+      truncateSync(target, MAX_REF_RULE_BYTES + 1);
+    } else mkdirSync(target);
+  }
+  const installed = loadRuleCatalog();
+  const catalog = worktreeRuleCatalog(installed, copy);
+  const pack = catalog.packs.get(WORKTREE_PACK_ID);
+  const documents = pack === undefined || !isWorktreePack(pack)
+    ? []
+    : pack.rules.flatMap(rule => {
+      const document = catalog.documents.get(rule.id);
+      return document?.kind === "code" ? [document] : [];
+    });
+  const skipped = catalog.skipped.filter(entry => !installed.skipped.includes(entry)).map((entry): ScanFailure => ({
+    code: "rule-left-out",
+    message: `${entry.reason}; it does not run`,
+    path: `${ref}:${relative(copy, entry.path).split(sep).join("/")}`,
+    ruleId: null,
+  }));
+  return { documents, skipped };
 }
+
+/** Past the loader's own limit for a rule file (1 MiB), so a larger one is left out as it would be in a checkout. */
+const MAX_REF_RULE_BYTES = 1024 * 1024;
 
 /**
  * Each `--pack` as the id of a pack installed in the Rerail home, given by its id (`complexity`) or its package name
@@ -175,57 +217,78 @@ function installedPackIds(requested: readonly string[]): string[] {
   });
 }
 
-/** Home database eligibility: recorded, started and set up. Read-only; an absent file is not eligible. */
-function homeIsEligible(databasePath: string, root: string): boolean {
-  if (!existsSync(databasePath)) return false;
-  let database: ReturnType<typeof openRerailDatabase> | undefined;
+/**
+ * The Rerail home's database, opened read-only and never changed (`openRerailDatabaseAsIs`): a scan from another build
+ * must not migrate the installed Rerail's file. Undefined when there is none; a file this build cannot read as it is
+ * fails the scan, saying why.
+ */
+function openHomeDatabase(databasePath: string): RerailDatabase | undefined {
+  if (!existsSync(databasePath)) return undefined;
+  return openRerailDatabaseAsIs(databasePath);
+}
+
+/** Whether the home has Rerail started and set up in `root`: then its configuration is the scan's. */
+function homeIsEligible(home: RerailDatabase, root: string): boolean {
+  const checkout = lookupCheckout(home, root);
+  if (checkout === undefined) return false;
+  const status = checkoutStatus(home, checkout);
+  return status.started && status.setUp;
+}
+
+/**
+ * The tables that say which rules run where, and the approvals: what a scan with the home's configuration copies into
+ * its own database. Session history is never read.
+ */
+const CONFIGURATION_TABLES = ["rules", "rule_catalog_identities", "repositories", "checkouts", "rule_attachments", "rule_settings", "library_rules", "rule_approvals"] as const;
+
+/**
+ * Copies `tables` from the home's database into the scan's, column by column (the columns both have), replacing what
+ * the scan's database seeded: the scan then runs on the home's configuration without ever writing the home's file.
+ */
+function copyTables(home: RerailDatabase, scratch: RerailDatabase, tables: readonly string[]): void {
+  const columnsOf = (database: RerailDatabase, table: string): string[] =>
+    (database.$client.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name);
+  scratch.$client.pragma("foreign_keys = OFF");
   try {
-    database = openRerailDatabase(databasePath, { readonly: true });
-    const checkout = lookupCheckout(database, root);
-    if (checkout === undefined) return false;
-    const status = checkoutStatus(database, checkout);
-    return status.started && status.setUp;
-  } catch {
-    return false;
+    scratch.$client.transaction(() => {
+      for (const table of tables) {
+        const theirs = new Set(columnsOf(home, table));
+        const columns = columnsOf(scratch, table).filter(column => theirs.has(column));
+        if (columns.length === 0) continue;
+        const list = columns.map(column => `"${column}"`).join(", ");
+        const insert = scratch.$client.prepare(`INSERT OR REPLACE INTO ${table} (${list}) VALUES (${columns.map(() => "?").join(", ")})`);
+        scratch.$client.prepare(`DELETE FROM ${table}`).run();
+        for (const row of home.$client.prepare(`SELECT ${list} FROM ${table}`).raw().iterate()) insert.run(...(row as unknown[]));
+      }
+    })();
   } finally {
-    database?.$client.close();
+    scratch.$client.pragma("foreign_keys = ON");
   }
 }
 
 /**
- * The approvals made on this machine (`rerail rules approve`), into the throwaway database: approval is of content, by
- * its digest, so a rule read from a ref, a worktree's rule or a pack from a folder steers here exactly when a person
- * approved that content in the Rerail home, as it would in a session.
+ * Sets up the scan's own database. With the home's configuration (`useHome`), a copy of it. Otherwise `root` recorded,
+ * started and set up with `packs` and the ref's rules, and the home's approvals: approval is of content, by its digest,
+ * so a rule read from a ref, a worktree's rule or a pack from a folder steers here exactly when a person approved that
+ * content in the Rerail home, as it would in a session. Returns the ids of the rules read from the ref.
  */
-function readApprovalSubjects(database: ReturnType<typeof openRerailDatabase>): RuleApprovalSubject[] {
-  return database.select().from(ruleApprovals).all().map(row => ({ kind: row.subjectKind, id: row.subjectId, digest: row.digest }));
-}
-
-function copyApprovals(homeDatabasePath: string, database: ReturnType<typeof openRerailDatabase>): void {
-  if (!existsSync(homeDatabasePath)) return;
-  const home = openRerailDatabase(homeDatabasePath, { readonly: true });
-  try {
-    for (const subject of readApprovalSubjects(home)) approve(database, subject);
-  } finally {
-    home.$client.close();
-  }
-}
-
-/** Sets up `root` in a throwaway database: its repository started and set up with `packs` and the ref's rules. */
 function prepareScratchDatabase(
-  databasePath: string, root: string, packs: readonly string[], rulesRef: string | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
-  homeDatabasePath: string,
+  databasePath: string, root: string, home: RerailDatabase | undefined, useHome: boolean,
+  packs: readonly string[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
 ): Set<string> {
   const refRuleIds = new Set<string>();
   const database = openRerailDatabase(databasePath);
   try {
+    if (useHome && home !== undefined) {
+      copyTables(home, database, CONFIGURATION_TABLES);
+      return refRuleIds;
+    }
     const { repositoryKey } = recordCheckout(database, root);
     const libraryRules: Array<{ sourceKind: "library_rule"; sourceId: string; folder: string }> = [];
-    if (rulesRef !== undefined) {
+    if (refRules !== undefined) {
       const catalog = loadRuleCatalog();
-      const documents = rulesAtRef(root, rulesRef);
-      for (const { document } of documents) {
-        const stored = upsertLibraryRule(database, catalog, document, "code");
+      for (const document of refRules.documents) {
+        const stored = upsertLibraryRule(database, catalog, document.rule, "code");
         const ruleId = stored.document.rule.id;
         refRuleIds.add(ruleId);
         ruleDocuments?.set(stored.payloadHash, stored.document);
@@ -233,12 +296,12 @@ function prepareScratchDatabase(
       }
     }
     setUpRepository(database, repositoryKey, { packs: packs.map(packId => ({ packId, folder: "" })), rules: libraryRules });
-    if (rulesRef !== undefined) {
+    if (refRules !== undefined) {
       // The working tree's own rules are what the change under review may have edited: they do not run.
       setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "", targetKind: "pack", targetId: WORKTREE_PACK_ID, on: false, mode: null });
     }
     setRepositoryStarted(database, repositoryKey, true);
-    copyApprovals(homeDatabasePath, database);
+    if (home !== undefined) copyTables(home, database, ["rule_approvals"]);
   } finally {
     database.$client.close();
   }
@@ -304,14 +367,28 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
 
   const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
   const packs = installedPackIds(options.packs);
-  const useHome = options.rulesRef === undefined && packs.length === 0 && homeIsEligible(homeDatabase, root);
+  const home = openHomeDatabase(homeDatabase);
+  let useHome: boolean;
+  try {
+    useHome = home !== undefined && options.rulesRef === undefined && packs.length === 0 && homeIsEligible(home, root);
+  } catch (error) {
+    home?.$client.close();
+    throw error;
+  }
   const scratch = mkdtempSync(join(tmpdir(), "rerail-scan-"));
   const previousStore = process.env.RERAIL_CONTENT_STORE_PATH;
   // The machine-wide content store belongs to the daemon; this process keeps its own, thrown away after.
   if (previousStore === undefined || previousStore === "") process.env.RERAIL_CONTENT_STORE_PATH = join(scratch, "content.sqlite");
   try {
-    const databasePath = useHome ? homeDatabase : join(scratch, "rerail.sqlite");
-    const refRuleIds = useHome ? new Set<string>() : prepareScratchDatabase(databasePath, root, packs, options.rulesRef, options.ruleDocuments, homeDatabase);
+    // The scan's own database, always: the home's is only read, and closed before the scan runs.
+    const databasePath = join(scratch, "rerail.sqlite");
+    const refRules = options.rulesRef === undefined ? undefined : await rulesAtRef(root, options.rulesRef, scratch);
+    let refRuleIds: Set<string>;
+    try {
+      refRuleIds = prepareScratchDatabase(databasePath, root, home, useHome, packs, refRules, options.ruleDocuments);
+    } finally {
+      home?.$client.close();
+    }
     const repository = repositoryOf(databasePath, root);
 
     let base: ScanReport["base"] = null;
@@ -390,12 +467,12 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
       seen.set(violation.fingerprint, count + 1);
       if (count > 0) violation.fingerprint = createHash("sha256").update(`${violation.fingerprint}\0${count}`).digest("hex").slice(0, 32);
     }
-    const failures = audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({
+    const failures = [...refRules?.skipped ?? [], ...audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({
       code: failure.code,
       message: failure.message,
       path: failure.path ?? null,
       ruleId: failure.ruleId ?? null,
-    }));
+    }))];
     const completed = audits.every(audit => audit.result?.status === "completed") && (audits.length > 0 || paths?.length === 0);
     return {
       schema: SCAN_SCHEMA,
@@ -420,6 +497,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
       summary: { violations: violations.length, failures: failures.length },
     };
   } finally {
+    if (home?.$client.open === true) home.$client.close();
     if (previousStore === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
     else process.env.RERAIL_CONTENT_STORE_PATH = previousStore;
     rmSync(scratch, { recursive: true, force: true });

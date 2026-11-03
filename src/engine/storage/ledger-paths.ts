@@ -67,31 +67,9 @@ async function ledgerFolder(directory: string, create: boolean): Promise<void> {
   }
 }
 
-/** The file that keeps Git from offering session records for a commit: it ignores everything in its folder. */
-const IGNORE_EVERYTHING = "# Rerail's session records: prompts, tool calls and their results. Never commit them.\n*\n";
-
-/**
- * Creates the session record folder `directory`, refusing a symlink below `.rerail` (see {@link LEDGER_FOLDER}). The
- * first folder below `.rerail` gets a `.gitignore` that ignores everything in it, so `git add -A` in the checkout never
- * stages a session record. `.rerail` itself is left alone: its `rules/` folder is committed.
- */
+/** Creates the session record folder `directory`, refusing a symlink below `.rerail` (see {@link LEDGER_FOLDER}). */
 export async function makeLedgerFolder(directory: string): Promise<void> {
   await ledgerFolder(directory, true);
-  const segments = resolve(directory).split(sep);
-  const start = segments.lastIndexOf(LEDGER_FOLDER);
-  if (start <= 0 || segments.length <= start + 1) return;
-  const ignore = [...segments.slice(0, start + 2), ".gitignore"].join(sep);
-  try {
-    const handle = await open(ignore, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    try {
-      await handle.writeFile(IGNORE_EVERYTHING);
-    } finally {
-      await handle.close();
-    }
-  } catch (error) {
-    // Already there (ours or the person's own), or a symlink at its name: either way it is not replaced.
-    if (errno(error) !== "EEXIST" && errno(error) !== "ELOOP") throw error;
-  }
 }
 
 /**

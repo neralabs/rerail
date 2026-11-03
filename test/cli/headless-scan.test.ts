@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
@@ -116,6 +118,51 @@ describe("headless rerail scan", () => {
     const databasePath = join(home, "rerail.sqlite");
     runRuleApproveCommand(["needle", "--repo", root], () => "usage", { stdout: { write: () => true } }, databasePath);
     expect((await scan(root, { databasePath })).violations).toEqual([expect.objectContaining({ mode: "steer" })]);
+  });
+
+  it("never writes the home's database: it scans with a read-only copy of its configuration, and refuses one it would have to upgrade", async () => {
+    const root = checkout();
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const databasePath = join(home, "rerail.sqlite");
+    setUpTestRepository(root, {}, databasePath);
+    const digest = (): string => createHash("sha256").update(readFileSync(databasePath)).digest("hex");
+    const before = digest();
+    chmodSync(databasePath, 0o444);
+    const report = await scan(root, { databasePath });
+    expect(report.rulesSource).toEqual({ kind: "home" });
+    expect(report.violations).toHaveLength(1);
+    expect(digest()).toBe(before);
+
+    // A file this build would have to upgrade first is refused, not upgraded.
+    const other = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(other);
+    const olderPath = join(other, "rerail.sqlite");
+    setUpTestRepository(root, {}, olderPath);
+    const database = new Database(olderPath);
+    const step = database.prepare("SELECT id FROM schema_migrations ORDER BY rowid DESC LIMIT 1").get() as { id: string };
+    database.prepare("DELETE FROM schema_migrations WHERE id = ?").run(step.id);
+    database.close();
+    const olderDigest = (): string => createHash("sha256").update(readFileSync(olderPath)).digest("hex");
+    const pending = olderDigest();
+    await expect(scan(root, { databasePath: olderPath })).rejects.toThrow(/before (?:this Rerail can read it|it can be read)/u);
+    expect(olderDigest()).toBe(pending);
+  });
+
+  it("loads the rules at --rules-ref as a checkout's own: a broken file or a repeated id is left out, with why, and the rest run", async () => {
+    const root = checkout();
+    writeRule(root, "a-broken.json", "{ not json");
+    writeRule(root, "z-again.json", needle("needle", "OTHER"));
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "more rules");
+    const report = await scan(root, { rulesRef: "HEAD" });
+    expect(report.rules.map(rule => rule.ruleId)).toEqual(["needle"]);
+    expect(report.violations).toEqual([expect.objectContaining({ ruleId: "needle", code: "NEEDLE" })]);
+    expect(report.failures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "rule-left-out", path: "HEAD:.rerail/rules/a-broken.json" }),
+      expect.objectContaining({ code: "rule-left-out", path: "HEAD:.rerail/rules/z-again.json", message: expect.stringContaining("rule needle is already in needle.json") }),
+    ]));
+    expect(report.status).toBe("completed");
   });
 
   it("refuses a --pack that is not installed rather than scanning without it", async () => {
