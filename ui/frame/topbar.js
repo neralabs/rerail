@@ -6,7 +6,7 @@
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { data, ui, repoName, stateHere } from "../state.js";
 import { invalidate } from "../shell.js";
-import { repoOption } from "../render/repos.js";
+import { repoOption, repoHint } from "../render/repos.js";
 
 const $ = id => document.getElementById(id);
 
@@ -62,7 +62,7 @@ function status() {
     return { cls: "warn", text: "Not set up", title: "No rule packs chosen, so no rules run here. Run /rerail-start in a session here." };
   }
   if (stateHere() === "stopped") {
-    return { cls: "warn", text: "Stopped", title: "Rerail isn't auditing or logging here. Start it from Overview or Settings, or run /rerail-start." };
+    return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
   }
   if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · refreshing every 5 s.` };
   return { cls: "", text: `Updated ${rel}`, title: `Last refreshed ${new Date(data.updatedAt).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
@@ -105,9 +105,9 @@ function renderRepoMenu(pill) {
   const layer = $("repolayer");
   if (!menuOpen) { setContent(layer, "", () => null); return; }
   const current = data.repository?.repositoryKey;
-  setContent(layer, JSON.stringify([data.repositories, current]), () => h("div.repomenu", { role: "listbox", "aria-label": "Repos Rerail has seen" },
+  setContent(layer, JSON.stringify([data.repositories, current]), () => h("div.repomenu", { role: "listbox", "aria-label": "Repos" },
     data.repositories.map(repo => repoOption(repo, repo.repositoryKey === current)),
-    h("p.sub", null, "One repo at a time. To set up a new repo, open a coding agent there and type ", h("span.mono", null, "/rerail-start"), ".")));
+    h("p.sub", null, repoHint())));
   const at = pill.getBoundingClientRect(), menu = layer.firstChild;
   menu.style.left = `${Math.round(at.left)}px`;
   menu.style.top = `${Math.round(at.bottom) + 6}px`;

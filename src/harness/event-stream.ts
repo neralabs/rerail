@@ -15,7 +15,7 @@ import {
 } from "../runtime/event-protocol.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
-import { daemonEngineSocket } from "../runtime/daemon-control.js";
+import { daemonEngineEndpoint, engineEndpointAt } from "../runtime/daemon-control.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { linkDeliveries } from "../presentation/session-presentation.js";
@@ -122,10 +122,10 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
         if (event.kind === "session-start") host = event.session.host;
         // As hooks do: where Rerail is off nothing is recorded, and asking for the socket would autostart the daemon.
         if (!await hookRerailStarted(host, workspaceRoot, explicitDatabase)) return [];
-        const socketPath = process.env.RERAIL_ENGINE_SOCKET
-          ?? await daemonEngineSocket(replaceOtherPackage);
+        const named = process.env.RERAIL_ENGINE_SOCKET;
+        const endpoint = named !== undefined ? await engineEndpointAt(named) : await daemonEngineEndpoint(replaceOtherPackage);
         replaceOtherPackage = false;
-        return await ingestEngineEvent(socketPath, event, configuration);
+        return await ingestEngineEvent(endpoint, event, configuration);
       },
     };
     await serveRerailEventStream({ eventLoop, input, output, workspaceRoot });

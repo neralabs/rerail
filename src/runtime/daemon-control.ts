@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
@@ -60,6 +61,33 @@ export const DAEMON_ACCESS_TOKEN_FILE = "access-token";
 /** The headers that admit a request to the daemon `state` records: its access capability, when it has one. */
 export function daemonAccessHeaders(state: Pick<DaemonState, "accessToken">): Record<string, string> {
   return state.accessToken === undefined ? {} : { [DAEMON_ACCESS_HEADER]: state.accessToken };
+}
+
+/** Whether `presented` is `token`, in time independent of where they differ. */
+export function sameSecret(presented: string | undefined, token: string): boolean {
+  if (presented === undefined) return false;
+  const digest = (text: string) => createHash("sha256").update(text).digest();
+  return timingSafeEqual(digest(presented), digest(token));
+}
+
+/** Where a hook sends events: the daemon's engine socket and the capability that socket requires. */
+export interface EngineEndpoint {
+  socketPath: string;
+  accessToken?: string;
+}
+
+function engineEndpointOf(state: Pick<DaemonState, "kernelSocketPath" | "accessToken">): EngineEndpoint {
+  return state.accessToken === undefined ? { socketPath: state.kernelSocketPath } : { socketPath: state.kernelSocketPath, accessToken: state.accessToken };
+}
+
+/**
+ * The endpoint for an engine socket named outright (`RERAIL_ENGINE_SOCKET`, or a test's path): with the capability of
+ * the home's daemon when its state names that same socket, and none otherwise, which only a standalone engine service
+ * (one no daemon started) accepts.
+ */
+export async function engineEndpointAt(socketPath: string, home: string = defaultRerailHome()): Promise<EngineEndpoint> {
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE)).catch(() => undefined);
+  return state !== undefined && resolve(state.kernelSocketPath) === resolve(socketPath) ? engineEndpointOf(state) : { socketPath };
 }
 
 /** How a Rerail process sends one request to the daemon: `fetch`'s shape, over the transport the daemon serves. */
@@ -567,13 +595,13 @@ export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRo
 }
 
 /**
- * The engine service socket main host clients send events to; only the daemon evaluates them, since it alone opens
+ * The engine endpoint main host clients send events to; only the daemon evaluates them, since it alone opens
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
  * another package, which is how a hook keeps an older daemon from receiving fields it predates; a client that
  * outlives an update passes false after its first event so it keeps using the newer daemon instead of displacing
  * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon.
  */
-export async function daemonEngineSocket(replaceOtherPackage: boolean): Promise<string> {
+export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promise<EngineEndpoint> {
   const home = defaultRerailHome();
   const packageRoot = PACKAGE_ROOT;
   const control = { home, packageRoot };
@@ -585,19 +613,19 @@ export async function daemonEngineSocket(replaceOtherPackage: boolean): Promise<
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, packageRoot))) {
     throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   }
-  return daemon.state.kernelSocketPath;
+  return engineEndpointOf(daemon.state);
 }
 
 /**
- * The engine service socket for a hook after a session's start, or undefined when no daemon answers. A daemon that is
+ * The engine endpoint for a hook after a session's start, or undefined when no daemon answers. A daemon that is
  * down is not started: each tool call then costs one failed probe instead of an autostart that can outlast the coding
  * agent's hook timeout (design N11). A healthy daemon from another package (an update installed mid-session) is
- * replaced as `daemonEngineSocket(true)` replaces it, so steering carries on with this package's engine.
+ * replaced as `daemonEngineEndpoint(true)` replaces it, so steering carries on with this package's engine.
  */
-export async function runningDaemonEngineSocket(): Promise<string | undefined> {
+export async function runningDaemonEngineEndpoint(): Promise<EngineEndpoint | undefined> {
   const daemon = await findRunningDaemon(defaultRerailHome());
   if (daemon === undefined) return undefined;
-  return await daemonUsesPackageRoot(daemon.state, PACKAGE_ROOT) ? daemon.state.kernelSocketPath : await daemonEngineSocket(true);
+  return await daemonUsesPackageRoot(daemon.state, PACKAGE_ROOT) ? engineEndpointOf(daemon.state) : await daemonEngineEndpoint(true);
 }
 
 interface LaunchedDaemon {

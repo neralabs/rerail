@@ -164,6 +164,10 @@ commands only with its sandbox on (`/sandbox`); the Cursor CLI's file tools are 
 sandboxes stop writes but not reads, and OMP and Pi have no sandbox.
 [Sandbox and permission entries](how-setup-works.md#sandbox-and-permission-entries) lists every entry.
 
+Settings → Coding agents in the dashboard and `rerail status` show, for each connected coding agent, whether its
+tools can read Rerail's data on this computer, from its settings as they are now (for Claude Code, whether
+`sandbox.enabled` is on in your user settings or in managed settings).
+
 ## Registry access
 
 Rerail is published only to npmjs, as a public package, so no account or sign-in is needed. Set-up and

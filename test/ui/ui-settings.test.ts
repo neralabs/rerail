@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRepoRuleCounts, repoLine, repoRuleCounts, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
 import { agentStatus, installedLabel } from "../../ui/settings-model.js";
 
-const agent = (over: Partial<{ found: boolean; connected: boolean; problem: string | null }>) =>
-  ({ id: "claude-code", name: "Claude Code", found: false, connected: false, problem: null, ...over });
+type DataAccess = "kept-out" | "file-tools" | "open";
+const agent = (over: Partial<{ found: boolean; connected: boolean; problem: string | null; access: DataAccess }>) => {
+  const { access = "open", ...rest } = over;
+  return { id: "claude-code", name: "Claude Code", found: false, connected: false, problem: null, rerailData: { access, why: `${access} because` }, ...rest };
+};
 
 /** One entry of `GET /api/repository/rules`, as `toStoredRules` reads it. */
 const entry = (id: string, { on = true, folder = "", configError = null as string | null } = {}) => ({
@@ -17,6 +20,13 @@ describe("a coding agent's state in Settings", () => {
     expect(agentStatus(agent({ found: true, connected: true }))).toMatchObject({
       state: "Connected", tone: "on", command: { text: "rerail install --remove --agents claude-code" },
     });
+  });
+
+  it("says whether a connected agent's tools can read Rerail's data, warning unless they are kept out", () => {
+    expect(agentStatus(agent({ found: true, connected: true, access: "kept-out" })).data).toEqual({ text: "kept-out because", warn: false });
+    expect(agentStatus(agent({ found: true, connected: true, access: "file-tools" })).data).toEqual({ text: "file-tools because", warn: true });
+    expect(agentStatus(agent({ found: true, connected: true, problem: "settings.json is not valid JSON" })).data).toBeUndefined();
+    expect(agentStatus(agent({ found: true })).data).toBeUndefined();
   });
 
   it("offers the connect command for an agent on this computer that is not connected", () => {
@@ -71,8 +81,8 @@ describe("a repo's line in the repo choices", () => {
   });
 
   it("says a repo that is not set up runs nothing, whatever it holds", () => {
-    expect(repoLine(repo({ setUp: false, started: true }), null)).toBe("Not set up · nothing runs");
-    expect(repoLine(repo({ setUp: false, checkoutCount: 3 }), { total: 2, on: 2 })).toBe("Not set up · nothing runs · 3 checkouts");
+    expect(repoLine(repo({ setUp: false, started: true }), null)).toBe("Not set up · no rules run");
+    expect(repoLine(repo({ setUp: false, checkoutCount: 3 }), { total: 2, on: 2 })).toBe("Not set up · no rules run · 3 checkouts");
   });
 
   it("says Off with the rules it holds while a repo is off, and only On or Off until the counts are read", () => {

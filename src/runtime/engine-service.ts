@@ -10,6 +10,7 @@ import {
   RERAIL_EVENT_MAX_FRAME_BYTES,
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -28,8 +29,6 @@ const ConfigurationSchema = z
     /** Absent selects the engine service's own database. */
     databasePath: z.string().min(1).optional(),
     workspaceRoot: z.string().min(1).optional(),
-    /** False for a caller without the daemon token: its runtime records, sets up and imports nothing. */
-    trusted: z.boolean().optional(),
   })
   .strict();
 export type EngineRuntimeConfiguration = z.infer<typeof ConfigurationSchema>;
@@ -136,6 +135,13 @@ export async function chooseEngineSocketPath(
 type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   socketPath: string;
   workspaceRoot?: string;
+  /**
+   * The capability every request must carry as `x-rerail-access`: the daemon's own. A request decides where its
+   * runtime writes (`storageRoot`, `databasePath`), and the daemon runs outside any coding agent's sandbox, so a
+   * process that can connect to the socket but cannot read the Rerail home must not be able to use it. Only a
+   * standalone service (tests, benchmarks) omits it.
+   */
+  accessToken?: string;
 };
 
 interface EngineRoutingState {
@@ -166,7 +172,6 @@ function resolveRuntimeRoute(
         resolvePath(configuration.storageRoot),
         resolvePath(configuration.modelPath),
         resolvePath(configuration.databasePath ?? options.databasePath ?? defaultRerailDatabasePath()),
-        configuration.trusted ?? true,
       ]);
   if (workspaceRoot === undefined) {
     const configuredRuntimeKey = configurationKey === undefined
@@ -178,9 +183,10 @@ function resolveRuntimeRoute(
     }
     return { runtimeKey: configuredRuntimeKey ?? candidates!.values().next().value! };
   }
+  const { accessToken: _accessToken, ...serviceDefaults } = options;
   const runtimeOptions: RerailRuntimeOptions = configuration === undefined
     ? {
-        ...options,
+        ...serviceDefaults,
         storageRoot: resolvePath(options.storageRoot),
         databasePath: resolvePath(options.databasePath ?? defaultRerailDatabasePath()),
         workspaceRoot: resolvePath(workspaceRoot),
@@ -190,15 +196,12 @@ function resolveRuntimeRoute(
         modelPath: resolvePath(configuration.modelPath),
         databasePath: resolvePath(configuration.databasePath ?? options.databasePath ?? defaultRerailDatabasePath()),
         workspaceRoot: resolvePath(workspaceRoot),
-        trusted: configuration.trusted ?? true,
       };
-  // A trusted and an untrusted caller never share a runtime.
   const runtimeKey = JSON.stringify([
     runtimeOptions.storageRoot,
     runtimeOptions.modelPath,
     runtimeOptions.databasePath,
     runtimeOptions.workspaceRoot,
-    runtimeOptions.trusted ?? true,
   ]);
   if (configurationKey !== undefined) state.runtimeKeysByConfiguration.set(configurationKey, runtimeKey);
   return { runtimeKey, runtimeOptions };
@@ -255,6 +258,12 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       response.writeHead(404).end();
       return;
     }
+    const presented = incoming.headers[DAEMON_ACCESS_HEADER];
+    if (options.accessToken !== undefined && !sameSecret(typeof presented === "string" ? presented : undefined, options.accessToken)) {
+      // Refused before the body is read: nothing of the request reaches a runtime.
+      response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
+      return;
+    }
     try {
       const chunks: Buffer[] = [];
       let size = 0;
@@ -299,7 +308,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
 }
 
 export async function ingestEngineEvent(
-  socketPath: string,
+  endpoint: EngineEndpoint,
   event: AdapterEvent,
   configuration?: EngineRuntimeConfiguration,
 ): Promise<readonly AdapterDelivery[]> {
@@ -308,13 +317,14 @@ export async function ingestEngineEvent(
   const { promise, resolve, reject } = Promise.withResolvers<readonly AdapterDelivery[]>();
   const outgoing = request(
     {
-      socketPath,
+      socketPath: endpoint.socketPath,
       method: "POST",
       path: "/events",
       agent: false,
       headers: {
         "content-type": "application/json",
         "content-length": Buffer.byteLength(body),
+        ...(endpoint.accessToken === undefined ? {} : { [DAEMON_ACCESS_HEADER]: endpoint.accessToken }),
       },
     },
     (response) => {
