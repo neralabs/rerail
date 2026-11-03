@@ -9,13 +9,14 @@ Each is tagged with an `Internal testing:` comment where it is defined, and ever
 
 | Feature | Where it surfaces |
 | --- | --- |
-| Full-repository scanning | `rerail scan`; the `audit_requests_create`, `audit_requests_list`, `repository_audits_list` and `repository_audit_entries_list` operations; the automatic first repository audit at session start |
+| Full-repository scanning | `rerail scan`; the `audit_requests_create`, `audit_requests_list`, `repository_audits_list` and `repository_audit_entries_list` operations |
 | Conversation rules, cosine (similarity) and command (tool-call) alike | `kind: "conversation"` rules, shown in the dashboard with an `Internal testing` badge; `/cosine-rules` and the `conversation_rules` tool in OMP and Pi; `/rerail-create`'s command rules ([Tool-call rules](tool-call-rules.md)) |
 | Semantic tools | `rerail_mark`, `rerail_select`, `rerail_project` and `rerail_relate` in OMP and Pi |
 | Block mode | `mode: "block"`, stored and delivered exactly like `steer`; the CLI and API writes that set it say it steers in this release, and the dashboard shows it as `Block (steers for now)` |
 | Activation profiles | `rerail activate`, `rerail activation request`, `rerail profile` and `--profile` |
 | Event stream | `rerail events` |
 | Steer strategies `rewind` and `subagent`, experimental: off unless `RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1` | `steerStrategy` in the audit settings (`rerail settings --steer-strategy`, `audit_settings_update`); Pi's `rerail_fix` tool; `benchmark/steer-strategy.ts` |
+| Automatic first repository audit, experimental: off unless `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` | One full-repository audit in `log` mode at the first session in a checkout |
 | Missed-steer digest, experimental: off unless `RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST=1` | Late code-rule steers held and sent as one steer at the agent's yield; Cursor's `stop` follow-up |
 
 `rerail settings` and the `audit_settings_*` operations are not tagged yet: their scope is still being decided. The daemon's HTTP API, OpenAPI document and MCP endpoint are described in the [reference](reference.md#run); the dashboard uses them internally. Found something in this list? Feedback is welcome in an issue, labelled as internal testing. Who decides when a feature graduates or is removed is in [Governance](GOVERNANCE.md#internal-testing-features).
