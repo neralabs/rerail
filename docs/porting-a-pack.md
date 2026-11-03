@@ -60,8 +60,7 @@ and how.
    you ran locally proves anything.
 
    ```sh
-   aws sso login            # or any credentials with read access to the bucket; ask a maintainer
-   npm run fixtures:pull    # -- --pack <id> for one pack
+   npm run fixtures:pull    # -- --pack <id> for one pack; needs read access to the bucket, which a maintainer grants
    ```
 
    Archives cache in `.rerail/pack-data/archives/`; copy that directory into a fresh worktree to skip the download. A
@@ -195,14 +194,15 @@ npm run fixtures:stage -- --pack <id> --tool <tool> --all    # the whole set: a 
 git add packs/<id>/upstream/<tool>/publish
 ```
 
-- The derive runs upstream's code, so it runs in a sandbox with no AWS or GitHub credentials
+- The derive runs upstream's code, so it runs in a sandbox with no credentials, neither the bucket's nor GitHub's
   ([Derive in a sandbox](upstream.md#derive-in-a-sandbox)). It stops before running if any authored file the tool's
   `UPSTREAM.md` lists is missing on disk. `npm run fixtures:pull` puts them there; without the read, a generator
   that writes its own authored cases (Ruff's and Bandit's, from their `NOQA`, `NOSEC` and `PROBES` tables through
   `common.write_authored`) can be run for those first, and the written set must equal the `UPSTREAM.md` listing.
   Hand-written authored files need the pull.
-- Staging reads the locked archive to say what a publish would drop, so it needs the AWS CLI even with `--all`. While
-  `publish/` is tracked, structure metric #3 fails by design; every path in its failures must be a `publish/` path.
+- Staging reads the locked archive to say what a publish would drop, so it needs the bucket read even with `--all`.
+  While `publish/` is tracked, structure metric #3 fails by design; every path in its failures must be a `publish/`
+  path.
 - A file the archive holds is in no diff. Renaming or merging an authored case waits for the next derive and a
   `replace` publish.
 - Every file under the tool's test directories is authored or under a `Taken from it` glob, and every glob matches a
