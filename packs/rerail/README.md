@@ -5,7 +5,7 @@ written down (REVIEW.md, CONTEXT.md, `src/README.md`, `docs/`) and has broken be
 repository with a `packs/*/pack.json`; it is a `repository` pack, added for the whole repository (see
 `docs/rule-packs.md`).
 
-The pack ships 33 rules: 17 in Steer mode, which steer the coding agent in the session, and 16 in Log mode,
+The pack ships 34 rules: 17 in Steer mode, which steer the coding agent in the session, and 17 in Log mode,
 which only record, because today's code still breaks them or the place the code should use does not exist yet. Each
 rule's details say why it is Log and what has to land before it can steer. Every rule is a code rule but
 `rerail-pack-data-through-publish`, a conversation rule on the commands the coding agent runs.
@@ -51,6 +51,7 @@ rules, whose files are under `.github/`, come from a copy of the tree. Live chec
 | Dashboard | `rerail-ui-api-precedence` | Setting precedence worked out in the dashboard | Log |
 | Dashboard | `rerail-ui-color-tokens` | Raw colours in the dashboard, or a Nera token redefined | Steer |
 | Dashboard | `rerail-ui-pure-modules` | Network, storage or DOM work in the dashboard's pure modules | Log |
+| Native engine | `rerail-grammar-node-kinds` | Grammar node kinds named in shared engine code instead of on the family's Engine Adapter | Log |
 | Native engine | `rerail-language-facts-from-registry` | Hand-kept lists of file suffixes or language names in shared engine code | Log |
 | Native engine | `rerail-origin-ranges` | Ranges mapped by `host_range`/`host_span` instead of `Origin` | Log |
 | Native engine | `rerail-store-reads-in-documents` | Content-store source or tape reads outside `workspace/documents.rs` | Log |
@@ -123,7 +124,8 @@ Gaps: Misses `use Family::*` with bare variants, `as` aliases, label constants, 
 `if let "python" = language`, TypeScript `{…}[language]` lookups and template literals; `scripts/` is out of scope. A new
 family module with a neutral name is steered until the exemption names it. 4 matches on main today: the Forte choices in
 `tape.rs` and `workspace/evaluate.rs`, the Blade guard in `encode_blade`, and `import_target.rs` refusing `importTarget`
-by family.
+by family. Grammar node kinds (`node.kind() == "block"`) are branching too (#373 review) but are flagged by
+[`rerail-grammar-node-kinds`](#rerail-grammar-node-kinds), in Log, not here.
 
 ### `rerail-command-sigil`
 
@@ -504,6 +506,49 @@ Gaps: Log because main has 2 matches today, `ui/repo-rules.js` importing `api.js
 kept; the file must be split or dropped from the pure list first. Flags `export default "./api.js"` and treats a
 destructured `({ fetch }) =>` or `catch (fetch)` as the global. Misses bracket access such as `window["fetch"]`. The
 scope is a hand copy of the README's list.
+
+### `rerail-grammar-node-kinds`
+
+Flags tree-sitter node kinds named in shared native engine code: a kind compared with `node.kind()` (`==`, `!=`), listed
+in a `match` on a kind or in `matches!`, tested with `.ends_with("comment")` or `["…"].contains(&node.kind())`, or passed
+to `kind_id`, `kind_ids` or `id_for_node_kind`. Kinds are per-grammar names, so shared code that names one branches on a
+language (#373 review). Put them on the family's Engine Adapter (`Adapter::COMMENT_KINDS`, `PREAMBLE_KINDS` and
+`BODY_KINDS`, which #400 adds; `ScopeRules::REFERENCE_KINDS` and `NAME_KINDS`; `ValueRules::EXPRESSION_KINDS` and
+`VALUE_KINDS`) and read them through `with_adapter!(Family::of(dialect), A => …)`. Code that only runs once its family is
+chosen moves into the family's module or is named for the family.
+
+It runs on `native/src/**/*.rs`. Left out:
+- the adapter, `language/adapter.rs` and `language/adapter/**`;
+- family-named modules: a folder or file named for a registry family, language or dialect (`python`, `ecma`, `php`,
+  `blade`, `vue`, `rust`, `sql`, `javascript`, `typescript`, `tsx`), alone or joined to another word with `_`, and
+  `phpdoc`. A rule cannot read `languages/*.json`, so the names are kept by hand;
+- modules not named for a family that only run after it is chosen: `calls/summary.rs`, `value/structure.rs` and
+  `literal/annotation.rs`, `offsets.rs` and `semantic.rs` (Python); `value/key.rs`, `module_graph.rs` and
+  `import_target/` (Ecma); the linters' suppression readers in `suppress/`, each read by its family's `suppresses`;
+  the literal grammars (`brace`, `percent`, `printf`, `scanf`, `eslint_directive`) and their `formatArgs` styles, whose
+  kinds are Rerail's own;
+- in `language.rs`, `matcher/arguments.rs`, `matcher/format_args.rs`, `matcher/resolve.rs` and `scope/usage.rs`, the
+  functions that run only after dispatch, listed by name in one clause per file, and `matcher/arguments.rs`'s check
+  behind the `estree` flag, which only Ecma accepts;
+- functions named for a family (`fn prepare_python`, `fn php_holds`), and `match` arms on a family-named variant
+  (`LiteralHost::PythonString`, `OwnKinds::Blade`);
+- tests and `#[cfg(test)]` items.
+
+Punctuation tokens (`","`, `"("`) and `ERROR` pass: tree-sitter names them the same in every grammar. The triage of
+every match is in [candidates/README.md](candidates/README.md#rerail-grammar-node-kinds-grammar-node-kinds-only-on-the-familys-adapter).
+
+History: Built on #50's `rerail-ignore` reader, whose comment, preamble and Python body kinds review flagged on #50 and
+which merged unchanged; the #373 review answered that they are branching, and #400 moves them onto each family's
+adapter. The rule matches those 3 lines on this branch and none on #400's head.
+
+Gaps: Log until #400 merges and the shared matches move. 14 matches on this branch: the 3 in `suppress/rerail.rs`,
+which #400 moves, and 11 that stay after it: `compile/resolve.rs`'s `parenthesized_expression`, `dotted_name`,
+`attribute`, `scoped_identifier` and `this` (6), `matcher/arguments.rs`'s `named_children` and `unparenthesized`,
+`matcher/compare.rs`'s `element_index` and `unparenthesized`, and `matcher/util.rs`'s `is_comment_kind`, each reached
+for several families. Misses kinds held in a constant or variable before the comparison, field names
+(`node.field("name")`), helpers taking one kind (`has_token(&node, "type")`) and a kind read under another name than
+`kind`. A new after-dispatch function in one of the five listed files, or a new family module with a neutral name, is
+flagged until it is listed.
 
 ### `rerail-language-facts-from-registry`
 

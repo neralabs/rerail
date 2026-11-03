@@ -479,6 +479,22 @@
       }
     },
     {
+      "id": "rerail-grammar-node-kinds",
+      "document": "rules/rerail-grammar-node-kinds.json",
+      "title": "Name grammar node kinds on the family's adapter, not in shared engine code",
+      "group": "Native engine",
+      "examples": {
+        "caught": {
+          "path": "native/src/code_rule_dsl/suppress/rerail.rs",
+          "text": "fn leading<D: Doc>(node: &Node<'_, D>, source: &str) -> Option<Node<'_, D>> {\n    (node.kind() == \"block\")\n        .then(|| node.children().find(|child| is_code(child, source)))\n        .flatten()\n}\n"
+        },
+        "passes": {
+          "path": "native/src/code_rule_dsl/suppress/rerail.rs",
+          "text": "fn leading<D: Doc>(node: &Node<'_, D>, kinds: Kinds) -> bool {\n    kinds.bodies.contains(&node.kind().as_ref())\n}\n"
+        }
+      }
+    },
+    {
       "id": "rerail-language-facts-from-registry",
       "document": "rules/rerail-language-facts-from-registry.json",
       "title": "Take language facts from the language registry",

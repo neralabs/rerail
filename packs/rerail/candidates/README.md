@@ -3,7 +3,7 @@
 These are the rules that were considered for the pack, and the study behind each. This file is not published; the
 pack's [README](../README.md) covers the rules it ships.
 
-The candidates were drafted, checked and shipped: 33 rule documents in [`../rules/`](../rules/), 17 in Steer and 16 in
+The candidates were drafted, checked and shipped: 34 rule documents in [`../rules/`](../rules/), 17 in Steer and 17 in
 Log, where a candidate whose parts needed different modes became two. Every document passes `rerail rules test`
 (valid, every case right, none unchecked) and was run against the history below. Two drafts were not approved and are
 listed under [Considered and not proposed](#considered-and-not-proposed). This pull request also fixed most of the
@@ -48,7 +48,7 @@ The modes the rules shipped in:
 
 | Proposed id | Rule | Main | Today | Branch | Review | Shipped | Now | Kind |
 |---|---|--:|--:|--:|--:|---|--:|---|
-| `rerail-language-branching` | Only an Engine Adapter branches on a language or family | 3 | 3 | 4 | 3 | Steer | 4 | code, Rust and TypeScript |
+| `rerail-language-branching` | Only an Engine Adapter branches on a language or family | 3 | 3 | 4 | 3 | Steer; grammar node kinds ship as `rerail-grammar-node-kinds`, Log | 4; 14 | code, Rust and TypeScript |
 | `rerail-pack-rule-test-placement` | A test of one pack rule lives in `test/engine/code-rule/pack-rules/` | 8 | 8 | 4 | 0 | Steer | 0 | code, path |
 | `rerail-pack-data-through-publish` | Pack data reaches S3 and the locks only through the publish workflow | 5 | 5 | 0 | 0 | Steer | — | conversation rule |
 | `rerail-ui-color-tokens` | The dashboard defines no raw colours; every colour is a Nera token | 21 | 6 | 2 | 0 | Steer, with an allow-list | 0 | code, CSS and JS |
@@ -82,9 +82,58 @@ The modes the rules shipped in:
 - **Shape**: a code rule over `native/src/**/*.rs` and `src/**/*.ts`, forbidding comparisons, `match` arms and
   `matches!` on `Family::`, `GrammarDialect::` or a language name, outside the adapter: `language/adapter*` and the
   per-family modules the adapter's module documentation names (`scope/<family>.rs`, `value/<family>/`, `calls/…`).
-- **Open question**: whether the node-kind checks in `native/src/code_rule_dsl/suppress/rerail.rs:196,230` count as
-  branching on a language. #50's review asked, and nobody answered; it is now asked of Timo on
-  [#373](https://github.com/neralabs/rerail/pull/373#issuecomment-6605930141). The rule ignores them for now.
+- **Answered**: whether the node-kind checks in `native/src/code_rule_dsl/suppress/rerail.rs:116,196,230` count as
+  branching on a language. #50's review asked and nobody answered; on
+  [#373](https://github.com/neralabs/rerail/pull/373#issuecomment-6606280318) Timo answered that they do: node kinds
+  are per-grammar names. PR #400 moves them onto each family's adapter, and they are flagged by
+  [`rerail-grammar-node-kinds`](#rerail-grammar-node-kinds-grammar-node-kinds-only-on-the-familys-adapter), a separate
+  rule because this one steers and that one has to start in Log.
+
+### `rerail-grammar-node-kinds`: grammar node kinds only on the family's adapter
+
+- **Rule**: shared engine code names no tree-sitter node kind; the kinds sit on the family's Engine Adapter
+  (`Adapter::COMMENT_KINDS`, `PREAMBLE_KINDS`, `BODY_KINDS`, `ScopeRules::REFERENCE_KINDS`, `ValueRules::VALUE_KINDS`
+  and the like) and are read through `with_adapter!`. Code that runs only after its family is chosen may name them.
+- **Stated in**: CONTEXT.md, Engine Adapter, as answered on the #373 review: "it's branching: node kinds are
+  per-grammar names". #50's review raised the same lines as a follow-up.
+- **History**: #50 merged `suppress/rerail.rs` with comment kinds of five grammars, PHP's and ECMAScript's preamble
+  tokens and Python's `block` in shared code; the review comment asking to move them went unanswered. PR #400 moves
+  them onto the adapter.
+- **Today**: the shapes match 1,288 places on this branch (`871c0661c`) and 1,285 on #400's head (`a0e55ecff`): 917
+  in family-named modules, left out by name, and the rest triaged below. The shipped rule matches 14 here and 11 on
+  #400; `suppress/rerail.rs` has 3 matches here and none on #400. Every match outside family-named modules, by verdict
+  (line numbers are the same on both trees outside `suppress/rerail.rs`):
+
+  | File | Matches (here / #400) | Verdict | How the rule treats it |
+  |---|--:|---|---|
+  | `suppress/rerail.rs` (`is_comment` 116, `first_code` 196, `covered` 230) | 3 / 0 | Shared; #400 moves them | Matched |
+  | `compile/resolve.rs` (`compile_binding_in` 442; `compile_lexical_resolves` 612, 633, 635, 642, 644) | 6 | Shared: Python, Ecma, PHP, Rust and SQL reach them | Matched |
+  | `matcher/arguments.rs` (`named_children` 64, `unparenthesized` 504) | 2 | Shared: Python, PHP, Ecma and Rust callers | Matched |
+  | `matcher/compare.rs` (`element_index` 314, `unparenthesized` 336) | 2 | Shared: `index` and `commute` run for every family | Matched |
+  | `matcher/util.rs` (`is_comment_kind` 38) | 1 | Shared: comment kinds of four grammars, for every family | Matched |
+  | `compile/resolve.rs` (`compile_php_resolves`) | 2 | After dispatch: PHP (`S::FLOW`) | Left out: function named for PHP |
+  | `compile/parse.rs` (`compile_parse`) | 5 | After dispatch: one `LiteralHost` arm per family | Left out: arm on a family-named variant |
+  | `language.rs` (`KindCatalog::kind_ids` 158) | 1 | After dispatch: the `OwnKinds::Blade` arm | Left out: arm on a family-named variant |
+  | `language.rs` (module-syntax and JSX-runtime helpers) | 25 | After dispatch: Ecma (`source_type` `None`, `JSX_RUNTIMES`) | Left out: listed by name |
+  | `matcher/arguments.rs` (`python`, `syntactic`, `literal_keywords`, `php`, `php_syntactic`, `php_arguments`, `typescript`; `match_node` 81) | 22 | After dispatch: each family's `ArgumentRules`; line 81 behind the `estree` flag only Ecma accepts | Left out: named for the family, listed by name, or inside `if self.estree` |
+  | `matcher/format_args.rs` (`prepare_python` and its helpers; `prepare_rust`) | 39 | After dispatch: the Brace and Percent styles (Python) and the Rust style | Left out: named for the family or listed by name |
+  | `matcher/resolve.rs` (`this` helpers; `seenBefore` and import helpers; `php_holds`) | 35 | After dispatch: Ecma's `this_global`, Python's `imported`, PHP's `S::FLOW` | Left out: named for the family or listed by name |
+  | `scope/usage.rs` (`dunder_all` and its helpers) | 22 | After dispatch: Python (`Usage::python`) | Left out: listed by name |
+  | `calls/summary.rs` | 41 | After dispatch: only `impl CallRules for Python` | Left out: file |
+  | `value/structure.rs` | 36 | After dispatch: only `impl ValueRules for Python` | Left out: file |
+  | `value/key.rs` | 37 | After dispatch: only `impl ValueRules for Ecma` and `value/ecma/` | Left out: file |
+  | `module_graph.rs` | 12 | After dispatch: `A::PACKAGE_MANIFESTS`, true only for Ecma | Left out: file |
+  | `import_target/term.rs` | 7 | After dispatch: `importTarget` compiles for Ecma only | Left out: folder |
+  | `embed/test_script.rs` | 7 | After dispatch: a test-only HTML embedder | Left out: file |
+  | `literal/annotation.rs`, `offsets.rs`, `semantic.rs` | 26 | After dispatch: Python strings and annotations | Left out: files |
+  | `literal/brace.rs`, `matcher/format_args/printf.rs`, `scanf.rs` | 11 | Rerail's literal grammars' kinds; PHP's and Python's styles | Left out: files |
+  | `suppress/` linter readers (biome, clippy, eslint, noqa, nosec, oxlint, phpcs, phpstan, psalm, sqlfluff) | 29 | After dispatch: each is read only by its family's `suppresses` | Left out: files |
+
+  Each verdict was traced from the function's callers to the family's adapter impl (`language/adapter*.rs`), a
+  family-named module, or a compile-time gate only one family passes.
+- **Shape**: a code rule over `native/src/**/*.rs` matching node kinds compared with, matched against or listed for a
+  node's kind, or passed to `kind_ids`, outside the adapter, family-named modules and the modules and functions above.
+  Punctuation and `ERROR` pass. It ships in Log; switch it to Steer once #400 merges and the 11 shared matches move.
 
 ### `rerail-pack-rule-test-placement`: a pack rule's test lives in `pack-rules/`
 
@@ -502,9 +551,8 @@ Still open:
 
 ## Still open
 
-- **`suppress/rerail.rs` node kinds.** Whether `native/src/code_rule_dsl/suppress/rerail.rs:196,230` branch on a
-  language is asked of Timo on [#373](https://github.com/neralabs/rerail/pull/373#issuecomment-6605930141);
-  `rerail-language-branching` ignores them until he answers.
+- **`rerail-grammar-node-kinds` to Steer.** It switches once #400 merges and the 11 shared matches in
+  `compile/resolve.rs`, `matcher/arguments.rs`, `matcher/compare.rs` and `matcher/util.rs` move onto the adapter.
 - **#176.** The open #176 also adds `packs/rerail`, with two rules on pack message wording; it has to be rebased onto
   this pack.
 - **`packs/next/pack.json`.** It differs from what `scripts/generate/packs/next-policies.mjs` writes, in key order

@@ -42,7 +42,7 @@ then offers it from that copy.
 | Node.js | framework | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | 23 (21) | `*.vue` files |
 | React | framework | 40 (21) | a `react` dependency, or `*.jsx` files |
-| Rerail repository | repository | 33 (33) | a repository with `packs/*/pack.json` files: written for this one. Private: never published, so install it from a checkout with `rerail packs add packs/rerail`. 16 rules steer and 17 only log; see `packs/rerail/README.md`. |
+| Rerail repository | repository | 34 (34) | a repository with `packs/*/pack.json` files: written for this one. Private: never published, so install it from a checkout with `rerail packs add packs/rerail`. 17 rules steer and 17 only log; see `packs/rerail/README.md`. |
 
 - **A project's own pack** is a `repository` pack you install from its folder with `rerail packs add <folder>`. It counts as a third party's pack.
 - **Starting values** are a pack's `mode` and `on`: what its rules start with in a repository that adds it. Repository or checkout settings override them.
