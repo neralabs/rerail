@@ -6595,6 +6595,142 @@
           "policyEntries": "[{\"allowed_cache_members\": [[\"entries.get\", \"call\"]], \"body_hash\": \"475f9cc9861bb483b5a8ff5737d0fcab1525f78745cded681ca3329c4a3ad52a\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
         }
       }
+    },
+    {
+      "test": "probe:batch8:cached-policy-unicode-decorator",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@\uff43\uff41\uff43\uff48\uff45\uff44\uff3f\uff50\uff55\uff52\uff45\uff3f\uff4c\uff41\uff5a\uff59(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "unsigned cached pure-lazy function: l1234_policy_test.sample.derive",
+          "message": "unsigned cached pure-lazy function: l1234_policy_test.sample.derive"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-unicode-function",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef \uff44\uff45\uff52\uff49\uff56\uff45(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "unsigned cached pure-lazy function: l1234_policy_test.sample.derive",
+          "message": "unsigned cached pure-lazy function: l1234_policy_test.sample.derive"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-unicode-member",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    \uff43\uff41\uff43\uff48\uff45.\uff54\uff4f\uff55\uff43\uff48()\n    return 1\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-quoted-annotation",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: \"OptimizerRunCache\") -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache argument 'cache' annotation \"'OptimizerRunCache'\" does not match cache type 'l2070_batching.optimizer_run_cache.OptimizerRunCache'",
+          "message": "l1234_policy_test.sample.derive: cache argument 'cache' annotation \"'OptimizerRunCache'\" does not match cache type 'l2070_batching.optimizer_run_cache.OptimizerRunCache'"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"eb384a51138bee16dfdca34f0dbdb6d4b80eca0e3e364f2cb0c99150c817cfc5\"}]"
+        }
+      }
     }
   ]
 }
