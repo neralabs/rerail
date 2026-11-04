@@ -18,6 +18,10 @@ const MAX_OUTPUT_CAPTURES_PER_TASK: u32 = 4_096;
 const MAX_PROPERTIES_PER_TASK: u32 = 4_096;
 
 /// Packed query ordering and exact-admission metadata, derived from the Program.
+/// A program flag (`Program::flags`): a task keeps its first accepted result only, and its result
+/// capacity is one. A label pass that marks its roots reads no more (`metal_label_passes`).
+pub(super) const ONE_RESULT: u32 = 4;
+
 pub(super) fn program_flags(program: &Program) -> u32 {
     u32::from(program.tree_sitter_query)
         | (u32::from(
@@ -844,7 +848,8 @@ impl PackedBatch {
                     .instructions
                     .iter()
                     .any(|instruction| matches!(instruction, output::OutputInstruction::LanguageFromMime { .. }));
-                Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform))
+                let one_result = packed_program.flags & ONE_RESULT != 0;
+                Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let capacities = self
@@ -852,7 +857,7 @@ impl PackedBatch {
             .iter()
             .map(|task| {
                 let facts = facts[task.program as usize];
-                let (program_values, strip_states, source_transform, mime_transform) = per_program[task.program as usize];
+                let (program_values, strip_states, source_transform, mime_transform, one_result) = per_program[task.program as usize];
                 let file = &self.files[task.file as usize];
                 let root = self.nodes[task.root as usize];
                 let work_capacity = |operations: u32| {
@@ -869,6 +874,8 @@ impl PackedBatch {
                 let repeat_bound = repeat_states;
                 let greedy_states = work_capacity(facts.greedy_operations);
                 let result_states = work_capacity(facts.emit_operations);
+                // Candidates are still every path's; only the first accepted is kept.
+                let (candidate_states, result_states) = (result_states, if one_result { result_states.min(1) } else { result_states });
                 let node_source_length = root.source_end.saturating_sub(root.source_start);
                 let value_states = program_values.iter().try_fold(0_u32, |maximum, value| {
                     let needed = if value.kind == 2 {
@@ -925,7 +932,7 @@ impl PackedBatch {
                     queued_states: repeat_bound,
                     greedy_entries: greedy_states,
                     value_states,
-                    candidates: result_states,
+                    candidates: candidate_states,
                     results: result_states,
                     output_bytes,
                     output_captures: if result_states != 0 {

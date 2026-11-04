@@ -86,7 +86,7 @@ fn fixtures() -> Vec<TapeDoc> {
 /// Whether a gate checks this clause: all, or those whose `policy/clause` contains
 /// `RERAIL_S1_CLAUSE`.
 fn selected(policy: &str, clause: &str) -> bool {
-    std::env::var("RERAIL_S1_CLAUSE").map_or(true, |part| format!("{policy}/{clause}").contains(&part))
+    std::env::var("RERAIL_S1_CLAUSE").map_or(true, |parts| parts.split('|').any(|part| format!("{policy}/{clause}").contains(part)))
 }
 
 fn python_matchers(

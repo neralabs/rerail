@@ -981,25 +981,43 @@ waves stay as O33 describes them. Widened or non-flat lattices run on the CPU.
 kernel; or measured as rare enough on the full corpus that host rounds are the shape. G's executor
 goes with O33.
 
+**Measured (2026-11-03, list step 26): no longer rare.**
+- On S7's sample, one file's first attempt plans these rounds:
+
+  ```
+  rounds [0, 64, 0, 20, 0, 64, 0, 20, 0, 20, 0, 20, 0, 64, 0, 7, 0, 64, …]
+  ```
+
+  That is about 340 rounds, the 64s at the round cap.
+- The plan counts every group as fused, one dispatch for all its rounds, and plans 57 launches.
+- These groups' walks use cursors or go deeper than 32 frames, so they do not fuse. Each round
+  then costs launches per level, and the run exceeds any launch bound. The interpreter's
+  workspace is also what exceeds the buffer budget (O35).
+- The clauses that fact labels unlocked (decision 0030) are where these groups come from.
+
+**Next design step:** micro walks with cursors and deeper frames, or such groups inside the device
+work queue (0027), so each group is one dispatch. A retry ladder is not the fix.
+
 ## O35. The Metal label run's workspace and the buffer budget
 
 **Requirement.** A wave's label run on Metal fits Metal's 256 MB buffer budget on real files.
 
-**Status (2026-11-03, list step 26).** The clauses that fact labels unlocked run interpreter tasks.
-- **Fixed in step 26.** At NARROW (1,024 lanes × 4,096 states), pending, captures and cursors
-  alone are about 284 MB before any input (`ruff-b006`, `ruff-f633`). A lease over the budget now
-  runs again with half the states per lane, down to 512 (`Error::BackendBudget`). Fewer lanes do
-  not help: the summed arenas grow.
-- **Still open.** On S7's sample, the results arena is up to `state_cap` results per task, summed
-  per level. That is 250–510 MB at any state count, so the label run fails (`BackendCapacity`)
-  even after the wave's document split. `the_backends_find_the_same_keys_on_real_files` is
-  ignored with this item.
-- **No CPU fallback** (user decision, 2026-11-03).
+**Status (2026-11-03).**
+- **Done:**
+  - A lease over the budget runs again with half the states per lane, down to 512 (step 26).
+  - A roots-mode label pass keeps one result per task (`packed_batch::ONE_RESULT`), since its sink
+    reads only whether the root matched. Its results arena is sized by that.
+  - Pooled workspaces are freed before a capacity retry; they counted against the budget across
+    runs.
+- **Still open, and mostly O34:**
+  - On S7's real files, recursive groups that do not fuse run on the interpreter. Their workspaces
+    and per-level task buffers (up to 510 MB for one level) exceed the budget, and their rounds
+    exceed the launch bound.
+  - `the_backends_find_the_same_keys_on_real_files` is ignored with this item.
+  - `the_wave_finds_ws_matches_on_metal` fails about one run in two inside the `waves::` group
+    (parallel Metal tests share the budget's ledger). It passes alone.
 
-**Closure.** Either:
-- a label pass's results are sized by what its sink reads: a roots-mode label needs one bit per
-  task, not a result page, though the quota is per evaluation today; or
-- the budget is raised (user decision, inside the 500 MB total).
+**Closure:** O34. Groups that fuse need no interpreter workspace.
 
 ## O36. Semantic leaves still refused as fact labels
 

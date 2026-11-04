@@ -50,6 +50,13 @@ static JIT_CACHE: LazyLock<Mutex<BTreeMap<String, Engine>>> =
 const METAL_WORKSPACE_POOL_LIMIT: usize = 4;
 static METAL_WORKSPACE_POOL: LazyLock<Mutex<Vec<MetalWorkspace>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// Frees the workspaces kept for reuse; whether there were any. Kept workspaces count against the
+/// buffer budget, so a run that misses capacity frees them before anything else (`label_passes::run`).
+pub(super) fn release_workspaces() -> bool {
+    let released = METAL_WORKSPACE_POOL.lock().map(|mut pool| std::mem::take(&mut *pool)).unwrap_or_default();
+    !released.is_empty()
+}
 pub(in crate::code_rule_dsl) static METAL_DEVICE: LazyLock<Option<Device>> = LazyLock::new(Device::system_default);
 
 struct MetalWorkspace {

@@ -896,9 +896,15 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let mut rounds = plan_rounds(0, &wanted)?;
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
-    let (mut lanes, mut micro, mut deep) = (NARROW, true, false);
+    let (mut lanes, mut micro, mut deep, mut released) = (NARROW, true, false, false);
     loop {
         let mut outcome = match encode(device, plan, files, &rounds, lanes, micro, deep) {
+            // Workspaces kept from earlier runs hold the budget: freed once, the same run again.
+            Err(Error::BackendCapacity) if !released && super::release_workspaces() => {
+                released = true;
+                crate::code_rule_dsl::prof::count("run.released", 1);
+                continue;
+            }
             // A task's states outgrew the narrow lanes' (or another task failed, which fails again).
             Err(Error::BackendFailure) if lanes != WIDE => {
                 crate::code_rule_dsl::prof::count("run.widened", 1);
@@ -1607,6 +1613,13 @@ impl Runner<'_> {
             if batch.tasks.is_empty() {
                 self.prepared.insert(key, None);
                 continue;
+            }
+            // A program that marks its roots (mode 0, `label_sink`) reads one result per task, not a
+            // page of them: its tasks keep their first and size their results by it (O35).
+            for (program, (_, _, mode, _)) in batch.programs.iter_mut().zip(&passes) {
+                if *mode == 0 {
+                    program.flags |= super::super::packed_batch::ONE_RESULT;
+                }
             }
             if let Some(levels) = sweep {
                 // The route in the program's flags marks its label as it publishes (`label_sweep`).
