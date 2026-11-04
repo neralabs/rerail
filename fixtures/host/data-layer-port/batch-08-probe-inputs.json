@@ -1,0 +1,424 @@
+{
+  "cases": [
+    {
+      "check": "lazy_sql_surface",
+      "id": "call-_grammar_effect_lazy",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "# compile\nconnection._grammar_effect_lazy()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "definition-_grammar_effect_lazy",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "class SyncSqlConnection:\n    def _grammar_effect_lazy(self): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "call-_grammar_row_lazy",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "# compile\nconnection._grammar_row_lazy()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "definition-_grammar_row_lazy",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "class SyncSqlConnection:\n    def _grammar_row_lazy(self): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "call-_grammar_rows_lazy",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "# compile\nconnection._grammar_rows_lazy()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "definition-_grammar_rows_lazy",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "class SyncSqlConnection:\n    def _grammar_rows_lazy(self): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "call-_grammar_value_lazy",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "# compile\nconnection._grammar_value_lazy()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "definition-_grammar_value_lazy",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "class SyncSqlConnection:\n    def _grammar_value_lazy(self): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "ctx-branch_id",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def compile(self, ctx):\n    return ctx.branch_id\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "ctx-materialized_pipeline",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def compile(self, ctx):\n    return ctx.materialized_pipeline\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "ctx-txn",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def compile(self, ctx):\n    return ctx.txn\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "ctx-sql_connection",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def compile(self, ctx):\n    return ctx.sql_connection\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "annotation-0",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[None]: pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "annotation-1",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[object]: pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "annotation-2",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[DatabaseRow]: pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "annotation-3",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[DatabaseRow|None]: pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "annotation-4",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[list[ DatabaseRow ]]: pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "execute-0",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "plan.execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "execute-1",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "get_plan().execute_async()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "execute-2",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "factory().operation_plan.execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "execute-3",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "_plan_.execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "execute-4",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "plan_executor.execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "clean-0",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "with explicit_execution_authority():\n    plan.execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "clean-1",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "async def f():\n    async with explicit_execution_authority():\n        plan.execute_async()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "clean-2",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "with explicit_execution_authority as ctx:\n    plan.execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "clean-3",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def compile(ctx):\n    def f(): return ctx.txn\n    return ctx\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "clean-4",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[tuple[DatabaseRow, ...]]: pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "clean-5",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[\"object\"]: pass\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "clean-6",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "connection.execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "clean-7",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "x = LazyResult[None, object]\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "clean-8",
+      "files": [
+        {
+          "path": "l3000_example/example.py",
+          "source": "x = LazyResult[None]\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "qualified-authority-does-not-suppress",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "with module.explicit_execution_authority():\n    plan.execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "allowed-execution-file",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/plan_helpers.py",
+          "source": "plan.execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "lazy_sql_surface",
+      "id": "source-trigger",
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "connection._grammar_row_lazy()\n"
+        }
+      ]
+    },
+    {
+      "check": "plan_helpers_allowlist",
+      "id": "aliases-0",
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "from impl.common.l2070_server_plan.plan_helpers import grammar_row_lazy as a\nb = a\nc = b\nc()\n"
+        }
+      ]
+    },
+    {
+      "check": "plan_helpers_allowlist",
+      "id": "aliases-1",
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "from impl.common.l2070_server_plan.plan_helpers import grammar_row_lazy as a\nfrom impl.common.l2070_server_plan.plan_helpers import grammar_rows_lazy as a\na()\n"
+        }
+      ]
+    },
+    {
+      "check": "plan_helpers_allowlist",
+      "id": "aliases-2",
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "a = not_known\na()\n"
+        }
+      ]
+    },
+    {
+      "check": "plan_helpers_allowlist",
+      "id": "aliases-3",
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "a = grammar_row_lazy\na = unknown\na()\n"
+        }
+      ]
+    },
+    {
+      "check": "plan_helpers_allowlist",
+      "id": "aliases-4",
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "def f():\n    a = grammar_row_lazy\n\na()\n"
+        }
+      ]
+    },
+    {
+      "check": "plan_helpers_allowlist",
+      "id": "aliases-5",
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "execute_fn = grammar_row_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "plan_helpers_allowlist",
+      "id": "aliases-6",
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "a, b = grammar_row_lazy\na(); b()\n"
+        }
+      ]
+    },
+    {
+      "check": "plan_helpers_allowlist",
+      "id": "aliases-7",
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "grammar_row_lazy = grammar_rows_lazy\ngrammar_row_lazy()\n"
+        }
+      ]
+    }
+  ]
+}

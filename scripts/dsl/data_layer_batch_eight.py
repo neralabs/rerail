@@ -31,9 +31,9 @@ def normalize(check, result, files, logical):
         value=asdict(item) if is_dataclass(item) else item if isinstance(item,dict) else vars(item)
         path=value.get('file_path',value.get('file',value.get('path',files[0]['path'] if len(files)==1 else None)))
         if path is None:raise ValueError('Finding has no source identity')
-        code=value.get('code',value.get('rule',value.get('pattern_name',value.get('reason'))))
+        code=value.get('code',value.get('rule',value.get('pattern_name',value.get('reason',value.get('message')))))
         if not code:raise ValueError('Finding has no diagnostic identity')
-        findings.append({'path':logical(path),'line':value.get('line',value.get('line_number',value.get('line_num',1))),
+        findings.append({'path':logical(path),'line':value.get('line_num',value.get('line_number',value.get('line',1))),
                          'column':None,'code':code,'message':value.get('message',value.get('reason',value.get('text','')))})
     return findings
 

@@ -1,0 +1,1396 @@
+{
+  "format": "rerail.data-layer-recording/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "lazy_sql_surface",
+    "plan_helpers_allowlist"
+  ],
+  "source_mismatches": [],
+  "pytest_exit_code": 0,
+  "collected_tests": 0,
+  "uncaptured_tests": [],
+  "loaded_source_files_checked": 117,
+  "events": [
+    {
+      "test": "probe:batch8:call-_grammar_effect_lazy",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "# compile\nconnection._grammar_effect_lazy()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "connection grammar lazy terminal call: _grammar_effect_lazy",
+          "message": "connection grammar lazy terminal call: _grammar_effect_lazy"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:definition-_grammar_effect_lazy",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "class SyncSqlConnection:\n    def _grammar_effect_lazy(self): pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "SyncSqlConnection defines forbidden grammar terminal: _grammar_effect_lazy",
+          "message": "SyncSqlConnection defines forbidden grammar terminal: _grammar_effect_lazy"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:call-_grammar_row_lazy",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "# compile\nconnection._grammar_row_lazy()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "connection grammar lazy terminal call: _grammar_row_lazy",
+          "message": "connection grammar lazy terminal call: _grammar_row_lazy"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:definition-_grammar_row_lazy",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "class SyncSqlConnection:\n    def _grammar_row_lazy(self): pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "SyncSqlConnection defines forbidden grammar terminal: _grammar_row_lazy",
+          "message": "SyncSqlConnection defines forbidden grammar terminal: _grammar_row_lazy"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:call-_grammar_rows_lazy",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "# compile\nconnection._grammar_rows_lazy()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "connection grammar lazy terminal call: _grammar_rows_lazy",
+          "message": "connection grammar lazy terminal call: _grammar_rows_lazy"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:definition-_grammar_rows_lazy",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "class SyncSqlConnection:\n    def _grammar_rows_lazy(self): pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "SyncSqlConnection defines forbidden grammar terminal: _grammar_rows_lazy",
+          "message": "SyncSqlConnection defines forbidden grammar terminal: _grammar_rows_lazy"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:call-_grammar_value_lazy",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "# compile\nconnection._grammar_value_lazy()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "connection grammar lazy terminal call: _grammar_value_lazy",
+          "message": "connection grammar lazy terminal call: _grammar_value_lazy"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:definition-_grammar_value_lazy",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "class SyncSqlConnection:\n    def _grammar_value_lazy(self): pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "SyncSqlConnection defines forbidden grammar terminal: _grammar_value_lazy",
+          "message": "SyncSqlConnection defines forbidden grammar terminal: _grammar_value_lazy"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:ctx-branch_id",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def compile(self, ctx):\n    return ctx.branch_id\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "step compile() reads ctx.branch_id",
+          "message": "step compile() reads ctx.branch_id"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:ctx-materialized_pipeline",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def compile(self, ctx):\n    return ctx.materialized_pipeline\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "step compile() reads ctx.materialized_pipeline",
+          "message": "step compile() reads ctx.materialized_pipeline"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:ctx-txn",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def compile(self, ctx):\n    return ctx.txn\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "step compile() reads ctx.txn",
+          "message": "step compile() reads ctx.txn"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:ctx-sql_connection",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def compile(self, ctx):\n    return ctx.sql_connection\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "step compile() reads ctx.sql_connection",
+          "message": "step compile() reads ctx.sql_connection"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:annotation-0",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[None]: pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 1,
+          "column": null,
+          "code": "untyped LazyResult[None]",
+          "message": "untyped LazyResult[None]"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:annotation-1",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[object]: pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 1,
+          "column": null,
+          "code": "untyped LazyResult[object]",
+          "message": "untyped LazyResult[object]"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:annotation-2",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[DatabaseRow]: pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 1,
+          "column": null,
+          "code": "untyped LazyResult[DatabaseRow]",
+          "message": "untyped LazyResult[DatabaseRow]"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:annotation-3",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[DatabaseRow|None]: pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 1,
+          "column": null,
+          "code": "untyped LazyResult[DatabaseRow | None]",
+          "message": "untyped LazyResult[DatabaseRow | None]"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:annotation-4",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[list[ DatabaseRow ]]: pass\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 1,
+          "column": null,
+          "code": "untyped LazyResult[list[DatabaseRow]]",
+          "message": "untyped LazyResult[list[DatabaseRow]]"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:execute-0",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "plan.execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 1,
+          "column": null,
+          "code": "ServerPlan execute() outside execution boundary",
+          "message": "ServerPlan execute() outside execution boundary"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:execute-1",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "get_plan().execute_async()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 1,
+          "column": null,
+          "code": "ServerPlan execute_async() outside execution boundary",
+          "message": "ServerPlan execute_async() outside execution boundary"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:execute-2",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "factory().operation_plan.execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 1,
+          "column": null,
+          "code": "ServerPlan execute() outside execution boundary",
+          "message": "ServerPlan execute() outside execution boundary"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:execute-3",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "_plan_.execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 1,
+          "column": null,
+          "code": "ServerPlan execute() outside execution boundary",
+          "message": "ServerPlan execute() outside execution boundary"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:execute-4",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "plan_executor.execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 1,
+          "column": null,
+          "code": "ServerPlan execute() outside execution boundary",
+          "message": "ServerPlan execute() outside execution boundary"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:clean-0",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "with explicit_execution_authority():\n    plan.execute()\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:clean-1",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "async def f():\n    async with explicit_execution_authority():\n        plan.execute_async()\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:clean-2",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "with explicit_execution_authority as ctx:\n    plan.execute()\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:clean-3",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def compile(ctx):\n    def f(): return ctx.txn\n    return ctx\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:clean-4",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[tuple[DatabaseRow, ...]]: pass\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:clean-5",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "def f() -> LazyResult[\"object\"]: pass\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:clean-6",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "connection.execute()\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:clean-7",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "x = LazyResult[None, object]\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:clean-8",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l3000_example/example.py",
+          "source": "x = LazyResult[None]\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:qualified-authority-does-not-suppress",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "with module.explicit_execution_authority():\n    plan.execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "line": 2,
+          "column": null,
+          "code": "ServerPlan execute() outside execution boundary",
+          "message": "ServerPlan execute() outside execution boundary"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:allowed-execution-file",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/plan_helpers.py",
+          "source": "plan.execute()\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:source-trigger",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/example.py",
+          "source": "connection._grammar_row_lazy()\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:aliases-0",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "from impl.common.l2070_server_plan.plan_helpers import grammar_row_lazy as a\nb = a\nc = b\nc()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/l1000_example/example.py",
+          "line": 4,
+          "column": null,
+          "code": "old or private grammar_row_lazy() call is forbidden",
+          "message": "old or private grammar_row_lazy() call is forbidden"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_file"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:aliases-1",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "from impl.common.l2070_server_plan.plan_helpers import grammar_row_lazy as a\nfrom impl.common.l2070_server_plan.plan_helpers import grammar_rows_lazy as a\na()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/l1000_example/example.py",
+          "line": 3,
+          "column": null,
+          "code": "old or private grammar_rows_lazy() call is forbidden",
+          "message": "old or private grammar_rows_lazy() call is forbidden"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_file"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:aliases-2",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "a = not_known\na()\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_file"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:aliases-3",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "a = grammar_row_lazy\na = unknown\na()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/l1000_example/example.py",
+          "line": 3,
+          "column": null,
+          "code": "old or private grammar_row_lazy() call is forbidden",
+          "message": "old or private grammar_row_lazy() call is forbidden"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_file"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:aliases-4",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "def f():\n    a = grammar_row_lazy\n\na()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/l1000_example/example.py",
+          "line": 4,
+          "column": null,
+          "code": "old or private grammar_row_lazy() call is forbidden",
+          "message": "old or private grammar_row_lazy() call is forbidden"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_file"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:aliases-5",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "execute_fn = grammar_row_lazy\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/l1000_example/example.py",
+          "line": 1,
+          "column": null,
+          "code": "lazy terminal grammar_row_lazy assigned to eager alias",
+          "message": "lazy terminal grammar_row_lazy assigned to eager alias"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_file"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:aliases-6",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "a, b = grammar_row_lazy\na(); b()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/l1000_example/example.py",
+          "line": 2,
+          "column": null,
+          "code": "old or private grammar_row_lazy() call is forbidden",
+          "message": "old or private grammar_row_lazy() call is forbidden"
+        },
+        {
+          "path": "api/l1000_example/example.py",
+          "line": 2,
+          "column": null,
+          "code": "old or private grammar_row_lazy() call is forbidden",
+          "message": "old or private grammar_row_lazy() call is forbidden"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_file"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:aliases-7",
+      "check": "plan_helpers_allowlist",
+      "entry": "scan_file",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "api/l1000_example/example.py",
+          "source": "grammar_row_lazy = grammar_rows_lazy\ngrammar_row_lazy()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "api/l1000_example/example.py",
+          "line": 2,
+          "column": null,
+          "code": "old or private grammar_rows_lazy() call is forbidden",
+          "message": "old or private grammar_rows_lazy() call is forbidden"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_file"
+        }
+      }
+    }
+  ]
+}
