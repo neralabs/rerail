@@ -51,3 +51,14 @@ pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn hashes_signed_artifact_payloads() {
+        let db=rusqlite::Connection::open_in_memory().unwrap();
+        super::register(&db).unwrap();
+        let actual:String=db.query_row("SELECT sha256('abc')",[],|r|r.get(0)).unwrap();
+        assert_eq!(actual,"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
+}
