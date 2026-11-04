@@ -531,6 +531,26 @@ What was left, and how each was closed (2026-11-03, the user's choice for the fi
   - S7's real files are still over the budget (O35).
 - **Still refused:** O36.
 
+**List step 27 (2026-11-03): the findings layer's SQL is typed (row 3, decision 0031).**
+- **One typed statement:** `emit::single` now composes the steps' checked `select::Query`s, not
+  rendered text. Each view, and each relation below the output, is a materialized CTE whose arms
+  are its steps. Reads of derived relations are rebound to the CTEs, and the whole statement is
+  checked. The policies' demand statement uses the same fold.
+- **Typed sources:** batch inputs are `select::Source`s (a table, its columns, positional or named,
+  optionally filtered by `:batch`). They render the earlier strings exactly, so the plan identities
+  are unchanged.
+- **Tables from the program:** the layer's tables are `FINDINGS`' declared inputs, and `TABLES` is
+  gone.
+- **S's `sql_shape`** allows only equijoins, so it can't express the layer's negation, ranges or
+  `count`. It stays test-only (O19).
+- **Measured** (load 65; CPU is user + sys):
+  - `waves::`: 111 of 111, including `the_findings_are_ws_violations` and
+    `the_findings_follow_ws_anchors_suppressions_and_ceilings`; 18.7 s.
+  - `logic::`: 34 of 34; 151.5 s.
+  - `waves::policies`: 4 of 4; `select::`: 2 of 2.
+  - `the_slice_finds_ws_findings_on_real_files` differs from W on B006 alone (4 keys, matcher-side,
+    O37), so it is ignored.
+
 ### Phase 9: residency and the pinned GPU cache (§5; F3–F8, K1)
 
 | Copy | From | To | Adaptations |

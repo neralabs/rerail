@@ -10,6 +10,7 @@
 //! fact family per clause (`partitions`) and `statistics` writes their row estimates to
 //! `fact_stats`, where the demand relations read them.
 
+use crate::code_rule_dsl::logic::sql::select::Source;
 use super::owner::Lease;
 use super::schedule::Program;
 use crate::code_rule_dsl::logic::plan::emit;
@@ -213,7 +214,7 @@ impl Wave {
         inputs.sort_by(|a, b| a.0.cmp(b.0));
         let mut reads = std::collections::BTreeMap::new();
         for (name, (from, estimate)) in &inputs {
-            identity = identity.text(name).text(from);
+            identity = identity.text(name).text(&from.render());
             reads.insert(format!("batch.{name}"), *estimate as u64);
         }
         for name in &self.names {
@@ -280,23 +281,23 @@ impl Wave {
     }
 
     /// The planner's source and the batch inputs it reads, each with its source and estimate.
-    fn inputs(&self, kept: bool) -> (String, HashMap<String, (String, f64)>) {
+    fn inputs(&self, kept: bool) -> (String, HashMap<String, (Source, f64)>) {
         let mut batch = HashMap::from([
             (
                 "terminal".to_owned(),
                 (
-                    format!("(SELECT file_index AS c0, producer_id AS c1, node AS c2, start_byte AS c3, end_byte AS c4 FROM {TERMINAL} WHERE batch = :batch)"),
+                    Source::positional(TERMINAL, &["file_index", "producer_id", "node", "start_byte", "end_byte"]).batched(),
                     self.names.len() as f64,
                 ),
             ),
-            ("document".to_owned(), ("(SELECT position AS c0, d AS c1 FROM temp.wave_document)".to_owned(), 100.0)),
+            ("document".to_owned(), (Source::positional("temp.wave_document", &["position", "d"]), 100.0)),
         ]);
         let mut source = SOURCE.to_owned();
         source.push_str(&self.logic.rules);
         if kept {
             source.push_str(KEPT);
-            batch.insert("kept_match".to_owned(), (format!("(SELECT c0, c1, c2 FROM {KEPT_MATCH})"), 1000.0));
-            batch.insert("kept_span".to_owned(), (format!("(SELECT c0, c1, c2, c3 FROM {KEPT_SPAN})"), 1000.0));
+            batch.insert("kept_match".to_owned(), (Source::positional(KEPT_MATCH, &["c0", "c1", "c2"]), 1000.0));
+            batch.insert("kept_span".to_owned(), (Source::positional(KEPT_SPAN, &["c0", "c1", "c2", "c3"]), 1000.0));
         }
         (source, batch)
     }

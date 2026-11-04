@@ -47,6 +47,7 @@ use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::findings::contract::{Coverage, FindingKey, Findings};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::plan::emit;
+use crate::code_rule_dsl::logic::sql::select::Source;
 use crate::code_rule_dsl::matcher::{FileGates, GrammarMatcher, begin_clause, binding_range, end_clause, node_at};
 use crate::code_rule_dsl::model::{
     Anchor, ClauseKind, CompiledCodeRule, FileInput, Query, ViolationSpec, package_marker_directory,
@@ -152,27 +153,21 @@ total($r, $x) :- ceiling($r, _), $x = count { reported($r, _, _, _, _) }.
 finding($r, $k, $d, $l) :- reported($r, $c, $d, $n, $b), lined($c, $d, $n, $b, $l), shape($c, _, $k, _, _, _), ceiling($r, $m), total($r, $x), $x >= $m.
 ";
 
-/// The tables the program's inputs read (`Layer::write`), each with its columns.
-const TABLES: [(&str, &str); 18] = [
-    ("clause", "c, p, k"),
-    ("shape", "c, r, k, a, i, g"),
-    ("group", "c, d, n, s"),
-    ("applies", "c, d, h"),
-    ("around", "c"),
-    ("error", "d, s, e"),
-    ("line", "d, l, s, e"),
-    ("noqa", "c, k"),
-    ("parented", "c"),
-    ("stmt", "d, s, e"),
-    ("exempt", "d, k"),
-    ("mapped", "d, s, e"),
-    ("directive", "d, s, e, x, k"),
-    ("nosec", "c, k"),
-    ("bandit", "d, l, k"),
-    ("after", "d, l, p"),
-    ("cover", "d, i, s, e"),
-    ("ceiling", "r, m"),
-];
+/// The wave's relations the program reads, each with its table: the policies' violations (list step 21)
+/// and the matched nodes' bytes. Its other inputs are the layer's tables (`Layer::tables`).
+const WAVE: [(&str, &str, usize); 2] = [("forbidden", "violation", 4), ("span", "span", 4)];
+
+/// The layer's tables: the program's inputs that are not the wave's, each with its declared columns
+/// (`FINDINGS`' `.decl`s), which `Layer::write` fills.
+fn tables() -> StoreResult<Vec<(String, Vec<String>)>> {
+    let program = crate::code_rule_dsl::logic::front::parse(FINDINGS).map_err(invalid)?;
+    Ok(program
+        .inputs
+        .iter()
+        .filter(|input| !WAVE.iter().any(|(name, _, _)| name == input))
+        .map(|input| (input.clone(), program.decls[input].iter().map(|(column, _)| column.clone()).collect()))
+        .collect())
+}
 
 /// W's failure code for a clause that cannot read a file: the coverage it leaves `Unknown`.
 const INCOMPLETE: &str = "source-incomplete";
@@ -326,6 +321,8 @@ pub(in crate::code_rule_dsl) struct Layer {
     codes: Vec<String>,
     /// `rerail-ignore` names: `i` is an index from 1.
     ignores: Vec<String>,
+    /// The tables `write` fills, as `tables()`.
+    tables: Vec<(String, Vec<String>)>,
 }
 
 /// Interns `name` in `names`.
@@ -359,20 +356,21 @@ impl Layer {
                 intern(&mut ignores, name);
             }
         }
-        Ok(Self { shapes, rules, codes, ignores })
+        Ok(Self { shapes, rules, codes, ignores, tables: tables()? })
     }
 
     /// The layer's program: the planner's statements over the tables, with `finding` recorded as
     /// one family per code rule, and the statements its steps read (`Emitted::setup`: the views).
     pub(in crate::code_rule_dsl) fn program(&self, store: &ContentStore) -> StoreResult<emit::Emitted> {
-        let mut batch = HashMap::from([
-            // The policies' violations, as the wave's rules derived them (list step 21).
-            ("forbidden".to_owned(), ("(SELECT c0, c1, c2, c3 FROM violation)".to_owned(), self.shapes.len() as f64)),
-            ("span".to_owned(), ("(SELECT c0, c1, c2, c3 FROM span)".to_owned(), self.shapes.len() as f64)),
-        ]);
-        for (name, columns) in TABLES {
-            let aliased = columns.split(", ").enumerate().map(|(i, c)| format!("{c} AS c{i}")).collect::<Vec<_>>().join(", ");
-            batch.insert(name.to_owned(), (format!("(SELECT {aliased} FROM {})", table(name)), 100.0));
+        let mut batch = HashMap::new();
+        for (name, table, arity) in WAVE {
+            let columns = (0..arity).map(|i| format!("c{i}")).collect::<Vec<_>>();
+            let columns = columns.iter().map(String::as_str).collect::<Vec<_>>();
+            batch.insert(name.to_owned(), (Source::positional(table, &columns), self.shapes.len() as f64));
+        }
+        for (name, columns) in &self.tables {
+            let columns = columns.iter().map(String::as_str).collect::<Vec<_>>();
+            batch.insert(name.clone(), (Source::positional(&table(name), &columns), 100.0));
         }
         let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
         let mut emitted = emit::single(emit::emit_batch(FINDINGS, PROGRAM, &batch, intern).map_err(invalid)?, RELATION).map_err(invalid)?;
@@ -446,8 +444,8 @@ impl Layer {
         scope: &str,
         documents: &[Document],
     ) -> StoreResult<BTreeMap<(usize, u32), Coverage>> {
-        for (name, columns) in TABLES {
-            let typed = columns.split(", ").map(|c| format!("{c} INTEGER NOT NULL")).collect::<Vec<_>>().join(", ");
+        for (name, columns) in &self.tables {
+            let typed = columns.iter().map(|c| format!("{c} INTEGER NOT NULL")).collect::<Vec<_>>().join(", ");
             lease.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TABLE {0}({typed})", table(name)))?;
         }
         let insert = |name: &str, values: &[i64]| -> rusqlite::Result<()> {

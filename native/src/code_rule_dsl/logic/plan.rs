@@ -81,9 +81,8 @@ pub(in crate::code_rule_dsl) struct Inputs {
     /// T's `RDL_NATIVE` modes (`native_modes`); empty is T's pure SQL mode.
     native: BTreeSet<String>,
     /// Batch inputs: relations a wave reads from its chunk's `demand(batch)`, which have no
-    /// statistics outside a batch. Each is read from its source (a subquery whose columns are
-    /// `c0`, `c1`, …, filtered by `:batch`) and planned from its row estimate.
-    batch: HashMap<String, (String, f64)>,
+    /// statistics outside a batch. Each is read from its source and planned from its row estimate.
+    batch: HashMap<String, (Source, f64)>,
     /// The planner's statistics, measured by the caller from the inputs in memory (`corpus::run`): nothing is read
     /// or counted at plan time.
     given: Option<Stats>,
@@ -845,7 +844,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
 // A rule body is built as a typed query (`sql::select`), checked against the program's relations and the
 // columns in scope, then rendered (list step 20).
 
-use super::sql::select::{Cte, FromItem, Join, Query, Relation, Select};
+use super::sql::select::{Cte, FromItem, Join, Query, Relation, Select, Source};
 use super::sql::sql_ast::{SqlBinaryOperator as Op, SqlExpression as Expr, SqlUnaryOperator, SqlValue as Value_};
 
 fn integer(i: i64) -> Expr {
@@ -961,9 +960,21 @@ impl Model {
         delta_at: Option<usize>,
         tables: Option<&HashMap<String, (String, String)>>,
     ) -> Result<String> {
+        Ok(self.checked_query(prog, head, order, delta_at, tables)?.render())
+    }
+
+    /// `sql_select`'s query, checked, before it is rendered.
+    pub(in crate::code_rule_dsl) fn checked_query(
+        &self,
+        prog: &Program,
+        head: &Atom,
+        order: &[Step],
+        delta_at: Option<usize>,
+        tables: Option<&HashMap<String, (String, String)>>,
+    ) -> Result<Query> {
         let query = self.sql_query(prog, head, order, delta_at, tables)?;
         query.check(&|relation| self.declared(prog, relation)).map_err(|e| Error::Plan(format!("the SQL for {head}: {e}")))?;
-        Ok(query.render())
+        Ok(query)
     }
 
     /// `sql_select`'s query, before it is checked.
@@ -1140,16 +1151,16 @@ impl Model {
                         return Err(Error::Plan(format!("the walk of {} reads nothing before it", s.lit)));
                     }
                     let (items, conds): (Vec<FromItem>, Vec<Vec<Expr>>) = frm.drain(..).unzip();
-                    ctes.push(Cte {
-                        name: seed.clone(),
-                        columns: None,
-                        arms: vec![Select {
+                    ctes.push(Cte::walk(
+                        seed.clone(),
+                        None,
+                        vec![Select {
                             distinct: true,
                             columns: seed_cols.iter().map(|v| (env[v].clone(), Some(v.clone()))).collect(),
                             from: items,
                             predicates: conds.into_iter().flatten().chain(wh.drain(..)).collect(),
                         }],
-                    });
+                    ));
                     // The seed's columns are threaded through the walk (ast-index-spike S050 `_path_threaded`), so the
                     // walk's output is the extended row and nothing joins back to the seed.
                     let threaded = |alias: &str| seed_cols.iter().map(|v| (col(alias, v), None)).collect::<Vec<_>>();
@@ -1176,7 +1187,7 @@ impl Model {
                                 ..Select::default()
                             },
                         ];
-                        ctes.push(Cte { name: walk.clone(), columns: Some(walk_columns), arms });
+                        ctes.push(Cte::walk(walk.clone(), Some(walk_columns), arms));
                         let mut predicates = vec![eq(col("k", "n"), col("w", "cur")), member(col("k", "kind"))];
                         if env.contains_key(a) {
                             predicates.push(eq(col("w", "cur"), col("w", a)));
@@ -1187,7 +1198,7 @@ impl Model {
                             predicates,
                             ..Select::default()
                         };
-                        ctes.push(Cte { name: near.clone(), columns: None, arms: vec![arm] });
+                        ctes.push(Cte::walk(near.clone(), None, vec![arm]));
                         a
                     } else {
                         walk_columns.extend(["cur".to_owned(), "stop".to_owned()]);
@@ -1219,7 +1230,7 @@ impl Model {
                                 ..Select::default()
                             },
                         ];
-                        ctes.push(Cte { name: walk.clone(), columns: Some(walk_columns), arms });
+                        ctes.push(Cte::walk(walk.clone(), Some(walk_columns), arms));
                         let mut predicates = vec![bin(Op::LessOrEqual, col("w", "cur"), col("w", "stop"))];
                         if env.contains_key(n) {
                             predicates.push(eq(col("w", "cur"), col("w", n)));
@@ -1230,7 +1241,7 @@ impl Model {
                             predicates,
                             ..Select::default()
                         };
-                        ctes.push(Cte { name: near.clone(), columns: None, arms: vec![arm] });
+                        ctes.push(Cte::walk(near.clone(), None, vec![arm]));
                         n
                     };
                     env = seed_cols.iter().map(|v| (v.clone(), col(&near, v))).collect();
@@ -2436,7 +2447,13 @@ const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT 
 
 /// The relations a single rule projects from one input atom, as views (`CREATE TEMP VIEW`), with
 /// their statistics, input columns and document columns recorded in `model`.
-fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&Rule>>) -> Result<Vec<(String, String)>> {
+/// A view's statement.
+pub(in crate::code_rule_dsl) fn view_sql(rel: &str, query: &Query) -> String {
+    format!("CREATE TEMP VIEW {rel} AS {}", query.render())
+}
+
+/// The views `run` makes of one-atom projections of an input, each as its query (`view_sql`).
+fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&Rule>>) -> Result<Vec<(String, Query)>> {
     let mut views = Vec::new();
     for (&rel, rs) in rules_by {
         let [rule] = rs.as_slice() else { continue };
@@ -2449,8 +2466,9 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
             continue;
         }
         let order = vec![Step { at: 0, lit: b[0].clone(), mode: None }];
-        let select = model.sql_select(prog, h, &order, None, None)?.replacen("SELECT DISTINCT", "SELECT", 1);
-        views.push((rel.to_owned(), format!("CREATE TEMP VIEW {rel} AS {select}")));
+        let mut query = model.checked_query(prog, h, &order, None, None)?;
+        query.body.distinct = false;
+        views.push((rel.to_owned(), query));
         model.view_stats(rel, h, a);
         let src = first_columns(a);
         let cols = h.args.iter().map(|t| if let Term::Var(v) = t { src.get(v.as_str()).map(|&c| sql_col(&a.rel, c)) } else { None }).collect();
@@ -2507,6 +2525,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let native = model.inputs.native.clone();
     let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
+        let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
         if old_views.remove(&rel).as_deref() != Some(&view.replacen("CREATE TEMP VIEW", "CREATE VIEW", 1)) {
             db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{rel}"))?;

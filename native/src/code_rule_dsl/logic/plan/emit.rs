@@ -27,6 +27,12 @@ pub(in crate::code_rule_dsl) struct Emitted {
     pub(in crate::code_rule_dsl) program: schedule::Program,
     /// Statements the steps read besides the program's relations: `rdl_int`, then the views.
     pub(in crate::code_rule_dsl) setup: Vec<String>,
+    /// Each step's checked query, as `program.steps` (`None`: a relation's constant rows).
+    pub(in crate::code_rule_dsl) queries: Vec<Option<Query>>,
+    /// The views among `setup`, each as its query.
+    pub(in crate::code_rule_dsl) views: Vec<(String, Query)>,
+    /// The program's inputs, which its statements may read.
+    pub(in crate::code_rule_dsl) inputs: Vec<String>,
 }
 
 /// `lowered` as the wave program `name`, planned over the statistics in schema `stats` of `db`,
@@ -39,7 +45,7 @@ pub(in crate::code_rule_dsl) fn emit(
     stats: &str,
     name: &str,
     counts: Option<&BTreeMap<String, u64>>,
-    batch: &HashMap<String, (String, f64)>,
+    batch: &HashMap<String, (Source, f64)>,
 ) -> Result<Emitted> {
     let prog = &lowered.program;
     let inputs = Inputs {
@@ -58,10 +64,11 @@ pub(in crate::code_rule_dsl) fn emit(
         rules_by.entry(r.head.rel.as_str()).or_default().push(r);
     }
     let mut setup = vec![RDL_INT.to_owned()];
+    let planned_views = plan_views(prog, &mut model, &rules_by)?;
     let mut views = HashSet::new();
-    for (rel, view) in plan_views(prog, &mut model, &rules_by)? {
-        setup.push(view);
-        views.insert(rel);
+    for (rel, view) in &planned_views {
+        setup.push(view_sql(rel, view));
+        views.insert(rel.clone());
     }
     let derived = |rel: &str| !prog.inputs.iter().any(|i| i == rel) && !views.contains(rel);
     for (rel, rows) in counts.into_iter().flatten() {
@@ -88,13 +95,15 @@ pub(in crate::code_rule_dsl) fn emit(
         out
     };
     let mut steps = Vec::new();
-    let mut step = |output: &str, stratum: usize, reads: Vec<String>, select: &str| {
+    let mut queries = Vec::new();
+    let mut step = |output: &str, stratum: usize, reads: Vec<String>, select: &str, query: Option<Query>| {
         steps.push(schedule::Step {
             output: output.to_owned(),
             stratum: stratum as u32,
             reads,
             sql: format!("INSERT OR IGNORE INTO new_{output} {select}"),
         });
+        queries.push(query);
     };
     // Constant rows first (stratum 0), each relation's in one statement: a relation of rows alone is
     // in no component.
@@ -114,7 +123,7 @@ pub(in crate::code_rule_dsl) fn emit(
             })
             .collect::<Vec<_>>()
             .join(", ");
-        step(rel, 0, Vec::new(), &format!("VALUES {rows}"));
+        step(rel, 0, Vec::new(), &format!("VALUES {rows}"), None);
     }
     for (at, scc) in sccs.iter().enumerate() {
         let stratum = at + 1;
@@ -130,11 +139,11 @@ pub(in crate::code_rule_dsl) fn emit(
         let own = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(&a.rel));
         let recursive = scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| own(&s.lit));
         for (rule, order) in &planned {
-            let select = model.sql_select(prog, &rule.head, order, None, None)?;
+            let query = model.checked_query(prog, &rule.head, order, None, None)?;
             // A recursive component's rule over whole relations runs once: its own atoms' later
             // rows reach it through the delta variants.
             let reads = reads(order, &|rel| !recursive || !scc.contains(rel));
-            step(&rule.head.rel, stratum, reads, &select);
+            step(&rule.head.rel, stratum, reads, &query.render(), Some(query));
         }
         if recursive {
             model.stats.solving = scc.clone();
@@ -145,9 +154,9 @@ pub(in crate::code_rule_dsl) fn emit(
                     }
                     let (order, _, _) = model.plan_rule(prog, &rule.head, &rule.body, Some(i))?;
                     let at = order.iter().position(|s| s.at == i).ok_or_else(|| Error::Plan(format!("{}: no delta atom", rule.head)))?;
-                    let select = model.sql_select(prog, &rule.head, &order, Some(at), None)?;
+                    let query = model.checked_query(prog, &rule.head, &order, Some(at), None)?;
                     let Literal::Atom(a) = l else { unreachable!("an own atom") };
-                    step(&rule.head.rel, stratum, vec![a.rel.clone()], &select);
+                    step(&rule.head.rel, stratum, vec![a.rel.clone()], &query.render(), Some(query));
                 }
             }
             model.stats.solving.clear();
@@ -157,6 +166,9 @@ pub(in crate::code_rule_dsl) fn emit(
     Ok(Emitted {
         program: schedule::Program { name: name.to_owned(), relations, steps, file_local: false, partitions: Vec::new(), lattices },
         setup,
+        queries,
+        views: planned_views,
+        inputs: prog.inputs.clone(),
     })
 }
 
@@ -165,7 +177,7 @@ pub(in crate::code_rule_dsl) fn emit(
 pub(in crate::code_rule_dsl) fn emit_batch(
     source: &str,
     name: &str,
-    batch: &HashMap<String, (String, f64)>,
+    batch: &HashMap<String, (Source, f64)>,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
 ) -> Result<Emitted> {
     emit_program(&crate::code_rule_dsl::logic::front::parse(source)?, name, batch, intern)
@@ -175,7 +187,7 @@ pub(in crate::code_rule_dsl) fn emit_batch(
 pub(in crate::code_rule_dsl) fn emit_program(
     prog: &crate::code_rule_dsl::logic::front::Program,
     name: &str,
-    batch: &HashMap<String, (String, f64)>,
+    batch: &HashMap<String, (Source, f64)>,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
 ) -> Result<Emitted> {
     let lowered = lower::lower(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
@@ -183,67 +195,96 @@ pub(in crate::code_rule_dsl) fn emit_program(
 }
 
 /// A non-recursive `emitted` program as one statement deriving `output` (architecture §8: one layer
-/// of full SQL, which no fixpoint runs): each relation below it a materialized common table
-/// expression, the union of its steps in stratum order, the views among them (`setup`), and the
-/// statement `output`'s step. The program it returns has `output` alone, and keeps the setup that
-/// is not a view (`rdl_int`). Refused where a step reads a relation of its own stratum or a later
-/// one (recursion), or the program has lattices.
+/// of full SQL, which no fixpoint runs), composed from the steps' checked queries (decision 0031):
+/// each relation below it a materialized common table expression, the distinct union of its steps in
+/// stratum order, the views among them, then `output`'s union as the statement. Each step's reads of
+/// derived relations are rebound to their expressions, and the whole query is checked again: it reads
+/// the program's inputs, and each expression only after it is defined. The program it returns has
+/// `output` alone, and keeps the setup that is not a view (`rdl_int`). Refused where a step reads a
+/// relation of its own stratum or a later one (recursion), reads a walk or constant rows, or the
+/// program has lattices.
 pub(in crate::code_rule_dsl) fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
-    let Emitted { program, setup } = emitted;
+    let Emitted { program, setup, queries, views, inputs } = emitted;
+    let fail = |message: String| Error::Plan(format!("{}: {message}", program.name));
     if !program.lattices.is_empty() {
-        return Err(Error::Plan(format!("{}: a lattice needs the fixpoint", program.name)));
+        return Err(fail("a lattice needs the fixpoint".to_owned()));
     }
     let arity = |rel: &str| program.relations.iter().find(|(name, _)| name == rel).map(|(_, arity)| *arity);
-    let columns = |n: usize| (0..n).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-    let mut ctes = Vec::new();
-    let mut kept = Vec::new();
-    for statement in setup {
-        match statement.strip_prefix("CREATE TEMP VIEW ").and_then(|rest| rest.split_once(" AS ")) {
-            Some((name, select)) => ctes.push(format!("\"{name}\" AS MATERIALIZED ({select})")),
-            None => kept.push(statement),
+    let positional = |n: usize| (0..n).map(|i| format!("c{i}")).collect::<Vec<_>>();
+    // A step's block, its derived reads rebound to their expressions.
+    let block = |owner: &str, query: Query| -> Result<Select> {
+        if !query.ctes.is_empty() {
+            return Err(fail(format!("{owner} reads a walk, which one statement does not fold")));
         }
+        let mut body = query.body;
+        let mut delta = None;
+        body.relations_mut(&mut |relation| {
+            if let Relation::Derived { rel, delta: read_delta } = relation {
+                if *read_delta {
+                    delta = Some(rel.clone());
+                }
+                *relation = Relation::Cte(rel.clone());
+            }
+        });
+        match delta {
+            Some(rel) => Err(fail(format!("{owner} reads the delta of {rel}"))),
+            None => Ok(body),
+        }
+    };
+    let view_statements: HashSet<String> = views.iter().map(|(rel, query)| view_sql(rel, query)).collect();
+    let kept = setup.into_iter().filter(|statement| !view_statements.contains(statement)).collect();
+    let mut ctes = Vec::new();
+    for (rel, query) in views {
+        let arm = block(&rel, query)?;
+        ctes.push(Cte { name: rel, columns: None, arms: vec![arm], distinct: false, materialized: true });
     }
-    let mut steps = program.steps.iter().collect::<Vec<_>>();
-    steps.sort_by_key(|step| step.stratum);
+    let mut steps = program.steps.iter().zip(queries).collect::<Vec<_>>();
+    steps.sort_by_key(|(step, _)| step.stratum);
     let stratum = |rel: &str| program.steps.iter().find(|step| step.output == rel).map(|step| step.stratum);
-    let mut done = BTreeSet::new();
-    let mut last = None;
-    for step in &steps {
+    let mut arms = IndexMap::<String, Vec<Select>>::new();
+    for (step, query) in steps {
         for read in &step.reads {
             if stratum(read).is_some_and(|s| s >= step.stratum) {
-                return Err(Error::Plan(format!("{}: {} reads {read} in its own stratum or a later one", program.name, step.output)));
+                return Err(fail(format!("{} reads {read} in its own stratum or a later one", step.output)));
             }
         }
-        if !done.insert(step.output.as_str()) {
-            continue;
-        }
-        let selects = steps
-            .iter()
-            .filter(|other| other.output == step.output)
-            .map(|other| {
-                other
-                    .sql
-                    .strip_prefix(&format!("INSERT OR IGNORE INTO new_{} ", other.output))
-                    .map(str::to_owned)
-                    .ok_or_else(|| Error::Plan(format!("{}: step of {} is not an insert", program.name, other.output)))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let n = arity(&step.output).ok_or_else(|| Error::Plan(format!("{} is not a relation", step.output)))?;
-        if step.output == output {
-            last = Some((selects, n));
-        } else {
-            ctes.push(format!("\"{}\"({}) AS MATERIALIZED ({})", step.output, columns(n), selects.join(" UNION ")));
-        }
+        let query = query.ok_or_else(|| fail(format!("{} has constant rows, which one statement does not fold", step.output)))?;
+        arms.entry(step.output.clone()).or_default().push(block(&step.output, query)?);
     }
-    let (selects, n) = last.ok_or_else(|| Error::Plan(format!("{}: no step derives {output}", program.name)))?;
-    let body = selects.iter().map(|select| format!("SELECT * FROM ({select})")).collect::<Vec<_>>().join(" UNION ");
-    let sql = format!("INSERT OR IGNORE INTO new_{output} WITH {} {body}", ctes.join(", "));
+    let n = arity(output).ok_or_else(|| fail(format!("{output} is not a relation")))?;
+    if !arms.contains_key(output) {
+        return Err(fail(format!("no step derives {output}")));
+    }
+    for (rel, arms) in arms {
+        let columns = positional(arity(&rel).ok_or_else(|| fail(format!("{rel} is not a relation")))?);
+        // The output is read once, by the statement; every relation below it is evaluated once.
+        let materialized = rel != output;
+        ctes.push(Cte { name: rel, columns: Some(columns), arms, distinct: true, materialized });
+    }
+    // The output's expression last, so the statement is the union of its steps.
+    let at = ctes.iter().position(|cte| cte.name == output).expect("the output has steps");
+    let last = ctes.remove(at);
+    ctes.push(last);
+    let body = Select {
+        columns: positional(n).into_iter().map(|c| (Expr::Qualified { alias: "o".to_owned(), column: c }, None)).collect(),
+        from: vec![FromItem::cross(Relation::Cte(output.to_owned()), "o")],
+        ..Select::default()
+    };
+    let query = Query { ctes, body };
+    query
+        .check(&|relation| match relation {
+            Relation::Input { rel, .. } | Relation::Batch { rel, .. } | Relation::Bound { rel, .. } => inputs.contains(rel),
+            Relation::Derived { .. } => false,
+            _ => true,
+        })
+        .map_err(|e| fail(format!("the statement for {output}: {e}")))?;
+    let sql = format!("INSERT OR IGNORE INTO new_{output} {}", query.render());
     let program = schedule::Program {
         relations: vec![(output.to_owned(), n)],
         steps: vec![schedule::Step { output: output.to_owned(), stratum: 0, reads: Vec::new(), sql }],
         ..program
     };
-    Ok(Emitted { program, setup: kept })
+    Ok(Emitted { program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs })
 }
 
 /// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.

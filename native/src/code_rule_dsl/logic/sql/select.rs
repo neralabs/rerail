@@ -18,8 +18,8 @@ pub(in crate::code_rule_dsl) enum Relation {
     Input { schema: String, rel: String },
     /// A derived relation's table, or its semi-naive delta (`delta_<rel>`).
     Derived { rel: String, delta: bool },
-    /// A wave's batch input: its source subquery over `demand(:batch)`, columns `c0`, `c1`, ….
-    Batch { rel: String, source: String },
+    /// A wave's batch input, read from its source.
+    Batch { rel: String, source: Source },
     /// A table the caller binds to a relation (the native set fixpoint's full or delta vtab).
     Bound { rel: String, table: String },
     /// The statistics' document intervals (`stat_docrange`: `d`, `lo`, `hi`).
@@ -28,6 +28,63 @@ pub(in crate::code_rule_dsl) enum Relation {
     Integers,
     /// A CTE of the same query.
     Cte(String),
+}
+
+/// Where a batch input is read: `columns` of `table`, each as `c{i}` (`positional`) or under its own name,
+/// and where `batched` only the rows of the chunk's batch (`batch = :batch`).
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(in crate::code_rule_dsl) struct Source {
+    pub(in crate::code_rule_dsl) table: String,
+    pub(in crate::code_rule_dsl) columns: Vec<String>,
+    pub(in crate::code_rule_dsl) positional: bool,
+    pub(in crate::code_rule_dsl) batched: bool,
+}
+
+impl Source {
+    /// `columns` of `table`, read as `c0`, `c1`, ….
+    pub(in crate::code_rule_dsl) fn positional(table: &str, columns: &[&str]) -> Self {
+        Self { table: table.to_owned(), columns: columns.iter().map(|c| (*c).to_owned()).collect(), positional: true, batched: false }
+    }
+
+    /// `columns` of `table` under their own names.
+    pub(in crate::code_rule_dsl) fn named(table: &str, columns: &[&str]) -> Self {
+        Self { positional: false, ..Self::positional(table, columns) }
+    }
+
+    /// Only the rows of the chunk's batch.
+    pub(in crate::code_rule_dsl) fn batched(self) -> Self {
+        Self { batched: true, ..self }
+    }
+
+    pub(in crate::code_rule_dsl) fn render(&self) -> String {
+        let columns = self
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(i, column)| if self.positional && *column != format!("c{i}") { format!("{column} AS c{i}") } else { column.clone() })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let filter = if self.batched { " WHERE batch = :batch" } else { "" };
+        format!("(SELECT {columns} FROM {}{filter})", self.table)
+    }
+
+    /// Its table and columns are identifiers (a table may be schema-qualified).
+    fn check(&self) -> Result<(), String> {
+        let identifier = |name: &str| {
+            let mut bytes = name.bytes();
+            bytes.next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_') && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        };
+        if self.columns.is_empty() {
+            return Err(format!("the source {} has no columns", self.table));
+        }
+        if !self.table.split('.').all(identifier) || self.table.split('.').count() > 2 {
+            return Err(format!("{:?} is not a table", self.table));
+        }
+        match self.columns.iter().find(|column| !identifier(column)) {
+            Some(column) => Err(format!("{column:?} is not a column of {}", self.table)),
+            None => Ok(()),
+        }
+    }
 }
 
 /// The columns of the planner's base relations (T's input schema). Others are `c0`, `c1`, ….
@@ -63,7 +120,7 @@ impl Relation {
         match self {
             Self::Input { schema, rel } => format!("{schema}{rel}"),
             Self::Derived { rel, delta } => format!("{}{rel}", if *delta { "delta_" } else { "" }),
-            Self::Batch { source, .. } => source.clone(),
+            Self::Batch { source, .. } => source.render(),
             Self::Bound { table, .. } => table.clone(),
             Self::DocRange { schema } => format!("{schema}stat_docrange"),
             Self::Integers => "rdl_int".to_owned(),
@@ -96,12 +153,22 @@ pub(in crate::code_rule_dsl) struct Select {
     pub(in crate::code_rule_dsl) predicates: Vec<SqlExpression>,
 }
 
-/// A CTE: its arms are joined by `UNION ALL`; a later arm may read the CTE itself (a recursive walk).
+/// A CTE: its arms are joined by `UNION ALL` (or `UNION` where `distinct`); a later arm may read the CTE
+/// itself (a recursive walk). `materialized` fences it (`AS MATERIALIZED`): evaluated once, not inlined.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::code_rule_dsl) struct Cte {
     pub(in crate::code_rule_dsl) name: String,
     pub(in crate::code_rule_dsl) columns: Option<Vec<String>>,
     pub(in crate::code_rule_dsl) arms: Vec<Select>,
+    pub(in crate::code_rule_dsl) distinct: bool,
+    pub(in crate::code_rule_dsl) materialized: bool,
+}
+
+impl Cte {
+    /// A walk's CTE: its arms under `UNION ALL`, inlined.
+    pub(in crate::code_rule_dsl) fn walk(name: impl Into<String>, columns: Option<Vec<String>>, arms: Vec<Select>) -> Self {
+        Self { name: name.into(), columns, arms, distinct: false, materialized: false }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -143,6 +210,25 @@ impl Select {
         sql
     }
 
+    /// Each FROM item's relation, in subqueries too.
+    pub(in crate::code_rule_dsl) fn relations_mut(&mut self, f: &mut dyn FnMut(&mut Relation)) {
+        for item in &mut self.from {
+            f(&mut item.relation);
+        }
+        let Self { columns, from, predicates, .. } = self;
+        let ons = from.iter_mut().flat_map(|item| match &mut item.join {
+            Join::On(on) => on.iter_mut().collect::<Vec<_>>(),
+            Join::Cross => Vec::new(),
+        });
+        for expression in columns.iter_mut().map(|(expression, _)| expression).chain(predicates.iter_mut()).chain(ons) {
+            expression.visit_mut(&mut |inner| {
+                if let SqlExpression::Exists { query, .. } | SqlExpression::Scalar(query) = inner {
+                    query.relations_mut(f);
+                }
+            });
+        }
+    }
+
     /// The output columns' names: the aliases, or a bare column's name.
     fn names(&self) -> Vec<Option<String>> {
         self.columns
@@ -170,8 +256,8 @@ impl Query {
             .iter()
             .map(|cte| {
                 let columns = cte.columns.as_ref().map_or_else(String::new, |columns| format!("({})", columns.join(", ")));
-                let arms = cte.arms.iter().map(Select::render).collect::<Vec<_>>().join(" UNION ALL ");
-                format!("{}{columns} AS ({arms})", cte.name)
+                let arms = cte.arms.iter().map(Select::render).collect::<Vec<_>>().join(if cte.distinct { " UNION " } else { " UNION ALL " });
+                format!("{}{columns} AS {}({arms})", cte.name, if cte.materialized { "MATERIALIZED " } else { "" })
             })
             .collect::<Vec<_>>()
             .join(", ");
@@ -253,6 +339,9 @@ fn check_select(
     for item in &block.from {
         if item.relation.program_relation().is_some() && !declared(&item.relation) {
             return Err(format!("{:?} is not a relation of the program", item.relation));
+        }
+        if let Relation::Batch { source, .. } = &item.relation {
+            source.check()?;
         }
         if frame.iter().any(|(alias, _)| *alias == item.alias) {
             return Err(format!("alias {} is used twice", item.alias));
@@ -351,10 +440,10 @@ mod tests {
     #[test]
     fn a_recursive_cte_reads_itself_and_nothing_reads_it_before() {
         let tape = || Relation::Input { schema: "main.".to_owned(), rel: "tape".to_owned() };
-        let walk = Cte {
-            name: "walk0".to_owned(),
-            columns: Some(vec!["v".to_owned(), "cur".to_owned()]),
-            arms: vec![
+        let walk = Cte::walk(
+            "walk0",
+            Some(vec!["v".to_owned(), "cur".to_owned()]),
+            vec![
                 Select {
                     columns: vec![(column("t", "n"), None), (column("t", "par"), None)],
                     from: vec![FromItem::cross(tape(), "t")],
@@ -369,7 +458,7 @@ mod tests {
                     ..Select::default()
                 },
             ],
-        };
+        );
         let body = Select {
             columns: vec![(column("walk0", "cur"), Some("c0".to_owned()))],
             from: vec![FromItem::cross(Relation::Cte("walk0".to_owned()), "walk0")],

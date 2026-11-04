@@ -37,6 +37,7 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Program, Rule, Term, Value, yaml};
 use crate::code_rule_dsl::logic::magic;
 use crate::code_rule_dsl::logic::plan::emit;
+use crate::code_rule_dsl::logic::sql::select::Source;
 use crate::code_rule_dsl::matcher::match_tree;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::transducer::packed::LoweredMatcher;
@@ -93,13 +94,12 @@ impl Logic {
     /// `demand_sql`'s statement, or why it has none.
     fn demand_statement(&self, store: &ContentStore) -> Result<Option<String>, String> {
         let Some(prog) = &self.demand else { return Ok(None) };
-        let mut batch = HashMap::from([(WAVE.to_owned(), ("(SELECT d AS c0 FROM temp.wave_document)".to_owned(), 100.0))]);
+        let mut batch = HashMap::from([(WAVE.to_owned(), (Source::positional("temp.wave_document", &["d"]), 100.0))]);
         // The `py.*` families are read where they are bound (`main`), as the chunk's base relations are,
         // each priced at a thousand rows: no statistics exist before the chunk's first read (decision 0029).
         for rel in prog.inputs.iter().filter(|rel| is_py(rel)) {
             let columns = crate::code_rule_dsl::logic::sql::select::input_columns(rel).expect("a py family's columns");
-            let select = columns.join(", ");
-            batch.insert(rel.clone(), (format!("(SELECT {select} FROM main.{rel})"), 1000.0));
+            batch.insert(rel.clone(), (Source::named(&format!("main.{rel}"), columns), 1000.0));
         }
         let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
         let emitted = emit::emit_program(prog, "demand", &batch, intern).and_then(|emitted| emit::single(emitted, DEMANDED)).map_err(|e| e.to_string())?;

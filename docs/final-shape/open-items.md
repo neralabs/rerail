@@ -36,6 +36,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O33 | Phase 4 | G's grid executor (`ExecutionBackend::Metal`, not on the production path) exceeds the 99-launch bound on five parity tests | closed 2026-11-02: superseded by 0024 (decision 0028); kept as a copy until step 31 |
 | O35 | Phase 4 / 9 | The Metal label run's interpreter workspace against the 256 MB buffer budget: S7's real files (results arena) | closed (2026-11-03): groups single-dispatch (O34); S7's 250 files agree on all four backends |
 | O36 | Phase 4 / 10 | Semantic leaves still refused as fact labels: shared bindings, binding predicates, multi-target sub-rules, `parse`, under-`not` unknowns (decision 0030) | open |
+| O37 | Phase 4 / 8 | The lowered B006 clause reports 4 mutable defaults on S7's `f010.py` that W does not (`Optional[…]`, `Annotated[…]` annotations); `the_slice_finds_ws_findings_on_real_files` ignored | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -1063,3 +1064,15 @@ The fact-shaped ones are:
 
 Shared bindings are joins on capture columns between labels (O24's direction).
 
+## O37. B006 reports annotated defaults W does not
+
+Found at list step 27 (2026-11-03). `the_slice_finds_ws_findings_on_real_files` gives 1,259 keys
+against W's 1,255 on S7's 250 files. Only `ruff-b006-mutable-argument-default` differs: 4 keys only
+ours, none only W's, all on `f010.py` lines 267–272. Those are parameters annotated with
+`Sequence[int] | None`, `Optional[abc.Mapping[…]]` and `Annotated[Union[…], …]`, with defaults `[]`,
+`{}` and `set()`.
+- **Where it comes from:** the matcher, not the findings layer. The four backends already found the
+  same 1,259 keys before step 27 (O34), and the findings layer's statement only changed form there.
+- **Likely cause:** B006's annotation test is a fact label (decision 0030), and W's verdict on
+  these annotations' `resolves` differs from the lowered one.
+- **Test:** ignored with this item as the reason, until the lowered clause agrees.

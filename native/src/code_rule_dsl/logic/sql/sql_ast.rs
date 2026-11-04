@@ -302,6 +302,36 @@ impl SqlExpression {
             _ => {}
         }
     }
+
+    /// `visit`, mutably: each subexpression, this one first (subqueries are not entered).
+    pub(in crate::code_rule_dsl) fn visit_mut(&mut self, f: &mut dyn FnMut(&mut Self)) {
+        f(self);
+        match self {
+            Self::Binary { left, right, .. } => {
+                left.visit_mut(f);
+                right.visit_mut(f);
+            }
+            Self::Unary { input, .. } => input.visit_mut(f),
+            Self::Function { arguments, .. } | Self::Call { arguments, .. } => arguments.iter_mut().for_each(|argument| argument.visit_mut(f)),
+            Self::In { input, values } => {
+                input.visit_mut(f);
+                values.iter_mut().for_each(|value| value.visit_mut(f));
+            }
+            Self::Case { branches, fallback } => {
+                branches.iter_mut().for_each(|(condition, result)| {
+                    condition.visit_mut(f);
+                    result.visit_mut(f);
+                });
+                fallback.visit_mut(f);
+            }
+            Self::Between { input, low, high } => {
+                input.visit_mut(f);
+                low.visit_mut(f);
+                high.visit_mut(f);
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
