@@ -132,8 +132,14 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
                 let entry = stages.entry(format!("now_mb.{stage}")).or_default();
                 entry.1 = entry.1.max((info.ri_phys_footprint >> 20) as usize);
                 // The process's footprint high-water mark so far: the stage that raised it.
+                let max = (info.ri_lifetime_max_phys_footprint >> 20) as usize;
                 let entry = stages.entry(format!("max_mb.{stage}")).or_default();
-                entry.1 = entry.1.max((info.ri_lifetime_max_phys_footprint >> 20) as usize);
+                entry.1 = entry.1.max(max);
+                // `RERAIL_PROF_RISES=1`: each stage at which the high-water mark rose, in order.
+                static RISEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if std::env::var_os("RERAIL_PROF_RISES").is_some() && max > RISEN.fetch_max(max, std::sync::atomic::Ordering::Relaxed) + 32 {
+                    eprintln!("footprint high-water {max} MB by {stage} (now {} MB)", info.ri_phys_footprint >> 20);
+                }
             }
         }
         // The system allocator's (SQLite's, the Metal runtime's): in use, and held.

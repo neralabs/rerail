@@ -872,6 +872,7 @@ fn s8_measures_the_targets_on_s7s_sample() {
                     wall.as_secs_f64(),
                     crate::code_rule_dsl::prof::footprint_mb(),
                 );
+                crate::code_rule_dsl::prof::report(what);
             };
             arm("cold", true);
             std::fs::write(&first, format!("{source}\ng = lambda: 1\n")).unwrap();

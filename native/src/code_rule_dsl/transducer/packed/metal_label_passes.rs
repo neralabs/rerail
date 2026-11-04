@@ -17,7 +17,7 @@
 mod patterns;
 
 use super::super::PackedPattern;
-use super::super::metal_batch_abi::{MetalFile as BatchFile, MetalSupertype};
+use super::super::metal_batch_abi::MetalSupertype;
 use super::super::native_ir::ArenaKind;
 use super::*;
 use super::super::metal_batch_abi::MetalEvaluation;
@@ -225,15 +225,7 @@ pub(in crate::code_rule_dsl) struct RunBuffers(Mutex<Option<Kept>>);
 
 struct Kept {
     /// (nodes, labels, counts) the buffers are sized for.
-    /// (nodes, labels, counts) the buffers are sized for (scratch serves a run whose rows fit).
     key: (usize, usize, usize),
-    nodes: MappedBuffer,
-    children: MappedBuffer,
-    source: MappedBuffer,
-    line_starts: MappedBuffer,
-    /// The batch's files and (node, class) pairs, before the label prefix.
-    files: Vec<BatchFile>,
-    supertypes: Vec<MetalSupertype>,
     stacks: Option<MappedBuffer>,
 }
 
@@ -701,11 +693,6 @@ struct Tapes {
     /// place, `docs` holding each one's `DocView`.
     table: crate::code_rule_dsl::residency::slabs::DocTable,
     docs: MappedBuffer,
-    files: MappedBuffer,
-    nodes: MappedBuffer,
-    children: MappedBuffer,
-    source: MappedBuffer,
-    line_starts: MappedBuffer,
     /// The label state: the prefix (head, labels, the sweeps' words), the scratch rows and the
     /// tallies (at `scratch_at`, `counts_at`, bytes), then the grammar's (node, class) pairs. One
     /// buffer, so a marking program (`packed_batch::MARKS`) reaches its rows from `run_batch`'s
@@ -716,8 +703,6 @@ struct Tapes {
     /// Elements in `supertypes`: a label batch's header says so, which `run_batch` reads as
     /// "the prefix head is there".
     supertype_count: u32,
-    /// The batch's files and (node, class) pairs before the prefix, to keep (`Kept`).
-    base: Option<(Vec<BatchFile>, Vec<MetalSupertype>)>,
 }
 
 /// A level's programs as an interpreter batch, built once: every round encodes the same tasks
@@ -813,20 +798,6 @@ struct Runner<'a> {
 thread_local! {
     /// Tests: the passes run on the interpreter, as a run whose walks outgrew their frames does.
     pub(in crate::code_rule_dsl) static INTERPRET_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Tests: the interpreter reads the packed batch, not the resident tapes (an A/B oracle while
-    /// the packed buffers are still built).
-    pub(in crate::code_rule_dsl) static PACKED_INTERPRETER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-fn packed_interpreter() -> bool {
-    #[cfg(test)]
-    return PACKED_INTERPRETER.get();
-    #[cfg(not(test))]
-    false
 }
 
 fn interpret_only() -> bool {
@@ -970,18 +941,21 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
             }
             Err(Error::BackendBudget) => return Err(Error::BackendCapacity),
             // A loop walk outgrew the pool's 64 frames (or a walk its captures or steps): the
-            // pool's 128-frame stacks first.
-            Err(Error::BackendCapacity) if micro && !deep => {
+            // pool's 128-frame stacks first. Only a walk's overflow reaches here; a batch over a
+            // budget (`BackendCapacity`) goes back to the wave to be split, before anything of a
+            // bigger route is built for it.
+            Err(Error::WalkFrames) if micro && !deep => {
                 crate::code_rule_dsl::prof::count("run.deep", 1);
                 deep = true;
                 continue;
             }
             // A micro walk outgrew its frames, captures or steps.
-            Err(Error::BackendCapacity) if micro => {
+            Err(Error::WalkFrames) if micro => {
                 crate::code_rule_dsl::prof::count("run.interpreted", 1);
                 micro = false;
                 continue;
             }
+            Err(Error::WalkFrames) => return Err(Error::BackendFailure),
             outcome => outcome?,
         };
         outcome.interpreted = !micro;
@@ -1066,7 +1040,7 @@ fn encode(
     command.set_label("Rerail label passes");
     let mut runner = Runner {
         device,
-        engine: if packed_interpreter() { compile_interpreter_cached()? } else { compile_resident_interpreter_cached()? },
+        engine: compile_resident_interpreter_cached()?,
         kernels: pipelines()?,
         sweep: if plan.steps.iter().any(|(recursive, levels)| *recursive && sweeps(levels)) {
             Some(compile_sweep_cached()?)
@@ -1078,7 +1052,7 @@ fn encode(
         command,
         queue,
         files,
-        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, kept.as_mut(), rows.as_ref(), [scratch_rows(plan) * words, tally_rows(plan) * nodes]))?,
+        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, rows.as_ref(), [scratch_rows(plan) * words, tally_rows(plan) * nodes]))?,
         plan_labels: prefix_labels,
         label_rows: rows.as_ref().map(|(_, row_of)| row_of.clone()),
         words,
@@ -1157,7 +1131,7 @@ fn encode(
     // A micro walk that outgrew its frames: the passes again on the interpreter.
     if runner.flag(0) & 2 != 0 {
         crate::code_rule_dsl::prof::count("gpu.frames_overflow", 1);
-        return Err(Error::BackendCapacity);
+        return Err(Error::WalkFrames);
     }
     if runner.flag(0) != 0 {
         return Err(Error::BackendFailure);
@@ -1183,15 +1157,9 @@ fn encode(
         })
         .count();
     runner.outcome.waits[1] = runner.flag(3) as usize + unsettled;
-    if let (Some(buffers), Some((files, supertypes))) = (plan.buffers, runner.tapes.base.take()) {
+    if let Some(buffers) = plan.buffers {
         let kept = Kept {
             key,
-            nodes: MappedBuffer::wrap(runner.tapes.nodes.buffer.clone()),
-            children: MappedBuffer::wrap(runner.tapes.children.buffer.clone()),
-            source: MappedBuffer::wrap(runner.tapes.source.buffer.clone()),
-            line_starts: MappedBuffer::wrap(runner.tapes.line_starts.buffer.clone()),
-            files,
-            supertypes,
             stacks: runner.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone())),
         };
         if let Ok(mut slot) = buffers.0.lock() {
@@ -1236,44 +1204,18 @@ fn tapes(
     files: &[TapeDoc],
     plan: &Plan<'_>,
     words: usize,
-    kept: Option<&mut Kept>,
     rows: Option<&(Vec<u32>, Vec<u32>)>,
     [scratch_words, count_words]: [usize; 2],
 ) -> Result<Tapes, Error> {
     let prefix_labels = rows.map_or(plan.labels, |(present, _)| present.len());
-    // The batch's own parts: kept from an earlier run (moved out, and back with `base`), or built.
-    let (nodes, children, source, line_starts, base_files, base_supertypes) = match kept {
-        Some(kept) => (
-            kept.nodes.buffer.clone(),
-            kept.children.buffer.clone(),
-            kept.source.buffer.clone(),
-            kept.line_starts.buffer.clone(),
-            std::mem::take(&mut kept.files),
-            std::mem::take(&mut kept.supertypes),
-        ),
-        None => {
-            let program = Program::new(vec![super::super::word(EMIT, 0, 0)], vec![b"tape".to_vec()], Vec::new(), vec![0], Vec::new())?;
-            let anchors = vec![vec![Vec::new()]; files.len()];
-            let batch = PackedBatch::new(std::slice::from_ref(&program), files, &anchors)?;
-            (
-                MappedBuffer::from_slice(device, &batch.nodes)?.buffer,
-                MappedBuffer::from_slice(device, &batch.children)?.buffer,
-                MappedBuffer::from_slice(device, &batch.source)?.buffer,
-                MappedBuffer::from_slice(device, &batch.line_starts)?.buffer,
-                batch.files.clone(),
-                batch.supertypes.iter().map(|pair| MetalSupertype { node: pair.node, kind: pair.kind }).collect::<Vec<_>>(),
-            )
-        }
-    };
     // The labels, then the sweeps' round, failure and per group (by step) changes (`label_sweep`),
-    // then the batch's (node, class) pairs: written in place, with no host copy of the labels.
-    // The scratch rows and tallies after it, each at 256 bytes (32 pairs), as a buffer offset is
-    // bound; the pairs after them.
+    // written in place with no host copy of the labels; then the scratch rows and tallies, each at
+    // 256 bytes (32 pairs), as a buffer offset is bound. (Grammar classes are the tapes' codes.)
     let at = |pairs: usize| pairs.div_ceil(32) * 32;
     let scratch_pair = at(1 + (prefix_labels * words + 2 + 2 * plan.steps.len()).div_ceil(2));
     let counts_pair = at(scratch_pair + scratch_words.div_ceil(2));
     let prefix = at(counts_pair + count_words.max(1).div_ceil(2));
-    let count = prefix + base_supertypes.len();
+    let count = prefix;
     let supertypes = MappedBuffer::zeroed::<MetalSupertype>(device, count)?;
     unsafe {
         let head = supertypes.buffer.contents().cast::<MetalSupertype>();
@@ -1296,11 +1238,6 @@ fn tapes(
         }
         // Back for a retry, which builds the prefix again.
         plan.initial.set(initial);
-        std::ptr::copy_nonoverlapping(base_supertypes.as_ptr(), head.add(prefix), base_supertypes.len());
-    }
-    let mut batch_files = base_files.clone();
-    for file in &mut batch_files {
-        file.supertype_start += prefix as u32;
     }
     // The documents in the slabs, one table over them: a batch over `MAX_SLABS` is the wave's to
     // split.
@@ -1319,14 +1256,8 @@ fn tapes(
         counts_at: 8 * counts_pair as u64,
         table,
         docs,
-        files: MappedBuffer::from_slice(device, &batch_files)?,
-        nodes: MappedBuffer::wrap(nodes),
-        children: MappedBuffer::wrap(children),
-        source: MappedBuffer::wrap(source),
-        line_starts: MappedBuffer::wrap(line_starts),
         supertype_count: count as u32,
         supertypes,
-        base: Some((base_files, base_supertypes)),
     })
 }
 
@@ -1677,7 +1608,8 @@ impl Runner<'_> {
                 }
             }
             let (programs, anchors) = self.batch_inputs(&passes);
-            let mut batch = crate::code_rule_dsl::prof::time("size.batch", || PackedBatch::new(&programs, self.files, &anchors))?;
+            // The level's tasks over the resident documents: nothing of the tapes is packed.
+            let mut batch = crate::code_rule_dsl::prof::time("size.batch", || PackedBatch::new_resident(&programs, self.files, &anchors))?;
             crate::code_rule_dsl::prof::count("size.tasks", batch.tasks.len());
             if batch.tasks.is_empty() {
                 self.prepared.insert(key, None);
@@ -1954,12 +1886,7 @@ impl Runner<'_> {
         let slabs = &tapes.table.slabs;
         let slab = |slot: usize| slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| &slab.buffer.buffer);
         let program_buffers = &prepared.program;
-        let packed = packed_interpreter();
-        let (files, nodes, children, source, lines) = if packed {
-            (&tapes.files.buffer, &tapes.nodes.buffer, &tapes.children.buffer, &tapes.source.buffer, &tapes.line_starts.buffer)
-        } else {
-            (&tapes.docs.buffer, slab(0), slab(1), slab(2), slab(3))
-        };
+        let (files, nodes, children, source, lines) = (&tapes.docs.buffer, slab(0), slab(1), slab(2), slab(3));
         [
             &prepared.tasks.buffer,
             &prepared.header.buffer,

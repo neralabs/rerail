@@ -121,7 +121,16 @@ pub(in crate::code_rule_dsl) fn apply(store: &ContentStore, scope: &str, root: H
     run(store, scope, root, rules, false)
 }
 
+/// One full execution; what it left resident drops two minutes after the last one ends (PIAT
+/// §20.10, decision 0032).
 fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold: bool) -> StoreResult<Run> {
+    let run = execute(store, scope, root, rules, cold);
+    #[cfg(target_os = "macos")]
+    crate::code_rule_dsl::residency::slabs::executed();
+    run
+}
+
+fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold: bool) -> StoreResult<Run> {
     let entered = rules.backing.enter(store);
     let lease = entered.pool().take()?;
     lease.execute_batch(KEPT)?;

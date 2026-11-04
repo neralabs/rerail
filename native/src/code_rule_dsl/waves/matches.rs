@@ -341,6 +341,13 @@ impl Wave {
             // labels in place and come back as match records (decision 0024 §3).
             let mut candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
             restrict(&mut candidates, demanded.as_deref());
+            crate::code_rule_dsl::prof::peak("2a.candidates");
+            // Wave preparation (PIAT §20.3): what the residency lacks of the chunk's tapes is read
+            // from the store in one query and decompressed into slabs; the label run then finds
+            // every document resident.
+            #[cfg(target_os = "macos")]
+            crate::code_rule_dsl::prof::time("demand.residency", || prepare(graph.store(), &docs))?;
+            crate::code_rule_dsl::prof::peak("2b.residency");
             let active = vec![vec![true; docs.len()]; self.plans.len()];
             let views = crate::code_rule_dsl::prof::time("demand.labels", || {
                 #[cfg(target_os = "macos")]
@@ -564,3 +571,13 @@ fn labelled_metal(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(target_os = "macos")]
+/// The chunk's documents admitted from the store by their tape digests (decision 0032). A grammar
+/// is the dialect the store's tag names. Leases are not kept: the label run takes its own.
+fn prepare(store: &ContentStore, docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> StoreResult<()> {
+    use crate::code_rule_dsl::{language, residency::slabs, tape::Grammar};
+    let digests = docs.iter().map(|doc| doc.resident_key().map_err(StoreError::Invalid)).collect::<StoreResult<Vec<_>>>()?;
+    let grammar = |id: i64| Grammar::new(u8::try_from(id).ok().and_then(language::from_tape_tag).ok_or("unknown grammar")?);
+    slabs::admit(store, &digests, &grammar).map(drop).map_err(invalid)
+}

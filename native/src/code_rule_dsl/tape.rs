@@ -2048,6 +2048,18 @@ impl TapeDoc {
         Ok(*self.digest.get_or_init(|| digest))
     }
 
+    /// This document's tape digest, known where it was restored from stored bytes (the SHA-256 of
+    /// those bytes, the residency's key): admission then reads it from the store, not from here.
+    pub(crate) fn stored_as(self, digest: [u8; 32]) -> Self {
+        let _ = self.digest.set(digest);
+        self
+    }
+
+    /// The SHA-256 of this document's stored bytes, the residency's key (decision 0032).
+    pub(crate) fn resident_key(&self) -> Result<[u8; 32], String> {
+        self.tape_digest()
+    }
+
     /// This document's image as stored, its source and its grammar: what residency admits.
     pub(super) fn resident_parts(&self) -> Result<(Vec<u8>, &str, &Arc<Grammar>), String> {
         Ok((self.image.to_bytes()?, self.source.as_str(), &self.grammar))

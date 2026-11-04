@@ -437,7 +437,8 @@ impl Families {
         let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
         let doc = TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false)
             .map_err(StoreError::Invalid)?;
-        Ok(Some((Sha256::digest(&bytes[..]).into(), Tape { id, doc, lines })))
+        let digest: [u8; 32] = Sha256::digest(&bytes[..]).into();
+        Ok(Some((digest, Tape { id, doc: doc.stored_as(digest), lines })))
     }
 
     /// The tape `read` names, for one of its readers: taken from the tape wave, else decoded from

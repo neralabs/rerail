@@ -97,6 +97,9 @@ pub(super) struct PackedBatch {
     pub(super) evaluations: Vec<MetalEvaluation>,
     pub(super) evaluation_lanes: Vec<MetalEvaluation>,
     pub(super) global_arenas: MetalGlobalArenas,
+    /// A resident batch's (`new_resident`): each task's root's source length, as the nodes a
+    /// packed batch holds give it.
+    pub(super) root_spans: Vec<u32>,
     /// The most states of each transient kind a task may hold (pending paths, captures, cursors,
     /// ...): 65,536 where `None`. A lane reserves the most of its evaluations' up front, so the
     /// cap bounds a dispatch's lanes (`metal_label_passes`).
@@ -184,6 +187,17 @@ impl PackedBatch {
         Self::build(programs, files, anchors, true)
     }
 
+    /// The tasks of `programs` over `files` resident in the slabs (decision 0032): each file's
+    /// record in the batch's numbering and the tasks, with no nodes, children, source, line starts
+    /// or class pairs packed (the device reads the documents in place).
+    pub(super) fn new_resident(
+        programs: &[Program],
+        files: &[TapeDoc],
+        anchors: &[Vec<Vec<u32>>],
+    ) -> Result<Self, Error> {
+        Self::build_tapes(programs, files.len(), anchors, true, true, |file| Ok(std::borrow::Cow::Borrowed(&files[file])), |_| Ok(()))
+    }
+
     pub(super) fn new_grid_inputs(
         programs: &[Program],
         files: &[TapeDoc],
@@ -251,6 +265,18 @@ impl PackedBatch {
         file_count: usize,
         anchors: &[Vec<R>],
         materialize_tasks: bool,
+        load: impl FnMut(usize) -> Result<std::borrow::Cow<'a, TapeDoc>, Error>,
+        after_file: impl FnMut(&mut Self) -> Result<(), Error>,
+    ) -> Result<Self, Error> {
+        Self::build_tapes(programs, file_count, anchors, materialize_tasks, false, load, after_file)
+    }
+
+    fn build_tapes<'a, R: AsRef<[u32]>>(
+        programs: &[Program],
+        file_count: usize,
+        anchors: &[Vec<R>],
+        materialize_tasks: bool,
+        resident: bool,
         mut load: impl FnMut(usize) -> Result<std::borrow::Cow<'a, TapeDoc>, Error>,
         mut after_file: impl FnMut(&mut Self) -> Result<(), Error>,
     ) -> Result<Self, Error> {
@@ -266,8 +292,34 @@ impl PackedBatch {
         // every file is placed (06 S7: bit by bit, 0.7 s of 1.3 s of roots).
         let mut derived: Vec<(u32, Arc<Vec<Vec<u64>>>)> = Vec::new();
         let stage = crate::code_rule_dsl::prof::Stage::start("batch.files");
+        // A resident batch keeps its documents for its tasks' sizes, and its source and line
+        // counters in place of the bytes.
+        let mut documents = Vec::new();
+        let (mut source_length, mut line_length) = (0usize, 0usize);
         for file in 0..file_count {
             let tape = load(file)?;
+            if resident {
+                let source = tape.transducer_source();
+                let lines = 1 + source.iter().filter(|&&byte| byte == b'\n').count();
+                let nodes = tape.transducer_len();
+                batch.files.push(BatchFile {
+                    node_start: checked_u32(navigation[0])?,
+                    node_count: checked_u32(nodes)?,
+                    source_start: checked_u32(source_length)?,
+                    source_length: checked_u32(source.len())?,
+                    line_start: checked_u32(line_length)?,
+                    line_count: checked_u32(lines)?,
+                    supertype_start: 0,
+                    supertype_count: 0,
+                });
+                navigation[0] += nodes;
+                navigation[1] += nodes.saturating_sub(1);
+                navigation[3] += lines;
+                source_length += source.len();
+                line_length += lines;
+                documents.push(tape);
+                continue;
+            }
             let node_start = checked_u32(navigation[0])?;
             let source_start = checked_u32(batch.source.len())?;
             let source = tape.transducer_source();
@@ -619,10 +671,18 @@ impl PackedBatch {
                         .node_start
                         .checked_add(root)
                         .ok_or(Error::BackendFailure)?;
-                    let task_nodes = batch.nodes[root as usize]
-                        .descendant_end
-                        .saturating_sub(root)
-                        .max(1);
+                    let task_nodes = if resident {
+                        let local = root - batch.files[file].node_start;
+                        let document = &documents[file];
+                        let span = document.transducer_span(local);
+                        batch.root_spans.push(checked_u32(span.end - span.start)?);
+                        document.transducer_descendants(local).end.saturating_sub(local).max(1)
+                    } else {
+                        batch.nodes[root as usize]
+                            .descendant_end
+                            .saturating_sub(root)
+                            .max(1)
+                    };
                     let has_repeats = programs[program]
                         .words
                         .iter()
@@ -866,7 +926,11 @@ impl PackedBatch {
                 let facts = facts[task.program as usize];
                 let (program_values, strip_states, source_transform, mime_transform, one_result, marks) = per_program[task.program as usize];
                 let file = &self.files[task.file as usize];
-                let root = self.nodes[task.root as usize];
+                let root = match self.root_spans.get(task.batch_ordinal as usize) {
+                    // A resident batch's root: its span alone is read.
+                    Some(&length) if self.nodes.is_empty() => BatchNode { source_start: 0, source_end: length, ..BatchNode::default() },
+                    _ => self.nodes[task.root as usize],
+                };
                 let work_capacity = |operations: u32| {
                     if operations == 0 {
                         0

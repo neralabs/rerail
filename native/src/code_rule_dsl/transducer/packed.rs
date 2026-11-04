@@ -952,6 +952,10 @@ pub(in crate::code_rule_dsl) enum Error {
     /// states; past the fewest it is `BackendCapacity`).
     BackendBudget,
     BackendLaunchLimit,
+    /// A label run's micro walk outgrew its frames, captures or steps on the device: the run
+    /// again with deep stacks, then interpreted. Not a size refusal: the batch fits; its walks'
+    /// pools do not.
+    WalkFrames,
     BackendFailure,
 }
 

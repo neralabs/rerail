@@ -105,6 +105,19 @@ The user chose the full §20 scope: the kernels on the wave's path read the v9np
      keeps no result records or final captures; those were reserved per task at their worst case
      and summed past the budget (O38). Scratch rows and tallies are parts of the label state
      buffer, which `run_batch` already binds as `supertypes`; the header names their words.
+   - **Landed (stage 6):** the label run builds no `PackedBatch` of tapes. A level's tasks come
+     from `PackedBatch::new_resident`: file records with running source and line bases, and each
+     task's root span. No node, child, source or line array is packed.
+   - **Wave preparation:** `waves::matches::demand` admits the chunk's tapes from the store by
+     their digests (one `resident_frames` read, decompressed into slabs) before the label run.
+     A tape decoded from stored bytes carries those bytes' SHA-256 (`TapeDoc::stored_as`), so the
+     label run's `admit_docs` finds every document resident.
+   - **The drop:** `slice::run` calls `executed()` after each audit or apply.
+   - **A walk's overflow is not a size refusal:** `Error::WalkFrames` is the only error that sends
+     a label run to deep stacks, then to the interpreter. A batch over a budget
+     (`BackendCapacity`) goes back to the wave, which splits it before a larger route is built.
+     Before, every refusal took both retries. On S7's 250 files, the interpreted retry built one
+     host task per (program, root), 45 M records, before the batch was split.
 5. **In-memory admission (`admit_docs`):** a batch whose tapes were restored before it ran (every
    caller but the wave, and every test) is admitted from its documents: a `TapeDoc` keeps the
    `TapeImage` it was restored from and its stored bytes' SHA-256 (computed once). The image is
@@ -122,3 +135,16 @@ The user chose the full §20 scope: the kernels on the wave's path read the v9np
   backends.
 - The device does more work per access: a code-table lookup, and sibling hops where `MetalNode`
   held links. The cost is to be measured on S2 and S7 when the kernels move.
+- Stage 6 checks (load 15-44; CPU is user + sys):
+  - S2: 158 of 158; interpreted, 34 of 39 equal, 5 refused (O38).
+  - The regression set: 195 of 195 (one run had a single intermittent failure; two reruns
+    passed).
+  - Real files: 1,259 keys on all four backends.
+  - `phase_four`/`jit`: 109 pass, with the same 11 failures as `978a99751`.
+- S7's sample on Metal, cold (S8, one pass):
+  - Residency: 247 misses read from the store in one query, then 1,441 hits in the label runs.
+  - Before `WalkFrames`: CPU 15.4 s, footprint peak 3,017 MB (the interpreted retry's tasks).
+  - After: 12.0 s, peak 871 MB; the footprint after the audit is 457 MB.
+  - The edits take 0.58 s each.
+  - The peak is still over the 500 MB budget (O39).
+

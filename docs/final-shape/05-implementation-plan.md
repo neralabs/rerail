@@ -531,6 +531,16 @@ What was left, and how each was closed (2026-11-03, the user's choice for the fi
   - S7's real files are still over the budget (O35).
 - **Still refused:** O36.
 
+**List step 28 (2026-11-04): tapes resident in slabs, read in place (decision 0032).**
+- **Slabs:** format 11 aligns the columns, and admission is by content: frames from the store
+  (the wave's preparation) or images in memory. `executed()` starts the 2-minute drop.
+- **Kernels:** the label passes, the pattern kernel and the resident interpreter read the slabs
+  through a 96-byte `DocView` per document. The label run packs no tapes.
+- **Label output is bits:** programs mark their bits as they publish, with no result records.
+- **Only a walk's frame overflow retries** deeper or interpreted (`WalkFrames`); a batch over a
+  budget is split. S7 cold on Metal: 12.0 s CPU, peak 871 MB (was 3,017 MB), 1,259 keys.
+- **Left:** the peak over budget (O39) and the interpreted lanes' workspace (O38).
+
 **List step 27 (2026-11-03): the findings layer's SQL is typed (row 3, decision 0031).**
 - **One typed statement:** `emit::single` now composes the steps' checked `select::Query`s, not
   rendered text. Each view, and each relation below the output, is a materialized CTE whose arms

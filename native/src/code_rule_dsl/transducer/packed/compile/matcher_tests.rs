@@ -333,14 +333,13 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
 /// S2 on the interpreter (decision 0032): every pass runs as programs in `run_batch` over the
 /// resident tapes (as a run whose walks outgrew their frames does), every fourth clause. Its
 /// passes mark their bits as they publish (`packed_batch::MARKS`). A clause refused for the
-/// interpreter's per-lane workspace or the launch bound (5 of 39, on the packed batch alike with
-/// `RERAIL_PACKED_INTERPRETER`) is counted, not compared: it runs as walks in production.
+/// interpreter's per-lane workspace or the launch bound (5 of 39, O38; the packed batch refused the
+/// same ones) is counted, not compared: it runs as walks in production.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
 fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     use super::compile_matcher::Backend;
-    use metal_program_backend::label_passes::{INTERPRET_ONLY, PACKED_INTERPRETER};
-    PACKED_INTERPRETER.set(std::env::var_os("RERAIL_PACKED_INTERPRETER").is_some());
+    use metal_program_backend::label_passes::INTERPRET_ONLY;
     let tapes = fixtures();
     let compiled = clauses();
     let (mut lowered, mut differ, mut refused, mut equal) = (0, Vec::new(), 0, 0);
@@ -369,7 +368,6 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
         }
     }
     INTERPRET_ONLY.set(false);
-    PACKED_INTERPRETER.set(false);
     eprintln!("S2 interpreted: {equal} of {} clauses equal, {refused} refused (workspace or launches)", lowered / 4);
     for differ in &differ {
         eprintln!("  {differ}");
