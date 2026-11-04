@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
 import { lstat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   ADAPTER_CAPABILITIES,
@@ -51,6 +51,7 @@ import { rewoundSteer, steerBlock, steerRules, subagentSteer } from "../engine/c
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
 import { checkoutPathBoundary } from "../engine/path-boundary.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
+import { isDefaultStorageRoot } from "./session-paths.js";
 import type {
   ContentItem,
   ContentSnapshot,
@@ -580,13 +581,12 @@ const SESSION_RECORDS_GITIGNORE = "# Created by Rerail: session records stay out
 /**
  * Session records hold what the person typed, and the storage root defaults to `<checkout>/.rerail/sessions`. A
  * `.gitignore` of `*` keeps them out of `git status` and `git add -A`, as `.pytest_cache` does, without touching the
- * repository's own ignores. Only a root inside a `.rerail` folder is Rerail's alone: a custom one
- * (`RERAIL_STORAGE_ROOT`) may hold the person's own files, so it is left as it is. In Rerail's own folder the file is
- * rewritten whenever it holds anything else, or is no regular file: a repository that commits one with `!*` would
- * otherwise have the person's next `git add -A` commit their prompts and pre-edit source.
+ * repository's own ignores. Only the default root is Rerail's alone: a custom one (`RERAIL_STORAGE_ROOT`) may hold the
+ * person's own files, so it is left as it is. In Rerail's own folder the file is rewritten whenever it holds anything
+ * else, or is no regular file: a repository that commits one with `!*` would otherwise have the person's next
+ * `git add -A` commit their prompts and pre-edit source.
  */
 async function ignoreInGit(storageRoot: string): Promise<void> {
-  if (basename(dirname(storageRoot)) !== ".rerail") return;
   const path = join(storageRoot, ".gitignore");
   const stats = await lstat(path).catch((error: unknown) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -685,6 +685,8 @@ export interface RerailRuntimeOptions {
 
 export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #storageRoot: string;
+  /** The root is the workspace's default (`isDefaultStorageRoot`), so its records get a `.gitignore`. */
+  readonly #storageRootIsDefault: boolean;
   readonly #embedder: SemanticEmbedder;
   readonly #modelPath: string | undefined;
   readonly #sessionStore: SqliteSessionStore;
@@ -716,6 +718,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   constructor(options: RerailRuntimeOptions) {
     this.#storageRoot = options.storageRoot;
+    this.#storageRootIsDefault = isDefaultStorageRoot(options.storageRoot, options.workspaceRoot);
     this.#modelPath = options.modelPath;
     this.#nativeSession = options.nativeSession;
     this.#deliverBackground = options.deliverBackground;
@@ -1193,7 +1196,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
     await makeLedgerFolder(directory);
     keepPrivate(directory);
-    await ignoreInGit(this.#storageRoot);
+    if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
     const ledgerPath = join(directory, "events.jsonl");
     const { values, appendState } = await readLines(ledgerPath);
     const ledger = validatedLedger(values);

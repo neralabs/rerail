@@ -1,0 +1,78 @@
+{
+  "caught": [
+    {
+      "path": "src/cli/setup-cli.ts",
+      "content": "/** What Rerail itself writes in its home: settings, records, logs, locks, its databases and the installation. */\nconst RERAIL_HOME_ENTRY =\n  /^(?:(?:activation|previous-activation|coding-agents|consent|daemon|daemon-port|launcher-path|update-state)\\.json|daemon\\.log.*|(?:harness|rerail)\\.sqlite.*|(?:start|update)\\.lock|bin|current|versions|packs)$/u;\n"
+    },
+    {
+      "path": "src/cli/uninstall-cli.ts",
+      "content": "/** What Rerail itself writes in its home. */\nconst RERAIL_HOME_ENTRY =\n  /^(?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\\.json|daemon\\.log.*|(?:harness|rerail)\\.sqlite.*|(?:start|update)\\.lock|bin|current|versions|packs|profiles|active-profile|device-secrets)(?:\\.\\d+(?:\\.[0-9a-f-]+)?\\.(?:tmp|old))?$/u;\n"
+    },
+    {
+      "path": "src/runtime/home-files.ts",
+      "content": "export const RERAIL_HOME_FILES: ReadonlySet<string> = new Set([\"daemon.json\", \"daemon.log\", \"consent.json\", \"access-token\"]);\n"
+    },
+    {
+      "path": "src/setup/home-scan.ts",
+      "content": "const OURS = new RegExp(\"^(?:daemon-port|launcher-path|coding-agents)\\\\.json$\");\nexport const isOurs = (name: string) => OURS.test(name);\n"
+    },
+    {
+      "path": "src/cli/doctor-cli.ts",
+      "content": "export function isRecord(name: string): boolean {\n  return [\n    \"update-state.json\",\n    \"launcher-path.json\",\n  ].includes(name);\n}\n"
+    },
+    {
+      "path": "src/cli/home-regex.ts",
+      "content": "const OURS = /^(?:daemon(?:-port)?|consent)\\.json$/u;\n"
+    },
+    {
+      "path": "src/cli/home-array.ts",
+      "content": "const HOME_FILES = [\n  \"daemon.json\", // the daemon state (pid, port)\n  \"daemon.log\",\n  basename(launcherPathMarker(home)),\n] as const;\n"
+    },
+    {
+      "path": "src/cli/home-object.ts",
+      "content": "const OWNER: Record<string, string> = { \"daemon.json\": \"daemon\", \"consent.json\": \"set-up\" };\n"
+    },
+    {
+      "path": "src/cli/home-switch.ts",
+      "content": "function what(name: string): string {\n  switch (name) {\n    case \"daemon.json\":\n    case \"daemon.log\":\n      return \"daemon\";\n    default:\n      return \"\";\n  }\n}\n"
+    },
+    {
+      "path": "src/cli/home-rules.ts",
+      "content": "const RECORDS = new Set([\"rules.json\", \"consent.json\"]);\n"
+    },
+    {
+      "path": "src/cli/home-scrub-hint.ts",
+      "content": "export const RERAIL_RECORDS = [\"scrub-hint.json\", \"daemon.json\"];\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/cli/home-entries.ts",
+      "content": "import { RERAIL_DATABASE_FILE } from \"../engine/storage/database.js\";\nimport { RULES_DUMP_FILE } from \"../engine/catalog/rule-bootstrap.js\";\nimport { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE } from \"../runtime/daemon-control.js\";\n\nconst escape = (name: string) => name.replaceAll(\".\", \"\\\\.\");\n/** What Rerail writes in its home, from each writer's own constant, with the suffixes a write cut short leaves. */\nconst RERAIL_HOME_ENTRY = new RegExp(\n  `^(?:${[DAEMON_STATE_FILE, DAEMON_LOG_FILE, DAEMON_ACCESS_TOKEN_FILE, RERAIL_DATABASE_FILE, RULES_DUMP_FILE].map(escape).join(\"|\")}).*$`,\n  \"u\",\n);\n"
+    },
+    {
+      "path": "src/runtime/daemon-control.ts",
+      "content": "/** In the Rerail home: the capability a loopback daemon keeps across restarts. */\nexport const DAEMON_ACCESS_TOKEN_FILE = \"access-token\";\nexport const DAEMON_STATE_FILE = \"daemon.json\";\nexport const DAEMON_LOG_FILE = \"daemon.log\";\nconst START_LOCK_DIR = \"start.lock\";\n"
+    },
+    {
+      "path": "src/cli/packs-prefix.ts",
+      "content": "/** What npm and the rule pack store put in the packs prefix, with the lock a pack change holds. */\nconst RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set([\"node_modules\", \"package.json\", \"package-lock.json\", \"staging\", \".lock\"]);\n"
+    },
+    {
+      "path": "src/runtime/daemon-stop.ts",
+      "content": "/**\n * Stops the daemon. It deletes daemon.json and keeps daemon.log and access-token for the next start.\n */\nexport function stop(): void {}\n// leaves \"daemon.log\" and \"access-token\" in place\n"
+    },
+    {
+      "path": "src/api/http.ts",
+      "content": "export const reason = \"this request lacks the access capability in daemon.json; start the daemon again\";\n"
+    },
+    {
+      "path": "src/cli/daemon-help.ts",
+      "content": "export const help = \"rerail daemon stop: deletes daemon.json and keeps daemon.log for the next start\";\nexport const note = `Kept ${home}. Rerail's files in it: daemon.json, daemon.log`;\n"
+    },
+    {
+      "path": "src/api/flags.ts",
+      "content": "const FLAGS = [\"--access-token\", \"--active-profile\"];\nconst HEADERS = [\"x-rerail-access-token\", \"x-rerail-active-profile\"];\nconst ROUTE = \"/api/coding-agents/access-token\";\n"
+    }
+  ]
+}

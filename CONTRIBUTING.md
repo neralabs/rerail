@@ -308,7 +308,8 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
 - `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
 - `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
   runs it).
-- A change to a pack under `packs/` adds a changeset ([.changeset/README.md](.changeset/README.md)), and stages the
+- A change to a published pack under `packs/` adds a changeset ([.changeset/README.md](.changeset/README.md)); a
+  private pack takes none. It also stages the
   pack data it adds, changes or removes ([Adding or changing a pack](#adding-or-changing-a-pack)).
 - A change to what the core package ships adds an entry as a file of its own in `.changelog/`, its name opening with
   its change type ([.changelog/README.md](.changelog/README.md)), never under `## Unreleased` in `CHANGELOG.md`.
@@ -367,7 +368,7 @@ the files and the lock format are in [docs/pack-format.md, "Pack data"](docs/pac
 
 ### Adding or changing a pack
 
-Each change is one pull request, with a changeset for the pack ([.changeset/README.md](.changeset/README.md)).
+Each change is one pull request, with a changeset for the pack unless it is private ([.changeset/README.md](.changeset/README.md)).
 The steps for adding a rule, written for Rerail or ported from a tool, with what each has needed in practice, are
 [docs/adding-rules-to-a-pack.md](docs/adding-rules-to-a-pack.md).
 

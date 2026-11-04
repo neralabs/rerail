@@ -64,7 +64,9 @@ Shared code sits beside the metrics: `repo.mjs` (the repository view; `memoryRep
 
 ### Terms
 
-- A **rule document** is a JSON file whose `format` is `rerail.policy/v1`.
+- A **rule document** is a JSON file whose `format` is `rerail.policy/v1` (a code rule), or a JSON object with no
+  `format` holding a conversation rule's required fields: `id`, `mode`, `match`, `sample` and `action`
+  (`isRuleDoc` in `lib.mjs`). Metrics 2, 7, 11, 15, 16 and 23 count both.
 - A **test file** is a `*.test.*`/`*.spec.*` script, a pytest `test_*.py`/`*_test.py` or a PHPUnit `*Test.php`.
 - The **data roots** are `fixtures/**` and `packs/<id>/upstream/**`: recorded or copied material, not the
   repository's own code.
@@ -80,8 +82,8 @@ pack-validator test inputs.
 
 ### 2. Rule documents outside `packs/*/{rules,candidates}` — target 0
 
-Every rule document is under `packs/<id>/rules/` or `packs/<id>/candidates/`. A benchmark or test that needs a
-pack's rule references the pack's document.
+Every rule document, code or conversation rule, is under `packs/<id>/rules/` or `packs/<id>/candidates/`. A
+benchmark or test that needs a pack's rule references the pack's document.
 
 <details>
 <summary>Exemptions</summary>
@@ -351,8 +353,9 @@ Metrics 16–18 check what directories hold and how files are named.
 
 ### 16. `rules/` directories holding non-rules — target 0
 
-Every file below a `rules/` directory is a rule document. Exemptions: `data-roots` (upstream trees) and
-`vendored`.
+Every file below a `rules/` directory is a rule document: a code rule or a conversation rule, which a pack may ship
+in `rules/`. A JSON object sharing only some of a conversation rule's fields is not one. Exemptions: `data-roots`
+(upstream trees) and `vendored`.
 
 ### 17. Test helpers in a support directory — target 100%
 

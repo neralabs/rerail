@@ -6,15 +6,15 @@ use std::ops::Range;
 
 fn source(path: &str) -> &'static str {
     match path.rsplit('/').next().unwrap() {
-        "closures.rs" => include_str!("../../../../../fixtures/rust/scope/crate/src/closures.rs"),
-        "generics.rs" => include_str!("../../../../../fixtures/rust/scope/crate/src/generics.rs"),
-        "imports.rs" => include_str!("../../../../../fixtures/rust/scope/crate/src/imports.rs"),
-        "items.rs" => include_str!("../../../../../fixtures/rust/scope/crate/src/items.rs"),
-        "lets.rs" => include_str!("../../../../../fixtures/rust/scope/crate/src/lets.rs"),
-        "lib.rs" => include_str!("../../../../../fixtures/rust/scope/crate/src/lib.rs"),
-        "macros.rs" => include_str!("../../../../../fixtures/rust/scope/crate/src/macros.rs"),
-        "patterns.rs" => include_str!("../../../../../fixtures/rust/scope/crate/src/patterns.rs"),
-        "unused.rs" => include_str!("../../../../../fixtures/rust/scope/crate/src/unused.rs"),
+        "closures.rs" => oracle!("rust/scope/crate/src/closures.rs"),
+        "generics.rs" => oracle!("rust/scope/crate/src/generics.rs"),
+        "imports.rs" => oracle!("rust/scope/crate/src/imports.rs"),
+        "items.rs" => oracle!("rust/scope/crate/src/items.rs"),
+        "lets.rs" => oracle!("rust/scope/crate/src/lets.rs"),
+        "lib.rs" => oracle!("rust/scope/crate/src/lib.rs"),
+        "macros.rs" => oracle!("rust/scope/crate/src/macros.rs"),
+        "patterns.rs" => oracle!("rust/scope/crate/src/patterns.rs"),
+        "unused.rs" => oracle!("rust/scope/crate/src/unused.rs"),
         other => panic!("unknown fixture {other}"),
     }
 }

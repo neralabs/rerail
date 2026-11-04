@@ -1,0 +1,150 @@
+{
+  "caught": [
+    {
+      "path": "src/harness/setup-screens.ts",
+      "content": "/** After \"Not now\": no rule pack installed, nothing connected or turned on. Set-up may have installed Rerail itself. */\nexport function renderNotNow(lane: SetupLane): string {\n  const style = styleFor(lane);\n  const start = lane === \"terminal\" ? \"rerail start\" : \"/rerail-start\";\n  return lines([\n    ...(lane === \"terminal\" ? [\"\"] : []),\n    bullet(\"Set-up stopped. No rule packs were installed and nothing was turned on.\", style),\n    `  ${style.dim(`Start Rerail in this repo whenever you’re ready with ${start}.`)}`,\n  ]);\n}\n"
+    },
+    {
+      "path": "src/runtime/repository-start.ts",
+      "content": "export function stopRerail(workspace: string, io: RepositorySetupIo, options: RepositoryStopOptions = {}): RepositoryStartState {\n  const databasePath = options.databasePath ?? defaultRerailDatabasePath();\n  const wholeRepository = options.repository === true;\n  const name = checkoutName(workspace, wholeRepository);\n  const startCommand = io.lane === \"terminal\" ? \"rerail start\" : \"/rerail-start\";\n  const database = openRerailDatabase(databasePath);\n  return previous;\n}\n"
+    },
+    {
+      "path": "src/repository-start.ts",
+      "content": "  const name = checkoutName(workspace, options.repository === true || needsSetUp);\n  if (needsSetUp) {\n    const uiCommand = io.lane === \"agent\" ? \"/rerail-ui\" : \"rerail ui\";\n    io.say([`● Rerail is on in ${name}. ${rulesNoun(ruleCount)}.`, ...setUpLines(recommendations, rulePacks, uiCommand)].join(\"\\n\"));\n  }\n"
+    },
+    {
+      "path": "src/harness/setup-summary.ts",
+      "content": "function otherReposLine(repo: string, others: readonly string[]): string {\n  const where = others.length === 0 ? `Rerail is only on in ${repo}.` : `Rerail is also on in ${andList(others.map(clean))}.`;\n  return `  ${where} To add another repo, type /rerail-start there.`;\n}\n\nfunction summaryLines(input: SummaryInput, style: Style): string[] {\n  return [\n    ...summaryRow(\"Try it\", [\"Open a new agent session and type /rerail-show-me\", \"to watch Rerail catch and fix a broken rule.\"]),\n    \"  Type /rerail in any session for help and every command.\",\n  ];\n}\n"
+    },
+    {
+      "path": "src/harness/setup-tips.ts",
+      "content": "const TIP_LINES: readonly string[] = [\n  \"  Change a rule’s mode in the dashboard.\",\n  \"\",\n  `  ${\"/rerail-create\".padEnd(COMMAND_WIDTH)}write your own rule, in plain words`,\n  `  ${\"/rerail-stop\".padEnd(COMMAND_WIDTH)}stop Rerail in this repo`,\n];\n"
+    },
+    {
+      "path": "src/harness/setup-confirm.ts",
+      "content": "const connect = input.agentsFound.length === 0 ? []\n  : [`  Will connect to: ${agentNames(input.agentsFound).join(\", \")}`, \"  Adds /rerail commands and a status line to each. Connecting is free.\"];\n"
+    },
+    {
+      "path": "src/runtime/repository-stop.ts",
+      "content": "  const name = checkoutName(workspace, wholeRepository);\n  const sigil = options.session?.host === \"codex\" ? \"$\" : \"/\";\n  const startCommand = io.lane === \"terminal\" ? \"rerail start\" : `${sigil}rerail-start`;\n"
+    },
+    {
+      "path": "src/engine/code-rule/rerail-steer.ts",
+      "content": "export function sessionStartNote(origin: string | undefined, host: RerailHost, sessionId: string, rules: SessionNoteRules): string {\n  const sigil = host === \"codex\" ? \"$\" : \"/\";\n  return `The user can type ${sigil}rerail to see what Rerail is doing and every Rerail command.`;\n}\n"
+    },
+    {
+      "path": "src/cli/cli.ts",
+      "content": "  process.stdout.write(`${renderRerailSummary({\n    ...state,\n    repositoryName: repositoryName(cwd),\n    sigil: host === \"codex\" ? \"$\" : \"/\",\n  })}\\n`);\n"
+    },
+    {
+      "path": "src/harness/rerail-command-files.ts",
+      "content": "const sigilFor = (agent: CommandFileAgent): CommandSigil => agent === \"codex\" ? \"$\" : \"/\";\n"
+    },
+    {
+      "path": "src/harness/setup-commands.ts",
+      "content": "const CODEX_ID = \"codex\";\n\nfunction commandIn(agents: readonly CodingAgent[], name: string): string {\n  return agents.length > 0 && agents.every(agent => agent.id === CODEX_ID) ? `$${name}` : `/${name}`;\n}\n\nfunction codexFormLines(agents: readonly CodingAgent[], name: string): string[] {\n  const codex = agents.some(agent => agent.id === CODEX_ID);\n  return codex && agents.some(agent => agent.id !== CODEX_ID) ? [`In Codex, type $${name}.`] : [];\n}\n"
+    },
+    {
+      "path": "src/presentation/command-hint.ts",
+      "content": "export const sigilOf = (host: RerailHost): CommandSigil => host !== \"codex\" ? \"/\" : \"$\";\n"
+    },
+    {
+      "path": "src/presentation/command-sigils.ts",
+      "content": "const SIGILS: Record<RerailHost, CommandSigil> = { omp: \"/\", pi: \"/\", \"claude-code\": \"/\", codex: \"$\", cursor: \"/\" };\n"
+    },
+    {
+      "path": "src/runtime/command-sigil.ts",
+      "content": "export function commandSigil(host: RerailHost): CommandSigil {\n  switch (host) {\n    case \"codex\": return \"$\";\n    default: return \"/\";\n  }\n}\n"
+    },
+    {
+      "path": "src/cli/show-me-cli.ts",
+      "content": "process.stdout.write(showMeInstructions({ cli, sigil: \"/\", write: \"edit-tool\" }));\n"
+    },
+    {
+      "path": "src/api/session-schemas.ts",
+      "content": "export const stateSchema = z.object({\n  repositoryState: z.enum([\"started\", \"stopped\"]).describe(\"Whether Rerail runs in the checkout.\"),\n  hint: z.string().default(\"Type /rerail-start to start it again.\"),\n});\n"
+    },
+    {
+      "path": "src/harness/setup-skipped.ts",
+      "content": "export function renderSkipped(lane: SetupLane): string {\n  const summary = [\n    ...summaryRow(\"Start\", [\"Open a session in one of your repos and type /rerail-start.\", \"Rerail asks, suggests rule packs that fit, and starts there.\"]),\n  ];\n  return lines(summary);\n}\n"
+    },
+    {
+      "path": "src/runtime/stop-reply.ts",
+      "content": "export const stopReply = (name: string): string => `Rerail is stopped in ${name}. Type \"/rerail-start\" to turn it back on.`;\n"
+    },
+    {
+      "path": "src/cli/stop-cli.ts",
+      "content": "process.stdout.write(`/rerail-start turns Rerail back on in ${name}.\\n`);\n"
+    },
+    {
+      "path": "src/runtime/command-name.ts",
+      "content": "function commandName(host: RerailHost, name: string): string {\n  if (host === \"codex\") return `$${name}`;\n  return `/${name}`;\n}\n"
+    },
+    {
+      "path": "src/harness/codex-note.ts",
+      "content": "const extra = hosts.includes(\"codex\") ? [`In Codex, type $${name}.`] : [];\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/harness/setup-stopped.ts",
+      "content": "/** Set-up ran again in a repo where Rerail was set up and then stopped: it changes nothing there. */\nexport function renderStoppedRepo(input: StoppedRepoInput, lane: SetupLane): string {\n  const style = styleFor(lane);\n  const start = lane === \"terminal\" ? \"rerail start\" : commandIn(input.agents?.connected ?? [], \"rerail-start\");\n  return lines([`  ${style.dim(\"○\")} Rerail is set up in ${clean(input.repoName)}, and stopped there. Start it again with ${start}.`]);\n}\n"
+    },
+    {
+      "path": "src/harness/rerail-summary.ts",
+      "content": "const notOnLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] =>\n  [`○ Rerail is not on in ${repositoryName}.`, `  Start it with ${sigil}rerail-start.`];\n"
+    },
+    {
+      "path": "src/cli/cli-imports.ts",
+      "content": "import { renderRerailSummary } from \"../harness/rerail-summary.js\";\nimport { defaultRerailHome } from \"../engine/storage/rerail-home.js\";\n\n/**\n * `/rerail`: what Rerail is doing for the caller's exact session, then every command.\n */\nconst path = \"/api/rerail-rules\";\nexport const rulePackPackageName = (id: string): string => `@neralabs/rerail-pack-${id}`;\nconst help = \"Run rerail start in one of your repos.\";\n"
+    },
+    {
+      "path": "src/api/session-contracts.ts",
+      "content": "export const state = z.object({\n  repositoryState: z.enum([\"started\", \"stopped\", \"not-set-up\"])\n    .describe(\"Whether Rerail runs in the checkout: stopped after /rerail-stop or before its first start.\"),\n});\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-schema.ts",
+      "content": "      context.addIssue({ code: \"custom\", path: [\"transform\", name], message: `$${source} is a transform variable, text; line, lines and count read a capture.` });\n"
+    },
+    {
+      "path": "src/setup/harness-registration.ts",
+      "content": "function planCodexSkill(context: RegistrationContext, name: string, path: string, existing: ExistingFile, text: string): PlannedChange {\n  if (existing.text === text) return { change: { harness: \"codex\", path, action: \"unchanged\", detail: `$${name} skill: already in place` } };\n  return planMutation(context, \"codex\", path, existing.exists ? \"updated\" : \"created\", `register the $${name} skill`,\n    () => writeTextFile(path, text, existing, false));\n}\n"
+    },
+    {
+      "path": "src/harness/host-commands.ts",
+      "content": "  register(\"rerail-show-me\", async () => {\n    pi.sendUserMessage(showMeInstructions({ cli, sigil: \"/\", write: \"edit-tool\" }));\n  });\n"
+    },
+    {
+      "path": "src/harness/setup-picker.ts",
+      "content": "export const SETUP_CANCELLED = \"Set-up stopped. Nothing was turned on. Type /rerail-start again when you’re ready.\";\n"
+    },
+    {
+      "path": "src/engine/adapter-contract.ts",
+      "content": "  codex: {\n    host: \"codex\",\n    commandSigil: \"$\",\n  },\n"
+    },
+    {
+      "path": "src/cli/show-me.ts",
+      "content": "/** Marks the demo rule as the demo's own, so cleanup never removes a rule someone else gave this id. */\nconst SHOW_ME_DESCRIPTION = \"The /rerail-show-me demo rule. The demo removes it when it ends.\";\n"
+    },
+    {
+      "path": "src/engine/storage/paths.ts",
+      "content": "export const rulesPath = (home: string): string => `${home}/rerail-rules.json`;\nconst api = \"/api/rerail-rules\";\n"
+    },
+    {
+      "path": "src/engine/code-rule/regex-anchor.ts",
+      "content": "const end = multiline ? \"$\" : \"/\";\n"
+    },
+    {
+      "path": "src/daemon/routes.ts",
+      "content": "app.get(\"/rerail-status\", handler);\nconst response = await fetch(\"/rerail-status\");\n"
+    },
+    {
+      "path": "src/engine/code-rule/message-variables.ts",
+      "content": "if (rule.host === \"codex\") issue(\"message\", `$${name} names no capture of the query`);\n"
+    },
+    {
+      "path": "src/harness/command-hint.ts",
+      "content": "export const HINT = \"Type /rerail-start (in Codex, $rerail-start) to begin.\";\nexport interface ShowMeInput {\n  sigil: \"/\" | \"$\";\n}\n"
+    }
+  ]
+}

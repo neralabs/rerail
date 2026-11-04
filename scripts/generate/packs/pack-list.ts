@@ -2,11 +2,13 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { isPrivatePack } from "../../release/packs.mjs";
 
 /**
- * The list of rule packs core knows by name (docs/rule-packs.md, "Installing packs"): each `packs/<id>/` directory's id
- * and npm package. Set-up fetches each listed pack from npm and runs the pack's own match definition; the list holds
- * no match and no rules, so a pack's detection logic lives in the pack.
+ * The list of rule packs core knows by name (docs/rule-packs.md, "Installing packs"): each published `packs/<id>/`
+ * directory's id and npm package. A pack whose package.json says `"private": true` is never published and is left out.
+ * Set-up fetches each listed pack from npm and runs the pack's own match definition; the list holds no match and no
+ * rules, so a pack's detection logic lives in the pack.
  */
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
@@ -15,13 +17,19 @@ export const PACK_LIST_MODULE_PATH = resolve(ROOT, "src", "engine", "catalog", "
 
 const packageSchema = z.looseObject({ name: z.string() });
 
-/** Every pack directory's id and package name, by id. */
+/** Every published pack directory's id and package name, by id. */
 export function readPackList(directory = PACKS_DIRECTORY): { id: string; packageName: string }[] {
   return readdirSync(directory, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name)
     .sort()
-    .map(id => ({ id, packageName: packageSchema.parse(JSON.parse(readFileSync(resolve(directory, id, "package.json"), "utf8"))).name }));
+    .map(id => {
+      const path = resolve(directory, id, "package.json");
+      const manifest: unknown = JSON.parse(readFileSync(path, "utf8"));
+      return { id, manifest, isPrivate: isPrivatePack(manifest, path) };
+    })
+    .filter(({ isPrivate }) => !isPrivate)
+    .map(({ id, manifest }) => ({ id, packageName: packageSchema.parse(manifest).name }));
 }
 
 export function renderPackListModule(packs: readonly { id: string; packageName: string }[] = readPackList()): string {

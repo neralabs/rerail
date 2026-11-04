@@ -1,14 +1,17 @@
 import { existsSync, readFileSync, type Dirent } from "node:fs";
 import { opendir, readFile, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { bundledModelPath } from "../engine/package-root.js";
+import { resolveModelPath } from "../runtime/session-paths.js";
 import { z } from "zod";
 import { libraryUpsertBodySchema } from "../api/repository-contracts.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import {
+  AUDIT_MAX_FILES,
+  AUDIT_MAX_SOURCE_BYTES,
   IGNORED_DIRECTORIES,
+  MAX_SOURCE_BYTES,
   languageFor,
   sourceFactsCache,
   sourceFileFacts,
@@ -42,10 +45,6 @@ import { UNLISTED_TEXT_LANGUAGE } from "../engine/code-rule/code-rule-languages.
 
 /** How many repository matches and unchecked files the text report shows; the JSON report lists every one. */
 const REPOSITORY_SHOWN = 5;
-/** The same bounds a repository scan walks with. */
-const REPOSITORY_MAX_FILES = 100_000;
-const REPOSITORY_MAX_FILE_BYTES = 32_000_000;
-const REPOSITORY_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
 /** The batches an audit sends its files to the Engine in: at most this many files, or about this many bytes. */
 const BATCH_FILES = 32;
 const BATCH_BYTES = 1024 * 1024;
@@ -348,7 +347,7 @@ async function repositoryFile(
 ): Promise<{ file: SourceFile; size: number } | "binary" | undefined> {
   const absolute = join(root, path);
   const size = (await stat(absolute)).size;
-  if (size > REPOSITORY_MAX_FILE_BYTES || bytesSoFar + size > REPOSITORY_MAX_SOURCE_BYTES) return undefined;
+  if (size > MAX_SOURCE_BYTES || bytesSoFar + size > AUDIT_MAX_SOURCE_BYTES) return undefined;
   const source = await readFile(absolute);
   if (source.includes(0)) return "binary";
   return {
@@ -453,7 +452,7 @@ async function repositoryFiles(
     return true;
   };
   for await (const path of repositoryPaths(root, prune)) {
-    if (files.length >= REPOSITORY_MAX_FILES) break;
+    if (files.length >= AUDIT_MAX_FILES) break;
     // An unlisted file is read as text, but only for a rule that reads text, as audits read it.
     const language = languageFor(path) ?? (readsText ? UNLISTED_TEXT_LANGUAGE : undefined);
     if (language === undefined || !compiled.inScope(path)) continue;
@@ -499,7 +498,7 @@ function conversationCaseResults(rule: ConversationRule, cases: ReadonlyArray<{ 
   let registry: ConversationRuleRegistry;
   try {
     registry = new ConversationRuleRegistry({
-      modelPath: process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
+      modelPath: resolveModelPath(process.cwd()),
     });
   } catch (error) {
     throw engineUnavailable(rule.id, errorMessage(error));
@@ -516,6 +515,27 @@ function conversationCaseResults(rule: ConversationRule, cases: ReadonlyArray<{ 
   });
 }
 
+async function policyCaseResults(
+  binding: NativeBinding,
+  compiled: NativeCompiledCodeRuleDsl,
+  root: string,
+  cases: ReadonlyArray<{ expected: Expectation; sample: CodeRuleCase }>,
+): Promise<RuleDraftCaseResult[]> {
+  const results: RuleDraftCaseResult[] = [];
+  for (const entry of cases) results.push(await policyCaseResult(binding, compiled, root, entry));
+  return results;
+}
+
+/**
+ * Run a draft's cases as `rules test` runs them, with import targets resolved against `root`, and skip its
+ * repository pass. A draft the Engine refuses throws `RuleDraftError`.
+ */
+export async function testRuleDraftCases(draft: RuleDraft, root: string): Promise<RuleDraftCaseResult[]> {
+  if (draft.kind === "conversation") return conversationCaseResults(draft.rule, draft.cases);
+  const { binding, compiled } = compileCodeRule(draft.rule);
+  return policyCaseResults(binding, compiled, root, draft.cases);
+}
+
 /**
  * Try a draft without storing it: validate it as storing would, run its cases, and for a policy rule count its
  * matches across `repo`'s files. Nothing is written to the catalog or the content store.
@@ -527,8 +547,7 @@ export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<Rul
   }
   const { binding, compiled } = compileCodeRule(draft.rule);
   const root = repositoryIdentityLocation(repo).workspaceRoot;
-  const cases: RuleDraftCaseResult[] = [];
-  for (const entry of draft.cases) cases.push(await policyCaseResult(binding, compiled, root, entry));
+  const cases = await policyCaseResults(binding, compiled, root, draft.cases);
   const repository = await repositoryPass(binding, compiled, root);
   return { ok: cases.every(result => result.ok), valid: true, cases, repository };
 }

@@ -1,0 +1,122 @@
+{
+  "caught": [
+    {
+      "path": "native/src/code_rule_dsl/suppress/rerail.rs",
+      "content": "/// Comment kinds across Rerail's grammars.\nfn is_comment<D: Doc>(node: &Node<'_, D>) -> bool {\n    matches!(\n        node.kind().as_ref(),\n        \"comment\" | \"html_comment\" | \"blade_comment\" | \"line_comment\" | \"block_comment\"\n    )\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/suppress/rerail.rs",
+      "content": "fn first_code<D: Doc>(root: &Node<'_, D>, source: &str) -> usize {\n    let mut first = source.len();\n    for node in root.dfs() {\n        let text = &source[node.range()];\n        if !text.trim().is_empty() && !matches!(node.kind().as_ref(), \"hash_bang_line\" | \"php_tag\") {\n            first = first.min(node.range().start);\n        }\n    }\n    first\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/suppress/rerail.rs",
+      "content": "fn leading<D: Doc>(node: &Node<'_, D>, source: &str) -> Option<Node<'_, D>> {\n    (node.kind() == \"block\")\n        .then(|| node.children().find(|child| is_code(child, source)))\n        .flatten()\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/util.rs",
+      "content": "/// Whether a node kind is a comment's, in any grammar.\npub(super) fn is_comment_kind(kind: &str) -> bool {\n    matches!(kind, \"comment\" | \"html_comment\" | \"line_comment\" | \"block_comment\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/arguments.rs",
+      "content": "fn named_children<'r, D: Doc>(node: &Node<'r, D>) -> Vec<Node<'r, D>> {\n    node.children()\n        .filter(|child| child.is_named() && !child.kind().ends_with(\"comment\"))\n        .collect()\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/arguments.rs",
+      "content": "impl Arguments {\n    fn match_node<'tree, D: Doc>(&self, node: Node<'tree, D>) -> Option<Node<'tree, D>> {\n        if node.field(\"arguments\").is_some_and(|arguments| arguments.kind() != \"arguments\") {\n            return None;\n        }\n        Some(node)\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/compare.rs",
+      "content": "fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {\n    while node.kind() == \"parenthesized_expression\" {\n        node = node.child(1).expect(\"inner\");\n    }\n    node\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/resolve.rs",
+      "content": "fn paren_kinds(language: GrammarDialect) -> BTreeSet<u16> {\n    kind_ids(language, &[\"parenthesized_expression\"])\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/resolve.rs",
+      "content": "impl Resolves {\n    fn holds_in<D: Doc>(&self, node: &Node<'_, D>) -> bool {\n        match node.kind().as_ref() {\n            \"identifier\" | \"variable_name\" => true,\n            _ => false,\n        }\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/usage.rs",
+      "content": "fn is_name<D: Doc>(node: &Node<'_, D>) -> bool {\n    [\"identifier\", \"variable_name\"].contains(&node.kind().as_ref())\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/tape.rs",
+      "content": "fn call_id(dialect: GrammarDialect) -> u16 {\n    dialect.kind_id(\"call_expression\")\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "native/src/code_rule_dsl/language/adapter.rs",
+      "content": "impl Adapter for Python {\n    const COMMENT_KINDS: &'static [&'static str] = &[\"comment\"];\n    const PREAMBLE_KINDS: &'static [&'static str] = &[];\n    const BODY_KINDS: &'static [&'static str] = &[\"block\"];\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/language/adapter/rust.rs",
+      "content": "fn is_attribute<D: Doc>(node: &Node<'_, D>) -> bool {\n    node.kind() == \"attribute_item\"\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/php.rs",
+      "content": "fn is_variable<D: Doc>(node: &Node<'_, D>) -> bool {\n    node.kind() == \"variable_name\"\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/value/python/compare.rs",
+      "content": "fn is_string<D: Doc>(node: &Node<'_, D>) -> bool {\n    matches!(node.kind().as_ref(), \"string\" | \"concatenated_string\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/php_names.rs",
+      "content": "fn is_name<D: Doc>(node: &Node<'_, D>) -> bool {\n    match node.kind().as_ref() {\n        \"name\" | \"qualified_name\" => true,\n        _ => false,\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/literal/phpdoc/parser.rs",
+      "content": "fn is_tag<D: Doc>(node: &Node<'_, D>) -> bool {\n    node.kind() == \"tag_name\"\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/suppress/noqa.rs",
+      "content": "fn comments<'r, D: Doc>(root: &Node<'r, D>) -> impl Iterator<Item = Node<'r, D>> {\n    root.dfs().filter(|node| node.kind() == \"comment\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/calls/summary.rs",
+      "content": "fn is_call<D: Doc>(node: &Node<'_, D>) -> bool {\n    node.kind() == \"call\"\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/suppress/rerail.rs",
+      "content": "#[derive(Clone, Copy)]\nstruct Kinds {\n    comments: &'static [&'static str],\n}\n\nimpl Kinds {\n    fn of(dialect: GrammarDialect) -> Self {\n        with_adapter!(Family::of(dialect), A => Self { comments: A::COMMENT_KINDS })\n    }\n\n    fn comment<D: Doc>(self, node: &Node<'_, D>) -> bool {\n        self.comments.contains(&node.kind().as_ref())\n    }\n}\n\nfn separator<D: Doc>(node: &Node<'_, D>) -> bool {\n    matches!(node.kind().as_ref(), \",\" | \";\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/literal/mod.rs",
+      "content": "fn errors<'r, D: Doc>(root: &Node<'r, D>) -> impl Iterator<Item = Node<'r, D>> {\n    root.children().filter(|child| child.kind() == \"ERROR\" || child.kind() == \"(\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/compare.rs",
+      "content": "fn f() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn finds_the_call() {\n        let call = root().dfs().find(|node| node.kind() == \"call\");\n        assert!(call.is_some());\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/tests.rs",
+      "content": "#[test]\nfn finds_the_call() {\n    assert!(root().dfs().any(|node| node.kind() == \"call\"));\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/format_args.rs",
+      "content": "impl FormatArgs {\n    fn prepare_python<D: Doc>(&self, string: &Node<'_, D>) -> bool {\n        matches!(string.kind().as_ref(), \"string\" | \"concatenated_string\")\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/parse.rs",
+      "content": "fn host_kinds(host: LiteralHost, language: GrammarDialect) -> BTreeSet<u16> {\n    match host {\n        LiteralHost::PythonString => kind_ids(language, &[\"string\", \"concatenated_string\"]),\n        LiteralHost::RustString => kind_ids(language, &[\"string_literal\", \"raw_string_literal\"]),\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/resolve.rs",
+      "content": "fn this_boundary(kind: &str) -> Option<ThisBoundary> {\n    match kind {\n        \"method_definition\" => Some(ThisBoundary::OwnExcept(\"name\")),\n        _ => None,\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/arguments.rs",
+      "content": "impl Arguments {\n    fn match_node<'tree, D: Doc>(&self, node: Node<'tree, D>) -> Option<Node<'tree, D>> {\n        // ESTree's TaggedTemplateExpression has no `arguments`.\n        if self.estree\n            && node.field(\"arguments\").is_some_and(|arguments| arguments.kind() != \"arguments\")\n        {\n            return None;\n        }\n        Some(node)\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/transform.rs",
+      "content": "fn trans(entry: &Map<String, Value>, path: &str) -> Result<Trans, String> {\n    let [(kind, body)] = entry.iter().collect::<Vec<_>>()[..] else {\n        return Err(format!(\"{path} must hold exactly one transformation\"));\n    };\n    Ok(match kind.as_str() {\n        \"replace\" => Trans::replace(body)?,\n        _ => return Err(format!(\"{path}/{kind} is unknown\")),\n    })\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/resolve.rs",
+      "content": "fn reference_kinds<S: ScopeRules>(language: GrammarDialect) -> BTreeSet<u16> {\n    kind_ids(language, S::REFERENCE_KINDS)\n}\n"
+    }
+  ]
+}

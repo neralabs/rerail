@@ -1,0 +1,1 @@
+In a partial clone (`git clone --filter=blob:none`), Rerail's Git calls no longer fetch missing objects from the remote, with Git 2.45 or a 2024-04-19 security release (2.39.4 to 2.44.1): every Git process sets `GIT_NO_LAZY_FETCH=1`, and a git-diff audit lists a renamed file under its new path. The Claude Code set-up check runs Git the same way.

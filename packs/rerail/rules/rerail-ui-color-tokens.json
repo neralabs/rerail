@@ -1,0 +1,118 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-ui-color-tokens",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Nera's design tokens for dashboard colours instead of raw colour values, and don't redefine a Nera token outside its generated sheet.",
+  "scope": {
+    "include": [
+      "ui/**/*.css",
+      "ui/**/*.js",
+      "ui/**/*.mjs",
+      "ui/**/*.html"
+    ],
+    "exclude": [
+      "ui/tokens.generated.css"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "raw-hex",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)^[ \\t]*(?:(?:(?:[^\\s/*<]|\\*[^\\s/\\n]|\\*[ \\t]+\\{|<[^!\\n]|/\\*(?:[^*\\n]|\\*[^/\\n])*\\*/)(?:[^\\n/<]|/[^/*\\n]|://|<[^!\\n]|/\\*(?:[^*\\n]|\\*[^/\\n])*\\*/)*?)?[^&0-9A-Za-z_\\n-])?(?P<colour>#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4}))(?:[^0-9A-Za-z_-]|$)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "UI_RAW_HEX_COLOUR",
+        "anchor": "capture.colour",
+        "message": "Use a Nera token or a base.css page-local token built from Nera tokens (var(), color-mix(); getComputedStyle in a canvas) for $colour. Leave it if it is an id, fragment or private field."
+      }
+    },
+    {
+      "id": "raw-hex-in-data-uri",
+      "forbid": {
+        "regex": {
+          "pattern": "(?P<colour>%23(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?:[^0-9A-Za-z_-]|$))",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "UI_RAW_COLOUR_IN_DATA_URI",
+        "anchor": "capture.colour",
+        "message": "A data: image can't read the page's tokens: draw this icon as inline SVG with currentColor, or as a mask-image over a background from a Nera token."
+      }
+    },
+    {
+      "id": "raw-colour-function",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:^|[{;])[ \\t]*(?:(?:(?:--(?:(?:[0-9A-Z_ad-kmnqrt-z]|-)[0-9A-Za-z_-]*|b(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+))))))))))|c(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+)))))))))))|l(?:|(?:[0-9A-Z_a-hj-z]|-)[0-9A-Za-z_-]*|i(?:|(?:[0-9A-Z_a-eg-z]|-)[0-9A-Za-z_-]*|f(?:|(?:[0-9A-Z_a-su-z]|-)[0-9A-Za-z_-]*|t(?:[0-9A-Za-z_-]+))))|o(?:|(?:[0-9A-Z_a-uw-z]|-)[0-9A-Za-z_-]*|v(?:|(?:[0-9A-Z_a-df-z]|-)[0-9A-Za-z_-]*|e(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|(?:[0-9A-Z_a-km-z]|-)[0-9A-Za-z_-]*|l(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-xz]|-)[0-9A-Za-z_-]*|y(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+))))))))))))))|p(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-mo-z]|-)[0-9A-Za-z_-]*|n(?:|(?:[0-9A-Z_a-df-z]|-)[0-9A-Za-z_-]*|e(?:|(?:[0-9A-Z_a-km-z]|-)[0-9A-Za-z_-]*|l(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+))))))))))))|s(?:|(?:[0-9A-Z_abd-z]|-)[0-9A-Za-z_-]*|c(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|(?:[0-9A-Z_a-hj-z]|-)[0-9A-Za-z_-]*|i(?:|(?:[0-9A-Z_a-ln-z]|-)[0-9A-Za-z_-]*|m(?:[0-9A-Za-z_-]+))))))[ \\t]*:|[^\\s;{}/*-]|-[^-\\n;{}])(?:[^;{}\\n/<]|/[^/*;{}\\n]|://|<[^!;{}\\n]|/\\*(?:[^*\\n]|\\*[^/\\n])*\\*/)*?)?[^&0-9A-Za-z_\\n;{}-])?(?P<colour>(?i:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\\(\\s*(?:[-+.0-9]|none[^0-9A-Za-z_-]|var\\(|calc\\(|\\$\\{)|(?i:color)\\(\\s*(?i:srgb|srgb-linear|display-p3|a98-rgb|prophoto-rgb|rec2020|xyz|xyz-d50|xyz-d65)(?:[^0-9A-Za-z_-]|$))",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "UI_RAW_COLOUR_FUNCTION",
+        "anchor": "capture.colour",
+        "message": "Replace this raw colour with a Nera token from tokens.generated.css, or a base.css page-local token built from them (var(), color-mix(); getComputedStyle in a canvas)."
+      }
+    },
+    {
+      "id": "named-colour",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:(?:^|[{;,'\\\"`])[ \\t]*(?:color|background(?:-color|-image)?|border(?:-[a-z]+){0,3}|outline(?:-color)?|fill|stroke|stop-color|flood-color|lighting-color|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?|box-shadow|text-shadow|scrollbar-color|-webkit-text-fill-color|backgroundColor|backgroundImage|borderColor|border(?:Top|Right|Bottom|Left|Block|Inline)[A-Za-z]*Color|outlineColor|caretColor|accentColor|textDecorationColor|stopColor|floodColor|boxShadow|textShadow|--(?:(?:[0-9A-Z_ad-kmnqrt-z]|-)[0-9A-Za-z_-]*|b(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+))))))))))|c(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+)))))))))))|l(?:|(?:[0-9A-Z_a-hj-z]|-)[0-9A-Za-z_-]*|i(?:|(?:[0-9A-Z_a-eg-z]|-)[0-9A-Za-z_-]*|f(?:|(?:[0-9A-Z_a-su-z]|-)[0-9A-Za-z_-]*|t(?:[0-9A-Za-z_-]+))))|o(?:|(?:[0-9A-Z_a-uw-z]|-)[0-9A-Za-z_-]*|v(?:|(?:[0-9A-Z_a-df-z]|-)[0-9A-Za-z_-]*|e(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|(?:[0-9A-Z_a-km-z]|-)[0-9A-Za-z_-]*|l(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-xz]|-)[0-9A-Za-z_-]*|y(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+))))))))))))))|p(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-mo-z]|-)[0-9A-Za-z_-]*|n(?:|(?:[0-9A-Z_a-df-z]|-)[0-9A-Za-z_-]*|e(?:|(?:[0-9A-Z_a-km-z]|-)[0-9A-Za-z_-]*|l(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+))))))))))))|s(?:|(?:[0-9A-Z_abd-z]|-)[0-9A-Za-z_-]*|c(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|(?:[0-9A-Z_a-hj-z]|-)[0-9A-Za-z_-]*|i(?:|(?:[0-9A-Z_a-ln-z]|-)[0-9A-Za-z_-]*|m(?:[0-9A-Za-z_-]+)))))))['\\\"`]?[ \\t]*:(?:(?:[^;{}\\n/<]|/[^/*;{}\\n]|://|<[^!;{}\\n]|/\\*(?:[^*\\n]|\\*[^/\\n])*\\*/)*?[\\s,('\\\"`])?|(?:^|[{;])[ \\t]*(?:(?:(?:--(?:(?:[0-9A-Z_ad-kmnqrt-z]|-)[0-9A-Za-z_-]*|b(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+))))))))))|c(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+)))))))))))|l(?:|(?:[0-9A-Z_a-hj-z]|-)[0-9A-Za-z_-]*|i(?:|(?:[0-9A-Z_a-eg-z]|-)[0-9A-Za-z_-]*|f(?:|(?:[0-9A-Z_a-su-z]|-)[0-9A-Za-z_-]*|t(?:[0-9A-Za-z_-]+))))|o(?:|(?:[0-9A-Z_a-uw-z]|-)[0-9A-Za-z_-]*|v(?:|(?:[0-9A-Z_a-df-z]|-)[0-9A-Za-z_-]*|e(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|(?:[0-9A-Z_a-km-z]|-)[0-9A-Za-z_-]*|l(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-xz]|-)[0-9A-Za-z_-]*|y(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+))))))))))))))|p(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-mo-z]|-)[0-9A-Za-z_-]*|n(?:|(?:[0-9A-Z_a-df-z]|-)[0-9A-Za-z_-]*|e(?:|(?:[0-9A-Z_a-km-z]|-)[0-9A-Za-z_-]*|l(?:|[0-9A-Z_a-z][0-9A-Za-z_-]*|-(?:|(?:[0-9A-Z_a-rt-z]|-)[0-9A-Za-z_-]*|s(?:|(?:[0-9A-Z_a-gi-z]|-)[0-9A-Za-z_-]*|h(?:|(?:[0-9A-Z_b-z]|-)[0-9A-Za-z_-]*|a(?:|(?:[0-9A-Z_a-ce-z]|-)[0-9A-Za-z_-]*|d(?:|(?:[0-9A-Z_a-np-z]|-)[0-9A-Za-z_-]*|o(?:|(?:[0-9A-Z_a-vx-z]|-)[0-9A-Za-z_-]*|w(?:[0-9A-Za-z_-]+))))))))))))|s(?:|(?:[0-9A-Z_abd-z]|-)[0-9A-Za-z_-]*|c(?:|(?:[0-9A-Z_a-qs-z]|-)[0-9A-Za-z_-]*|r(?:|(?:[0-9A-Z_a-hj-z]|-)[0-9A-Za-z_-]*|i(?:|(?:[0-9A-Z_a-ln-z]|-)[0-9A-Za-z_-]*|m(?:[0-9A-Za-z_-]+))))))[ \\t]*:|[^\\s;{}/*-]|-[^-\\n;{}])(?:[^;{}\\n/<]|/[^/*;{}\\n]|://|<[^!;{}\\n]|/\\*(?:[^*\\n]|\\*[^/\\n])*\\*/)*?)?[^&0-9A-Za-z_\\n;{}-])?(?:(?:fillStyle|strokeStyle|shadowColor|style\\.[A-Za-z]+)[ \\t]*=(?:(?:[^;{}\\n/<]|/[^/*;{}\\n]|://|<[^!;{}\\n]|/\\*(?:[^*\\n]|\\*[^/\\n])*\\*/)*?[?:])?[ \\t]*['\\\"`][ \\t]*|(?:fill|stroke|stop-color|flood-color|lighting-color|color|bgcolor)=['\\\"]?|set(?:Property|Attribute)\\(\\s*['\\\"`][0-9A-Za-z_-]+['\\\"`]\\s*,\\s*['\\\"`][ \\t]*|color-mix\\((?:[^;{}\\n/<]|/[^/*;{}\\n]|://|<[^!;{}\\n]|/\\*(?:[^*\\n]|\\*[^/\\n])*\\*/)*?[\\s,(]))(?P<colour>(?i:lightgoldenrodyellow|mediumspringgreen|mediumaquamarine|mediumslateblue|mediumturquoise|mediumvioletred|blanchedalmond|cornflowerblue|darkolivegreen|lightslategray|lightslategrey|lightsteelblue|mediumseagreen|darkgoldenrod|darkslateblue|darkslategray|darkslategrey|darkturquoise|lavenderblush|lightseagreen|palegoldenrod|paleturquoise|palevioletred|rebeccapurple|antiquewhite|darkseagreen|lemonchiffon|lightskyblue|mediumorchid|mediumpurple|midnightblue|darkmagenta|deepskyblue|floralwhite|forestgreen|greenyellow|lightsalmon|lightyellow|navajowhite|saddlebrown|springgreen|yellowgreen|aquamarine|blueviolet|chartreuse|darkorange|darkorchid|darksalmon|darkviolet|dodgerblue|ghostwhite|lightcoral|lightgreen|mediumblue|papayawhip|powderblue|sandybrown|whitesmoke|aliceblue|burlywood|cadetblue|chocolate|darkgreen|darkkhaki|firebrick|gainsboro|goldenrod|indianred|lawngreen|lightblue|lightcyan|lightgray|lightgrey|lightpink|limegreen|mintcream|mistyrose|olivedrab|orangered|palegreen|peachpuff|rosybrown|royalblue|slateblue|slategray|slategrey|steelblue|turquoise|cornsilk|darkblue|darkcyan|darkgray|darkgrey|deeppink|honeydew|lavender|moccasin|seagreen|seashell|crimson|darkred|dimgray|dimgrey|fuchsia|hotpink|magenta|oldlace|skyblue|thistle|bisque|indigo|maroon|orange|orchid|purple|salmon|sienna|silver|tomato|violet|yellow|azure|beige|black|brown|coral|green|ivory|khaki|linen|olive|wheat|white|aqua|blue|cyan|gold|gray|grey|lime|navy|peru|pink|plum|snow|teal|red|tan))(?:[^0-9A-Za-z_(-]|$)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "UI_NAMED_COLOUR",
+        "anchor": "capture.colour",
+        "message": "Replace $colour with a Nera token from tokens.generated.css, or a base.css page-local token built from them (var(), color-mix(); getComputedStyle in a canvas)."
+      }
+    },
+    {
+      "id": "effect-not-black-or-white",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:^|[{;])[ \\t]*--(?:overlay-shadow|panel-shadow|card-shadow|bar-shadow|scrim|lift)[ \\t]*:(?:(?:[^;{}\\n/<]|/[^/*;{}\\n]|://|<[^!;{}\\n]|/\\*(?:[^*\\n]|\\*[^/\\n])*\\*/)*?[^&0-9A-Za-z_-])?(?P<colour>(?i:hsla?|hwb|lab|lch|oklab|oklch)\\(\\s*(?:[-+.0-9]|none[^0-9A-Za-z_-]|var\\(|calc\\(|\\$\\{)|(?i:rgba?)\\(\\s*(?:[^012\\n]|0(?:[^ ,\\n]| (?:[^0\\n]|0(?:[^ \\n]| (?:[^0\\n]|0(?:[^ /\\n]| (?:[^/\\n])))))|,(?:[^ 0\\n]| (?:[^0\\n]|0(?:[^,\\n]|,(?:[^ \\n]| (?:[^0\\n]|0(?:[^,\\n])))))|0(?:[^,\\n]|,(?:[^0\\n]|0(?:[^,\\n])))))|1(?:[^0\\n]|0(?:[^ ,\\n]| (?:[^1\\n]|1(?:[^0\\n]|0(?:[^ \\n]| (?:[^1\\n]|1(?:[^4\\n]|4(?:[^ /\\n]| (?:[^/\\n])))))))|,(?:[^ 1\\n]| (?:[^1\\n]|1(?:[^0\\n]|0(?:[^,\\n]|,(?:[^ \\n]| (?:[^1\\n]|1(?:[^4\\n]|4(?:[^,\\n])))))))|1(?:[^0\\n]|0(?:[^,\\n]|,(?:[^1\\n]|1(?:[^4\\n]|4(?:[^,\\n]))))))))|2(?:[^5\\n]|5(?:[^5\\n]|5(?:[^ ,\\n]| (?:[^2\\n]|2(?:[^5\\n]|5(?:[^5\\n]|5(?:[^ \\n]| (?:[^2\\n]|2(?:[^5\\n]|5(?:[^5\\n]|5(?:[^ /\\n]| (?:[^/\\n])))))))))|,(?:[^ 2\\n]| (?:[^2\\n]|2(?:[^5\\n]|5(?:[^5\\n]|5(?:[^,\\n]|,(?:[^ \\n]| (?:[^2\\n]|2(?:[^5\\n]|5(?:[^5\\n]|5(?:[^,\\n])))))))))|2(?:[^5\\n]|5(?:[^5\\n]|5(?:[^,\\n]|,(?:[^2\\n]|2(?:[^5\\n]|5(?:[^5\\n]|5(?:[^,\\n]))))))))))))|(?i:color)\\(\\s*(?i:srgb|srgb-linear|display-p3|a98-rgb|prophoto-rgb|rec2020|xyz|xyz-d50|xyz-d65)(?:[^0-9A-Za-z_-]|$)|(?i:lightgoldenrodyellow|mediumspringgreen|mediumaquamarine|mediumslateblue|mediumturquoise|mediumvioletred|blanchedalmond|cornflowerblue|darkolivegreen|lightslategray|lightslategrey|lightsteelblue|mediumseagreen|darkgoldenrod|darkslateblue|darkslategray|darkslategrey|darkturquoise|lavenderblush|lightseagreen|palegoldenrod|paleturquoise|palevioletred|rebeccapurple|antiquewhite|darkseagreen|lemonchiffon|lightskyblue|mediumorchid|mediumpurple|midnightblue|darkmagenta|deepskyblue|floralwhite|forestgreen|greenyellow|lightsalmon|lightyellow|navajowhite|saddlebrown|springgreen|yellowgreen|aquamarine|blueviolet|chartreuse|darkorange|darkorchid|darksalmon|darkviolet|dodgerblue|ghostwhite|lightcoral|lightgreen|mediumblue|papayawhip|powderblue|sandybrown|whitesmoke|aliceblue|burlywood|cadetblue|chocolate|darkgreen|darkkhaki|firebrick|gainsboro|goldenrod|indianred|lawngreen|lightblue|lightcyan|lightgray|lightgrey|lightpink|limegreen|mintcream|mistyrose|olivedrab|orangered|palegreen|peachpuff|rosybrown|royalblue|slateblue|slategray|slategrey|steelblue|turquoise|cornsilk|darkblue|darkcyan|darkgray|darkgrey|deeppink|honeydew|lavender|moccasin|seagreen|seashell|crimson|darkred|dimgray|dimgrey|fuchsia|hotpink|magenta|oldlace|skyblue|thistle|bisque|indigo|maroon|orange|orchid|purple|salmon|sienna|silver|tomato|violet|yellow|azure|beige|brown|coral|green|ivory|khaki|linen|olive|wheat|aqua|blue|cyan|gold|gray|grey|lime|navy|peru|pink|plum|snow|teal|red|tan)(?:[^0-9A-Za-z_(-]|$))",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "UI_EFFECT_COLOUR",
+        "anchor": "capture.colour",
+        "message": "Effect tokens hold only a black or white alpha; take this colour from a Nera token or a base.css page-local token built from Nera tokens."
+      }
+    },
+    {
+      "id": "nera-token-redefined",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:^|[{;,'\\\"`])[ \\t]*(?P<token>--(?:sidebar-primary-foreground|sidebar-accent-foreground|decision-current-border|decision-remove-border|destructive-foreground|decision-diff-removed|color-header-primary|secondary-foreground|warning-subtle-hover|decision-diff-added|default-font-family|brand-subtle-hover|color-text-primary|popover-foreground|primary-foreground|sidebar-foreground|success-foreground|warning-foreground|accent-foreground|danger-foreground|decision-additive|subtle-foreground|brand-foreground|decision-current|font-family-sans|muted-foreground|nera-card-shadow|warning-on-solid|card-foreground|decision-remove|info-foreground|sidebar-primary|tracking-normal|header-primary|sidebar-accent|sidebar-border|success-subtle|warning-subtle|border-strong|danger-subtle|brand-subtle|sidebar-ring|destructive|font-sf-pro|info-subtle|subtle-fill|background|font-serif|foreground|shadow-2xl|shadow-2xs|font-mono|font-sans|radius-lg|radius-md|radius-sm|radius-xl|secondary|shadow-lg|shadow-md|shadow-sm|shadow-xl|shadow-xs|text-2xs|popover|primary|sidebar|spacing|success|warning|accent|border|danger|radius|shadow|subtle|brand|hover|input|muted|card|info|ring))['\\\"`]?[ \\t]*:",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "UI_NERA_TOKEN_REDEFINED",
+        "anchor": "capture.token",
+        "message": "$token is Nera's and comes only from tokens.generated.css: add a page-local token with its own name in base.css's token block and use that. Fix a wrong Nera value in Nera."
+      }
+    },
+    {
+      "id": "nera-token-set",
+      "forbid": {
+        "regex": {
+          "pattern": "setProperty\\(\\s*['\\\"`](?P<token>--(?:sidebar-primary-foreground|sidebar-accent-foreground|decision-current-border|decision-remove-border|destructive-foreground|decision-diff-removed|color-header-primary|secondary-foreground|warning-subtle-hover|decision-diff-added|default-font-family|brand-subtle-hover|color-text-primary|popover-foreground|primary-foreground|sidebar-foreground|success-foreground|warning-foreground|accent-foreground|danger-foreground|decision-additive|subtle-foreground|brand-foreground|decision-current|font-family-sans|muted-foreground|nera-card-shadow|warning-on-solid|card-foreground|decision-remove|info-foreground|sidebar-primary|tracking-normal|header-primary|sidebar-accent|sidebar-border|success-subtle|warning-subtle|border-strong|danger-subtle|brand-subtle|sidebar-ring|destructive|font-sf-pro|info-subtle|subtle-fill|background|font-serif|foreground|shadow-2xl|shadow-2xs|font-mono|font-sans|radius-lg|radius-md|radius-sm|radius-xl|secondary|shadow-lg|shadow-md|shadow-sm|shadow-xl|shadow-xs|text-2xs|popover|primary|sidebar|spacing|success|warning|accent|border|danger|radius|shadow|subtle|brand|hover|input|muted|card|info|ring))['\\\"`]",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "UI_NERA_TOKEN_SET",
+        "anchor": "capture.token",
+        "message": "$token is Nera's and comes only from tokens.generated.css: add a page-local token with its own name in base.css's token block and use that. Fix a wrong Nera value in Nera."
+      }
+    }
+  ]
+}

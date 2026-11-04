@@ -313,6 +313,9 @@ export class FileDeviceSecretStore implements DeviceSecretStore {
   }
 }
 
+/** In the Rerail home: the file device secret store (`RERAIL_DEVICE_SECRET_STORE=file`). */
+export const DEVICE_SECRETS_DIR = "device-secrets";
+
 /**
  * The device secret store for this process: the system store (Keychain, Secret Service, Credential
  * Manager) unless `RERAIL_DEVICE_SECRET_STORE=file`. A test run (`VITEST` set, inherited by every CLI it
@@ -321,7 +324,7 @@ export class FileDeviceSecretStore implements DeviceSecretStore {
 export function deviceSecretStore(environment: NodeJS.ProcessEnv = process.env): DeviceSecretStore {
   const selected = environment.RERAIL_DEVICE_SECRET_STORE;
   if (selected === "file") {
-    return new FileDeviceSecretStore(join(defaultRerailHome(environment), "device-secrets"));
+    return new FileDeviceSecretStore(join(defaultRerailHome(environment), DEVICE_SECRETS_DIR));
   }
   if (selected !== undefined && selected !== "system") {
     throw new Error(`RERAIL_DEVICE_SECRET_STORE must be system or file, not ${selected}`);

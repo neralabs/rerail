@@ -23,7 +23,10 @@ Recommendations match the repository's files and dependency manifests against ea
 
 ## The packs
 
-Every pack lives under `packs/` in this repository and is published from there ([pack format](pack-format.md)).
+Every pack lives under `packs/` in this repository and is published from there ([pack format](pack-format.md)), except
+a private pack (`"private": true` in its `package.json`): it is never published and is not in
+`src/engine/catalog/pack-list.generated.ts`; install it from a checkout with `rerail packs add packs/<id>`, and set-up
+then offers it from that copy.
 
 | Pack | Category | Rules (on) | Recommended for |
 |---|---|--:|---|

@@ -63,16 +63,19 @@ import { checkoutPathBoundary, SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES, sen
 export { SOURCE_LANGUAGES };
 
 
-const MAX_SOURCE_BYTES = 32_000_000;
+/** The largest source file the repository walk reads. */
+export const MAX_SOURCE_BYTES = 32_000_000;
 const MAX_PENDING_BYTES = 8 * 1024 * 1024;
 const AUDIT_BATCH_FILES = 32;
 const AUDIT_CHUNK_BYTES = 1024 * 1024;
 const AUDIT_MAX_DURATION_MS = 5 * 60_000;
-const AUDIT_MAX_FILES = 100_000;
+/** The most source files the repository walk reads. */
+export const AUDIT_MAX_FILES = 100_000;
 const AUDIT_MAX_FAILURES = 20;
 /** The recorded `package` facts of a source a superseded evaluation repackaged: never equal to any facts' JSON, so the source is resent. */
 const UNREPORTED_FACTS = "\0unreported";
-const AUDIT_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
+/** The most source bytes the repository walk reads in total. */
+export const AUDIT_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
 export const IGNORED_DIRECTORIES = new Set([
   ".git",
   ".hg",
