@@ -34,8 +34,8 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   `latest`, putting a pack back, and the lockfile sync after `changeset version`. The dist-tag check after a publish,
   and the GitHub Release of each released version from its changelog section. The release notes: the changelog
   generator changesets write each pack's entries with, core's section written from the entries pending in
-  `.changelog/`, and the check that an entry or changeset a pull request adds is written for the person upgrading,
-  that no entry is written into `CHANGELOG.md` by hand, and that a release's section leads with a paragraph.
+  `.changelog/`, by change type, and the check that every pending entry names its type, that an entry or changeset a
+  pull request adds is written for the person upgrading, that no entry is written into `CHANGELOG.md` by hand, and that a release's section leads with a paragraph.
 - `review/`: the guidance review (`just rerail-guidance-review`): every rule pack rule run on its examples and upstream
   fixtures, with the steer the coding agent reads, in a local page where each rule's guidance is approved or sent back
   with comments.

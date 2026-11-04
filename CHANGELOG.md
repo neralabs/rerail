@@ -1,8 +1,12 @@
 # Changelog
 
+Every notable change to Rerail's core package, `@neralabs/rerail`, latest first. From 0.1.1 the notes follow [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/): each release lists its changes under Added, Changed, Deprecated, Removed, Fixed and Security. There are two differences: a heading reads `## <version> (<date>)` rather than `## [<version>] - <date>`, and changes waiting for the next release are in [.changelog](.changelog/README.md), so `## Unreleased` holds only that release's opening paragraph.
+
+Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. A release is a patch unless it names a later version, and a patch can change or remove what you use, so read the notes before you update.
+
 ## Unreleased
 
-Rerail and its rule packs are public on npm, so installing Rerail, and adding a pack, needs no npm account. The daemon now answers only a request that carries its access capability, so another user of your machine, or a sandboxed process allowed localhost, gets nothing from it: open the dashboard from `rerail manage`, since an old bookmark no longer gets in. A coding agent's Rerail tools reach only the repository it works in, and a file named like one holding secrets reaches it by rule and place only. The dashboard says less, by rule. A daemon reachable from other machines now serves HTTPS with `--tls-cert` and `--tls-key`, or needs `--insecure-http` to stay on plain HTTP, so check that before updating a remote set-up. Block is still not in this release.
+0.1.1 locks the daemon to you, keeps each coding agent's Rerail tools inside its own repository, and loads rules from a checkout's own folder and from third parties' packs, in Log until you approve them. Before you update: open the dashboard with `rerail manage`, since old bookmarks stop working; have scripts that call the daemon send `x-rerail-access`; and give a daemon reachable from other machines a TLS certificate or `--insecure-http`.
 
 ## 0.1.0 (2026-10-27)
 

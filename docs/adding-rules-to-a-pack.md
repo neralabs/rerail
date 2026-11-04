@@ -310,7 +310,7 @@ Promote from the judged commit's promotable list, after confirming `main` has no
 
 1. Move the document to `rules/`; point the port entry at it.
 2. List it in `pack.json`: off if the comment's **Starts** column says off, with its example pair if any.
-3. Move its README section; add a changeset (the summary is the release note).
+3. Move its README section; add a changeset (its summary may be empty: the Release pull request lists new rules).
 4. Grep for the old path: `git grep -F candidates/rules/<rule>.json`.
 5. Re-pin the native anchors test, last: `cargo test --manifest-path Cargo.toml -p rerail-engine anchors::tests`.
 
@@ -326,7 +326,9 @@ Promote from the judged commit's promotable list, after confirming `main` has no
   documents, so any move between `rules/` and `candidates/` changes it. The cargo command prints the new value.
 - **Add the suppression case** where the tool's generator demands one.
 - **Changeset summary = release note**: what changed for the upgrader, at most 60 words, no ticket id, pull request
-  number or commit hash. The **Changesets** job enforces this.
+  number or commit hash. The **Changesets** job enforces this. Which rules ship and how each starts is written by the
+  Release pull request from `pack.json`, so a promotion with nothing else to say leaves the summary empty
+  ([versioning](pack-format.md#versioning-and-release)).
 - **Evidence**: results against the tool's expected findings, rename variants and samples, every divergence checked,
   and why any `rename_exempt` reason holds ([REVIEW.md](../REVIEW.md#what-blocks-a-merge-here)).
 
@@ -342,7 +344,7 @@ A shipped rule that fails a blocking check the same pull request does not fix go
 - Move its README section to `candidates/README.md`, in sorted place, with one sentence (file and line) on why.
 - Tests loading the rule by id read `rules/` only; also pass the pack's `candidates/` directory, as
   `test/engine/code-rule/pack-rules/python-harmful-steers.test.ts` does.
-- Re-pin the anchors test. The changeset states the net effect against `main`.
+- Re-pin the anchors test. The changeset says why the rule no longer ships; the Release pull request lists it.
 - No re-derive: the generator's authored output does not depend on which rules ship.
 
 </details>

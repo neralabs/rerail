@@ -148,11 +148,17 @@ hooks, daemon restart and removal.
 
 Release notes pitch the release to people who opt into each update; the GitHub Release publishes them unchanged.
 
-- **Entries.** Each pull request changing what core ships adds one file in `.changelog/`
-  ([.changelog/README.md](../.changelog/README.md)): one or two plain sentences for the upgrader, at most 60 words.
+- **Entries.** Each pull request changing what core ships adds one file in `.changelog/`, its name opening with its
+  change type (`added-`, `changed-`, `deprecated-`, `removed-`, `fixed-`, `security-`;
+  [.changelog/README.md](../.changelog/README.md)): one or two plain sentences for the upgrader, at most 60 words.
 - **Lead.** Whoever readies the release writes a paragraph under `## Unreleased` at the top of `CHANGELOG.md` on
   `main`: what the release gives and why to take it.
-- **Minor or major.** Name the version in the heading: `## 0.2.0 (unreleased)`.
+- **Format.** From 0.1.1 the notes follow [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), with the two
+  differences `CHANGELOG.md`'s header states: headings read `## <version> (<date>)`, and pending entries wait in
+  `.changelog/` rather than under `## Unreleased`.
+- **Versions.** Below 1.0.0 a release is a patch unless it names another, and a patch can change or remove behavior,
+  which Semantic Versioning allows below 1.0.0. To release a minor or major, name it in the heading:
+  `## 0.2.0 (unreleased)`. What core promises from 1.0.0 is not set yet.
 
 <details>
 <summary>Why, assembly and CI checks</summary>
@@ -163,13 +169,16 @@ the first entry; add the `## Unreleased` heading if the last release took it. It
 rewrites the Release pull request.
 
 **Assembly.** The Release pull request renames the heading `## <version> (<date>)`, dated the day it last updated from
-`main`. It moves pending entries under the lead in file-name order and deletes their files. With neither lead nor
-entry, the section says no entries were written.
+`main`. It puts pending entries under the lead, under a `### <type>` heading for each change type that has one (Added,
+Changed, Deprecated, Removed, Fixed, Security, in that order, file-name order within a type), and deletes their files.
+With neither lead nor entry, the section says no entries were written. Should an entry with no type reach `main`, core
+is left out of the Release pull request, and its description says why, until the file is renamed; the packs still
+release.
 
 **CI** (`scripts/release/core-changelog-check.mjs`, in `ci.yml`'s lint job) fails:
 
-- a pull request whose added or changed `.changelog/` entry runs long, names a ticket, pull request or commit, or starts
-  with its own `- `;
+- a pull request with a pending `.changelog/` entry that has no change type, or whose added or changed entry runs
+  long, names a ticket, pull request or commit, or starts with its own `- `;
 - a pull request writing an entry into `CHANGELOG.md`'s first section, under `## Unreleased` or the last release's
   dated heading;
 - the Release pull request until the dated section has its lead. One pull request releases core and packs, so this

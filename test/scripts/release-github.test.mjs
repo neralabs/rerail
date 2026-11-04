@@ -52,6 +52,17 @@ describe("githubRelease", () => {
     });
     expect(githubRelease({ name: PYTHON, version: "0.1.5", distTag: "next" }, packChangelog)).toMatchObject({ prerelease: true, latest: false });
   });
+
+  it("points relative links at the docs website or the file at the tag, since GitHub resolves them against the release page", () => {
+    const changelog = ["# Changelog", "", "## 0.1.1 (2026-11-04)", "", "- [a](docs/privacy.md#support-bundles), [b](docs/code-rule-dsl-reference.html#importTarget), [c](docs/README.md), [d](SECURITY.md), [e](https://x.dev/y), [f](#g).", ""].join("\n");
+    expect(githubRelease({ name: CORE, version: "0.1.1", distTag: "latest" }, changelog).notes).toBe(
+      "- [a](https://neralabs.github.io/rerail/privacy.html#support-bundles), [b](https://neralabs.github.io/rerail/code-rule-dsl-reference.html#importTarget), [c](https://neralabs.github.io/rerail/index.html), [d](https://github.com/neralabs/rerail/blob/v0.1.1/SECURITY.md), [e](https://x.dev/y), [f](#g).",
+    );
+    const pack = [`# ${PYTHON}`, "", "## 0.1.6 (2026-11-04)", "", "- See [the README](README.md) and [packs](../../docs/rule-packs.md).", ""].join("\n");
+    expect(githubRelease({ name: PYTHON, version: "0.1.6", distTag: "latest" }, pack).notes).toBe(
+      `- See [the README](https://github.com/neralabs/rerail/blob/${PYTHON}@0.1.6/packs/python/README.md) and [packs](https://neralabs.github.io/rerail/rule-packs.html).`,
+    );
+  });
 });
 
 describe("packReleaseNotes", () => {

@@ -1,0 +1,1 @@
+Rules Rerail did not publish run in Log until you approve them with `rerail rules approve` or the dashboard, and again after each change. Library rules you already have stay approved ([approval](docs/rule-scoping.md#approval)).

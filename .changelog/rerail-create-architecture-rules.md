@@ -1,1 +1,0 @@
-`/rerail-create` also writes architecture rules, where code belongs and which way dependencies run. It reads that intent from design docs, ADRs, package READMEs, CODEOWNERS and the review comments that sent a design back, and gates the draft on history: it must catch the first design the maintainers sent back and stay quiet on recent merged pull requests.

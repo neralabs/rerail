@@ -1,0 +1,1 @@
+`rerail update rollback` is removed. `rerail update` still saves `rerail.sqlite.pre-update`; to go back, stop Rerail and copy it over `rerail.sqlite` ([database compatibility](docs/how-setup-works.md#database-compatibility)).

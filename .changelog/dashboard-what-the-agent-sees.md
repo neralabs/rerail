@@ -1,1 +1,0 @@
-The dashboard's What the agent sees block says less. A rule on Log reads "Not sent while this rule is on Log.", under its message and its draft, and the hint under the draft says what saving does: "Reaches open sessions once your agent saves it.", and for a pack's rule "Saved as your copy. This one turns off." first.

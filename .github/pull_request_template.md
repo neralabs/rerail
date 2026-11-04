@@ -20,6 +20,6 @@ Fixes #
 - [ ] `npm run check:licenses` and `reuse lint` pass
 - [ ] Tests cover the behavior this changes, and the docs that describe it are updated
 - [ ] A change to a pack under `packs/` adds a changeset
-- [ ] A change to what the core package ships adds an entry file in `.changelog/`
+- [ ] A change to what the core package ships adds an entry file in `.changelog/`, named for its change type
 - [ ] The rule-file format, the API and installed packs keep working, or this says above what changes and how
       people upgrade

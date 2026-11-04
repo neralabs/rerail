@@ -770,7 +770,10 @@ changesets, bumps each pack and writes its `CHANGELOG.md`.
 </details>
 
 **Release notes.** The summary goes out as written on the pack's GitHub Release: what changed for the person
-upgrading, in at most 60 words.
+upgrading, in at most 60 words. Which rules a pack ships and how each starts is not the summary's to say: the Release
+pull request writes that from `pack.json` (step 1 below). A summary says what a rule now does differently, or why a
+rule no longer ships; a change with nothing else to say, a rule shipped or a README reworded, leaves it empty, and the
+changeset still bumps the pack.
 
 <details>
 <summary>Release note rules</summary>
@@ -779,7 +782,8 @@ The summary says what changed plainly, in a sentence or two, without commit hash
 repository-internal maintenance. The **Changesets** job fails a changeset that breaks this
 ([release notes](release.md#release)). `changeset version` writes each summary as one changelog entry, as written, with
 no commit hash (`scripts/release/changeset-changelog.mjs`, the generator `.changeset/config.json` names), unlike
-changesets' default generator.
+changesets' default generator, and an empty summary as no entry. Rule counts are left to the Release pull request
+because changesets pile up between releases and each counts against the `main` it was written on.
 
 </details>
 
@@ -802,6 +806,11 @@ Core's `v*` release (`release.yml`) is separate.
 - With changesets pending, it runs `npm run version:packs`: `changeset version`, then
   `scripts/release/sync-pack-lockfile.mjs` to record the new versions in `package-lock.json`. It bumps core too when
   what core ships has changed.
+- It then dates each released pack's new `CHANGELOG.md` section and opens it with what changed in the pack's rules
+  since the commit that released its previous version (`scripts/release/pack-changelog.mjs`): how many rules it ships
+  and how many start on, its new rules (by id, or counted by group past 12) and how each starts, those it no longer
+  ships, and those that start differently. The changesets' entries follow, without the `### Patch Changes` heading,
+  which says nothing below 1.0.0.
 - Its description lists every package and version it releases, with changelog entries. Review it like any pull
   request.
 - A newer push cancels an older run; with nothing releasable, an open Release pull request is closed.
@@ -852,13 +861,14 @@ promote job points `latest` at that version and tags it `held` there.
 </details>
 
 **GitHub Releases.** Every released pack version gets one on its tag `@neralabs/rerail-pack-<id>@<version>`. The notes
-are that version's `CHANGELOG.md` section, so they are written once, in the changeset summary.
+are that version's `CHANGELOG.md` section, so they are written once, by the Release pull request and in the changeset
+summaries.
 
 <details>
 <summary>How GitHub Releases are made</summary>
 
-- The notes are the section's entries alone: without the one `### Patch Changes` heading changesets writes over every
-  section below 1.0.0, and without the commit hash on entries of versions released before this generator.
+- Sections written before the Release pull request dated them lose their one `### Patch Changes` heading and the
+  commit hash their entries carry.
 - After **Published dist-tags** passes, the **GitHub Releases** job makes one per published version
   (`scripts/release/github-release.mjs`). Rerun, it rewrites an existing Release's notes and flags.
 - A pack's Release is never the repository's latest release, which is core's. It is a pre-release only for a held pack

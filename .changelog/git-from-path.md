@@ -1,1 +1,0 @@
-Rerail runs the Git on your `PATH`, such as MacPorts', mise's or one you built, and falls back to the usual install locations only when `PATH` has none. It skips a `PATH` entry that is relative, inside the repository or inside `node_modules`, so a repository's own `bin/` cannot put its `git` first.

@@ -1,0 +1,1 @@
+The daemon limits request size and time, Rerail's files and sockets are private to you, more file names count as secret-like and stay out of `rerail rules test` and stored transcripts, and steers drop control and invisible characters.

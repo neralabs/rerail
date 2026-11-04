@@ -11,5 +11,3 @@
 "@neralabs/rerail-pack-typescript": patch
 "@neralabs/rerail-pack-vue": patch
 ---
-
-Licence notes: each `licenses/<project>/UPSTREAM.md` records its upstream repository per repo (source, the path patterns taken, what is not copied) instead of one row per copied test file; no rule changes.

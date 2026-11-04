@@ -10,5 +10,3 @@
 "@neralabs/rerail-pack-typescript": patch
 "@neralabs/rerail-pack-vue": patch
 ---
-
-The README describes only the rules the pack ships. What it said about the candidate ports moves to `candidates/README.md`, which is not published.
