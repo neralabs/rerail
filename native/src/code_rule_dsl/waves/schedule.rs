@@ -280,7 +280,15 @@ fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u3
                 let token = token.ok_or_else(|| StoreError::Invalid(format!("{}: a step reads demand(batch) without a batch", program.name)))?;
                 statement.raw_bind_parameter(i, token)?;
             }
-            statement.raw_execute()?;
+            // Each statement's time, by its output (`RERAIL_PROF`); `RERAIL_PROF_SLOW_MS=<ms>` prints the
+            // SQL of each statement slower than that.
+            let started = std::time::Instant::now();
+            crate::code_rule_dsl::prof::time(&format!("step.{output}"), || statement.raw_execute())?;
+            if let Some(slow) = std::env::var("RERAIL_PROF_SLOW_MS").ok().and_then(|ms| ms.parse::<u128>().ok()) {
+                if started.elapsed().as_millis() >= slow {
+                    eprintln!("slow step {output} ({:?}): {text}", started.elapsed());
+                }
+            }
             lease.storage.borrow_mut().written(&format!("new_{output}"), true);
             written.insert(output.as_str());
         }

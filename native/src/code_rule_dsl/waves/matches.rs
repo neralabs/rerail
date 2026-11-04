@@ -312,9 +312,17 @@ impl Wave {
             ),
             ("document".to_owned(), (Source::positional("temp.wave_document", &["position", "d"]), 100.0)),
         ]);
-        // The relations the rules read as bound with the chunk, priced as the demand statement prices them.
+        // The relations the rules read as bound with the chunk, priced at a chunk's size: a few hundred
+        // documents, their nodes in the hundreds of thousands. Priced low, the planner scans one first
+        // and probes the rules' relations per row.
         for (rel, columns) in &self.logic.bound {
-            batch.insert(rel.clone(), (Source::named(&format!("main.{rel}"), columns), 1000.0));
+            let rows = match rel.as_str() {
+                "doc" | "pkg" => 300.0,
+                "intval" | "op" => 1e4,
+                rel if rel.starts_with("py_") => 1e5,
+                _ => 1e6,
+            };
+            batch.insert(rel.clone(), (Source::named(&format!("main.{rel}"), columns), rows));
         }
         let mut source = SOURCE.to_owned();
         source.push_str(&self.logic.rules);

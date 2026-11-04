@@ -96,7 +96,11 @@ chain($D, $X, $F) :- ann_scope($D, _, $X), def($D, _, $X, $XE, _), def($D, _, $F
 .decl shadow(d: int, x: int, h: sym)
 shadow($D, $X, $H) :- binder($D, _, $S, $E, $H), scope_at($D, $S, $E, $X).
 shadow($D, $X, $H) :- param($D, _, $S, $E, $H), scope_at($D, $S, $E, $X).
-shadow($D, $X, $H) :- def($D, $N, $S, $E, _), child($N, $I, 0), text($I, $H), scope_at($D, $S, $E, $X).
+// (A definition's name is a relation of its own: in one rule with scope_at, the planner scanned every
+// first child in the chunk and joined scope_at to each.)
+.decl def_name(d: int, s: int, e: int, h: sym)
+def_name($D, $S, $E, $H) :- def($D, $N, $S, $E, _), child($N, $I, 0), text($I, $H).
+shadow($D, $X, $H) :- def_name($D, $S, $E, $H), scope_at($D, $S, $E, $X).
 shadow($D, -1, $H) :- ast($D, $T, {{GLOBAL}}), core_node($D, $T, $N), text($N, $H).
 // `nonlocal` binds the name in each function around the statement.
 shadow($D, $F, $H) :- ast($D, $T, {{NONLOCAL}}), core_node($D, $T, $N), text($N, $H), node($D, $N, _, $S, $E), def($D, _, $F, $FE, 1), $F < $S, $FE >= $E.

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROF").is_some());
 static STAGES: Mutex<BTreeMap<String, (Duration, usize)>> = Mutex::new(BTreeMap::new());
 
-pub(in crate::code_rule_dsl) fn time<T>(stage: &'static str, f: impl FnOnce() -> T) -> T {
+pub(in crate::code_rule_dsl) fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T {
     if !*ON {
         return f();
     }
