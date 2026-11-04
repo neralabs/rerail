@@ -36,3 +36,25 @@ branch_kind("try_statement"). branch_kind("except_clause"). branch_kind("case_cl
 remove_stmt(st) :- child(b, st, _), kind(b, "block"), child(b, o, _), o != st => delete(st).
 remove_stmt(st) :- child(b, st, _), kind(b, "block"), count : { child(b, o, _), o != st } = 0 => replace(st, `pass`).
 remove_stmt(st) :- child(m, st, _), kind(m, "module") => delete(st).    // module level: an empty module is fine
+
+// always_raises(b): every way through block b ends in a raise: some statement of b is a `raise`, or an `if`
+// whose every branch (each elif, and an else that must exist) always raises. Returns, loops and try are not
+// followed: they count as "may not raise". "Every branch" is a chain, not a count: an if raises when its body
+// does and its first alternative starts a raising tail, so the recursion is positive and plain Soufflé.
+.decl always_raises(b: node)
+always_raises(b) :- kind(b, "block"), child(b, s, _), kind(s, "raise_statement").
+always_raises(b) :- kind(b, "block"), child(b, s, _), kind(s, "if_statement"),
+    field(s, "consequence", c), always_raises(c), alt_first(s, x), tail_raises(x).
+// alt_first(s, x) / alt_next(x, y): an if's elif and else clauses in source order.
+.decl alt_first(s: node, x: node)
+alt_first(s, x) :- kind(s, "if_statement"), j = min j2 : { field(s, "alternative", y), child(s, y, j2) },
+    child(s, x, j).
+.decl alt_next(x: node, y: node)
+alt_next(x, y) :- field(s, "alternative", x), child(s, x, i),
+    j = min j2 : { field(s, "alternative", y2), child(s, y2, j2), j2 > i }, child(s, y, j).
+// tail_raises(x): clause x and every clause after it always raise, and the chain ends in an else.
+.decl tail_raises(x: node)
+tail_raises(x) :- kind(x, "else_clause"), field(x, "body", b), always_raises(b).
+tail_raises(x) :- kind(x, "elif_clause"), field(x, "consequence", b), always_raises(b), alt_next(x, y),
+    tail_raises(y).
+

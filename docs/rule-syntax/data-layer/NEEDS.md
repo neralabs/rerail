@@ -1,5 +1,8 @@
 # Library needs beyond the stated interface
 
+This page covers the first six hand-written checks. Everything all 142 data-layer checks need, and how the
+language provides it, is in [DESIGN.md](DESIGN.md); per-check analyses are in [checks/](checks/).
+
 The six data-layer rule files use these relations and builtins, which the `python/*` interface did not list. All four are now in the libraries: `path_part`, `file_name` and regex captures (`match` with named groups) in `lib/core.rr`, and `cmp` in `lib/python/names.rr`.
 
 | Name | Signature | Meaning | Kind | Used by |

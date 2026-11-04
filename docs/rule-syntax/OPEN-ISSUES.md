@@ -27,12 +27,17 @@ confirm once a parser and engine exist. None is fixed yet.
 2. names: `live_def` never drops a decorated definition (the `(f, f)` row of `defstmt` is never shadowed).
 3. names: `site_latest` misses a later `def`/`class` (strict `within` against the statement itself).
 4. imports ↔ names depend on each other with one `.use`; imports reads `def_name`, `qualname`, `type_checking_block`.
-5. imports: `exports` → `resolve_export` → `!… exports …` is negation through recursion: not stratifiable.
+5. Fixed (2026-11-04, found by the new stratification check): `exports` → `resolve_export` → `!… exports …` was
+   negation through recursion. resolve_export now negates `exported(m, x)`, which is defined without
+   resolve_export. A second cycle, import_time → `!type_checking_block` → sym_of → resolve_export → exports →
+   import_time, is broken by testing TYPE_CHECKING by qualified name (`qn`), not by resolved symbol. The cost:
+   `from typing import TYPE_CHECKING as T` re-exported through another module is not recognised.
 6. Fixed in the Soufflé conversion: `fdef` (function-or-lambda in imports, function-only elsewhere) is now `fn_or_lambda` in
    imports, and each library declares a relation once.
 7. calls: `isasync` duplicates `is_async`; a library carries `.output`; the W5 `ASYNC_BLOCKING` comment has no rules.
 8. calls: `posarg` counts all argument children, so keyword or splat arguments before it shift the index.
-9. flow: `stmt_of`/`before` cover `block` nodes only (no module level); `in_branch` leaves out loop bodies.
+9. Changed: flow's `always_raises` follows if/elif/else chains as positive recursion (no `ordered by`).
+   flow: `stmt_of`/`before` cover `block` nodes only (no module level); `in_branch` leaves out loop bodies.
 10. names: `nonlocal` targets the nearest function, not the nearest one binding the name; `scope_name` uses any
     enclosing class; `rel_base` lacks the `p != ""` guard.
 
@@ -57,4 +62,14 @@ confirm once a parser and engine exist. None is fixed yet.
    declarations and ungrounded rules in the hand files; it prints ok today.
 3. Additions to Soufflé that an engine must support: pattern atoms `` n ~ `…` ``, named-group captures in `match`
    (span or symbol), `match_all`, `must, may` relations, `.violation`/`fix`/`=>`/`.edit`, and a relation name
-   as the stop-set argument of `within_stop`, `nearest`, `precedes_stop`.
+   as the stop-set argument of `within_stop`, `nearest`, `precedes_stop`; the `join` aggregate; and
+   `.decl r(…) ordered by earlier` (data-layer/DESIGN.md).
+4. `site/check_rr.py` also checks stratification: no relation depends on itself through `!` or an aggregate unless
+   it is `ordered by earlier` and the use is tied by `earlier(m, n)`. It found the two cycles above.
+
+## Data-layer design (data-layer/DESIGN.md)
+1. `.gate`, `.budget … from base`, `.on parse_error` and `code {c}` are specified but have no engine yet.
+2. Signature verification is Datalog over `@ed25519_ok`; the two layouts in lib/data-layer/signing.rr were checked
+   against real signatures at the pinned revision, the rules themselves were not run.
+3. file-length follows the CLI's line count (splitlines); the suite plugin counts `\n`. They differ only on files
+   with other line separators.

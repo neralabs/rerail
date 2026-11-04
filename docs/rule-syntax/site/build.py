@@ -24,7 +24,9 @@ LIBS = [
     ("python/names", "datalog", "Scopes, bindings, references and qualified names. Python's scope lookup and rebinding, adapted from an earlier Datalog prototype."),
     ("python/imports", "datalog", "What each import binds and loads, the import-time module graph, and module exports."),
     ("python/calls", "datalog", "Call targets and call chains: which function a call can reach, with unknown targets kept as unknown."),
-    ("python/flow", "datalog", "Statement order within a body. Tree arithmetic only."),
+    ("python/ast", "datalog", "Python as CPython's ast sees it: Name and context, frames with decorators inside the def, parameters by kind, assignments, constants, qualified names, and visit order."),
+    ("python/flow", "datalog", "Statement order within a body, and blocks that always raise. Tree arithmetic only."),
+    ("data-layer/signing", "datalog", "The data-layer repository's signed allowlists and ratchet baselines, verified in Datalog: the signed bytes rebuilt with join, checked with @ed25519_ok."),
     ("tsx/names", "datalog", "TypeScript and JavaScript scopes after eslint-scope, import specifier resolution, exports and symbols across files."),
     ("tsx/jsx", "datalog", "JSX tags, components, and what renders under what."),
 ]
@@ -35,6 +37,9 @@ DATA_LAYER = [
     ("missing-async-pairs", "missing-async-pairs", "lint_missing_async_pairs.py"),
     ("post-op-no-internal-dispatch", "post-op-no-internal-dispatch", "lint_post_op_no_internal_dispatch.py"),
     ("swallowed-exceptions", "swallowed-exceptions", "lint_swallowed_exceptions.py"),
+    ("file-length", "file-length", "lint_file_length.py"),
+    ("noqa-sec-ratchet", "noqa-sec-ratchet", "lint_noqa_sec_ratchet.py"),
+    ("versioned-table-names", "versioned-table-names", "lint_versioned_table_name_manipulation.py"),
 ]
 NDL_COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 PR2539 = "origin/jeremy/serverplan-architecture-integration"

@@ -258,7 +258,7 @@ const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&
 const MAX_LINES = 2500;
 
 // ---------- statements and definitions ----------
-const DIRECTIVE_WORDS = new Set(["must", "may", "count", "min", "max", "sum", "mean", "code", "anchor", "suppress", "fix", "options", "each", "revision", "by", "at", "safe"]);
+const DIRECTIVE_WORDS = new Set(["must", "may", "count", "min", "max", "sum", "mean", "code", "anchor", "suppress", "fix", "options", "each", "revision", "by", "at", "safe", "join", "sep", "ordered", "from", "floor", "drop", "report"]);
 const TYPE_WORDS = new Set(["node", "span", "loc", "symbol", "number", "relation"]);
 const BUILTIN_FNS = new Set(["match", "match_all", "cat", "strlen", "substr", "to_number", "to_string", "contains", "ord"]);
 const isDecl = s => s.kind === "decl" || s.kind === "native" || s.kind === "edit" || s.kind === "functor";

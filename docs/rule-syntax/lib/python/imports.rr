@@ -156,13 +156,19 @@ exports(m, x, q) :- star_from(m, m2), exports(m2, x, q), public_name(m2, x).
 .decl star_from(m: symbol, m2: symbol)
 star_from(m, m2) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"),
     module_text(i, m2), module_of(i, m).
+// exported(m, x): module m exports a name x, whatever it denotes. The same three cases as exports, without
+// following anything: whether m exports x never depends on where x resolves. resolve_export negates this, not
+// exports, so the negation is outside the recursion and the program is stratified, as Soufflé requires.
+.decl exported(m: symbol, x: symbol)
+exported(m, x) :- module_of(f, m), def_name(f, x), nearest(f, s, scope), kind(s, "module").
+exported(m, l) :- import_alias(i, _, _, x, l), import_time(i), module_of(i, m), x != "".
+exported(m, x) :- star_from(m, m2), exported(m2, x), public_name(m2, x).
 // resolve_export(q, r): the qualified name q ("m.x") is really r, after following m's exports. If m exports no x
 // (an external module, or x defined nowhere we can see), r = q unchanged. split_dot(q, m, x) splits q at its
-// last dot. Stratification note: rule 2 negates exports, and exports depends on resolve_export, so this negation sits
-// inside the recursion; the engine must evaluate it as a lower stratum or per-q on demand.
+// last dot.
 .decl resolve_export(q: symbol, r: symbol)  // follow re-exports to the definition; outside the workspace, q itself
 resolve_export(@dot(m, x), r) :- exports(m, x, r), r != @dot(m, x).
-resolve_export(q, q) :- export_query(q), count : { split_dot(q, m, x), exports(m, x, _) } = 0.
+resolve_export(q, q) :- export_query(q), count : { split_dot(q, m, x), exported(m, x) } = 0.
 // export_query(q): the names resolve_export is asked about. Rule 2 above needs them: a q that only appears under
 // `!` would not be bound. Each comes from a qualified name in the code or a from-import.
 .decl export_query(q: symbol)
@@ -176,7 +182,7 @@ dunder_all(m, x) :- kind(a, "assignment"), field(a, "left", l), text(l, "__all__
 // name not starting with an underscore. This is also what `from m import *` copies.
 .decl public_name(m: symbol, x: symbol)
 public_name(m, x) :- dunder_all(m, x).
-public_name(m, x) :- exports(m, x, _), count : { dunder_all(m, _) } = 0, !match("_.*", x).
+public_name(m, x) :- exported(m, x), count : { dunder_all(m, _) } = 0, !match("_.*", x).
 
 // ---- edits --------------------------------------------------------------------------------------------------------
 // Library edits for import fixes. Each expands to core's native edits; see python/flow for what `.edit` means.

@@ -188,7 +188,11 @@ w('''  <section class="sect">
           <td><code>.violation</code>, <code>fix</code>, <code>=&gt; edits</code> and <code>.edit</code>: findings and fixes</td></tr>
       <tr><td><code>.decl</code>, <code>.type</code>, <code>.input</code>, <code>.output</code>, <code>.pragma</code>, <code>#include</code></td>
           <td>A relation name as the stop-set argument of <code>within_stop</code>, <code>nearest</code> and <code>precedes_stop</code>: <code>nearest(f, s, scope)</code></td></tr>
+      <tr><td>Aggregates <code>count</code>, <code>min</code>, <code>max</code>, <code>sum</code>, <code>mean</code>; none builds a string</td>
+          <td><code>s = join x by k sep "," : { … }</code>: the rows' x values in k order, joined. For sorted lists in keys and for the exact bytes a signature covers</td></tr>
       <tr><td>Stratified negation: a relation is complete before anything negates it</td>
+          <td><code>.decl r(…) ordered by earlier</code>: r may read itself under <code>!</code> or an aggregate at strictly earlier nodes. For "the latest earlier write that counts" (see "What the data-layer checks need")</td></tr>
+      <tr><td></td>
           <td>Policy directives: <code>.policy</code>, <code>.description</code>, <code>.language</code>, <code>.mode</code>, <code>.scope</code>, <code>.budget</code>, …; <code>#include</code> loads each file once</td></tr>
     </table></div>
   </section>
@@ -217,6 +221,14 @@ w('''  <section class="sect">
       <tr><td><code>.input r(IO=file, filename="…")</code></td><td>Soufflé. Facts from a policy file: allowlists, baselines, registries.</td></tr>
       <tr><td><code>.pragma "magic-transform" "r"</code></td><td>Soufflé. Compute r only for the arguments rules ask about.</td></tr>
       <tr><td><code>.violation CODE(at: node, …) "message {col}"</code></td><td>A finding relation. Continuation lines: <code>suppress</code>, <code>fix</code>, <code>anchor</code>.</td></tr>
+      <tr><td><code>CODE(@place("a.json", 1), …) :- …</code></td><td>A finding at a file and line with no node there: an allowlist, a baseline, a Markdown line. Line 0: the whole file.</td></tr>
+      <tr><td><code>.violation SEC(at: span, c: symbol) code {c}</code></td><td>The code is a column: each SEC code found in a comment is its own code.</td></tr>
+      <tr><td><code>.severity CODE warning</code></td><td>Severity per code, as the repository's report shows it.</td></tr>
+      <tr><td><code>.gate CODE</code></td><td>When CODE has rows they are the only findings: a bad signature replaces the report.</td></tr>
+      <tr><td><code>.on parse_error report CODE</code></td><td>Also report files the language's own parser rejects (their outcome stays Unknown).</td></tr>
+      <tr><td><code>.budget M by k from base [floor] [drop 10%]</code></td><td>Ratchet whose ceilings are the rows of relation base, derived by rules, usually from a verified baseline file. M is a violation or an <code>.output</code> metric.</td></tr>
+      <tr><td><code>.scope report dirs "api"</code><br><code>.scope text "**/*.md"</code></td><td>Findings only land under these directories / read these files as text only (lines, no tree).</td></tr>
+      <tr><td><code>.input r(IO=json, filename="b.json", path="/counts")</code></td><td>Read a repository file: json, yaml, lines (<code>dir=</code> for a directory), file. A missing or malformed file gives an <code>input_error</code> row.</td></tr>
       <tr><td><code>.edit e(…)</code></td><td>An edit defined in Datalog, for fixes (see "Fixes").</td></tr>
     </table></div>
   </section>
@@ -470,6 +482,38 @@ may  passes(e) :- tag(e, t), sym_of(t, q), !component(q, _).
 //   <Card>   must passes, may passes   → the inner router in Card is reported with .mode
 //   <Shell>  may passes only           → the inner router in Shell is reported as possible, .possible mode
 ''', "Rule (from the accurate nested-routers rule)"),
+])
+
+sect("What the data-layer checks need", [
+    "The data-layer repository has 142 lint checks, written in Python. Each was read against the language, to find what it needs beyond what is here. Most needs are facts the Python checks take from CPython (its <code>ast</code>, its string decoder, its visit order) and repository files they read (allowlists, signed baselines, Markdown). Those became native facts and library relations, not syntax.",
+    "Two needs became language: <code>join</code>, because nothing else builds the exact text a signature covers, and <code>ordered by earlier</code>, for state where only some writes count. Most state needs no new form: when every assignment resets a name, the latest write is plain syntax, and the recursion is positive. Signatures are checked in Datalog, so a repository's own signing layout needs no new reader.",
+    "Checks that run repository code (pytest collection, import-time registries) stay outside: a CI step writes the facts to a file and the policy reads it. Rerail never runs the code it checks.",
+], [
+ ("rr", '''
+// lib/data-layer/signing.rr: the signed bytes of an allowlist, rebuilt and verified.
+// The repository signs json.dumps({"allowlist": sorted(entries), "linter": …, "version": 1}).
+allow_message(l, msg) :- allow_sig(l, linter, _),
+    body = join q by e sep "," : { allow_entry(l, e), q = @json_str(e) },
+    msg = cat("{\\"allowlist\\":[", body, "],\\"linter\\":", @json_str(linter), ",\\"version\\":1}").
+allow_status(l, "unsigned") :- allow_sig(l, _, s), unsigned_sig(s).
+allow_status(l, v) :- allow_sig(l, _, s), !unsigned_sig(s), allow_message(l, m),
+    ok = count : { nera_key(k), @ed25519_ok(k, m, s) = 1 },
+    ( ok > 0, v = "valid" ; ok = 0, v = "invalid" ).
+''', "Signatures in Datalog (checked against the repository's real signatures)"),
+ ("rr", '''
+// data-layer/file-length.rr: a bad signature replaces every other finding.
+invalid_allowlist_signature(@place(".file-length-allowlist.json", 1)) :- allowlisted(_, _),
+    !allow_status("file_length", "valid").
+.gate invalid_allowlist_signature
+''', "A gate at a place"),
+ ("rr", '''
+// A name's code is the code of its latest earlier assignment whose value had one: `x = a.field`
+// then `x = b` leaves x at EOP002. Which write counts depends on src_code itself, under max.
+.decl src_code(v: node, c: symbol) ordered by earlier
+src_code(n, c) :- ast_name(n, x), expr_ctx(n, "load"), frame(n, f),
+    k = max i : { write(w2, f, x, v2), earlier(v2, n), src_code(v2, _), visit_index(w2, i) },
+    visit_index(w, k), write(w, f, x, v), src_code(v, c).
+''', "ordered by earlier (data-layer/sketches/owner-code.rr)"),
 ])
 
 w('''  <section class="sect">

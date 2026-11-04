@@ -32,8 +32,13 @@ def main():
         for line, vs, st in souffle.check_text(open(f).read(), edits):
             bad += 1
             print(f"{f}:{line}: unbound {', '.join(vs)}")
-    for f in sorted(glob.glob("*.rr") + glob.glob("data-layer/*.rr")):
+    for f in sorted(glob.glob("*.rr") + glob.glob("data-layer/**/*.rr", recursive=True) + glob.glob("lib/**/*.rr", recursive=True)):
         files = program(os.path.abspath(f)) + [os.path.join(ROOT, "lib/core.rr")]
+        texts = [open(g).read() for g in dict.fromkeys(files)]
+        for line, h, d, st in souffle.check_strata(texts):
+            bad += 1
+            print(f"{f}: {h} depends on {d} through ! or an aggregate in a cycle "
+                  f"(not stratified; no `ordered by` tie): {st[:100]}")
         decls = collections.defaultdict(list)
         for g in dict.fromkeys(files):
             for m in re.finditer(r"^\.(?:decl|edit)\s+(\w+)\(", open(g).read(), re.M):

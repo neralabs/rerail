@@ -20,7 +20,7 @@ First draft            Soufflé form
 
 Used once on the hand-written files and on every translation the page shows.
 """
-import re
+import collections, re
 
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -390,7 +390,7 @@ if __name__ == "__main__":
 # a fix relation's head and an .edit's head arrive bound; a stop-set argument names a relation, not a variable.
 
 BUILTIN_FN = {"cat", "strlen", "to_number", "to_string", "contains", "substr", "ord", "min", "max", "sum",
-              "count", "mean"}
+              "count", "mean", "join"}
 RELATION_ARG = {"within_stop": 2, "nearest": 2, "precedes_stop": 2}
 STMT_TOK = re.compile(r'"(?:[^"\\]|\\.)*"|`+|//[^\n]*|:-|=>|!=|<=|>=|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|[A-Za-z_][A-Za-z0-9_]*|@[A-Za-z_]\w*|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|\S', re.S)
 
@@ -602,7 +602,7 @@ def _literal(l, bound, force=False):
         subj = _vars(args[1]) if len(args) > 1 else set()
         ready = force or subj <= bound
         return groups, subj, ready
-    if "count" in l or "min" in l or "max" in l or "sum" in l:
+    if "count" in l or "min" in l or "max" in l or "sum" in l or "join" in l:
         # v = agg … : { … }   or   agg : { … } op value
         if ":" in l and "{" in l:
             a = l.index("{")
@@ -613,7 +613,7 @@ def _literal(l, bound, force=False):
             if len(outside) >= 2 and outside[1] == "=" and _is_var(outside[0]):
                 ready = force or inner_vars <= bound
                 return {outside[0]}, inner_vars, ready
-            vs = _vars([t for t in outside if t not in ("count", "min", "max", "sum", ":")]) | inner_vars
+            vs = _vars([t for t in outside if t not in ("count", "min", "max", "sum", "join", ":")]) | inner_vars
             # `min k : { … }`: k is local
             agg_local = {outside[1]} if outside and outside[0] in ("min", "max", "sum") and len(outside) > 1 else set()
             vs -= agg_local
@@ -691,3 +691,131 @@ def check_text(text, extra_bound=()):
         if bad:
             problems.append((line, bad, st))
     return problems
+
+
+# ---- stratification ------------------------------------------------------------------------------------------------
+# Soufflé requires that no relation depends on itself through `!` or an aggregate. Addition 6 relaxes that for
+# relations declared `ordered by earlier`: such a use is allowed when its first column is tied to the head's first
+# column by earlier(m, n) in the same scope (the body, or the aggregate's body).
+
+AGG = ("count", "min", "max", "sum", "join", "mean")
+
+
+def ordered_decls(text):
+    """{relation: order} for `.decl r(…) ordered by earlier`."""
+    return {m.group(1): m.group(2) for m in
+            re.finditer(r"^\.decl\s+(\w+)\(.*\)\s+ordered by (earlier)\b", text, re.M)}
+
+
+def _first_arg(atom):
+    """First argument token of `r ( a , … )`, or None."""
+    if len(atom) > 2 and atom[1] == "(":
+        return atom[2]
+    return None
+
+
+def _tied(scope, order, m, n):
+    for i in range(len(scope) - 5):
+        if scope[i] == order and scope[i + 1:i + 6] == ["(", m, ",", n, ")"]:
+            return True
+    return False
+
+
+def rule_deps(stmt):
+    """(head, head_first_arg, [(dep, negative, dep_first_arg, scope_tokens)]) for one rule; None for facts."""
+    toks = _lex(stmt)
+    if toks and toks[-1] == ".":
+        toks = toks[:-1]
+    if toks and toks[0] in ("must", "may"):
+        toks = toks[1:]
+    if not toks or ":-" not in toks:
+        return None
+    k = toks.index(":-")
+    head, rest = toks[:k], toks[k + 1:]
+    if "=>" in rest:
+        rest = rest[:rest.index("=>")]
+    deps = []
+
+    def walk(lits, neg, scope):
+        for l in lits:
+            if not l:
+                continue
+            if l[0] == "(" and l[-1] == ")" and ";" in l:
+                for br in _split_top(l[1:-1], ";"):
+                    walk([x for x in _split_top(br, ",") if x], neg, scope)
+                continue
+            if l[0] == "!":
+                walk([l[1:]], True, scope)
+                continue
+            if any(t in AGG for t in l) and "{" in l and ":" in l:
+                a = l.index("{")
+                e = len(l) - 1 - l[::-1].index("}")
+                inner = l[a + 1:e]
+                walk([x for x in _split_top(inner, ",") if x], True, inner)
+                continue
+            if len(l) > 1 and l[1] == "(" and _is_var(l[0]):
+                deps.append((l[0], neg, _first_arg(l), scope))
+
+    walk([x for x in _split_top(rest, ",") if x], False, rest)
+    return head[0], _first_arg(head), deps
+
+
+def check_strata(texts):
+    """Problems in one program (a list of file texts): negative cycles not allowed by `ordered by`."""
+    ordered, rules = {}, []
+    for t in texts:
+        ordered.update(ordered_decls(t))
+        for line, st in statements(t):
+            r = rule_deps(st)
+            if r:
+                rules.append((line, st, r))
+    idb = {r[0] for _, _, r in rules}
+    graph = collections.defaultdict(set)
+    for _, _, (h, _, deps) in rules:
+        for d, _, _, _ in deps:
+            if d in idb:
+                graph[h].add(d)
+    comp = _scc(idb, graph)
+    problems = []
+    for line, st, (h, n, deps) in rules:
+        for d, neg, m, scope in deps:
+            if not neg or d not in idb or comp[d] != comp[h]:
+                continue
+            o = ordered.get(h)
+            if o and ordered.get(d) == o and m and n and _tied(scope, o, m, n):
+                continue
+            problems.append((line, h, d, st))
+    return problems
+
+
+def _scc(nodes, graph):
+    """Tarjan's strongly connected components, iterative: {node: component id}."""
+    index, low, comp, stack, on, out = {}, {}, {}, [], set(), {}
+    counter = [0]
+    for root in sorted(nodes):
+        if root in index:
+            continue
+        work = [(root, iter(sorted(graph.get(root, ()))))]
+        index[root] = low[root] = counter[0]; counter[0] += 1
+        stack.append(root); on.add(root)
+        while work:
+            v, it = work[-1]
+            nxt = next(it, None)
+            if nxt is not None:
+                if nxt not in index:
+                    index[nxt] = low[nxt] = counter[0]; counter[0] += 1
+                    stack.append(nxt); on.add(nxt)
+                    work.append((nxt, iter(sorted(graph.get(nxt, ())))))
+                elif nxt in on:
+                    low[v] = min(low[v], index[nxt])
+                continue
+            work.pop()
+            if work:
+                low[work[-1][0]] = min(low[work[-1][0]], low[v])
+            if low[v] == index[v]:
+                while True:
+                    w = stack.pop(); on.discard(w); out[w] = v
+                    if w == v:
+                        break
+    return out
+

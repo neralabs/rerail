@@ -282,7 +282,10 @@ annotation(r) :- string_annotation(s), parsed(s, "annotation", r).   // native s
 // type_checking_block(b): b is the body of `if TYPE_CHECKING:` (from typing or typing_extensions). Code there never
 // runs, so imports in it do not count as import-time (see python/imports' import_time).
 .decl type_checking_block(b: node)
-type_checking_block(b) :- kind(i, "if_statement"), field(i, "condition", c), sym_of(c, q),
+// It reads qn (the import as written), not sym_of: sym_of follows re-exports, which depend on import_time, which
+// negates this relation, so using it here would make a negative cycle that Soufflé rejects. A TYPE_CHECKING
+// re-exported through another module is therefore not recognised.
+type_checking_block(b) :- kind(i, "if_statement"), field(i, "condition", c), qn(c, q),
     (q = "typing.TYPE_CHECKING" ; q = "typing_extensions.TYPE_CHECKING"), field(i, "consequence", b).
 // catches(x, q): except clause x catches exception class q. A bare `except:` (no child other than the body block)
 // catches everything, modelled as builtins.BaseException.

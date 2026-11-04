@@ -3,13 +3,17 @@
 // Tape relations are read in place from the parse tape (decision 0026); none is a table of rows per node.
 //
 // The language is Soufflé Datalog. Rules, `.decl`, `.input`, `.output`, `.type`, `.functor`, `#include`,
-// `!`, `_`, `count : { … }`, `match` and `@functors` mean what they mean in Soufflé. Four additions, each
+// `!`, `_`, `count : { … }`, `match` and `@functors` mean what they mean in Soufflé. Six additions, each
 // described where it is used:
 //   1. Patterns:  n ~ `code pattern`  matches a node against the language's grammar (matcher atoms, below).
 //   2. Captures:  named regex groups in match("…(?<X>…)…", s) bind X (value functions and captures, below).
 //   3. must, may: three-valued relations, for facts that may be unknown (the tsx and python libraries).
 //   4. Findings and fixes: .violation, fix, `=> edits` and .edit (edits, below; the page's Fixes section).
-// Plus the policy header directives (.policy, .mode, .scope, .budget, …), which are settings, not logic.
+//   5. join: an ordered string aggregate, `s = join x by k sep "," : { … }` (order and aggregation, below).
+//   6. ordered by: recursion through `!` and aggregates that only looks back along source order (same section).
+// Plus the policy directives (.policy, .mode, .scope, .budget, .gate, …), which are settings, not logic
+// (findings and enforcement, at the end). Everything else the data-layer checks need is relations and functors:
+// docs/rule-syntax/data-layer/DESIGN.md maps each of the 142 checks to what it uses.
 //
 // Names used below: `d` a document id, `n`/`p`/`c`/`a` nodes, `s`/`v`/`k` symbols.
 
@@ -66,6 +70,30 @@
 .input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
 .input value, string_value, static_value, value_type
 
+// ---- source text (every document, parsed or not) ------------------------------------------------------------
+// Checks that count lines, scan comments or read files with no grammar (Markdown, Rust read as text) need the
+// raw bytes, comments and blank lines included. A document in `.scope text "**/*.md"` has doc, path_part and these
+// relations, and no tree.
+// source(d, sp): the whole file as one span. match / match_all over it give spans with lines.
+.decl source(d: number, sp: span)
+// src_line(d, 12, sp): physical line 12, without its terminator. Python documents split as str.splitlines()
+// does (\r, \v, \f, \x1c-\x1e, \x85 and the Unicode separators also end a line); others split at \n only.
+// A Datalog version over match_all would be exact for \n only, so it is native.
+.decl src_line(d: number, l: number, sp: span)
+.decl line_count(d: number, k: number)                   // number of physical lines, as src_line counts them
+.decl end_line(n: loc, l: number)                        // 1-based line of the last character
+.decl col(n: loc, c: number)                             // 0-based column of the start, for keys that need one
+// op_at(n, i, s): n's operator tokens in order, from 0: in `a < b <= c`, op_at(cmp, 0, "<"), op_at(cmp, 1, "<=").
+// A two-word operator is one token: "not in", "is not". `op` (above) is the unordered view; chained comparisons
+// need the order.
+.decl op_at(n: node, i: number, s: symbol)
+// parse_error(d, 3, "invalid syntax"): the language's own parser rejects the file. Tree-sitter recovers from
+// errors, so the tape always has a tree; this fact is the reference parser's verdict (CPython for Python).
+// By the findings contract the file's outcome is Unknown(parse failure); a policy can also report it
+// (`.on parse_error`, at the end).
+.decl parse_error(d: number, l: number, msg: symbol)
+.input source, src_line, line_count, end_line, col, op_at, parse_error
+
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
 // would materialise every (node, ancestor) pair; on the tape each question is a range comparison.
@@ -97,7 +125,15 @@
 // split_dot("os.path.join", "os.path", "join"): q is m.x, split at the last dot. A relation, not a function,
 // so it runs whichever way round its columns are bound (see @dot below for building a name).
 .decl split_dot(q: symbol, m: symbol, x: symbol)
+// earlier(m, n): m comes before n in the language's AST visit order, in the same document. For Python that is
+// CPython's ast order: a def's decorators and return annotation come after its body, defaults after all the
+// parameters. Elsewhere it is start offset. It is the order `ordered by` relations look back along (below), and
+// "the latest assignment before this use" is `max` over it.
+.decl earlier(m: node, n: node)
+.decl visit_index(n: node, i: number)                    // the same order as a number, from 0 per document
+.decl ast_depth(n: node, k: number)                      // depth in the language's AST, for breadth-first "first"
 .input within, within_stop, nearest, precedes, next_sibling, precedes_stop, parsed, spread, split_dot
+.input earlier, visit_index, ast_depth
 
 // ---- matcher atoms ---------------------------------------------------------------------------------------------
 // Body forms that hand a node to the pattern matcher. Not Soufflé: addition 1.
@@ -109,6 +145,33 @@
 //                 Variables bound by patterns are written in capitals by convention; nothing else is.
 // text_rule(d, {…})  a document-level regex rule (forbid.regex), from a translated JSON rule
 // ast(n, { … })   a JSON matcher term with no Datalog form yet; compiled to a transducer program
+
+// ---- order and aggregation: additions 5 and 6 -------------------------------------------------------------------
+// 5. join, an ordered string aggregate. Soufflé's aggregates are count, sum, min, max and mean; none builds a string.
+//      s = join x by k sep ", " : { r(k, x) }
+//    s is every x of the rows, ordered by k (ties by x), separated by ", "; "" when there are none. Symbols
+//    compare by Unicode code point and numbers by value, as Python's sorted() does. `by k` may be
+//    a tuple, `by (a, b)`. Checks need it where text is part of a key or of a signed message: a sorted list in a
+//    ratchet identity, or the canonical JSON an allowlist signature covers. Message text alone does not need it
+//    (the findings contract leaves messages free), but may use it.
+//
+// 6. ordered by earlier: recursion through `!` and aggregates, along the visit order.
+//      .decl owner_code(n: node, x: symbol, c: symbol) ordered by earlier
+//    Soufflé rejects a relation that depends on itself through `!` or an aggregate. A few checks need exactly
+//    that: a name's state at n is set by the latest earlier write *that qualifies*, and whether a write
+//    qualifies depends on the state where it happens. "x's code is the code of its latest assignment whose
+//    value has a code" (rebinding to a value without one keeps the old code), where the value's code may come
+//    from another name's state at that assignment. "Latest qualifying" is a max over the recursive relation.
+//    It is well founded: every step goes to an earlier node. A relation declared `ordered by earlier` may be
+//    used under `!` or in an aggregate in its own recursion when the use's first column m is tied to the head's
+//    first column n by earlier(m, n) in the same body (inside the aggregate when the use is inside it). The
+//    checker enforces this. The engine evaluates such a relation per document in visit order, so rows at n
+//    depend only on rows already final.
+//    Most state needs no ordered by. When every write resets the name (any assignment clears it, as Python's
+//    dict assignment does), "latest write before n" is a max over the writes, which are syntax; the value
+//    that write stores then depends positively on the state there, which plain recursion allows. "Every branch
+//    raises" is a chain over the branches (python/flow's always_raises). Use ordered by only when which write
+//    counts depends on the recursion.
 
 // ---- value functions and captures --------------------------------------------------------------------------------
 // Soufflé built-ins used here: cat(a, b) concatenation, strlen(s), to_number(s), to_string(n), contains(a, b),
@@ -154,6 +217,28 @@
 // @slice("_name", 1, 5) = "name": characters start to end-1; negative positions count from the end.
 .functor slice(s: symbol, start: number, end: number): symbol
 .functor to_precision(n: symbol, digits: number): symbol  // JavaScript's Number.prototype.toPrecision
+//
+// Places. @place("api/LAYER_GROUPS.yaml", 1) is a span at line 1 of that path, and @place(path, 0) the file
+// itself. It is how a finding sits where there is no node: a missing required file, an allowlist, a baseline,
+// a Markdown line. The path need not exist. text is "" and docof has no row.
+.functor place(path: symbol, line: number): span
+//
+// Text for keys and signatures.
+.functor count_matches(re: symbol, s: symbol): number    // non-overlapping matches of re anywhere in s
+.functor sha256(s: symbol): symbol                       // hex digest of s's UTF-8 bytes
+// @json_str(s): s as a JSON string literal, quotes included, escaped as Python's json.dumps does by default
+// (non-ASCII as \uXXXX, surrogate pairs above U+FFFF), so rebuilt messages match the bytes that were signed.
+.functor json_str(s: symbol): symbol
+.functor nfkc(s: symbol): symbol                         // Unicode NFKC, as Python normalises identifiers
+// @ed25519_ok(key_hex, message, sig_b64) = 1 when sig (base64) is key's Ed25519 signature of message's UTF-8
+// bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its
+// layout, and verifies it: lib/data-layer/signing.rr does this for the data layer's two layouts.
+.functor ed25519_ok(key: symbol, message: symbol, sig: symbol): number
+// @tree_digest(n): a hash of n's subtree (kinds, fields, token text; no positions), as Python's ast.dump compares.
+.functor tree_digest(n: node): symbol
+// @unparse(n): the reference printer's text of n (Python: ast.unparse). Comments go, quotes and spacing are
+// normalised. Native because it is the reference implementation's printer, not a property of the tree.
+.functor unparse(n: node): symbol
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
 // Facts from the repository that are not source code. Each reader parses one kind of file (JSON configs,
@@ -177,10 +262,40 @@
 // option("max_depth", "3"): a policy's tunable, so one rule text serves repositories with different settings.
 .decl option(name: symbol, v: symbol)  // a rule option's configured value (rerail.policy/v1 `options`)
 // signed_list("allow/exec.txt", "scripts/build.py"): approved exceptions; the signature check is native so a
-// rule cannot accept an edited list.
+// rule cannot accept an edited list. A list whose signature fails has no rows, and an input_error row instead.
 .decl signed_list(path: symbol, entry: symbol)  // entries of a signed allowlist; refused if the signature fails
+// git_tracked("docs/a.md"): the file is in the Git index. file() is what is on disk in the scanned tree; a check
+// about committed files needs the difference.
+.decl git_tracked(path: symbol)
+// git_rev("head", sha), git_rev("base", sha): the revision under check and the one it is compared against (the
+// merge base of a change). git_has(sha, path): the path exists at that revision.
+.decl git_rev(name: symbol, sha: symbol)
+.decl git_has(sha: symbol, path: symbol)
+// Python string constants as CPython builds them. str_part(lit, i, v, at, spec): piece i of the str Constant(s)
+// that literal lit becomes: adjacent literals are one constant, joined; an f-string gives one piece per literal
+// run between interpolations, and spec = 1 for a piece inside a format spec. v is decoded (escapes applied).
+// at is the source piece it starts in. Bytes literals give no row. Native: it is CPython's decoder.
+.decl str_part(lit: node, i: number, v: symbol, at: node, spec: number)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, string_annotation, option
-.input signed_list
+.input signed_list, git_tracked, git_rev, git_has, str_part
+//
+// Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per
+// format; r's columns are filled by name or position. A file that is missing, unreadable or malformed gives no
+// rows and one input_error row, so a rule (or `.on input_error`) can report it. Readers only read: signatures
+// are checked in Datalog with @ed25519_ok, so any signing layout works without a new reader.
+//   IO=file      tab-separated lines (Soufflé's own format)
+//   IO=json      path="/counts" (a JSON pointer, default the whole file): an object gives one (key, value) row
+//                per member, a list one row per element, a scalar one row; records=true makes each element of a
+//                list of objects one row, a column per key
+//   IO=yaml      the same shapes as json
+//   IO=lines     one row per line: (line number, text); dir="allow/" reads every file of a directory, with
+//                (file, line, text) rows, as strict allowlist fragment directories need
+//   at="base"    read the file as it is at git_rev("base", …). Burn-down lists that may only shrink compare the
+//                two readings.
+// Rerail never runs repository code. Facts only a run can produce (pytest's collection, behaviour probes, a
+// catalog built at import time) are read from a file a CI step writes, with IO=json, and are declared inputs.
+.decl input_error(path: symbol, kind: symbol, detail: symbol)  // kind: missing, unreadable, malformed, signature
+.input input_error
 
 // ---- edits (native applier) -----------------------------------------------------------------------------------
 // Addition 4. A fix is a set of edits. Rules derive edits like any other rows: a rule ending in `=> e1, e2`
@@ -205,3 +320,33 @@
 // its own line at n's indentation; in a list it gets a separator.
 .edit insert_before(n: node, text: symbol)               // built in
 .edit insert_after(n: node, text: symbol)                // built in
+
+// ---- findings and enforcement (directives) -----------------------------------------------------------------------
+// A finding's key is (policy, code, path, line), as the findings contract says. Order, multiplicity and messages
+// are free, so two matches at one key are one finding; a check that needs two keeps them apart with a column.
+//
+// .violation V(at: loc, …) "message"          at is a node, a span, or a @place. A place with line 0 is a file-level
+//                                              finding; @place of a missing path is a repository-level one.
+// .violation V(at: loc, c: symbol) code {c}   the code is a column: SEC123 found in a comment is its own code,
+//                                              and budgets by code see each one.
+// .severity V warning | error                 per code; `.budget … by severity` counts by it.
+// .gate V                                     when V has rows, they are the policy's only findings: a bad
+//                                              signature or a missing baseline replaces the report.
+// .on parse_error report CODE                 also report each parse_error as a finding (the outcome is still
+//                                              Unknown for that file); likewise .on input_error report CODE.
+// .budget V by code { … }                      ratchet: block only past these counts (as before).
+// .budget V by code from base [floor] [drop 10%]
+//                                              the ceilings are the rows of relation base(code, n), which rules
+//                                              derive, typically from a baseline file read with .input and verified
+//                                              with @ed25519_ok. A code with no row has ceiling 0. floor: counts may
+//                                              not drop either; drop N%: not by more than N%. A missing or badly
+//                                              signed baseline is an ordinary violation, usually a .gate.
+// .budget M by k from base …                  the same over a metric relation M(k, n) that is .output, not over
+//                                              findings: test counts, ignore comments, tracked docs.
+// .group errors = "A", "B"                    names a set of codes, for `.budget … by group`.
+// .scope report dirs "api", "impl"            where findings may land; facts still come from the whole scope,
+//                                              so imports and manifests outside it are read.
+// .scope text "**/*.md", "**/*.rs"            documents read as text only (source, src_line; no tree).
+// .scope tests false                          drops documents with a `test` or `tests` path part. Walks always
+//                                              skip .git, .venv, venv, __pycache__ and tmp.
+
