@@ -3,7 +3,9 @@
 Repository scripts, grouped by what they are for. Their tests live in `test/scripts/`.
 
 - `build/`: steps of `npm run build` and `npm pack` (copy the UI, require cargo, repair SQLite, stamp plugin
-  versions).
+  versions), and the documentation site GitHub Pages serves (`docs-site.mjs`, `npm run build:docs-site`: `docs/` as
+  pages in `dist-docs-site/`, with each page's Markdown twin, `llms.txt` and the code rule's JSON Schema for agents;
+  `.github/workflows/docs-site.yml` publishes it).
 - `check/`: the checks `npm run check` and `check:*` run, including the layer boundary lint
   (`check-boundaries.mjs`), the Windows checkout check (`check-windows-paths.mjs`: every tracked path short
   enough and named so Windows can check it out), the internal reference check (`check-internal-refs.mjs`: no

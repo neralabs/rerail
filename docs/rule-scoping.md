@@ -1,4 +1,4 @@
-# Rule Scoping
+# Rule scoping
 
 Rerail keeps rule configuration and execution history in one user-level SQLite database, `$RERAIL_HOME/rerail.sqlite` (`~/.rerail/rerail.sqlite` when `RERAIL_HOME` is unset). A **repository** owns its rule configuration; each **checkout** of it decides whether Rerail is on there and may change rules for itself. Sessions, events, work links and audits are attributed to the repository of the checkout that recorded them.
 

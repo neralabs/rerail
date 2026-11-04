@@ -1,4 +1,4 @@
-# Distribution Model
+# Distribution model
 
 ## Decision
 

@@ -316,7 +316,7 @@ A rule document carries two kinds of text, for two readers. Its `description` is
 the rule catalog; the coding agent never reads it. Each clause's `violation.message` is for the agent, which reads it in
 the steer block Rerail writes around it:
 
-```
+```text
 Rerail found 2 problems in your last edit:
 - src/grade.js:1:8 — <message> [complexity-cyclomatic-javascript]
   Suggested fix: delete 14:3–14:12

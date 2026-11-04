@@ -1,4 +1,4 @@
-# Writing Command-Line Rules
+# Writing command-line rules
 
 > A practical guide to catching the commands an agent should never run — `git push --force`,
 > `rm -rf`, `--no-verify` — with structural tool-call rules. Every example below was run through the

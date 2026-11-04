@@ -1,0 +1,1 @@
+The docs are now a website, https://neralabs.github.io/rerail/, with a page of architecture rule examples taken from maintainers' reviews in open-source projects, a readable DSL reference, and every page also served as Markdown, with llms.txt and a JSON Schema for code rules, so coding agents can read them.

@@ -11,7 +11,7 @@ what to do, and that nothing was changed on this machine; fix that, then run the
 
 ### Node is too old
 
-```
+```text
 ✕ Rerail needs Node 24 or newer. You have Node 22.23.4.
   Nothing was changed on this machine.
   Upgrade Node:  nvm install 24
@@ -31,7 +31,7 @@ npm stops with `npm error code EBADENGINE`. Both mean the same: install Node 24.
 
 ### Linux: `Rerail can’t run on this computer`
 
-```
+```text
 ✕ Rerail can’t run on this computer: this Linux has glibc 2.26, and Rerail needs glibc 2.28 or newer.
   Nothing was changed on this machine.
   Rerail runs on macOS and Windows, and on Linux with glibc 2.28 or newer, each on arm64 or x64.
@@ -53,7 +53,7 @@ On a system or processor Rerail has no engine for (FreeBSD, 32-bit ARM), it read
 
 ### Git is missing
 
-```
+```text
 ✕ Rerail needs Git, and found none where it looks:
     /home/me/.local/bin/git
     /usr/bin/git
@@ -80,7 +80,7 @@ tools: Rerail counts it only once the Command Line Tools are installed (`xcode-s
 
 ### Windows PowerShell: `npx.ps1 cannot be loaded`
 
-```
+```text
 npx : File C:\Program Files\nodejs\npx.ps1 cannot be loaded because running scripts is disabled on this system.
 ```
 
@@ -100,7 +100,7 @@ reach the registry, see below.
 
 When npx cannot fetch Rerail at all, npm stops before Rerail runs:
 
-```
+```text
 npm error code ECONNREFUSED
 npm error network If you are behind a proxy, please make sure that the
 npm error network 'proxy' config is set properly.  See: 'npm help config'
@@ -108,7 +108,7 @@ npm error network 'proxy' config is set properly.  See: 'npm help config'
 
 When npx already has Rerail in its cache, set-up starts, asks the registry once, and stops within seconds, naming it:
 
-```
+```text
 rerail: could not reach the npm registry (https://registry.npmjs.org, ECONNREFUSED): check your network, proxy, or registry in ~/.npmrc
 ```
 
@@ -122,7 +122,7 @@ When no other set-up or update is running, delete `~/.rerail/update.lock` and ru
 
 ### `Couldn’t download Rerail’s rule packs`
 
-```
+```text
 Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit app.
   could not reach the npm registry (https://registry.npmjs.org, ECONNREFUSED): check your network, proxy, or registry in ~/.npmrc
 Try downloading them again?
@@ -135,7 +135,7 @@ with its reason. A pack made for a newer Rerail says so, and that `rerail update
 
 ### A rule pack I expected is not offered
 
-```
+```text
 Node.js and React would fit, but have no rules yet, so set-up does not offer them.
 ```
 
@@ -166,13 +166,13 @@ The startup file set-up changed keeps the file as it was in `<file>.rerail.bak`,
 
 ### `rerail status` says `No repo found here` or `Rerail is not installed`
 
-```
+```text
 No repo found here (/home/me). Run rerail status inside your project.
 ```
 
 `rerail status` reports on the repository you run it in. Run it inside your project.
 
-```
+```text
 Rerail is not installed on this computer. Install it with npx @neralabs/rerail setup.
 ```
 
@@ -188,7 +188,7 @@ Claude Code's status line on Windows.
 When that `node` is older than 24, `rerail` stops with set-up's `Rerail needs Node 24 or newer` message, the daemon
 does not start, the coding agents' hooks do nothing and say why in one line on stderr:
 
-```
+```text
 rerail hook: Rerail needs Node 24 or newer and this is Node 22.12.0, so it is off in this session. Put Node 24 or newer first on PATH, then run rerail install --refresh.
 ```
 
@@ -215,7 +215,7 @@ On Windows, Codex's hook works from a profile folder whose name has a space or a
 
 ### `Couldn’t connect …: … is not plain JSON`
 
-```
+```text
   △ Couldn’t connect Claude Code: /home/me/.claude/settings.json is not plain JSON
     (Expected property name or '}' in JSON at position 2 (line 1 column 3)). Rerail left the file as it is.
     Take out its comments and trailing commas, then run rerail setup again to connect Claude Code.
@@ -245,7 +245,7 @@ afterwards. Set-up run again never connects an agent you left out with `--agents
 
 ### `Unknown coding agent`
 
-```
+```text
 rerail: Unknown coding agent: copilot. Rerail works with omp, pi, claude-code, codex, cursor.
 ```
 
@@ -301,7 +301,7 @@ fails the start (below).
 
 ### `rerail daemon start` fails
 
-```
+```text
 rerail: Rerail daemon exited with code 1 before it was ready:
 …
 ```
@@ -357,7 +357,7 @@ or Cursor connected to WSL), and on Windows for an agent running on Windows. Use
 nothing. Keep repositories on the same side as the agent, under your WSL home (`~/code/…`) rather than `/mnt/c/…`.
 Set-up run in WSL for a repository on the Windows drive says so, and goes on:
 
-```
+```text
 △ This is WSL, and /mnt/c/code/app is on the Windows drive.
   Rerail and your coding agent have to be installed on the same side: both in WSL, or both on Windows.
   Repos on the Windows drive are slow from WSL; a clone in the Linux file system (under ~) is faster.

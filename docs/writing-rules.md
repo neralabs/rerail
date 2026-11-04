@@ -72,8 +72,9 @@ changes nothing.
 **A code rule** checks the files the agent edits: imports across a layer boundary, a call that bypasses a helper, a blocking call
 in async code, an old path still written in a `Justfile`, a file in the wrong folder. It is a `rerail.policy/v1` document with a
 scope (globs) and clauses (a `regex` over a file's text or path, a `file` query, or a syntax query over Python, JavaScript,
-TypeScript, PHP or Blade). See [Writing a code rule](../skills/rerail-create/references/code-rules.md), and for rules over
-text and paths in any file, [Writing path and text rules](path-and-text-rules.md).
+TypeScript, PHP or Blade). See [Writing a code rule](../skills/rerail-create/references/code-rules.md), for rules over
+text and paths in any file, [Writing path and text rules](path-and-text-rules.md), and for rules that hold a design in
+place, [Architecture rule examples](architecture-rule-examples.md).
 
 **A command rule** checks the commands the agent runs: force pushes, `--no-verify`, publishing. It is a conversation rule with a
 structural `match` over `input.command`. See [Writing a command rule](../skills/rerail-create/references/conversation-rules.md)

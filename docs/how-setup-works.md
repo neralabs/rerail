@@ -9,7 +9,7 @@ details. [Troubleshooting](troubleshooting.md) answers what goes wrong.
 `npx` fetches the package into npm's cache and runs its `rerail` binary from
 there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 
-```
+```text
 ~/.rerail/
 ├── versions/<version>/node_modules/@neralabs/rerail/   the installed package
 ├── current  →  versions/<version>/node_modules/@neralabs/rerail

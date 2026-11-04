@@ -15,6 +15,9 @@
 - [tool-call-rules.md](tool-call-rules.md): writing rules over the commands an agent runs
 - [path-and-text-rules.md](path-and-text-rules.md): writing code rules over files' text and paths, which files they
   read, and rules that say a file should not exist
+- [architecture-rule-examples.md](architecture-rule-examples.md): design rules maintainers of Sentry, Home Assistant,
+  Zulip, Immich, n8n, VS Code, rust-analyzer, Zed, uv, Nextcloud, Laravel apps and Synapse enforce in review, each as a
+  tested rule, plus React wrapper rules, and what a rule can and cannot see
 - [code-rule-dsl-reference.html](code-rule-dsl-reference.html): every construct of the `rerail.policy/v1` code-rule
   DSL. Hand-written prose with generated regions; see `scripts/generate/README.md`.
 - [in-session-surfaces.md](in-session-surfaces.md): what Rerail shows inside a coding-agent session
