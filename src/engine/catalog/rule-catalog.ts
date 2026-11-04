@@ -236,17 +236,19 @@ function comparePackPrecedence(left: LoadedRulePack, right: LoadedRulePack): num
  */
 function compileProblem(loaded: LoadedRulePack, coreVersion: string | undefined): string | undefined {
   const rerail = coreVersion === undefined ? "this Rerail" : `this Rerail (${coreVersion})`;
+  const cannotRun = (ruleId: string, engineSays: string): string =>
+    `${rerail} cannot run its rule ${ruleId}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${engineSays}`;
   for (const document of loaded.documents) {
     if (document.kind === "conversation") {
       const [issue] = engineRegexIssues(document.rule);
-      if (issue !== undefined) return `${rerail} cannot run its rule ${document.rule.id}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${issue.path.join(".")} ${issue.message}`;
+      if (issue !== undefined) return cannotRun(document.rule.id, `${issue.path.join(".")} ${issue.message}`);
       continue;
     }
     try {
       storableCodeRule(document.rule);
     } catch (error) {
       if (!(error instanceof CodeRuleCompileError)) throw error;
-      return `${rerail} cannot run its rule ${document.rule.id}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${error.reason}`;
+      return cannotRun(document.rule.id, error.reason);
     }
   }
   return undefined;

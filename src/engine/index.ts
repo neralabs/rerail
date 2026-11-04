@@ -65,7 +65,7 @@ export {
   rulePackPackageSchema,
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
-export { engineRegexIssues } from "./catalog/rule-regexes.js";
+export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
 export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
 export {
