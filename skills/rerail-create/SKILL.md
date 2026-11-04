@@ -62,7 +62,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      and 3 call `console.log`.
    - `rerail rules export --output <tmp>/rules.json`, to see the person's own rules and avoid duplicating them.
    - For architecture rules, also read the design docs and the maintainers' review comments that
-     [Where the intent is written](references/architecture-rules.md#where-the-intent-is-written) lists.
+     [Where the intent is written](references/architecture-rules.md#find-the-intent) lists.
 2. **Turn the evidence into candidates.** Write one checkable sentence each, in the person's own words. Never turn a "should" into
    a "must". Score each candidate with the value model and drop the ones it says to skip.
 3. **Show the shortlist:** at most five, best first, in the card format the reference gives, and ask which to write. With no
@@ -103,7 +103,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      Its matches say nothing about those. `repository.binary` counts files in scope it skipped as binary.
    - A rule that matches hundreds of places fights the repo's convention.
    - The message passes the harmful-steering check.
-   - An architecture rule passes [Proving it against history](references/architecture-rules.md#proving-it-against-history):
+   - An architecture rule passes [Proving it against history](references/architecture-rules.md#check-it-against-history):
      it catches the first draft the maintainers sent back, and stays quiet on the merge and on recent merged work.
 
    After about five rounds without passing, stop and tell the person what does not work.

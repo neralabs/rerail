@@ -3,11 +3,14 @@
 Repository scripts, grouped by what they are for. Their tests live in `test/scripts/`.
 
 - `build/`: steps of `npm run build` and `npm pack` (copy the UI, require cargo, repair SQLite, stamp plugin
-  versions).
+  versions), and the documentation site GitHub Pages serves (`docs-site.mjs`, `npm run build:docs-site`: `docs/` as
+  pages in `dist-docs-site/`, with each page's Markdown twin, `llms.txt` and the code rule's JSON Schema for agents;
+  `.github/workflows/docs-site.yml` publishes it).
 - `check/`: the checks `npm run check` and `check:*` run, including the layer boundary lint
   (`check-boundaries.mjs`), the Windows checkout check (`check-windows-paths.mjs`: every tracked path short
   enough and named so Windows can check it out), the internal reference check (`check-internal-refs.mjs`: no
-  internal ticket ID in a tracked path or text) and the licence allowlist.
+  internal ticket ID in a tracked path or text), the CI path filter check (`check-ci-paths.mjs`: every file the jobs
+  `ci.yml`'s path filters skip import, from the entry points it lists, matches their filter) and the licence allowlist.
 - `deps/`: pins that follow a dependency (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release digests
   follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI, and `reviewer.yml`'s
   `reviewer_ref` follows the commit its `uses:` pins. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's
@@ -31,8 +34,8 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   `latest`, putting a pack back, and the lockfile sync after `changeset version`. The dist-tag check after a publish,
   and the GitHub Release of each released version from its changelog section. The release notes: the changelog
   generator changesets write each pack's entries with, core's section written from the entries pending in
-  `.changelog/`, and the check that an entry or changeset a pull request adds is written for the person upgrading,
-  that no entry is written into `CHANGELOG.md` by hand, and that a release's section leads with a paragraph.
+  `.changelog/`, by change type, and the check that every pending entry names its type, that an entry or changeset a
+  pull request adds is written for the person upgrading, that no entry is written into `CHANGELOG.md` by hand, and that a release's section leads with a paragraph.
 - `review/`: the guidance review (`just rerail-guidance-review`): every rule pack rule run on its examples and upstream
   fixtures, with the steer the coding agent reads, in a local page where each rule's guidance is approved or sent back
   with comments.

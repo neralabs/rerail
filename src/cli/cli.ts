@@ -51,6 +51,7 @@ import {
   stopDaemon,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
+  type DaemonLookup,
   type RunningDaemon,
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
@@ -62,14 +63,18 @@ import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-con
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
+import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
+import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
+import { runFeedbackCommand } from "./feedback-cli.js";
 import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { modelStatusLine } from "../engine/native/model-status.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -172,6 +177,8 @@ function usage(): string {
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
+    "  rerail feedback <rule-id> <reason>",
+    "  rerail feedback list [--rule <rule-id>]",
     "  rerail support-bundle [--session <id>] [--repo <dir>] [--output <file>] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
     "  rerail update",
@@ -181,6 +188,12 @@ function usage(): string {
     "",
     internalTesting("Not part of the 0.1.0 release:"),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
+    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
+    "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]",
+    "  rerail remote list|status [--json]",
+    "  rerail remote remove <name|url>",
+    "  rerail remote push [--json]",
+    "  rerail remote exclude|include [--repo <dir>]",
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
@@ -270,6 +283,23 @@ async function runStatusCommand(home: string): Promise<number> {
   } else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
   else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
   else process.stdout.write(`Rerail is on in ${name}.\n`);
+  const code = printDaemonStatus(lookup);
+  // Internal testing: the remote sink, only when a remote is added.
+  try {
+    for (const remote of new RemoteOutbox({ home }).status()) process.stdout.write(`${describeRemoteStatus(remote)}\n`);
+  } catch (error) {
+    process.stdout.write(`Remote sink: status unreadable (${error instanceof Error ? error.message : String(error)})\n`);
+  }
+  // Last, for each connected coding agent, whether its tools can read Rerail's data on this computer.
+  for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
+    // Each sentence names its coding agent.
+    if (agent.connected) process.stdout.write(`${agent.rerailData.why}\n`);
+  }
+  return code;
+}
+
+/** What `rerail status` says of the daemon, and the exit code that goes with it. */
+function printDaemonStatus(lookup: DaemonLookup): number {
   if (lookup.status === "absent") {
     process.stdout.write("The Rerail daemon is not running. Start it with rerail daemon start.\n");
     return 3;
@@ -589,9 +619,11 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, `show-me`, `reset` and `scrub` write the Rerail database with the invoking package's schema (a checkout build, say).
+  // `seed`, `rules`, `show-me`, `reset`, `scrub` and `feedback` write the Rerail database with the invoking package's schema (a checkout build, say).
   // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle"].includes(command ?? "")) return true;
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle", "feedback", "remote"].includes(command ?? "")) return true;
+  // A headless `scan` (no `--session`) runs in this process, so it scans with the package invoked.
+  if (command === "scan") return !commandArgs.includes("--session");
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && commandArgs[1] === "status";
 }
@@ -697,13 +729,16 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "support-bundle") return await runSupportBundleCommand(args, usage, { packageVersion: context.packageVersion });
   if (command === "packs") return await runPacksCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
+  if (command === "feedback") return await runFeedbackCommand(args, usage, { packageVersion: context.packageVersion });
   if (command === "scrub") return await runScrubCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
   if (command === "state") return runStateCommand(args);
   // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
-  if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
+  if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home, version: context.packageVersion });
+  // Internal testing: the remote sink.
+  if (command === "remote") return await runRemoteCommand(args, { home });
   return undefined;
 }
 

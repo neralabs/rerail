@@ -116,6 +116,9 @@ pub(super) struct GrammarMatcher {
     pub(super) text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
     pub(super) sound_under_errors: bool,
+    /// Whether the matcher or a utility it calls holds an `importTarget` term
+    /// (`reads_import_targets`), worked out once when it is compiled.
+    pub(super) import_target: bool,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
     pub(super) utils: Arc<UtilTable>,

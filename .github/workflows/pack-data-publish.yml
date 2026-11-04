@@ -1,8 +1,8 @@
 name: Publish pack data
 
-# Publishes a pull request's pack data (CONTRIBUTING.md, "Pack test data"): every packs/<pack>/upstream/<tool>/publish/
-# its head tracks becomes a new test data or samples archive in s3://nera-test-fixtures/rerail/archives/, and the locks
-# naming them replace publish/ on the pull request's branch.
+# Publishes a pull request's pack data (docs/upstream.md, "Publishing pack data"): every
+# packs/<pack>/upstream/<tool>/publish/ its head tracks becomes a new test data or samples archive in
+# s3://nera-test-fixtures/rerail/archives/, and the locks naming them replace publish/ on the pull request's branch.
 #
 # A maintainer (or an agent with write access) dispatches it on main with the pull request's number, so it always runs
 # main's workflow and code. No job runs anything of the pull request: prep reads its publish/ as git blobs and parses

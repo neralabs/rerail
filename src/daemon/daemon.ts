@@ -10,13 +10,14 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit, sameSecret } from "../api/http.js";
+import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
@@ -56,6 +57,8 @@ const INTERNAL_ERROR_MESSAGE = "The Rerail daemon could not answer this request;
 
 export interface RerailDaemonOptions {
   version: string;
+  /** Internal testing: false keeps the remote sink's sender off; tests may shorten its interval. */
+  remoteSink?: false | { intervalMs: number };
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
   /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
@@ -271,6 +274,7 @@ export class RerailDaemon {
   readonly #accessToken: string;
   readonly #tlsFingerprint256: string | undefined;
   #closed = false;
+  #remoteSink: RemoteSinkLoop | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken,
@@ -361,6 +365,7 @@ export class RerailDaemon {
         modelPath,
         databasePath,
         workspaceRoot,
+        accessToken,
       });
       const nativeToken = randomBytes(32).toString("hex");
       const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath });
@@ -431,6 +436,8 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256,
       });
       if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(daemon.state(), null, 2)}\n`);
+      // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`).
+      if (options.remoteSink !== false) daemon.#remoteSink = startRemoteSink({ home: dirname(databasePath), ...(options.remoteSink ?? {}) });
       // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
       if (options.portFile !== undefined && options.port !== 0 && daemon.port !== remembered) await rememberPort(options.portFile, daemon.port);
       return daemon;
@@ -502,6 +509,7 @@ export class RerailDaemon {
     if (this.#closed) return;
     this.#closed = true;
     try {
+      await this.#remoteSink?.stop();
       await closeHttpServer(this.#server);
     } finally {
       try {

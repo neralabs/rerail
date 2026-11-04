@@ -466,7 +466,9 @@ pub(super) enum Query {
     },
     Ast {
         /// One compiled matcher per grammar the rule language spans; a file uses the grammar its label selects.
-        matchers: Vec<GrammarMatcher>,
+        /// Shared: a workspace copies a code rule's clauses into the synthetic clauses it adds, and the
+        /// matchers never change once compiled.
+        matchers: Arc<[GrammarMatcher]>,
         /// The `calls` terms of the rule and its utilities, each once: their seeds run per file,
         /// their closure is read at call nodes.
         calls: Vec<Arc<CallsTerm>>,
@@ -516,9 +518,7 @@ impl Query {
     /// one matched (`import_target::fs::View`).
     pub(super) fn reads_import_targets(&self) -> bool {
         match self {
-            Query::Ast { matchers, .. } => matchers.iter().any(|matcher| {
-                crate::code_rule_dsl::matcher::reads_import_targets(&matcher.matcher)
-            }),
+            Query::Ast { matchers, .. } => matchers.iter().any(|matcher| matcher.import_target),
             Query::SelectWhen { select, exists } => {
                 select.reads_import_targets() || exists.reads_import_targets()
             }

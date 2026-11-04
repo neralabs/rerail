@@ -17,8 +17,9 @@ function violation(overrides: Partial<CodeRuleViolation> = {}): CodeRuleViolatio
   };
 }
 
-const FIX_IT = "Fix it, or tell the user in one line why you won't.";
-const FIX_THESE = "Fix these, or tell the user in one line why you won't.";
+// One rule: the feedback command names it; several: a placeholder for the rule the agent declines.
+const FIX_IT = "Fix it, or tell the user in one line why you won't and run `rerail feedback p '<that line>'`.";
+const FIX_THESE = "Fix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.";
 
 describe("renderSteer", () => {
   it("renders one violation as the agent's steer: the edit's lead, the finding with its location and rule, the latitude", () => {
@@ -146,7 +147,8 @@ describe("buildSteer", () => {
         "Rerail found 2 problems in your last edit:",
         `- docs/a.md:3:15 — ${SECRET_FILE_FINDING_MESSAGE} [p]`,
         "- src/a.ts:3:15 — log of user [p]",
-        FIX_THESE,
+        // Both findings are rule `p`, so the feedback command names it.
+        "Fix these, or tell the user in one line why you won't and run `rerail feedback p '<that line>'`.",
       ].join("\n"));
     } finally {
       rmSync(root, { recursive: true, force: true });

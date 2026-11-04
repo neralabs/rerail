@@ -281,10 +281,24 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
             .is_err()
         );
 
+        // The first call to meet the poisoned state closes the workspace, which releases its
+        // sources at once; it and every later call fail as closed, which no host retries.
         assert_eq!(
             workspace.add_code_rule(&compiled, None).unwrap_err().reason,
-            "policy workspace is evaluating"
+            "policy workspace is closed"
         );
+        assert!(
+            retained.upgrade().is_none(),
+            "a poisoned workspace retained a source"
+        );
+        assert!(!workspace.accepts_path("resident.py".into()));
+        for rejected in [
+            workspace.set_root("/".into()).unwrap_err(),
+            workspace.evict_inactive().unwrap_err(),
+            workspace.set_document_residency_limit(1024).unwrap_err(),
+        ] {
+            assert_eq!(rejected.reason, "policy workspace is closed");
+        }
         assert!(workspace.try_apply(request.clone()).unwrap().is_none());
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
@@ -295,7 +309,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
         };
         assert_eq!(
             task.compute().unwrap_err().reason,
-            "policy workspace is unavailable"
+            "policy workspace is closed"
         );
         let workspace = Arc::new(workspace);
         let barrier = Arc::new(std::sync::Barrier::new(3));
@@ -320,6 +334,41 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
             "closed poisoned workspace retained a source"
         );
     }
+}
+
+#[test]
+fn a_panic_holding_the_cpu_slot_leaves_the_next_apply_free_to_run() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let panicked = crate::panic_boundary::contain_panic::<()>("apply", || {
+        let _held = super::api::cpu_slot().lock();
+        panic!("apply panicked holding the CPU slot");
+    });
+    assert!(panicked.is_err());
+    let workspace = CodeRuleDslWorkspace::new();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 1, "files": [], "removed": [] }).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    // Retried as the host retries a busy slot: another test's apply may hold it for a moment, but
+    // a slot the panic left held would answer busy until the deadline.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let outcome = loop {
+        match task.compute() {
+            Err(error)
+                if error.reason == "WORKSPACE_BUSY" && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            outcome => break outcome,
+        }
+    };
+    assert!(
+        outcome.is_ok(),
+        "the apply after a panic failed: {outcome:?}"
+    );
 }
 
 #[test]

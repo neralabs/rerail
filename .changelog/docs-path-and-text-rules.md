@@ -1,1 +1,0 @@
-[Writing path and text rules](docs/path-and-text-rules.md) is a new guide to rules over files' text and paths, and the [DSL reference](docs/code-rule-dsl-reference.html#files-read) lists which files each query reads.

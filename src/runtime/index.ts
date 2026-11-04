@@ -9,6 +9,7 @@ export {
   daemonFetch,
   type DaemonHealth,
   type DaemonLaunchOptions,
+  type EngineEndpoint,
   type DaemonState,
   probeDaemon,
   readDaemonState,
@@ -43,3 +44,22 @@ export {
 } from "./session-store.js";
 export { DAEMON_KEEPS_RUNNING, type RepositorySetupIo, onRuleCount } from "./repository-start.js";
 export { type NpmRunner } from "./npm.js";
+export {
+  addRemote,
+  machineId,
+  readRemoteConfig,
+  readRemoteToken,
+  removeRemote,
+  setRepositoryExcluded,
+  type RemoteConfig,
+  type RemoteEntry,
+} from "./remote-config.js";
+export {
+  backoffMs,
+  MAX_BACKOFF_MS,
+  MAX_BATCH_BYTES,
+  RemoteOutbox,
+  startRemoteSink,
+  type RemoteStatus,
+  type SyncResult,
+} from "./remote-outbox.js";

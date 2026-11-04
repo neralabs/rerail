@@ -7,7 +7,7 @@ Works with [![Claude Code](docs/images/agents/claude-code.svg)](https://claude.c
 [![CI](https://github.com/neralabs/rerail/actions/workflows/ci.yml/badge.svg)](https://github.com/neralabs/rerail/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-[Docs](docs/README.md) · [Changelog](CHANGELOG.md)
+[Docs](https://neralabs.github.io/rerail/) · [Changelog](CHANGELOG.md)
 
 ## What is Rerail
 
@@ -21,14 +21,15 @@ Rule checking runs on your machine and makes no network requests. No account or 
 
 You need Node.js 24 or later and Git, on macOS, Linux with glibc 2.28 or later (not Alpine or other musl Linux), or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine. If set-up or Rerail goes wrong, see [Troubleshooting](docs/troubleshooting.md).
 
+In your repository, run this to install Rerail under `~/.rerail`, connect your coding agents and start Rerail there:
+
 ```sh
-cd your-repo
-npx @neralabs/rerail setup   # install under ~/.rerail, connect your coding agents, start Rerail here
+npx @neralabs/rerail setup
 ```
 
 Then, in a new terminal, which has `rerail` on its `PATH`, open the dashboard with `rerail manage`.
 
-Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) lists everything set-up writes and how to remove it.
+Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) says what set-up changes on your machine and how to update and remove Rerail.
 
 Then start a new Claude Code, Codex, Cursor, OMP or Pi session in the repository. To watch Rerail catch a broken rule and steer the fix, run:
 
@@ -43,7 +44,7 @@ To add a rule of your own, type `/rerail-create` followed by what you want:
 /rerail-create never import from src/legacy in new code
 ```
 
-The agent drafts the rule from your description, tests it against the repository without saving it, and adds it after you confirm. [Writing rules](docs/writing-rules.md) covers which rules are worth having.
+The agent drafts the rule from your description, tests it against the repository without saving it, and adds it after you confirm. [Writing rules](docs/writing-rules.md) covers which rules are worth having, and [Architecture rule examples](docs/architecture-rule-examples.md) has complete, tested rules for design decisions that maintainers of Sentry, VS Code, rust-analyzer, Nextcloud and other projects enforce in review: layer boundaries, calls that must go through a service or repository, one home for each kind of thing.
 
 ## How it works
 
@@ -62,7 +63,7 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 
 ## Capabilities
 
-- **Code rules.** Rules are `rerail.policy/v1` documents. Each clause is `forbid`, `require_each` or `budget`, built from regex, syntax-tree and relational queries. The native engine runs them the same way every time, within set limits on files, nodes and time. The [code-rule DSL reference](docs/code-rule-dsl-reference.html) documents every construct.
+- **Code rules.** Rules are `rerail.policy/v1` documents. Each clause is `forbid`, `require_each` or `budget`, built from regex, syntax-tree and relational queries. The native engine runs them the same way every time, within set limits on files, nodes and time. The [code-rule DSL reference](https://neralabs.github.io/rerail/code-rule-dsl-reference.html) documents every construct.
 - **Only the agent's new work is judged.** Code rules report only the lines the agent changed in the session, so existing code does not bury the signal.
 - **Runtime steering.** Violations go back into the live session while the change is still being made, not later in review.
 - **Rules belong to the repository.** Every clone and worktree of a remote shares its rules. Turn a rule or pack on, off or to log-only per repository, folder or checkout, and choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence it; changes apply on the next tool call. See [Rule scoping](docs/rule-scoping.md).
@@ -75,12 +76,22 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 
 Core ships no rules. A rule pack is a set of rules published as its own npm package: Rerail's are `@neralabs/rerail-pack-<id>`, and anyone can publish one as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, which Rerail has not reviewed ([rule packs](docs/rule-packs.md#third-parties-packs)). Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend`.
 
-To add a pack after set-up:
+To add a pack after set-up, first see the packs that fit this repository, and why:
 
 ```sh
-rerail packs recommend        # the packs that fit this repository, and why
-rerail packs add complexity   # install it into ~/.rerail/packs
-rerail manage                 # Rule packs page: add it to this repository
+rerail packs recommend
+```
+
+Install one into `~/.rerail/packs`:
+
+```sh
+rerail packs add complexity
+```
+
+Then open the dashboard and add it to this repository on the **Rule packs** page:
+
+```sh
+rerail manage
 ```
 
 `rerail packs add` installs a pack but turns it on nowhere; it runs only in the repositories you add it to.
@@ -134,6 +145,8 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 
 Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 
+When the agent decides not to follow a steer, it records its one-line reason with `rerail feedback`. Rerail keeps the note on your machine and sends it nowhere; to tell us a rule keeps getting pushed back on, attach the output of `rerail feedback list --rule <rule-id>` to a [Rule misfire](https://github.com/neralabs/rerail/issues/new?template=2-rule-misfire.yml) issue. See [Steer feedback](docs/reference.md#steer-feedback).
+
 ## Internal testing
 
 > [!WARNING]
@@ -180,11 +193,11 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 ### Good places to start
 
 - [CONTEXT.md](CONTEXT.md): the vocabulary used across the codebase. Read it first.
-- [docs/installation.md](docs/installation.md): what set-up writes to your machine and how to remove it.
+- [docs/installation.md](docs/installation.md): what you need, how to install, update and remove Rerail, and what set-up changes on your machine; [docs/how-setup-works.md](docs/how-setup-works.md) has every step and file in detail.
 - [docs/reference.md](docs/reference.md): rules and their configuration, the database, updates, the daemon and its API.
-- [docs/code-rule-dsl-reference.html](docs/code-rule-dsl-reference.html): every construct of the `rerail.policy/v1` rule language.
+- [docs/code-rule-dsl-reference.html](https://neralabs.github.io/rerail/code-rule-dsl-reference.html): every construct of the `rerail.policy/v1` rule language.
 - [docs/rule-packs.md](docs/rule-packs.md) and [docs/pack-format.md](docs/pack-format.md): how packs work and what each must prove.
-- [packs/complexity/rules/](packs/complexity/rules/): real rules to copy when writing your own.
+- [packs/complexity/rules/](packs/complexity/rules/) and [docs/architecture-rule-examples.md](docs/architecture-rule-examples.md): real rules to copy when writing your own.
 - [src/README.md](src/README.md): the layers and which may import which.
 
 ## Contributing
@@ -195,8 +208,23 @@ To build from a checkout you need Node.js 24+, npm, Rust (pinned in `rust-toolch
 
 ```sh
 git lfs install
+```
+
+Then, in the checkout, install the dependencies and build:
+
+```sh
 npm ci && npm run build
+```
+
+Run the checks:
+
+```sh
 npm run check:all
+```
+
+Run the tests:
+
+```sh
 npm run test:all
 ```
 
