@@ -2,6 +2,7 @@
 """Record unchanged eighth-batch analyzer calls with their complete source domain."""
 from __future__ import annotations
 import ast
+import copy
 from dataclasses import asdict, is_dataclass
 from functools import wraps
 import importlib
@@ -64,6 +65,20 @@ def install(recorder):
             if active_sources:active_sources[-1].append((path,text))
         return original_init(self,path,tree,*args,**kwargs)
     recorder.originals.append((cls,'__init__',original_init));cls.__init__=observed_init
+    deleted_observations=[]
+    lazy_module=modules['lazy_architecture']
+    for name in ('_source_for_deleted_surface_scan','_scan_deleted_cold_bootstrap_surfaces'):
+        original=getattr(lazy_module,name)
+        def deleted_observer(original,name):
+            @wraps(original)
+            def observed(*args,**kwargs):
+                result=original(*args,**kwargs)
+                if deleted_observations:
+                    if name=='_source_for_deleted_surface_scan':deleted_observations[-1]['sources'].append((args[0],result))
+                    else:deleted_observations[-1]['findings'].extend(result)
+                return result
+            return observed
+        recorder.originals.append((lazy_module,name,original));setattr(lazy_module,name,deleted_observer(original,name))
     discovered_sources={}
     for function_name in ('scan_cached_pure_lazy_source',):
         cached_module=modules['cached_pure_lazy_allowlist']
@@ -143,19 +158,37 @@ def install(recorder):
                 if not Path.read_text.__module__.startswith('pathlib'):raise ValueError('Test replaces the original source reader')
                 event['files']=files
             except Exception as error:event['retained_reason']='Input adapter: '+type(error).__name__+': '+str(error)
-            captured=[]
-            if check=='lazy_architecture':active_sources.append(captured)
+            captured=[];deleted={'sources':[],'findings':[]}
+            if check=='lazy_architecture':active_sources.append(captured);deleted_observations.append(deleted)
             recorder.depth+=1;start=time.perf_counter()
             try:result=original(*args,**kwargs)
             finally:
                 recorder.depth-=1;event['oracle_ms']=(time.perf_counter()-start)*1000
-                if check=='lazy_architecture':active_sources.pop()
+                if check=='lazy_architecture':active_sources.pop();deleted_observations.pop()
             if check=='lazy_architecture' and captured:
                 by_path={logical(path):text for path,text in captured};files=[{'path':path,'source':text} for path,text in by_path.items()];event['files']=files
+            extra=None
+            if check=='lazy_architecture' and deleted['sources'] and 'retained_reason' not in event:
+                read_sources={logical(path):text for path,text in deleted['sources']}
+                if any(file['source']!=read_sources.get(file['path'],file['source']) for file in files):
+                    # The original mock supplies two different input representations.
+                    # Keep actual producer outputs and coordinates, rather than changing findings.
+                    extra=copy.deepcopy(event);extra['entry']='_scan_deleted_cold_bootstrap_surfaces';extra['call']+=1
+                    extra['oracle_config']['options']['entryPoint']=extra['entry']
+                    extra['files']=[{'path':path,'source':text} for path,text in read_sources.items()]
+                    extra['findings']=normalize(check,deleted['findings'],extra['files'],logical)
+                    extra['input_adapter_note']='Actual fallback source reads and their producer results, separate from the mocked AST coordinates.'
+                    excluded={id(item) for item in deleted['findings']}
+                    result_for_recording=[item for item in result[1] if id(item) not in excluded]
+                    event['entry']='scan_files.ast-component';event['oracle_config']['options']['entryPoint']=event['entry']
+                else:result_for_recording=result
+            else:result_for_recording=result
             if 'retained_reason' not in event:
-                try:event['findings']=normalize(check,result,files,logical)
+                try:event['findings']=normalize(check,result_for_recording,files,logical)
                 except Exception as error:event['retained_reason']='Output adapter: '+type(error).__name__+': '+str(error)
-            recorder.events.append(event);return result
+            recorder.events.append(event)
+            if extra is not None:recorder.events.append(extra)
+            return result
         return observed
     for check,names in entries.items():
         module=modules[check]

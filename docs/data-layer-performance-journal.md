@@ -5807,3 +5807,29 @@ For lazy architecture, 84 distinct source inputs from original fact tests are ev
 These are supplemental source probes, not replacements for the original fact assertions.
 Seven additional probes bring positive coverage to all 18 LA diagnostic families.
 The ninth and tenth ports, broader semantic probes, and repository acceptance remain open.
+
+### Batch eight: lazy architecture, all diagnostic families
+
+Nine candidates now pass 428 native observations: 263 positive and 165 clean.
+The original 456 pytest tests still pass without source changes.
+Lazy architecture covers all 18 diagnostic codes, including supplemental full-analyzer evaluations of original fact-test source inputs.
+Snapshot and workspace results agree with zero extra findings, missing findings, or engine failures.
+The focused native run completes in 13 seconds.
+
+The first lazy-architecture ladder fails on anchor contracts and repeated alias scope searches.
+Rollups now anchor to actual syntax spans.
+Alias scope ranges are prepared once and indexed by binding name and position.
+The original two real collect-results source files no longer exhaust the SQL work budget.
+Raw deleted-surface checks use first-occurrence regular expressions, including comments and overlapping surface names.
+They do not add a regex-evidence engine extension solely for this rule.
+
+Three original fixtures provide ASTs from one text representation, then use `ast.unparse` as a fallback file reader.
+Their syntax facts and raw-text findings therefore have different coordinates.
+The recorder observes both unchanged producers and partitions their actual results by object identity.
+It preserves both input representations and all original diagnostic locations.
+Those component observations are identified explicitly; coherent physical-file probes still execute the complete rule.
+No expected diagnostic is moved or discarded.
+
+The final cached-policy port remains open.
+It requires exact CPython 3.13 AST fingerprints, rather than a source-text or structural-equality hash.
+No new Linear ticket or performance claim is added.

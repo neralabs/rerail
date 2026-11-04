@@ -10,7 +10,7 @@ from data_layer_eight.relations import clause
 def candidate(source,policy):
     v=constants(source/'scripts/lint_eager_resolve.py')
     vals=lambda *names:literals(set().union(*(v[n] for n in names)))
-    prefixes=lambda name:q('^(?:'+'|'.join(map(re.escape,v[name]))+')')
+    prefixes=lambda name:q('^(?:'+'|'.join(map(re.escape,sorted(v[name])))+')')
     external=[line.strip() for line in (source/'scripts/allowlists/lint_eager_resolve_external_io_boundaries.txt').read_text().splitlines() if line.strip() and not line.startswith('#')]
     p=policy('eager_resolve',['impl/**/*.py','api/**/*.py','l[0-9][0-9][0-9][0-9]_*/**/*.py'])
     p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'_scan_source'},'externalIoBoundaries':{'type':'array','items':'string','default':external}}}})
