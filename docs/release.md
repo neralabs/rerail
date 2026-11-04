@@ -155,7 +155,8 @@ Release notes pitch the release to people who opt into each update; the GitHub R
   `main`: what the release gives and why to take it.
 - **Format.** From 0.1.1 the notes follow [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), with the two
   differences `CHANGELOG.md`'s header states: headings read `## <version> (<date>)`, and pending entries wait in
-  `.changelog/` rather than under `## Unreleased`.
+  `.changelog/` rather than under `## Unreleased`. A pack's notes take the same format and types, its lead and rule
+  entries written from `pack.json` ([pack-format.md](pack-format.md#release)).
 - **Versions.** Below 1.0.0 a release is a patch unless it names another, and a patch can change or remove behavior,
   which Semantic Versioning allows below 1.0.0. To release a minor or major, name it in the heading:
   `## 0.2.0 (unreleased)`. What core promises from 1.0.0 is not set yet.

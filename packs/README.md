@@ -26,9 +26,9 @@ npx vitest run test/engine/catalog/packs.test.ts -t "pack python"   # one pack
 npm run test:conformance                                            # the conformance check
 ```
 
-A pull request that changes a published pack adds a changeset (`npx changeset`); a private pack takes none, and CI
-refuses a changeset naming one; see [versioning](../docs/pack-format.md#versioning-and-release). Pack versions and
-changelogs are never edited by hand.
+A pull request that changes a published pack adds a changeset (`npx changeset`, then a file name opening with its change
+type); a private pack takes none, and CI refuses a changeset naming one; see
+[versioning](../docs/pack-format.md#versioning-and-release). Pack versions and changelogs are never edited by hand.
 A pull request that adds or changes pack data stages it into the tool-pack's tracked `upstream/<tool>/publish/`
 directory (`npm run fixtures:stage -- --pack <id> --tool <tool>`); a maintainer runs the publish workflow
 (`pack-data-publish.yml`) for it, a code owner approves the upload, and the workflow commits the new locks and removes

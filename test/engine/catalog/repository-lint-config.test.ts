@@ -296,6 +296,20 @@ describe("proposeLintConfigSettings", () => {
     });
   });
 
+  it("configures typescript-eslint's no-unused-expressions from allowShortCircuit and allowTernary", async () => {
+    const root = await repository({ ".eslintrc.json": JSON.stringify({ rules: { "@typescript-eslint/no-unused-expressions": ["error", { allowShortCircuit: true, allowTernary: true }] } }) });
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["typescript"])).toEqual({
+      settings: [{
+        ruleId: "typescript-eslint-no-unused-expressions",
+        folder: "",
+        on: null,
+        config: { allowShortCircuit: true, allowTernary: true },
+        because: ".eslintrc.json: \"@typescript-eslint/no-unused-expressions\": [\"error\",{\"allowShortCircuit\":true,\"allowTernary\":true}]",
+      }],
+      notes: [],
+    });
+  });
+
   it("turns off the javascript pack's no-console for \"no-console\": \"off\", and only for packs being set up", async () => {
     const root = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": \"off\" } }" });
     expect(readRepositoryLintConfig(root, ruleCatalog, ["javascript"]).settings).toEqual([

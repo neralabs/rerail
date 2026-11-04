@@ -1,24 +1,26 @@
-// The rule summary at the head of each released pack version's CHANGELOG.md section (docs/pack-format.md, "Release").
-// Which rules a pack ships, and how each starts, is read from its pack.json rather than written in changesets:
-// changesets pile up between releases and each one counts against the main it was written on, so their counts and
-// "ships"/"back to candidates" lines contradicted one another in a release's notes. The Release pull request
-// (release-version.mjs) compares the pack's rules at its last release with the rules it releases now and writes what
-// changed for the people who upgrade; the changesets' summaries follow it, saying what changed in a rule's behaviour.
-import { changelogEntries } from "./core.mjs";
-
-/** Above this many rules, a new-rule line counts them by group instead of naming each. */
-export const NAMED_RULES = 12;
+// Each released pack version's CHANGELOG.md section (docs/pack-format.md, "Release"), in the format of core's
+// (docs/release.md, "Release notes"): a lead, then the changes under Keep a Changelog's headings. Which rules a pack
+// ships, and how each starts, is read from its pack.json rather than written in changesets: changesets pile up between
+// releases and each one counts against the main it was written on, so their counts and "ships"/"back to candidates"
+// lines contradicted one another in a release's notes. The Release pull request (release-version.mjs) compares the
+// pack's rules at its last release with the rules it releases now and writes one entry per rule for the people who
+// upgrade; the changesets' summaries follow, each under the change type its file name opens with, saying what changed
+// in a rule's behaviour. changesets itself writes no changelog (`.changeset/config.json`, `"changelog": false`).
+import { changeTypeSections } from "./release-notes.mjs";
 
 /** How a rule starts in a repository that adds the pack, in the order the notes list them: on in a mode, or off. */
 const START = { steer: "in Steer", log: "in Log", block: "in Block", off: "off" };
 
 /**
- * A pack's rules as its release notes compare them, from its pack.json (`pack`) and `documentMode(entry)`, the mode
- * of the rule document an entry of pack.json's `rules` names: `{ id, group, start }`, `start` `off` for a rule the
- * pack starts off (`on: false`), else the mode it starts in: pack.json's `mode`, or its document's.
+ * A pack's rules as its release notes compare them, from its pack.json (`pack`) and `documentOf(entry)`, the rule
+ * document an entry of pack.json's `rules` names (undefined where it has none): `{ id, start, description }`, `start`
+ * `off` for a rule the pack starts off (`on: false`), else the mode it starts in: pack.json's `mode`, or its document's.
  */
-export function packRules(pack, documentMode) {
-  return (pack.rules ?? []).map((rule) => ({ id: rule.id, group: rule.group ?? "", start: rule.on === false ? "off" : (rule.mode ?? documentMode(rule)) }));
+export function packRules(pack, documentOf) {
+  return (pack.rules ?? []).map((rule) => {
+    const document = documentOf(rule);
+    return { id: rule.id, start: rule.on === false ? "off" : (rule.mode ?? document?.mode), description: document?.description };
+  });
 }
 
 /**
@@ -38,68 +40,71 @@ export function packRuleChanges(before, after) {
   };
 }
 
-/** `a`, `a and b`, `a, b and c`. */
-const list = (items) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 const code = (id) => `\`${id}\``;
 const rules = (count) => `${count} rule${count === 1 ? "" : "s"}`;
-/** The starts present among `rules`, in START's order. */
-const startsOf = (group) => Object.keys(START).filter((start) => group.some((rule) => rule.start === start));
-/** `items` in order of first appearance, counted: `[[item, count], …]`. */
-const tally = (items) => [...items.reduce((counts, item) => counts.set(item, (counts.get(item) ?? 0) + 1), new Map())];
+/** `group` in the order the notes list rules: by how each starts, in START's order, then by id. */
+const byStart = (group) => {
+  const starts = Object.keys(START);
+  return [...group].sort((a, b) => starts.indexOf(a.start) - starts.indexOf(b.start) || (a.id < b.id ? -1 : 1));
+};
 
-/** The new-rule line: each rule by id under how it starts, or above NAMED_RULES, counts by start and by group. */
-function addedLine(added) {
-  const starts = startsOf(added);
-  if (added.length <= NAMED_RULES) {
-    const parts = starts.map((start) => {
-      const ids = added.filter((rule) => rule.start === start).map((rule) => code(rule.id));
-      return `${list(ids)} start${ids.length === 1 ? "s" : ""} ${START[start]}`;
-    });
-    return `- ${added.length === 1 ? "New rule" : `${added.length} new rules`}: ${parts.join("; ")}.`;
-  }
-  const byStart = starts.map((start, index) => `${added.filter((rule) => rule.start === start).length}${index === 0 ? " start" : ""} ${START[start]}`);
-  const groups = tally(added.map((rule) => rule.group).filter((group) => group !== ""));
-  const from = groups.length === 1 ? ` from ${groups[0][0]}` : groups.length > 1 ? ` (${list(groups.map(([group, count]) => `${count} from ${group}`))})` : "";
-  return `- ${added.length} new rules${from}: ${list(byStart)}.`;
+/** The sentence saying how many of a pack's `total` rules start `on`. */
+function ruleCount(total, on) {
+  if (total === 0) return "Ships no rules yet.";
+  if (on > 0 && on < total) return `${rules(total)}, ${on} of them on by default.`;
+  const all = total === 1 ? "" : "all ";
+  return `${rules(total)}, ${all}${on === 0 ? "off" : "on"} by default.`;
+}
+
+/** A new rule's entry: its id, how it starts and what it wants. Throws without a description, which pack validation requires. */
+function addedEntry(rule) {
+  if (rule.description === undefined) throw new Error(`${rule.id}'s document gives it no description`);
+  return { type: "Added", entry: `- ${code(rule.id)} (starts ${START[rule.start]}): ${rule.description}` };
 }
 
 /**
- * The summary of `changes` (packRuleChanges) a released section opens with: `{ lead, entries }`, the lead the pack's
- * rule count, the entries one line each for its new rules, the rules it no longer ships and those that start
- * differently, each rule by id but for many new ones (addedLine).
+ * What `changes` (packRuleChanges) says in a released section: `{ lead, entries }`, the lead the pack's rule count, the
+ * entries `{ type, entry }`, one per rule: its new rules under Added, the rules it no longer ships under Removed and
+ * those that start differently under Changed, each group in the order byStart gives (Removed by id).
  */
 export function packRuleNotes(changes) {
-  const { total, on } = changes;
-  const share = on === total ? (total === 1 ? "on" : "all on") : on === 0 ? (total === 1 ? "off" : "all off") : `${on} of them on`;
-  const lead = total === 0 ? "Ships no rules yet." : `${rules(total)}, ${share} by default.`;
-  const entries = [];
-  if (changes.added.length > 0) entries.push(addedLine(changes.added));
-  if (changes.removed.length > 0) entries.push(`- No longer shipped: ${list(changes.removed.map((rule) => code(rule.id)))}.`);
-  for (const start of Object.keys(START)) {
-    const restarted = changes.restarted.filter((rule) => rule.start === start).map((rule) => code(rule.id));
-    if (restarted.length > 0) entries.push(`- Now start${restarted.length === 1 ? "s" : ""} ${START[start]}: ${list(restarted)}.`);
-  }
-  return { lead, entries };
+  const added = byStart(changes.added).map(addedEntry);
+  const removed = byStart(changes.removed.map((rule) => ({ id: rule.id }))).map((rule) => ({ type: "Removed", entry: `- ${code(rule.id)}: no longer shipped.` }));
+  const restarted = byStart(changes.restarted).map((rule) => ({ type: "Changed", entry: `- ${code(rule.id)} now starts ${START[rule.start]} (was ${START[rule.from]}).` }));
+  return { lead: ruleCount(changes.total, changes.on), entries: [...added, ...removed, ...restarted] };
 }
 
+/** The rule an entry opens with (`` - `rule-id` … ``), or null. */
+const ruleOf = (entry) => /^- `([^`]+)`/u.exec(entry)?.[1] ?? null;
+
 /**
- * `changelog` (a pack's CHANGELOG.md, just written by `changeset version`) with its `## <version>` section dated
- * `date` and led by `notes` (packRuleNotes): the lead, then the rule entries, then the changesets' entries. A section
- * with one `### <Type> Changes` heading loses it: below 1.0.0 every change is a patch and the heading says nothing.
- * One with several (a pack past 1.0.0) keeps them, under the rule entries. A section with no entry of either kind
- * says its rules did not change. Throws when the section is missing.
+ * The entries of a released section: `generated` (packRuleNotes), then `written` (the changesets'), less each generated
+ * Removed entry whose rule a written one opens with, since that one also says why the rule left.
  */
-export function releasedPackSection(changelog, version, date, notes) {
-  const lines = changelog.split("\n");
-  const start = lines.findIndex((line) => line === `## ${version}`);
-  if (start === -1) throw new Error(`the changelog has no undated ## ${version} section to date`);
-  const next = lines.findIndex((line, index) => index > start && line.startsWith("## "));
-  const end = next === -1 ? lines.length : next;
-  const section = lines.slice(start + 1, end).join("\n");
-  const typed = section.split("\n").filter((line) => line.startsWith("### ")).length > 1;
-  const written = typed ? [] : changelogEntries(section);
-  const entries = [...notes.entries, ...written];
-  const parts = [notes.lead, ...(entries.length > 0 ? [entries.join("\n")] : typed ? [] : ["- No change to its rules."]), ...(typed ? [section.trim()] : [])];
-  const after = lines.slice(end).join("\n");
-  return [...lines.slice(0, start), `## ${version} (${date})`, "", parts.join("\n\n"), ...(after === "" ? [""] : ["", after])].join("\n");
+function mergedEntries(generated, written) {
+  const explained = new Set(written.filter(({ type }) => type === "Removed").map(({ entry }) => ruleOf(entry)));
+  return [...generated.filter(({ type, entry }) => type !== "Removed" || !explained.has(ruleOf(entry))), ...written];
+}
+
+/** What every pack's CHANGELOG.md says of itself, as core's does: the format, and where it differs from Keep a Changelog. */
+export const PACK_CHANGELOG_INTRO = [
+  "Every notable change to this rule pack, latest first. Each release says how many rules the pack ships, then lists its changes, rule by rule, under Added, Changed, Deprecated, Removed, Fixed and Security, as in [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); releases from before the pack's notes took that format list them without those headings. There are two differences: a heading reads `## <version> (<date>)` rather than `## [<version>] - <date>`, and changes waiting for the next release are [changesets](../../.changeset/README.md), so there is no `## Unreleased`.",
+  "Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.",
+].join("\n\n");
+
+/**
+ * `changelog` (a pack's CHANGELOG.md, `""` for a pack with none yet) with `name`'s `version` released on `date`: the
+ * title and PACK_CHANGELOG_INTRO, then a new section of `notes`' lead and, under their change types, `notes`' entries
+ * (packRuleNotes) followed by `written`, the changesets' entries (changesetNotes), then the releases before it. A
+ * section with no entry says its rules did not change. Throws on an entry with no type, which would drop out of the notes.
+ */
+export function releasedPackChangelog(changelog, name, version, date, notes, written) {
+  const entries = mergedEntries(notes.entries, written);
+  const untyped = entries.find(({ type }) => type === null);
+  if (untyped !== undefined) throw new Error(`a changeset has no change type: ${untyped.entry}`);
+  const sections = changeTypeSections(entries);
+  const body = [sections.length > 0 ? notes.lead : `${notes.lead} No change to its rules.`, ...sections].join("\n\n");
+  const first = changelog.search(/^## /mu);
+  const history = first === -1 ? "" : `\n${changelog.slice(first)}`;
+  return `# ${name}\n\n${PACK_CHANGELOG_INTRO}\n\n## ${version} (${date})\n\n${body}\n${history}`;
 }

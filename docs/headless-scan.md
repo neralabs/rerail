@@ -111,7 +111,7 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
 {
   "schema": "rerail.scan/1",
   "scanId": "6f0c…",                     // a new UUID per scan
-  "tool": { "name": "rerail", "version": "0.1.0" },
+  "tool": { "name": "rerail", "version": "<version>" },
   "startedAt": 1793732129819, "finishedAt": 1793732131165,   // milliseconds since the epoch
   "repository": { "key": "remote:github.com/org/repo", "displayName": "repo" },   // or "clone:<id>" without a remote
   "checkout": { "path": "/abs/checkout", "head": "<sha>|null", "ref": "refs/heads/main|null" },
