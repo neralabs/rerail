@@ -2617,6 +2617,10 @@ impl<'a> Builder<'a> {
         }
         self.reached(rule)?;
         self.push(RESTORE_CURSOR, 0, cursor);
+        // Restored, the slot is free again: slots are a stack by walk nesting, so a program holds
+        // as many as its deepest nesting, not one per walk (sibling walks share; forked paths
+        // carry their own copies). A micro walk holds `micro::CURSORS`.
+        self.cursors -= 1;
         Ok(())
     }
 

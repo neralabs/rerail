@@ -34,7 +34,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
 | O33 | Phase 4 | G's grid executor (`ExecutionBackend::Metal`, not on the production path) exceeds the 99-launch bound on five parity tests | closed 2026-11-02: superseded by 0024 (decision 0028); kept as a copy until step 31 |
-| O35 | Phase 4 / 9 | The Metal label run's interpreter workspace against the 256 MB buffer budget: S7's real files (results arena) | open |
+| O35 | Phase 4 / 9 | The Metal label run's interpreter workspace against the 256 MB buffer budget: S7's real files (results arena) | closed (2026-11-03): groups single-dispatch (O34); S7's 250 files agree on all four backends |
 | O36 | Phase 4 / 10 | Semantic leaves still refused as fact labels: shared bindings, binding predicates, multi-target sub-rules, `parse`, under-`not` unknowns (decision 0030) | open |
 
 ## O1. Stale-fact detection after a crash
@@ -971,6 +971,22 @@ with the copies it belongs to (list step 31).
 
 ## O34. Device rounds for groups whose members are other pipelines
 
+**Closed (2026-11-03).** The groups that did not fuse had members that were interpreter tasks only
+because of cursor slots:
+- The lowering gave every walk a new cursor slot and never reused one, so a program with many
+  sibling walks needed more than a micro walk's 8 (`micro::CURSORS`). It became an interpreter
+  task, and its group could not fuse.
+- Slots are now a stack by walk nesting (`Builder::walk`): a slot is free once its walk restores
+  it. A program holds as many as its deepest nesting.
+- **S2:** 104 of 104 groups fuse (was 103), no task is refused for cursors (was 28,564), and the
+  most launches for one clause is 34 (was 51).
+- **S7's 250 real files:** the four backends find the same 1,259 keys.
+  - The Metal backends took 9.1–9.4 s of CPU; the CPU backends 11.2–12.3 s (load 47).
+  - Before, 3.4 M tasks were refused for cursors and 25 groups did not fuse.
+
+The text below is the item as it was.
+
+
 Decision 0027's device work queue runs only the code compiled into its kernel; file-local lattice
 FIX is its first user. A recursive label group whose members are interpreter tasks or per-clause
 pattern kernels (other pipelines) keeps host-planned rounds with device early exit and a rerun.
@@ -999,6 +1015,8 @@ goes with O33.
 work queue (0027), so each group is one dispatch. A retry ladder is not the fix.
 
 ## O35. The Metal label run's workspace and the buffer budget
+
+**Closed (2026-11-03)** by O34: groups that fuse need no interpreter workspace, and `the_backends_find_the_same_keys_on_real_files` runs again. The notes below are from before.
 
 **Requirement.** A wave's label run on Metal fits Metal's 256 MB buffer budget on real files.
 
