@@ -6147,3 +6147,52 @@ Typechecking, boundary checks, script tests and whitespace checks pass.
 The complete `npm run check` still fails the repository structure gate on three existing directory-size findings.
 The baseline commit `408f91f1a` already has 26 files in `native/src/code_rule_dsl/`, 31 in `scripts/dsl/`, and 26 in `test/engine/native/`.
 New Python audit tools and tests use subdirectories. They add no directory-size or CI-registration finding.
+
+
+## 2026-11-04 — Finish batch-eight native assertion translation
+
+The previous audit did not translate semantic helper assertions. Its Python pass count overstated the native evidence.
+This delivery replaces those calls and adds a guard against original semantic execution.
+The [native assertion receipt](../fixtures/host/data-layer-port/batch-08-native-assertions.json) binds the tested policies, adapters and addon by hash.
+
+The first direct run exposed eight purity failures and eight callback failures.
+A subsequent lazy-architecture run exposed missing diagnostic symbols, messages and stable identities.
+Shared SQL now carries those payloads. The engine requires nonempty message-column names and text results.
+Canonical wrapper signatures, eager exemptions, signature validation, cache discovery and runtime hashes now execute natively.
+Native fact exports retain class aliases, execution context flags, tombstones, side-queue declarations and deferred call targets.
+Plugin tests batch native fact construction instead of invoking the original Python collector.
+
+Both execution APIs pass all 456 original cases, without skips or semantic fallbacks.
+Each run records 480 native calls across 336 cases: 283 diagnostic calls and 197 helper calls.
+Of the diagnostic calls, 199 contain findings.
+The other 120 cases exercise host constants, DTOs, file handling, signing or CLI orchestration.
+Three instrumentation functions use native counters in four cases; their behavior assertions are unchanged.
+
+The instrumentation ladder exposed two real defects.
+Relational work counters were lost at snapshot and workspace reporting boundaries.
+Canonical byte-column requests also parsed and walked the module unnecessarily.
+The counters now reach both reports, and text-only requests perform no parse or module walk.
+A 108-kilobyte unused literal stress case exposed unnecessary immutable-container classification.
+That preparation now follows actual global-reference demand. The original stress observation passes without increasing its budget.
+
+A new exact-message regression exposed alphabetical target selection beneath one shared graph hop.
+The port now preserves source call order and stops at the first matching sink.
+Ordered traversal serves actual diagnostic demand and guards cycles.
+The new corpus also checks nested owners, compatibility imports, deferred delegates and first matching connection-owner calls.
+
+All 552 recorded observations pass both native APIs: 347 positive and 205 clean.
+This includes the earlier 534 observations and 18 new exact-message observations.
+All ten native always-clean controls reject their selected positives.
+Disabling the nine detectors with original pytest modules produces 173 failed cases and ten positive-fixture setup failures.
+Those failures contain no engine errors or original-detector fallback.
+
+The final focused TypeScript gate passes 35 tests. Canonical producer tests pass nine; relational tests pass 94.
+The integrated compiler accepts all 80 candidates.
+Typechecking, boundary checks and Windows path checks pass.
+The structure gate still reports the three directory-size failures already present at the recorded baseline.
+The test-binary build took 187 seconds; its nine canonical tests took 0.08 seconds.
+The selected addon build took 59.91 seconds. Build times are separate from execution evidence.
+No complete-repository cold benchmark ran. Historical CPU and RSS measurements remain historical.
+
+Root TDD commits `aac633d9f` and `e364ead20` capture the assertion and ordered-target regressions.
+Companion engine commit `ebcfefa0a` supplies diagnostic payloads and native work counters.

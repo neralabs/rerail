@@ -1002,7 +1002,7 @@
           },
           {
             "name": "coordinate_roots",
-            "query": "SELECT \"__path\",\"id\" FROM (SELECT __path,id FROM nodes WHERE kind='identifier' AND text IN ('_MEMOIZED_PURE_LAZY_STATE_CREATION_LOCK','_MemoizedPureLazyState','_memoized_purity_decorator') AND __path NOT LIKE '%l2055_lazy_result/purity.py')",
+            "query": "SELECT \"__path\",\"id\" FROM (SELECT __path,id FROM nodes WHERE kind='identifier' AND text IN ('memoized_pure_lazy','_MEMOIZED_PURE_LAZY_STATE_CREATION_LOCK','_MemoizedPureLazyState','_memoized_purity_decorator') AND __path NOT LIKE '%l2055_lazy_result/purity.py')",
             "indexes": [
               [
                 "__path",
@@ -1022,7 +1022,13 @@
           },
           {
             "name": "memoized_aliases",
-            "query": "SELECT \"function\",\"error\" FROM (SELECT m.module||'.<memoized_decorator_alias_'||(n.line+1)||'>' function,'memoized_pure_lazy decorator aliases are forbidden' error FROM nodes n JOIN module_names m ON m.__path=n.__path JOIN nodes a ON a.__path=n.__path AND a.parent=n.id WHERE n.kind='import_from_statement' AND n.module_name_source='l2055_lazy_result.purity' AND a.kind='aliased_import' AND a.name_source='memoized_pure_lazy' UNION ALL SELECT m.module||'.<private_memoized_storage_access_'||(n.line+1)||'_'||(SELECT column FROM coordinates h WHERE h.__path=n.__path AND h.id=n.id)||'>','direct access to private memoization storage is forbidden' FROM nodes n JOIN module_names m ON m.__path=n.__path LEFT JOIN nodes par ON par.__path=n.__path AND par.id=n.parent WHERE n.kind='identifier' AND n.text IN ('_MEMOIZED_PURE_LAZY_STATE_CREATION_LOCK','_MemoizedPureLazyState','_memoized_purity_decorator') AND par.kind NOT IN ('dotted_name','aliased_import','import_from_statement') AND n.__path NOT LIKE '%l2055_lazy_result/purity.py')"
+            "query": "SELECT \"__path\",\"id\",\"function\",\"error\" FROM (SELECT n.__path,n.id,m.module||'.<memoized_decorator_alias_'||(n.line+1)||'>' function,'memoized_pure_lazy decorator aliases are forbidden' error FROM nodes n JOIN module_names m ON m.__path=n.__path JOIN nodes parent ON parent.__path=n.__path AND parent.id=n.parent AND parent.kind='module' JOIN nodes a ON a.__path=n.__path AND a.parent=n.id WHERE n.kind='import_from_statement' AND n.module_name_source='l2055_lazy_result.purity' AND a.kind='aliased_import' AND a.name_source='memoized_pure_lazy' UNION ALL SELECT n.__path,n.id,m.module||'.<private_memoized_storage_access_'||(n.line+1)||'_'||(SELECT column FROM coordinates h WHERE h.__path=n.__path AND h.id=n.id)||'>','direct access to private memoization storage is forbidden' FROM nodes n JOIN module_names m ON m.__path=n.__path LEFT JOIN nodes par ON par.__path=n.__path AND par.id=n.parent WHERE n.kind='identifier' AND n.text IN ('_MEMOIZED_PURE_LAZY_STATE_CREATION_LOCK','_MemoizedPureLazyState','_memoized_purity_decorator') AND par.kind NOT IN ('dotted_name','aliased_import','import_from_statement') AND n.__path NOT LIKE '%l2055_lazy_result/purity.py' UNION ALL SELECT n.__path,n.id,m.module||'.<escaped_memoized_decorator_'||(n.line+1)||'_'||(SELECT column FROM coordinates h WHERE h.__path=n.__path AND h.id=n.id)||'>','memoized_pure_lazy cannot escape as a first-class value' FROM nodes n JOIN module_names m ON m.__path=n.__path JOIN nodes par ON par.__path=n.__path AND par.id=n.parent WHERE n.kind='identifier' AND n.text='memoized_pure_lazy' AND par.kind NOT IN ('dotted_name','aliased_import','import_from_statement') AND n.__path NOT LIKE '%l2055_lazy_result/purity.py' AND NOT EXISTS(SELECT 1 FROM selected_functions f WHERE f.__path=n.__path AND f.decorator=par.id AND par.function_id=n.id))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
           },
           {
             "name": "all_memoized",

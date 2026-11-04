@@ -3,6 +3,7 @@
 from data_layer_six.common import S,q,literals,choice
 from data_layer_generate_batch_seven import constant
 from data_layer_eight.relations import clause
+from data_layer_eight.plan_names import module_sql,path_scope
 
 
 def candidate(source,policy):
@@ -10,7 +11,7 @@ def candidate(source,policy):
     value=lambda name:constant(module,name)
     public=set(value('PUBLIC_TARGET_HELPERS'));private=set(value('PRIVATE_TERMINAL_HELPERS'));lazy=set(value('ALLOWED_LAZY_TERMINALS'));legacy=set(value('LEGACY_PRIVATE_TERMINAL_HELPERS'))
     tracked=public|private|lazy|legacy
-    p=policy('plan_helpers_allowlist',['impl/**/*.py','api/**/*.py','l[0-9][0-9][0-9][0-9]_*/**/*.py'])
+    p=policy('plan_helpers_allowlist',['**/*.py'])
     p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'scan_repo'}}}})
     stages=[
       S('helper_names',' UNION ALL '.join('SELECT '+q(n)+' name,'+str(int(n in public))+' public,'+str(int(n in lazy))+' lazy,'+str(int(n in legacy))+' legacy' for n in sorted(tracked)),('name',)),
@@ -31,7 +32,7 @@ def candidate(source,policy):
         SELECT w.__path,w.request,NULL,w.at,a.attr,w.priority||'00000000000000000000/' FROM lookup w JOIN attributes a ON a.__path=w.__path AND a.id=w.node JOIN nodes o ON o.__path=a.__path AND o.id=a.object WHERE w.helper IS NULL AND (a.attr IN (SELECT name FROM helper_names) OR a.attr GLOB '_*via_plan*' AND o.kind='identifier' AND EXISTS(SELECT 1 FROM module_aliases m WHERE m.__path=o.__path AND m.name=o.text AND m.__start<w.at)))
         SELECT __path,request,helper FROM (SELECT __path,request,helper,row_number() OVER(PARTITION BY __path,request ORDER BY priority DESC) chosen FROM lookup WHERE helper IS NOT NULL) WHERE chosen=1""",('__path','request')),
       S('modules',"""SELECT __path,replace(substr(trim(replace(__path,char(92),'/'),'/'),1,length(trim(replace(__path,char(92),'/'),'/'))-3),'/','.') raw FROM nodes WHERE kind='module'""",('__path',)),
-      S('module_names',"""SELECT __path,CASE WHEN instr('.'||raw||'.','.impl.')>0 THEN substr(raw,instr('.'||raw||'.','.impl.')) WHEN instr('.'||raw||'.','.api.')>0 THEN substr(raw,instr('.'||raw||'.','.api.')+4) ELSE coalesce(rx_extract(raw,'(?:^|\\.)(l[0-9]{4}_[^.]*.*)$',1),raw) END name FROM modules""",('__path',)),
+      S('module_names','SELECT __path,'+module_sql('__path')+' name FROM modules',('__path',)),
       S('regions',"SELECT __path,id,name,__start,__end,'class' kind FROM classes UNION ALL SELECT f.__path,f.id,f.name,coalesce(d.__start,f.__start),f.__end,'function' FROM functions f LEFT JOIN nodes d ON d.__path=f.__path AND d.id=f.parent AND d.kind='decorated_definition'",('__path',)),
       S('raw_issues',"""SELECT i.__path,i.__start,i.__end,i.alias_id identity,'import' kind,i.name helper,i.local FROM imports i WHERE i.module='impl.common.l2070_server_plan.plan_helpers' AND (i.name IN (SELECT name FROM helper_names WHERE public OR lazy) OR i.name GLOB '_*via_plan*' OR i.name IN (SELECT name FROM helper_names WHERE legacy))
        UNION ALL SELECT t.__path,t.__start,t.__end,t.id,'alias',r.helper,t.name FROM target_names t JOIN resolved r ON r.__path=t.__path AND r.request=t.assignment
@@ -45,7 +46,7 @@ def candidate(source,policy):
     ]
     # Diagnostic identity is the original reason for direct scanner observations.
     base="SELECT __path path,__start start_byte,__end end_byte,{code} issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN "+literals(value('ALLOWLISTED_CALLSITES'))
-    discovery=" AND rx_matches(__path,'(?:^|/)(?:impl|api|l[0-9]{4}_[^/]*)/') AND NOT rx_matches(__path,"+q('(?:^|/)(?:'+'|'.join(__import__('re').escape(x) for x in sorted(value('SKIP_PARTS')))+')(?:/|$)')+")"
+    discovery=' AND '+path_scope('__path',value('SKIP_PARTS'))
     direct=base.format(code='reason')
     query={'$option':'oracleAnalyzer','cases':{'true':{'$option':'entryPoint','cases':{'scan_repo':direct+discovery},'default':direct},'false':base.format(code="'PHA001'")+discovery}}
     # The generic builder needs string SQL for dependency and column analysis.

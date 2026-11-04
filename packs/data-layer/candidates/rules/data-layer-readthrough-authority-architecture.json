@@ -137,7 +137,7 @@
       },
       "violation": {
         "code": "RTA001",
-        "message": "RTA001",
+        "message": "Read durable overlays inside the admitted application plan",
         "anchor": "witness.span"
       }
     },
@@ -209,7 +209,7 @@
       },
       "violation": {
         "code": "RTA002",
-        "message": "RTA002",
+        "message": "Do not pass authority-scoped overlays through runtime seeds",
         "anchor": "witness.span"
       }
     },
@@ -332,7 +332,7 @@
       },
       "violation": {
         "code": "RTA001",
-        "message": "RTA001",
+        "message": "Connection authority binding must not load durable overlay evidence",
         "anchor": "witness.span"
       }
     },
@@ -473,7 +473,7 @@
       },
       "violation": {
         "code": "RTA003",
-        "message": "RTA003",
+        "message": "Gate authority cleanup with ReadThroughAuthorityOwnedTableRecord, not cache-state heuristics",
         "anchor": "witness.span"
       }
     },
@@ -598,7 +598,7 @@
       },
       "violation": {
         "code": "RTA004",
-        "message": "RTA004",
+        "message": "Durable overlay evidence must include principal_user_id",
         "anchor": "witness.span"
       }
     },
@@ -837,7 +837,7 @@
       },
       "violation": {
         "code": "RTA005",
-        "message": "RTA005",
+        "message": "Read overlay evidence after the same-plan proposed lease",
         "anchor": "witness.span"
       }
     },
@@ -1185,7 +1185,7 @@
       },
       "violation": {
         "code": "RTA006",
-        "message": "RTA006",
+        "message": "Principal-change row deletion must require persistent ownership evidence",
         "anchor": "witness.span"
       }
     },
@@ -1671,7 +1671,7 @@
       },
       "violation": {
         "code": "RTA008",
-        "message": "RTA008",
+        "message": "Lease transition cleanup must compare the complete authority identity",
         "anchor": "witness.span"
       }
     },
@@ -1927,7 +1927,7 @@
       },
       "violation": {
         "code": "RTA009",
-        "message": "RTA009",
+        "message": "Exact lease renewal must update only last_authenticated_at",
         "anchor": "witness.span"
       }
     },
@@ -2052,7 +2052,7 @@
       },
       "violation": {
         "code": "RTA007",
-        "message": "RTA007",
+        "message": "Validate admitted overlays before authority and cache publication",
         "anchor": "witness.span"
       }
     }

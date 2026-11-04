@@ -45,4 +45,12 @@ def candidate(source,policy):
     string=A(O(K('string'),K('concatenated_string')),P('STRING'),{'regex':r'''(?i)^[ru]*["']'''})
     target_values=E(A(K('keyword_argument'),F('name',{'regex':'^lazy_name$'}),F('value',string),I(A(K('decorator'),P('DEC')))),
         {'decorator_start':'capture.DEC.startByte','target':'capture.DECODED.text'},transform={'DECODED':{'substring':{'source':'$STRING','value':True,'startChar':0}}})
-    p['clauses'].append(clause('adapter-ownership',stages,' UNION ALL '.join(rows),{'target_values':target_values}));return p
+    messages="""CASE d.issue
+      WHEN 'LAO001' THEN f.name||' is a legacy adapter but its body contains executable planning or I/O'
+      WHEN 'LAO002' THEN f.name||' delegates to missing module lazy target '||f.target
+      WHEN 'LAO003' THEN f.name||' delegates to '||f.target||', which is not @pure_lazy'
+      WHEN 'LAO004' THEN '@pure_lazy surface '||f.name||' reaches eager terminal '||(SELECT min(c.callee) FROM owned_calls c WHERE c.__path=f.__path AND c.fn=f.id AND c.callee IN """+eager+""" )
+      WHEN 'LAO005' THEN 'transaction-facing function '||f.name||' owns eager calls '||(SELECT group_concat(callee,', ') FROM (SELECT DISTINCT c.callee FROM owned_calls c JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver AND receiver.kind='identifier' JOIN transaction_parameters p ON p.__path=c.__path AND p.fn=c.fn AND p.name=receiver.text WHERE c.__path=f.__path AND c.fn=f.id AND c.callee NOT GLOB '*_lazy' ORDER BY c.callee))||' instead of delegating to one @pure_lazy surface'
+      WHEN 'LAO006' THEN 'async transaction-facing function '||f.name||' has no awaited I/O and is not a legacy adapter' END"""
+    query="SELECT d.*,"+messages+" message FROM ("+' UNION ALL '.join(rows)+") d JOIN function_targets f ON f.__path=d.path AND f.id=d.identity"
+    item=clause('adapter-ownership',stages,query,{'target_values':target_values});item['relational']['message']='message';p['clauses'].append(item);return p

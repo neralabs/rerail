@@ -28,9 +28,13 @@ def candidate(source,policy):
     p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'scan_sources'}}}})
     trigger=O(A(K('module'),RX('ReadThrough|readthrough|overlay|authority')),I(A(K('module'),RX('ReadThrough|readthrough|overlay|authority'))))
     gate={'$option':'oracleAnalyzer','cases':{'true':ANY,'false':trigger}}
+    messages={}
+    for node in sorted(ast.walk(ast.parse(module.read_text())),key=lambda node:getattr(node,'lineno',0)):
+        if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id=='Finding' and len(node.args)==4 and isinstance(node.args[2],ast.Constant) and isinstance(node.args[3],ast.Constant):
+            messages.setdefault(node.args[2].value,[]).append(node.args[3].value)
     def add(id,rule,code):
         p['clauses'].append({'id':id,'forbid':{'ast':{'language':'python','syntax':'valid','rule':A(gate,rule)}},
-                             'violation':{'code':code,'message':code,'anchor':'witness.span'}})
+                             'violation':{'code':code,'message':messages[code][1 if id=='bind-load' else 0],'anchor':'witness.span'}})
     add('restore',call(['_restore_persisted_local_overlays','_restore_persisted_local_overlays_async']),'RTA001')
     add('runtime-seed',A(O(K('string'),K('concatenated_string')),{'value':{'eq':'__readthrough_local_overlays'}}),'RTA002')
     add('bind-load',A(K('function_definition'),F('name',names(['_bind_cache_to_current_authority','_bind_cache_to_current_authority_native'])),

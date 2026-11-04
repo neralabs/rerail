@@ -191,6 +191,30 @@
           "source": "pass\n"
         }
       ]
+    },
+    {
+      "id": "native-deferred-call-target",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "class C:\n    def eager(self):\n        grammar_fetchall()\n    def build_lazy(self):\n        return defer_lazy_result(sync_resolve=self.eager)\n"
+        }
+      ]
+    },
+    {
+      "id": "native-ordered-cycle",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "@pure_lazy\ndef first_lazy():\n    second_lazy()\n@pure_lazy\ndef second_lazy():\n    first_lazy()\n    helper_async()\nasync def helper_async(): return 1\n"
+        }
+      ]
     }
   ]
 }

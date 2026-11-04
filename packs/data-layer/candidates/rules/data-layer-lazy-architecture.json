@@ -158,20 +158,6 @@
             ]
           },
           {
-            "name": "classes",
-            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",\"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"name\" FROM (SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='class_definition')",
-            "indexes": [
-              [
-                "__path",
-                "id"
-              ],
-              [
-                "__path",
-                "name"
-              ]
-            ]
-          },
-          {
             "name": "attributes",
             "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"attr\",\"object\",\"object_text\" FROM (SELECT n.*,n.attribute_source AS attr,n.object_id AS object,n.object_source AS object_text FROM nodes n WHERE n.kind='attribute')",
             "indexes": [
@@ -435,6 +421,17 @@
             ]
           },
           {
+            "name": "class_method_aliases",
+            "query": "SELECT \"__path\",\"cls\",NULL AS \"qualname\",\"name\",\"target\",\"__start\" FROM (SELECT a.__path,d.id cls,d.qualname,a.target_text name,a.expr_text target,a.__start FROM assignments a JOIN nodes stmt ON stmt.__path=a.__path AND stmt.id=a.parent JOIN declaration_contexts d ON d.__path=stmt.__path AND d.kind='class_definition' AND stmt.parent=d.body_id WHERE a.target_kind='identifier' AND a.expr_kind='identifier' AND a.type_start IS NULL)",
+            "indexes": [
+              [
+                "__path",
+                "cls",
+                "name"
+              ]
+            ]
+          },
+          {
             "name": "module_alias_bindings",
             "query": "SELECT \"__path\",\"name\",\"target\" FROM (SELECT a.__path,a.target_text name,\n        CASE WHEN a.expr_kind='identifier' THEN a.expr_text WHEN a.expr_kind='attribute' THEN attr.attr\n          WHEN a.expr_kind='call' AND call.callee_kind='identifier' THEN call.callee END target\n        FROM assignments a JOIN nodes expression ON expression.__path=a.__path AND expression.id=a.parent\n        JOIN nodes module ON module.__path=expression.__path AND module.id=expression.parent AND module.kind='module'\n        LEFT JOIN attributes attr ON attr.__path=a.__path AND attr.id=a.value\n        LEFT JOIN calls call ON call.__path=a.__path AND call.id=a.value\n        WHERE a.target_kind='identifier' AND a.type_start IS NULL\n        AND NOT EXISTS(SELECT 1 FROM assignments later JOIN nodes e ON e.__path=later.__path AND e.id=later.parent\n          WHERE later.__path=a.__path AND later.target_text=a.target_text AND later.target_kind='identifier'\n          AND later.type_start IS NULL AND e.parent=module.id AND later.__start>a.__start))",
             "indexes": [
@@ -477,8 +474,18 @@
             ]
           },
           {
+            "name": "execution_context_classes",
+            "query": "SELECT \"__path\",\"cls\" FROM (WITH RECURSIVE heads(__path,cls,node) AS (\n      SELECT c.__path,c.id,b.id FROM declaration_contexts c JOIN nodes args ON args.__path=c.__path AND args.parent=c.id AND args.kind='argument_list' JOIN nodes b ON b.__path=args.__path AND b.parent=args.id WHERE c.kind='class_definition'\n      UNION ALL SELECT h.__path,h.cls,n.function_id FROM heads h JOIN nodes n ON n.__path=h.__path AND n.id=h.node AND n.kind='call')\n      SELECT DISTINCT h.__path,h.cls FROM heads h JOIN nodes n ON n.__path=h.__path AND n.id=h.node WHERE n.kind='identifier' AND n.text GLOB '*ExecutionContext' OR n.kind='attribute' AND n.attribute_source GLOB '*ExecutionContext')",
+            "indexes": [
+              [
+                "__path",
+                "cls"
+              ]
+            ]
+          },
+          {
             "name": "function_flags",
-            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",\"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"name\",\"region_start\",\"qualname\",\"lexical_parent\",\"symbol\",\"sensitive\",\"bootstrap\",\"reconciliation\",\"pure\",\"legacy\" FROM (SELECT f.*,EXISTS(SELECT 1 FROM decorator_names d LEFT JOIN imports i ON i.__path=d.__path AND i.local=d.name AND i.fn IS NULL WHERE d.__path=f.__path AND d.fn=f.id AND rx_extract(coalesce((SELECT a.resolved FROM module_aliases a WHERE a.__path=d.__path AND a.name=d.name),i.module||'.'||i.name,d.name),'[^.]+$',0)='pure_lazy') pure,EXISTS(SELECT 1 FROM decorator_names d LEFT JOIN imports i ON i.__path=d.__path AND i.local=d.name AND i.fn IS NULL WHERE d.__path=f.__path AND d.fn=f.id AND rx_extract(coalesce((SELECT a.resolved FROM module_aliases a WHERE a.__path=d.__path AND a.name=d.name),i.module||'.'||i.name,d.name),'[^.]+$',0) IN ('legacy_sync','legacy_async','legacy_module_sync','legacy_module_async')) legacy FROM analyzer_functions f)",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",\"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"name\",\"region_start\",\"qualname\",\"lexical_parent\",\"symbol\",\"sensitive\",\"bootstrap\",\"reconciliation\",\"execution_context\",\"tombstone\",\"pure\",\"legacy\" FROM (SELECT f.*,\n      EXISTS(SELECT 1 FROM execution_context_classes ctx JOIN declaration_contexts cls ON cls.__path=ctx.__path AND cls.id=ctx.cls WHERE cls.__path=f.__path AND cls.region_start<f.region_start AND cls.__end>=f.__end) AND f.name IN ('execute_sync','execute_async') execution_context,\n      EXISTS(SELECT 1 FROM nodes stmt LEFT JOIN nodes value ON value.__path=stmt.__path AND value.parent=stmt.id AND value.ordinal=0 LEFT JOIN calls call ON call.__path=value.__path AND call.id=value.id WHERE stmt.__path=f.__path AND stmt.parent=f.body_id AND stmt.kind='raise_statement' AND (CASE WHEN value.kind='call' THEN call.callee WHEN value.kind='attribute' THEN value.attribute_source WHEN value.kind='identifier' THEN value.text END GLOB '*NotImplementedError' OR CASE WHEN value.kind='call' THEN call.callee WHEN value.kind='attribute' THEN value.attribute_source WHEN value.kind='identifier' THEN value.text END GLOB '*LazyPurityError')\n        AND NOT EXISTS(SELECT 1 FROM nodes prior WHERE prior.__path=stmt.__path AND prior.parent=stmt.parent AND prior.__start<stmt.__start AND prior.kind!='comment' AND NOT(prior.kind='expression_statement' AND EXISTS(SELECT 1 FROM nodes doc WHERE doc.__path=prior.__path AND doc.parent=prior.id AND doc.kind IN ('string','concatenated_string'))))) tombstone,EXISTS(SELECT 1 FROM decorator_names d LEFT JOIN imports i ON i.__path=d.__path AND i.local=d.name AND i.fn IS NULL WHERE d.__path=f.__path AND d.fn=f.id AND rx_extract(coalesce((SELECT a.resolved FROM module_aliases a WHERE a.__path=d.__path AND a.name=d.name),i.module||'.'||i.name,d.name),'[^.]+$',0)='pure_lazy') pure,EXISTS(SELECT 1 FROM decorator_names d LEFT JOIN imports i ON i.__path=d.__path AND i.local=d.name AND i.fn IS NULL WHERE d.__path=f.__path AND d.fn=f.id AND rx_extract(coalesce((SELECT a.resolved FROM module_aliases a WHERE a.__path=d.__path AND a.name=d.name),i.module||'.'||i.name,d.name),'[^.]+$',0) IN ('legacy_sync','legacy_async','legacy_module_sync','legacy_module_async')) legacy FROM analyzer_functions f)",
             "indexes": [
               [
                 "__path",
@@ -491,7 +498,7 @@
           },
           {
             "name": "owned_calls",
-            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",NULL AS \"module_name_start\",NULL AS \"module_name_end\",NULL AS \"module_name_kind\",NULL AS \"module_name_source\",\"callee_id\",\"callee_kind\",NULL AS \"full_callee\",\"callee\",\"receiver\",\"fn\",\"resolved\",\"leaf\" FROM (SELECT c.*,o.fn,coalesce(t.value,c.callee) resolved,rx_extract(coalesce(t.value,c.callee),'([^.]+)$',1) leaf FROM calls c JOIN owned_nodes o ON o.__path=c.__path AND o.id=c.id LEFT JOIN terminal_values t ON t.__path=c.__path AND t.fn=o.fn AND t.root=c.callee_id)",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"callee_id\",\"callee_kind\",\"full_callee\",\"callee\",\"receiver\",\"fn\",\"resolved\",\"leaf\" FROM (SELECT c.*,o.fn,coalesce(t.value,c.callee) resolved,rx_extract(coalesce(t.value,c.callee),'([^.]+)$',1) leaf FROM calls c JOIN owned_nodes o ON o.__path=c.__path AND o.id=c.id LEFT JOIN terminal_values t ON t.__path=c.__path AND t.fn=o.fn AND t.root=c.callee_id)",
             "indexes": [
               [
                 "__path",
@@ -517,7 +524,7 @@
           },
           {
             "name": "classified_calls",
-            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",NULL AS \"module_name_start\",NULL AS \"module_name_end\",NULL AS \"module_name_kind\",NULL AS \"module_name_source\",\"callee_id\",\"callee_kind\",NULL AS \"full_callee\",\"callee\",\"receiver\",\"fn\",\"resolved\",\"leaf\",\"plan_receiver\",\"lazy_receiver\" FROM (SELECT c.*,EXISTS(SELECT 1 FROM expression_tags t WHERE t.__path=c.__path AND t.fn=c.fn AND t.node=c.receiver AND t.kind='plan') plan_receiver,EXISTS(SELECT 1 FROM expression_tags t WHERE t.__path=c.__path AND t.fn=c.fn AND t.node=c.receiver AND t.kind='lazy') lazy_receiver FROM owned_calls c)",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",\"module_name_start\",\"module_name_end\",\"module_name_kind\",\"module_name_source\",\"callee_id\",\"callee_kind\",\"full_callee\",\"callee\",\"receiver\",\"fn\",\"resolved\",\"leaf\",\"plan_receiver\",\"lazy_receiver\" FROM (SELECT c.*,EXISTS(SELECT 1 FROM expression_tags t WHERE t.__path=c.__path AND t.fn=c.fn AND t.node=c.receiver AND t.kind='plan') plan_receiver,EXISTS(SELECT 1 FROM expression_tags t WHERE t.__path=c.__path AND t.fn=c.fn AND t.node=c.receiver AND t.kind='lazy') lazy_receiver FROM owned_calls c)",
             "indexes": [
               [
                 "__path",
@@ -531,10 +538,30 @@
           },
           {
             "name": "call_targets",
-            "query": "SELECT \"__path\",\"fn\",NULL AS \"id\",\"__start\",NULL AS \"__end\",\"target\" FROM (SELECT c.__path,c.fn,c.id,c.__start,c.__end,\n        CASE WHEN c.callee_kind='identifier' THEN coalesce((SELECT replace(substr(c.__path,1,length(c.__path)-3),'/','.')||'.'||a.resolved FROM module_aliases a WHERE a.__path=c.__path AND a.name=c.callee),(SELECT i.module||'.'||i.name FROM imports i WHERE i.__path=c.__path AND i.local=c.callee AND i.kind='import_from_statement' AND (i.fn IS NULL OR i.fn=c.fn) ORDER BY i.fn IS NOT NULL DESC,i.__start DESC LIMIT 1),replace(substr(c.__path,1,length(c.__path)-3),'/','.')||'.'||c.callee)\n        WHEN c.callee_kind='attribute' AND receiver.kind='identifier' AND receiver.text IN ('self','cls') AND f.lexical_parent IS NOT NULL THEN (SELECT cls.symbol_prefix FROM (SELECT replace(substr(d.__path,1,length(d.__path)-3),'/','.')||'.'||d.qualname||'.' symbol_prefix FROM declaration_contexts d WHERE d.__path=f.__path AND d.id=f.lexical_parent) cls)||c.callee\n        WHEN c.callee_kind='attribute' AND receiver.kind='identifier' THEN (SELECT i.name||'.'||c.callee FROM imports i WHERE i.__path=c.__path AND i.kind='import_statement' AND i.fn IS NULL AND i.local=receiver.text ORDER BY i.__start DESC LIMIT 1) END target\n        FROM owned_calls c JOIN function_flags f ON f.__path=c.__path AND f.id=c.fn LEFT JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver)",
+            "query": "SELECT \"__path\",\"fn\",\"__start\",NULL AS \"id\",\"target\" FROM (SELECT c.__path,c.fn,c.__start,c.id,CASE WHEN c.callee_kind='identifier' THEN coalesce(\n      (SELECT i.module||'.'||i.name FROM imports i WHERE i.__path=c.__path AND i.local=c.callee AND i.kind='import_from_statement' AND i.fn=c.fn ORDER BY i.__start DESC LIMIT 1),\n      (SELECT i.module||'.'||i.name FROM imports i WHERE i.__path=c.__path AND i.local=c.callee AND i.kind='import_from_statement' AND i.fn IS NULL ORDER BY i.__start DESC LIMIT 1),\n      replace(substr(c.__path,1,length(c.__path)-3),'/','.')||'.'||coalesce((SELECT a.resolved FROM module_aliases a WHERE a.__path=c.__path AND a.name=c.callee),c.callee))\n      WHEN c.callee_kind='attribute' AND receiver.kind='identifier' AND receiver.text IN ('self','cls') AND f.lexical_parent IS NOT NULL THEN\n        replace(substr(c.__path,1,length(c.__path)-3),'/','.')||'.'||(SELECT cls.qualname FROM declaration_contexts cls WHERE cls.__path=f.__path AND cls.id=f.lexical_parent)||'.'||\n          coalesce((SELECT a.target FROM class_method_aliases a WHERE a.__path=f.__path AND a.cls=f.lexical_parent AND a.name=c.callee ORDER BY a.__start DESC LIMIT 1),c.callee)\n      WHEN c.callee_kind='attribute' AND receiver.kind='identifier' THEN (SELECT i.name||'.'||c.callee FROM imports i WHERE i.__path=c.__path AND i.kind='import_statement' AND i.fn IS NULL AND i.local=receiver.text ORDER BY i.__start DESC LIMIT 1) END target FROM owned_calls c JOIN function_flags f ON f.__path=c.__path AND f.id=c.fn LEFT JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver)",
             "indexes": [
               [
                 "target"
+              ]
+            ]
+          },
+          {
+            "name": "delegate_values",
+            "query": "SELECT \"__path\",\"fn\",NULL AS \"id\",\"__start\",NULL AS \"__end\",\"keyword_start\",\"callee_kind\",\"callee\",NULL AS \"callee_id\",\"receiver\" FROM (SELECT source.__path,source.fn,source.id,source.__start,source.__end,k.__start keyword_start,node.kind callee_kind,CASE WHEN node.kind='identifier' THEN node.text ELSE node.attribute_source END callee,node.id callee_id,node.object_id receiver FROM owned_calls source JOIN keywords k ON k.__path=source.__path AND k.call=source.id AND k.name IN ('sync_resolve','async_resolve') JOIN nodes node ON node.__path=k.__path AND node.id=k.value WHERE (source.resolved='defer_lazy_result' OR source.resolved GLOB '*.defer_lazy_result') AND node.kind IN ('identifier','attribute'))",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "delegate_targets",
+            "query": "SELECT \"__path\",\"fn\",NULL AS \"id\",\"__start\",NULL AS \"__end\",\"keyword_start\",\"target\" FROM (SELECT c.__path,c.fn,c.id,c.__start,c.__end,c.keyword_start,CASE WHEN c.callee_kind='identifier' THEN coalesce(\n      (SELECT i.module||'.'||i.name FROM imports i WHERE i.__path=c.__path AND i.local=c.callee AND i.kind='import_from_statement' AND i.fn=c.fn ORDER BY i.__start DESC LIMIT 1),\n      (SELECT i.module||'.'||i.name FROM imports i WHERE i.__path=c.__path AND i.local=c.callee AND i.kind='import_from_statement' AND i.fn IS NULL ORDER BY i.__start DESC LIMIT 1),\n      replace(substr(c.__path,1,length(c.__path)-3),'/','.')||'.'||coalesce((SELECT a.resolved FROM module_aliases a WHERE a.__path=c.__path AND a.name=c.callee),c.callee))\n      WHEN c.callee_kind='attribute' AND receiver.kind='identifier' AND receiver.text IN ('self','cls') AND f.lexical_parent IS NOT NULL THEN\n        replace(substr(c.__path,1,length(c.__path)-3),'/','.')||'.'||(SELECT cls.qualname FROM declaration_contexts cls WHERE cls.__path=f.__path AND cls.id=f.lexical_parent)||'.'||\n          coalesce((SELECT a.target FROM class_method_aliases a WHERE a.__path=f.__path AND a.cls=f.lexical_parent AND a.name=c.callee ORDER BY a.__start DESC LIMIT 1),c.callee)\n      WHEN c.callee_kind='attribute' AND receiver.kind='identifier' THEN (SELECT i.name||'.'||c.callee FROM imports i WHERE i.__path=c.__path AND i.kind='import_statement' AND i.fn IS NULL AND i.local=receiver.text ORDER BY i.__start DESC LIMIT 1) END target FROM delegate_values c JOIN function_flags f ON f.__path=c.__path AND f.id=c.fn LEFT JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver)",
+            "indexes": [
+              [
+                "__path",
+                "fn"
               ]
             ]
           },
@@ -549,8 +576,18 @@
             ]
           },
           {
+            "name": "side_queue_fields",
+            "query": "SELECT \"__path\",\"id\",\"__start\",\"__end\",NULL AS \"scope\",\"qualname\",\"name\",NULL AS \"line\" FROM (SELECT a.__path,a.id,a.__start,a.__end,cls.qualname scope,cls.qualname||'.'||a.target_text qualname,a.target_text name,(SELECT line FROM nodes n WHERE n.__path=a.__path AND n.id=a.id) line FROM assignments a JOIN nodes expression ON expression.__path=a.__path AND expression.id=a.parent JOIN declaration_contexts cls ON cls.kind='class_definition' AND cls.__path=expression.__path AND expression.parent=cls.body_id WHERE a.target_kind='identifier' AND a.target_text IN ('pending_after_create_schema_ddl_async_batch_ref_id','pending_after_create_schema_ddl_async_statements','pending_after_create_schema_ddl_batch_ref_id','pending_after_create_schema_ddl_statements','pending_polymorphic_guard_ddl_async_batch_scheduled','pending_polymorphic_guard_ddl_async_statements','pending_polymorphic_guard_ddl_batch_scheduled','pending_polymorphic_guard_ddl_statements','pending_staged_trigger_ddl_async_batch_scheduled','pending_staged_trigger_ddl_async_statements','pending_staged_trigger_ddl_batch_scheduled','pending_staged_trigger_ddl_statements'))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
             "name": "function_events",
-            "query": "SELECT \"__path\",\"fn\",\"id\",\"__start\",\"__end\",\"category\",\"detail\" FROM (SELECT e.__path,e.fn,e.id,e.__start,e.__end,e.category,\n      CASE WHEN e.category='plan' AND EXISTS(SELECT 1 FROM classified_calls c\n        JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver AND receiver.kind='identifier'\n        JOIN native_cursor_parameters p ON p.__path=c.__path AND p.fn=c.fn AND p.name=receiver.text\n        WHERE c.__path=e.__path AND c.fn=e.fn AND c.id=e.id AND c.callee IN ('fetchone','fetchmany','fetchall'))\n        THEN 'native_cursor.'||e.detail ELSE e.detail END detail FROM (SELECT c.__path,c.fn,c.id,c.__start,c.__end,'plan' category,c.leaf detail FROM classified_calls c WHERE c.leaf IN ('ddl_effect_lazy','execute_grammar_leaf','execute_grammar_leaf_async','fetchall_grammar_leaf','fetchall_grammar_leaf_async','fetchone_grammar_leaf','fetchone_grammar_leaf_async','grammar_effect_lazy','grammar_execute','grammar_execute_async','grammar_fetchall','grammar_fetchall_async','grammar_fetchone','grammar_fetchone_async','grammar_row_lazy','grammar_rows_lazy','grammar_value_lazy','scalar_grammar_leaf') UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'plan' category,CASE WHEN c.callee IN ('resolve','resolve_async') THEN 'lazy.'||c.callee WHEN c.plan_receiver THEN 'plan.'||c.callee ELSE c.callee END detail FROM classified_calls c WHERE c.callee_kind='attribute' AND (c.callee IN ('execute','execute_async') AND c.plan_receiver OR c.callee IN ('execute_many','execute_one','fetchall','fetchmany','fetchone') OR c.callee IN ('_execute_direct_internal','_execute_direct_internal_async') OR c.callee IN ('resolve','resolve_async') AND c.lazy_receiver) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'intent' category,c.leaf detail FROM classified_calls c WHERE c.leaf IN ('_add_intent','_execute_intent_via_txn_plan','_execute_intent_via_txn_plan_async') OR c.resolved GLOB '*Intent' UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'grammar' category,c.leaf detail FROM classified_calls c WHERE c.resolved GLOB 'grammar_*' UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'native' category,c.leaf detail FROM classified_calls c WHERE c.leaf IN ('_call_dolt_procedure','_checkout_branch','_create_dolt_branch','commit') UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'private' category,c.leaf detail FROM classified_calls c WHERE c.resolved IN ('getattr','builtins.getattr','vars','builtins.vars') AND EXISTS(SELECT 1 FROM arguments a LEFT JOIN strings s ON s.__path=a.__path AND s.__start=a.__start WHERE a.__path=c.__path AND a.call=c.id AND (c.resolved IN ('vars','builtins.vars') AND a.position=0 OR a.position=1 AND s.value='_conn')) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'internal' category,c.leaf detail FROM classified_calls c WHERE c.resolved IN ('__getattribute__','object.__getattribute__','getattr','builtins.getattr') AND EXISTS(SELECT 1 FROM arguments a JOIN strings s ON s.__path=a.__path AND s.__start=a.__start WHERE a.__path=c.__path AND a.call=c.id AND a.position=1 AND s.value IN ('_context','_error','_pre_populated','_state','_value')) AND EXISTS(SELECT 1 FROM arguments a JOIN expression_tags t ON t.__path=a.__path AND t.fn=c.fn AND t.node=a.id AND t.kind='lazy' WHERE a.__path=c.__path AND a.call=c.id AND a.position=0) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'state' category,c.leaf detail FROM classified_calls c WHERE c.resolved IN ('setattr','builtins.setattr','__setattr__','object.__setattr__') AND EXISTS(SELECT 1 FROM arguments a JOIN strings s ON s.__path=a.__path AND s.__start=a.__start WHERE a.__path=c.__path AND a.call=c.id AND a.position=1 AND s.value IN ('_branch_anchor','_branch_id','_revision_id')) AND EXISTS(SELECT 1 FROM arguments a JOIN expression_tags t ON t.__path=a.__path AND t.fn=c.fn AND t.node=a.id AND t.kind='internal' WHERE a.__path=c.__path AND a.call=c.id AND a.position=2) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'forbidden_pure' category,c.leaf detail FROM classified_calls c WHERE c.leaf IN ('_ensure_internal_raw_access') UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'reconciliation' category,c.leaf detail FROM classified_calls c WHERE c.leaf IN ('_execute_direct_internal_lazy','_execute_schema_ddl','_execute_schema_ddl_lazy','_execute_schema_direct_internal_lazy','_get_physical_table_info_for_schema_batch','_introspect_physical_table_for_schema_batch','_list_physical_tables_for_schema_batch','_schema_operation_lazy','flush_schema_plan','get_table_indexes_lazy','get_table_info_lazy','introspect_table_lazy','list_tables_lazy','materialized_physical_columns','physical_columns_for_reconcile','physical_table_exists_for_reconcile') AND NOT (c.leaf='flush_schema_plan' AND EXISTS(SELECT 1 FROM function_flags f WHERE f.__path=c.__path AND f.id=c.fn AND (f.name IN ('_bulk_schema_plan_context','_commit_schema_transaction','_create_fts_index_schema_sync','create_table_from_schema','drop_table') OR f.qualname IN ('LazySchemaTransaction._bulk_schema_plan_context','LazySchemaTransaction._commit_schema_transaction','LazySchemaTransaction._create_fts_index_schema_sync','SyncSchemaTransaction.create_table_from_schema','SyncSchemaTransaction.drop_table')))) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'bootstrap' category,c.leaf detail FROM classified_calls c WHERE c.callee_kind='attribute' AND c.callee IN ('add','append','clear','discard','extend','insert','pop','remove','setdefault','update') AND EXISTS(SELECT 1 FROM expression_roots root WHERE root.__path=c.__path AND root.expression=c.receiver AND root.name IN ('self','cls')) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'absence' category,c.leaf detail FROM classified_calls c WHERE c.leaf='_record_table_exists_result' AND EXISTS(SELECT 1 FROM arguments a WHERE a.__path=c.__path AND a.call=c.id AND a.position=1 AND a.kind='false') UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'dynamic' category,c.leaf detail FROM classified_calls c WHERE EXISTS(SELECT 1 FROM function_flags f WHERE f.__path=c.__path AND f.id=c.fn AND f.name GLOB 'materialize_*') AND (c.resolved IN ('callable','builtins.callable') AND EXISTS(SELECT 1 FROM arguments a JOIN expression_tags t ON t.__path=a.__path AND t.fn=c.fn AND t.node=a.id AND t.kind='dynamic' WHERE a.__path=c.__path AND a.call=c.id AND a.position=0) OR c.callee_kind='identifier' AND EXISTS(SELECT 1 FROM expression_tags t WHERE t.__path=c.__path AND t.fn=c.fn AND t.node=c.callee_id AND t.kind='dynamic')) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'payload' category,c.leaf detail FROM classified_calls c WHERE EXISTS(SELECT 1 FROM keywords k JOIN expression_tags t ON t.__path=k.__path AND t.fn=c.fn AND t.node=k.value AND t.kind='callable' WHERE k.__path=c.__path AND k.call=c.id AND (k.name='closed_post_op' OR NOT EXISTS(SELECT 1 FROM keywords closed WHERE closed.__path=c.__path AND closed.call=c.id AND closed.name='closed_post_op') AND (c.resolved IN ('literal_post_op','l2070_batching.post_op.literal_post_op','runtime_builder_post_op','l2070_batching.post_op.runtime_builder_post_op') OR c.leaf='RuntimeBuilderSpec' AND k.name='literal_kwargs' OR c.leaf='ResultMaterializationSpec' AND k.name IN ('literal_payload','default_value')))) OR c.resolved IN ('literal_post_op','l2070_batching.post_op.literal_post_op') AND NOT EXISTS(SELECT 1 FROM keywords closed WHERE closed.__path=c.__path AND closed.call=c.id AND closed.name='closed_post_op') AND EXISTS(SELECT 1 FROM arguments a JOIN expression_tags t ON t.__path=a.__path AND t.fn=c.fn AND t.node=a.id AND t.kind='callable' WHERE a.__path=c.__path AND a.call=c.id AND a.position=0) UNION ALL SELECT s.__path,o.fn,s.__start,s.__start,s.__end,'dolt',s.value FROM strings s JOIN owned_nodes o ON o.__path=s.__path AND o.__start=s.__start AND o.__end=s.__end WHERE rx_matches(lower(s.value),'dolt_|dolt log|dolt branches') UNION ALL SELECT a.__path,o.fn,a.id,a.__start,a.__end,'bootstrap',a.target_text FROM assignments a JOIN owned_nodes o ON o.__path=a.__path AND o.id=a.id JOIN nodes target ON target.__path=a.__path AND target.id=a.target JOIN expression_roots root ON root.__path=target.__path AND root.expression=target.id WHERE target.kind IN ('attribute','subscript') AND root.name IN ('self','cls') UNION ALL SELECT r.__path,o.fn,r.id,r.__start,r.__end,'of_return','LazyResult.of' FROM returns r JOIN owned_nodes o ON o.__path=r.__path AND o.id=r.id JOIN calls c ON c.__path=r.__path AND c.id=r.value WHERE c.callee_kind='attribute' AND c.callee='of' AND rx_matches(c.full_callee,'(?:^|\\.)LazyResult\\.of$') UNION ALL SELECT a.__path,o.fn,a.id,a.__start,a.__end,'absence','empty snapshot' FROM assignments a JOIN owned_nodes o ON o.__path=a.__path AND o.id=a.id JOIN calls c ON c.__path=a.__path AND c.id=a.value WHERE a.target_kind='identifier' AND rx_matches(a.target_text,'snapshot|existing') AND c.callee_kind='identifier' AND c.callee IN ('set','frozenset') AND NOT EXISTS(SELECT 1 FROM nodes args WHERE args.__path=c.__path AND args.parent=c.arguments_id AND args.kind!='comment') UNION ALL SELECT r.__path,o.fn,r.id,r.__start,r.__end,'absence','false return' FROM returns r JOIN owned_nodes o ON o.__path=r.__path AND o.id=r.id JOIN calls c ON c.__path=r.__path AND c.id=r.value JOIN arguments a ON a.__path=c.__path AND a.call=c.id AND a.position=0 JOIN function_flags f ON f.__path=o.__path AND f.id=o.fn WHERE a.kind='false' AND c.callee_kind='attribute' AND c.callee='of' AND rx_matches(c.full_callee,'(?:^|\\.)LazyResult\\.of$') AND f.name!='table_exists_lazy' AND instr(lower(f.qualname),'_should_skip_')=0 AND rx_matches(lower(f.qualname),'schema_fact|exists|has_|table|column|index|trigger') UNION ALL SELECT f.__path,f.id,f.id,f.__start,f.__end,'context',f.name FROM function_flags f JOIN declaration_contexts cls ON cls.__path=f.__path AND cls.id=f.lexical_parent JOIN nodes supers ON supers.__path=cls.__path AND supers.parent=cls.id AND supers.kind='argument_list' WHERE f.name IN ('execute_sync','execute_async') AND rx_matches(supers.text,'ExecutionContext')) e)",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"__start\",\"__end\",\"category\",\"uses_conn\",\"detail\",\"event_kind\" FROM (SELECT e.__path,e.fn,e.id,e.__start,e.__end,e.category,e.uses_conn,\n      CASE e.category\n      WHEN 'forbidden_pure' THEN 'forbidden @pure_lazy operation '||e.detail\n      WHEN 'bootstrap' THEN CASE WHEN a.id IS NOT NULL THEN CASE WHEN a.target_kind='attribute' THEN 'attribute' ELSE 'subscript' END||' assignment to '||a.target_text ELSE 'mutating call '||coalesce(c.callee,e.detail)||'(...)' END\n      WHEN 'payload' THEN 'callable-tainted payload passed into a ServerPlan service'\n      WHEN 'dynamic' THEN CASE WHEN c.resolved IN ('callable','builtins.callable') THEN 'callable() applied to dynamically looked-up behavior' ELSE 'invokes dynamically looked-up behavior inside a ServerPlan service' END\n      WHEN 'absence' THEN CASE WHEN a.id IS NOT NULL THEN 'schema fact absence fallback assigns '||a.expr_text||' to '||a.target_text WHEN c.id IS NOT NULL THEN 'schema fact absence fallback calls _record_table_exists_result(..., False)' ELSE 'schema fact absence fallback returns LazyResult.of(False)' END\n      WHEN 'internal' THEN (SELECT s.value FROM arguments a JOIN strings s ON s.__path=a.__path AND s.__start=a.__start WHERE a.__path=c.__path AND a.call=c.id AND a.position=1 LIMIT 1)\n      WHEN 'state' THEN (SELECT s.value FROM arguments a JOIN strings s ON s.__path=a.__path AND s.__start=a.__start WHERE a.__path=c.__path AND a.call=c.id AND a.position=1 LIMIT 1)\n      WHEN 'private' THEN CASE WHEN c.resolved IN ('getattr','builtins.getattr') THEN 'getattr(..., '||quote('_conn')||')' WHEN c.resolved IN ('vars','builtins.vars') THEN 'vars(...)' ELSE e.detail END\n      ELSE e.detail END detail,\n      CASE WHEN e.category='reconciliation' THEN CASE WHEN e.detail IN ('_get_physical_table_info_for_schema_batch','_introspect_physical_table_for_schema_batch','_list_physical_tables_for_schema_batch','get_table_indexes_lazy','get_table_info_lazy','introspect_table_lazy','list_tables_lazy','materialized_physical_columns','physical_columns_for_reconcile','physical_table_exists_for_reconcile') THEN 'schema discovery' WHEN e.detail IN ('_execute_direct_internal_lazy','_execute_schema_ddl','_execute_schema_ddl_lazy','_execute_schema_direct_internal_lazy','flush_schema_plan') THEN 'direct DDL or schema plan flush' ELSE 'lazy callback trampoline' END END event_kind\n      FROM (SELECT e.__path,e.fn,e.id,e.__start,e.__end,e.category,\n      CASE WHEN e.category='plan' AND EXISTS(SELECT 1 FROM classified_calls c\n        JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver AND receiver.kind='identifier'\n        JOIN native_cursor_parameters p ON p.__path=c.__path AND p.fn=c.fn AND p.name=receiver.text\n        WHERE c.__path=e.__path AND c.fn=e.fn AND c.id=e.id AND c.callee IN ('fetchone','fetchmany','fetchall'))\n        THEN 'native_cursor.'||e.detail ELSE e.detail END detail,\n        e.category='plan' AND EXISTS(SELECT 1 FROM classified_calls c WHERE c.__path=e.__path AND c.id=e.id AND EXISTS(SELECT 1 FROM attributes attr WHERE attr.__path=c.__path AND attr.attr='_conn' AND (\n      EXISTS(SELECT 1 FROM arguments a WHERE a.__path=c.__path AND a.call=c.id AND a.position=0 AND attr.__start>=a.__start AND attr.__end<=a.__end)\n      OR EXISTS(SELECT 1 FROM keywords k WHERE k.__path=c.__path AND k.call=c.id AND k.name IN ('owner','txn','tx','conn','connection') AND attr.__start>=k.__start AND attr.__end<=k.__end)))) uses_conn FROM (SELECT c.__path,c.fn,c.id,c.__start,c.__end,'plan' category,c.leaf detail FROM classified_calls c WHERE c.leaf IN ('ddl_effect_lazy','execute_grammar_leaf','execute_grammar_leaf_async','fetchall_grammar_leaf','fetchall_grammar_leaf_async','fetchone_grammar_leaf','fetchone_grammar_leaf_async','grammar_effect_lazy','grammar_execute','grammar_execute_async','grammar_fetchall','grammar_fetchall_async','grammar_fetchone','grammar_fetchone_async','grammar_row_lazy','grammar_rows_lazy','grammar_value_lazy','scalar_grammar_leaf') UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'plan' category,CASE WHEN c.callee IN ('resolve','resolve_async') THEN 'lazy.'||c.callee WHEN c.plan_receiver THEN 'plan.'||c.callee ELSE c.callee END detail FROM classified_calls c WHERE c.callee_kind='attribute' AND (c.callee IN ('execute','execute_async') AND c.plan_receiver OR c.callee IN ('execute_many','execute_one','fetchall','fetchmany','fetchone') OR c.callee IN ('_execute_direct_internal','_execute_direct_internal_async') OR c.callee IN ('resolve','resolve_async') AND c.lazy_receiver) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'intent' category,c.leaf detail FROM classified_calls c WHERE c.leaf IN ('_add_intent','_execute_intent_via_txn_plan','_execute_intent_via_txn_plan_async') OR c.resolved GLOB '*Intent' UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'grammar' category,c.leaf detail FROM classified_calls c WHERE c.resolved GLOB 'grammar_*' UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'native' category,c.leaf detail FROM classified_calls c WHERE c.leaf IN ('_call_dolt_procedure','_checkout_branch','_create_dolt_branch','commit') UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'private' category,c.leaf detail FROM classified_calls c WHERE c.resolved IN ('getattr','builtins.getattr','vars','builtins.vars') AND EXISTS(SELECT 1 FROM arguments a LEFT JOIN strings s ON s.__path=a.__path AND s.__start=a.__start WHERE a.__path=c.__path AND a.call=c.id AND (c.resolved IN ('vars','builtins.vars') AND a.position=0 OR a.position=1 AND s.value='_conn')) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'internal' category,c.leaf detail FROM classified_calls c WHERE c.resolved IN ('__getattribute__','object.__getattribute__','getattr','builtins.getattr') AND EXISTS(SELECT 1 FROM arguments a JOIN strings s ON s.__path=a.__path AND s.__start=a.__start WHERE a.__path=c.__path AND a.call=c.id AND a.position=1 AND s.value IN ('_context','_error','_pre_populated','_state','_value')) AND EXISTS(SELECT 1 FROM arguments a JOIN expression_tags t ON t.__path=a.__path AND t.fn=c.fn AND t.node=a.id AND t.kind='lazy' WHERE a.__path=c.__path AND a.call=c.id AND a.position=0) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'state' category,c.leaf detail FROM classified_calls c WHERE c.resolved IN ('setattr','builtins.setattr','__setattr__','object.__setattr__') AND EXISTS(SELECT 1 FROM arguments a JOIN strings s ON s.__path=a.__path AND s.__start=a.__start WHERE a.__path=c.__path AND a.call=c.id AND a.position=1 AND s.value IN ('_branch_anchor','_branch_id','_revision_id')) AND EXISTS(SELECT 1 FROM arguments a JOIN expression_tags t ON t.__path=a.__path AND t.fn=c.fn AND t.node=a.id AND t.kind='internal' WHERE a.__path=c.__path AND a.call=c.id AND a.position=2) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'forbidden_pure' category,c.leaf detail FROM classified_calls c WHERE c.leaf IN ('_ensure_internal_raw_access') UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'reconciliation' category,c.leaf detail FROM classified_calls c WHERE c.leaf IN ('_execute_direct_internal_lazy','_execute_schema_ddl','_execute_schema_ddl_lazy','_execute_schema_direct_internal_lazy','_get_physical_table_info_for_schema_batch','_introspect_physical_table_for_schema_batch','_list_physical_tables_for_schema_batch','_schema_operation_lazy','flush_schema_plan','get_table_indexes_lazy','get_table_info_lazy','introspect_table_lazy','list_tables_lazy','materialized_physical_columns','physical_columns_for_reconcile','physical_table_exists_for_reconcile') AND NOT (c.leaf='flush_schema_plan' AND EXISTS(SELECT 1 FROM function_flags f WHERE f.__path=c.__path AND f.id=c.fn AND (f.name IN ('_bulk_schema_plan_context','_commit_schema_transaction','_create_fts_index_schema_sync','create_table_from_schema','drop_table') OR f.qualname IN ('LazySchemaTransaction._bulk_schema_plan_context','LazySchemaTransaction._commit_schema_transaction','LazySchemaTransaction._create_fts_index_schema_sync','SyncSchemaTransaction.create_table_from_schema','SyncSchemaTransaction.drop_table')))) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'bootstrap' category,c.leaf detail FROM classified_calls c WHERE c.callee_kind='attribute' AND c.callee IN ('add','append','clear','discard','extend','insert','pop','remove','setdefault','update') AND EXISTS(SELECT 1 FROM expression_roots root WHERE root.__path=c.__path AND root.expression=c.receiver AND root.name IN ('self','cls')) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'absence' category,c.leaf detail FROM classified_calls c WHERE c.leaf='_record_table_exists_result' AND EXISTS(SELECT 1 FROM arguments a WHERE a.__path=c.__path AND a.call=c.id AND a.position=1 AND a.kind='false') UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'dynamic' category,c.leaf detail FROM classified_calls c WHERE EXISTS(SELECT 1 FROM function_flags f WHERE f.__path=c.__path AND f.id=c.fn AND f.name GLOB 'materialize_*') AND (c.resolved IN ('callable','builtins.callable') AND EXISTS(SELECT 1 FROM arguments a JOIN expression_tags t ON t.__path=a.__path AND t.fn=c.fn AND t.node=a.id AND t.kind='dynamic' WHERE a.__path=c.__path AND a.call=c.id AND a.position=0) OR c.callee_kind='identifier' AND EXISTS(SELECT 1 FROM expression_tags t WHERE t.__path=c.__path AND t.fn=c.fn AND t.node=c.callee_id AND t.kind='dynamic')) UNION ALL SELECT c.__path,c.fn,c.id,c.__start,c.__end,'payload' category,c.leaf detail FROM classified_calls c WHERE EXISTS(SELECT 1 FROM keywords k JOIN expression_tags t ON t.__path=k.__path AND t.fn=c.fn AND t.node=k.value AND t.kind='callable' WHERE k.__path=c.__path AND k.call=c.id AND (k.name='closed_post_op' OR NOT EXISTS(SELECT 1 FROM keywords closed WHERE closed.__path=c.__path AND closed.call=c.id AND closed.name='closed_post_op') AND (c.resolved IN ('literal_post_op','l2070_batching.post_op.literal_post_op','runtime_builder_post_op','l2070_batching.post_op.runtime_builder_post_op') OR c.leaf='RuntimeBuilderSpec' AND k.name='literal_kwargs' OR c.leaf='ResultMaterializationSpec' AND k.name IN ('literal_payload','default_value')))) OR c.resolved IN ('literal_post_op','l2070_batching.post_op.literal_post_op') AND NOT EXISTS(SELECT 1 FROM keywords closed WHERE closed.__path=c.__path AND closed.call=c.id AND closed.name='closed_post_op') AND EXISTS(SELECT 1 FROM arguments a JOIN expression_tags t ON t.__path=a.__path AND t.fn=c.fn AND t.node=a.id AND t.kind='callable' WHERE a.__path=c.__path AND a.call=c.id AND a.position=0) UNION ALL SELECT s.__path,o.fn,s.__start,s.__start,s.__end,'dolt',s.value FROM strings s JOIN owned_nodes o ON o.__path=s.__path AND o.__start=s.__start AND o.__end=s.__end WHERE rx_matches(lower(s.value),'dolt_|dolt log|dolt branches') UNION ALL SELECT a.__path,o.fn,a.id,a.__start,a.__end,'bootstrap',a.target_text FROM assignments a JOIN owned_nodes o ON o.__path=a.__path AND o.id=a.id JOIN nodes target ON target.__path=a.__path AND target.id=a.target JOIN expression_roots root ON root.__path=target.__path AND root.expression=target.id WHERE target.kind IN ('attribute','subscript') AND root.name IN ('self','cls') UNION ALL SELECT r.__path,o.fn,r.id,r.__start,r.__end,'of_return','LazyResult.of' FROM returns r JOIN owned_nodes o ON o.__path=r.__path AND o.id=r.id JOIN calls c ON c.__path=r.__path AND c.id=r.value WHERE c.callee_kind='attribute' AND c.callee='of' AND rx_matches(c.full_callee,'(?:^|\\.)LazyResult\\.of$') UNION ALL SELECT a.__path,o.fn,a.id,a.__start,a.__end,'absence','empty snapshot' FROM assignments a JOIN owned_nodes o ON o.__path=a.__path AND o.id=a.id JOIN calls c ON c.__path=a.__path AND c.id=a.value WHERE a.target_kind='identifier' AND rx_matches(a.target_text,'snapshot|existing') AND c.callee_kind='identifier' AND c.callee IN ('set','frozenset') AND NOT EXISTS(SELECT 1 FROM nodes args WHERE args.__path=c.__path AND args.parent=c.arguments_id AND args.kind!='comment') UNION ALL SELECT r.__path,o.fn,r.id,r.__start,r.__end,'absence','false return' FROM returns r JOIN owned_nodes o ON o.__path=r.__path AND o.id=r.id JOIN calls c ON c.__path=r.__path AND c.id=r.value JOIN arguments a ON a.__path=c.__path AND a.call=c.id AND a.position=0 JOIN function_flags f ON f.__path=o.__path AND f.id=o.fn WHERE a.kind='false' AND c.callee_kind='attribute' AND c.callee='of' AND rx_matches(c.full_callee,'(?:^|\\.)LazyResult\\.of$') AND f.name!='table_exists_lazy' AND instr(lower(f.qualname),'_should_skip_')=0 AND rx_matches(lower(f.qualname),'schema_fact|exists|has_|table|column|index|trigger') UNION ALL SELECT f.__path,f.id,f.id,f.__start,f.__end,'context',f.name FROM function_flags f WHERE f.execution_context) e) e LEFT JOIN assignments a ON a.__path=e.__path AND a.id=e.id LEFT JOIN classified_calls c ON c.__path=e.__path AND c.id=e.id JOIN function_flags flags ON flags.__path=e.__path AND flags.id=e.fn WHERE e.category NOT IN ('bootstrap','forbidden_pure') OR flags.pure)",
             "indexes": [
               [
                 "__path",
@@ -586,7 +623,7 @@
           },
           {
             "name": "intrinsic",
-            "query": "SELECT \"__path\",\"id\" FROM (SELECT f.__path,f.id FROM function_flags f WHERE f.legacy OR rx_matches(f.text,'^async\\b') AND NOT f.pure OR f.name GLOB '*_async' OR EXISTS(SELECT 1 FROM function_events e WHERE e.__path=f.__path AND e.fn=f.id AND (e.category IN ('plan','native') OR f.sensitive AND e.category IN ('context','internal','state','private'))))",
+            "query": "SELECT \"__path\",\"id\",\"location\",\"reason\" FROM (SELECT __path,id,location,reason FROM (\n      SELECT f.__path,f.id,e.__start location,\n        CASE e.category WHEN 'context' THEN 'ExecutionContext terminal ' WHEN 'internal' THEN 'reads LazyResult internals ' WHEN 'state' THEN 'writes execution-derived planner state ' WHEN 'private' THEN 'reaches through private runtime state via ' WHEN 'plan' THEN 'direct eager sink ' ELSE 'imperative native call ' END||e.detail reason,\n        row_number() OVER(PARTITION BY f.__path,f.id ORDER BY CASE e.category WHEN 'context' THEN 0 WHEN 'internal' THEN 1 WHEN 'state' THEN 2 WHEN 'private' THEN 3 WHEN 'plan' THEN 4 ELSE 5 END,e.__start,e.__end DESC) chosen\n      FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category IN ('plan','native') OR f.sensitive AND e.category IN ('context','state','private') OR f.sensitive AND e.category='internal' AND f.name NOT IN ()\n      ) WHERE chosen=1 UNION ALL SELECT f.__path,f.id,f.__start,CASE WHEN f.legacy THEN 'legacy eager wrapper' WHEN rx_matches(f.text,'^async\\b') AND NOT f.pure THEN 'async function' ELSE 'name ends with _async' END FROM function_flags f\n      WHERE (f.legacy OR rx_matches(f.text,'^async\\b') AND NOT f.pure OR f.name GLOB '*_async') AND NOT EXISTS(SELECT 1 FROM function_events e WHERE e.__path=f.__path AND e.fn=f.id AND (e.category IN ('plan','native') OR f.sensitive AND e.category IN ('context','state','private') OR f.sensitive AND e.category='internal' AND f.name NOT IN ())))",
             "indexes": [
               [
                 "__path",
@@ -595,8 +632,40 @@
             ]
           },
           {
+            "name": "graph_nodes",
+            "query": "SELECT \"__path\",\"id\",\"symbol\",\"token\" FROM (SELECT f.__path,f.id,f.symbol,row_number() OVER(ORDER BY f.__path,f.__start,f.id) token FROM function_flags f)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "ordered_demands",
+            "query": "SELECT \"__path\",\"id\",\"mode\" FROM (SELECT f.__path,f.id,'eager' mode FROM function_flags f WHERE f.pure AND EXISTS(SELECT 1 FROM reachable r JOIN intrinsic i ON i.__path=r.path AND i.id=r.node WHERE r.__path=f.__path AND r.root=f.id) UNION ALL SELECT f.__path,f.id,'nonlazy' FROM function_flags f WHERE (f.pure OR f.name GLOB '*_lazy') AND EXISTS(SELECT 1 FROM reachable r JOIN function_flags target ON target.__path=r.path AND target.id=r.node WHERE r.__path=f.__path AND r.root=f.id AND r.first IS NOT NULL AND NOT target.pure AND target.name NOT GLOB '*_lazy' AND target.symbol NOT IN ('_internal.dynamic_import.load_python_module','l2070_batching.lazy_runtime.build_visible_whole_document_embedding_write','l5200_vector_index.index_implementations.pgvector._vector_dimension_mismatch_from_pgvector_error')))",
+            "indexes": [
+              [
+                "__path",
+                "id",
+                "mode"
+              ]
+            ]
+          },
+          {
+            "name": "ordered_reach",
+            "query": "SELECT \"__path\",\"root\",\"mode\",\"path\",\"node\",\"first\",\"order_\",NULL AS \"seen\" FROM (WITH RECURSIVE walk(__path,root,mode,path,node,first,order_,seen) AS (\n        SELECT d.__path,d.id,d.mode,d.__path,d.id,NULL,'',','||n.token||',' FROM ordered_demands d JOIN graph_nodes n ON n.__path=d.__path AND n.id=d.id\n        UNION ALL SELECT r.__path,r.root,r.mode,e.target_path,e.target,coalesce(r.first,e.__start),r.order_||printf('%020d.',e.__start),r.seen||next.token||','\n        FROM walk r JOIN function_flags current ON current.__path=r.path AND current.id=r.node\n        LEFT JOIN intrinsic sink ON sink.__path=r.path AND sink.id=r.node\n        JOIN architecture_edges e ON e.__path=r.path AND e.fn=r.node JOIN graph_nodes next ON next.__path=e.target_path AND next.id=e.target\n        WHERE r.path=r.__path AND instr(r.seen,','||next.token||',')=0\n          AND (r.mode='eager' AND sink.id IS NULL OR r.mode='nonlazy' AND (r.first IS NULL OR current.pure OR current.name GLOB '*_lazy'))\n          AND (r.mode!='nonlazy' OR next.symbol NOT IN ('_internal.dynamic_import.load_python_module','l2070_batching.lazy_runtime.build_visible_whole_document_embedding_write','l5200_vector_index.index_implementations.pgvector._vector_dimension_mismatch_from_pgvector_error'))) SELECT * FROM walk)",
+            "indexes": [
+              [
+                "__path",
+                "root",
+                "mode"
+              ]
+            ]
+          },
+          {
             "name": "transitive_matches",
-            "query": "SELECT \"__path\",\"root\",\"eager\" FROM (SELECT r.__path,r.root,min(CASE WHEN r.first IS NULL THEN -1000000000+coalesce((SELECT min(e.__start) FROM function_events e WHERE e.__path=f.__path AND e.fn=f.id),f.__start) ELSE r.first END) eager FROM reachable r JOIN function_flags f ON f.__path=r.path AND f.id=r.node JOIN intrinsic i ON i.__path=f.__path AND i.id=f.id GROUP BY r.__path,r.root)",
+            "query": "SELECT \"__path\",\"root\",\"eager\",\"target\",\"reason\" FROM (SELECT __path,root,eager,target,reason FROM (SELECT r.__path,r.root,CASE WHEN r.first IS NULL THEN -1000000000+i.location ELSE r.first END eager,f.symbol target,i.reason,\n      row_number() OVER(PARTITION BY r.__path,r.root ORDER BY r.order_) chosen FROM ordered_reach r JOIN intrinsic i ON i.__path=r.path AND i.id=r.node JOIN function_flags f ON f.__path=r.path AND f.id=r.node WHERE r.mode='eager') WHERE chosen=1)",
             "indexes": [
               [
                 "__path",
@@ -606,7 +675,7 @@
           },
           {
             "name": "non_lazy_matches",
-            "query": "SELECT \"__path\",\"root\",\"location\" FROM (SELECT r.__path,r.root,min(r.first) location FROM reachable r JOIN function_flags f ON f.__path=r.path AND f.id=r.node WHERE r.first IS NOT NULL AND NOT f.pure AND f.name NOT GLOB '*_lazy' AND f.symbol NOT IN ('_internal.dynamic_import.load_python_module','l2070_batching.lazy_runtime.build_visible_whole_document_embedding_write','l5200_vector_index.index_implementations.pgvector._vector_dimension_mismatch_from_pgvector_error') GROUP BY r.__path,r.root)",
+            "query": "SELECT \"__path\",\"root\",\"location\",\"target\" FROM (SELECT __path,root,location,target FROM (SELECT r.__path,r.root,r.first location,f.symbol target,row_number() OVER(PARTITION BY r.__path,r.root ORDER BY r.order_) chosen FROM ordered_reach r JOIN function_flags f ON f.__path=r.path AND f.id=r.node WHERE r.mode='nonlazy' AND r.first IS NOT NULL AND NOT f.pure AND f.name NOT GLOB '*_lazy') WHERE chosen=1)",
             "indexes": [
               [
                 "__path",
@@ -626,27 +695,27 @@
           },
           {
             "name": "diagnostics_0",
-            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\" FROM (SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-001' issue,f.id||':LA-001' identity FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.pure UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-002' issue,f.id||':LA-002' identity FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE EXISTS(SELECT 1 FROM rollups intent WHERE intent.__path=f.__path AND intent.root=f.id AND intent.category='intent') UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-003' issue,f.id||':LA-003' identity FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.name NOT GLOB '_*' AND f.name NOT GLOB '*_lazy' AND NOT f.pure AND (rx_matches(f.__path,'^(?:impl/common/l3500_bulk_ops/|impl/common/l7300_revision_history/|impl/common/l9700_sql_graph_query/)') OR f.__path='impl/common/l5200_sql_query/_insert_from_query.py') AND NOT EXISTS(SELECT 1 FROM rollups intent WHERE intent.__path=f.__path AND intent.root=f.id AND intent.category='intent') UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-004' issue,f.id||':LA-004' identity FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='native' WHERE NOT rx_matches(f.__path,'migration') AND EXISTS(SELECT 1 FROM rollups plan WHERE plan.__path=f.__path AND plan.root=f.id AND plan.category='orchestration') UNION ALL SELECT f.__path path,CASE WHEN min(r.location)<0 THEN min(r.location)+1000000000 ELSE min(r.location) END start_byte,CASE WHEN min(r.location)<0 THEN min(r.location)+1000000000 ELSE min(r.location) END end_byte,'LA-005' issue,f.id identity FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category IN ('dolt','native') WHERE rx_matches(f.__path,'^(?:impl/common/l7100_versioned_operations/|impl/common/l7248_sparse_versioned_transactions/|impl/common/l7300_sql_versioned_transactions/|l7250_versioned_operations/)') GROUP BY f.__path,f.id UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-006' issue,f.id||':plan:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='plan' AND (EXISTS(SELECT 1 FROM classified_calls c WHERE c.__path=e.__path AND c.id=e.id AND EXISTS(SELECT 1 FROM attributes attr WHERE attr.__path=c.__path AND attr.attr='_conn' AND (EXISTS(SELECT 1 FROM arguments a WHERE a.__path=c.__path AND a.call=c.id AND a.position=0 AND attr.__start>=a.__start AND attr.__end<=a.__end) OR EXISTS(SELECT 1 FROM keywords k WHERE k.__path=c.__path AND k.call=c.id AND k.name IN ('owner','txn','tx','conn','connection') AND attr.__start>=k.__start AND attr.__end<=k.__end))))))"
+            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\",\"fn\",\"origin\",\"detail\",\"symbol\" FROM (SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-001' issue,f.id||':LA-001' identity, f.id fn,'plan' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.pure UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-002' issue,f.id||':LA-002' identity, f.id fn,'plan' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE EXISTS(SELECT 1 FROM rollups intent WHERE intent.__path=f.__path AND intent.root=f.id AND intent.category='intent') UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-003' issue,f.id||':LA-003' identity, f.id fn,'plan' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.name NOT GLOB '_*' AND f.name NOT GLOB '*_lazy' AND NOT f.pure AND (rx_matches(f.__path,'^(?:impl/common/l3500_bulk_ops/|impl/common/l7300_revision_history/|impl/common/l9700_sql_graph_query/)') OR f.__path='impl/common/l5200_sql_query/_insert_from_query.py') AND NOT EXISTS(SELECT 1 FROM rollups intent WHERE intent.__path=f.__path AND intent.root=f.id AND intent.category='intent') UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-004' issue,f.id||':LA-004' identity, f.id fn,'native' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='native' WHERE NOT rx_matches(f.__path,'migration') AND EXISTS(SELECT 1 FROM rollups plan WHERE plan.__path=f.__path AND plan.root=f.id AND plan.category='orchestration') UNION ALL SELECT f.__path path,CASE WHEN min(r.location)<0 THEN min(r.location)+1000000000 ELSE min(r.location) END start_byte,CASE WHEN min(r.location)<0 THEN min(r.location)+1000000000 ELSE min(r.location) END end_byte,'LA-005' issue,f.id identity, f.id fn,'' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category IN ('dolt','native') WHERE rx_matches(f.__path,'^(?:impl/common/l7100_versioned_operations/|impl/common/l7248_sparse_versioned_transactions/|impl/common/l7300_sql_versioned_transactions/|l7250_versioned_operations/)') GROUP BY f.__path,f.id UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-006' issue,f.id||':plan:'||e.id identity, f.id fn,'plan' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='plan' AND (e.uses_conn) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (other.uses_conn)))"
           },
           {
             "name": "diagnostics_1",
-            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\" FROM (SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-007' issue,f.id||':LA-007' identity FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.name GLOB 'prepare_*' UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LA-008' issue,f.id identity FROM function_flags f WHERE rx_matches(f.__path,'^(?:impl/common/l7248_sparse_versioned_transactions/|impl/common/l7300_sql_versioned_transactions/|impl/doltdb/versioned_write_transaction\\.py)') AND EXISTS(SELECT 1 FROM rollups grammar WHERE grammar.__path=f.__path AND grammar.root=f.id AND grammar.category='grammar') AND EXISTS(SELECT 1 FROM function_flags async_fn JOIN reachable r ON r.__path=async_fn.__path AND r.root=async_fn.id JOIN function_events e ON e.__path=r.path AND e.fn=r.node WHERE async_fn.__path=f.__path AND async_fn.name=f.name||'_async' AND e.category IN ('plan','grammar') AND e.detail GLOB '*_async') UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':context:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='context' AND (f.sensitive) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':internal:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='internal' AND (f.sensitive) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':state:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='state' AND (f.sensitive) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':private:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='private' AND (f.sensitive) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category))"
+            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\",\"fn\",\"origin\",\"detail\",\"symbol\" FROM (SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-007' issue,f.id||':LA-007' identity, f.id fn,'plan' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.name GLOB 'prepare_*' UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LA-008' issue,f.id identity, f.id fn,'' origin,NULL detail,NULL symbol FROM function_flags f WHERE rx_matches(f.__path,'^(?:impl/common/l7248_sparse_versioned_transactions/|impl/common/l7300_sql_versioned_transactions/|impl/doltdb/versioned_write_transaction\\.py)') AND EXISTS(SELECT 1 FROM rollups grammar WHERE grammar.__path=f.__path AND grammar.root=f.id AND grammar.category='grammar') AND EXISTS(SELECT 1 FROM function_flags async_fn JOIN reachable r ON r.__path=async_fn.__path AND r.root=async_fn.id JOIN function_events e ON e.__path=r.path AND e.fn=r.node WHERE async_fn.__path=f.__path AND async_fn.name=f.name||'_async' AND e.category IN ('plan','grammar') AND e.detail GLOB '*_async') UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':context:'||e.id identity, f.id fn,'context' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='context' AND (f.sensitive) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (f.sensitive)) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':internal:'||e.id identity, f.id fn,'internal' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='internal' AND (f.sensitive AND f.name NOT IN ()) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (f.sensitive AND f.name NOT IN ())) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':state:'||e.id identity, f.id fn,'state' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='state' AND (f.sensitive) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (f.sensitive)) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':private:'||e.id identity, f.id fn,'private' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='private' AND (f.sensitive) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (f.sensitive)))"
           },
           {
             "name": "diagnostics_2",
-            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\" FROM (SELECT f.__path path,CASE WHEN t.eager<0 THEN t.eager+1000000000 ELSE t.eager END start_byte,CASE WHEN t.eager<0 THEN t.eager+1000000000 ELSE t.eager END end_byte,'LA-009' issue,f.id||':eager' identity FROM function_flags f JOIN transitive_matches t ON t.__path=f.__path AND t.root=f.id WHERE f.pure AND NOT EXISTS(SELECT 1 FROM legacy_matches l WHERE l.__path=f.__path AND l.root=f.id) UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LA-010' issue,f.id identity FROM function_flags f WHERE instr(lower(f.name),'lazy')>0 AND rx_matches(lower(f.name),'async|sync') UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-011' issue,f.id||':LA-011' identity FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.__path GLOB 'impl/common/l2070_server_plan/*' AND f.name IN ('lower','compile','preprocess','pre_op','post_op') UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-011' issue,f.id||':forbidden_pure:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='forbidden_pure' AND (0) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-012' issue,f.id||':plan:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='plan' AND (NOT f.legacy AND e.detail IN ('lazy.resolve','lazy.resolve_async')) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-013' issue,f.id||':forbidden_pure:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='forbidden_pure' AND (f.pure))"
+            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\",\"fn\",\"origin\",\"detail\",\"symbol\" FROM (SELECT f.__path path,CASE WHEN t.eager<0 THEN t.eager+1000000000 ELSE t.eager END start_byte,CASE WHEN t.eager<0 THEN t.eager+1000000000 ELSE t.eager END end_byte,'LA-009' issue,f.id||':eager' identity, f.id fn,'eager' origin,NULL detail,NULL symbol FROM function_flags f JOIN transitive_matches t ON t.__path=f.__path AND t.root=f.id WHERE f.pure AND NOT EXISTS(SELECT 1 FROM legacy_matches l WHERE l.__path=f.__path AND l.root=f.id) UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LA-010' issue,f.id identity, f.id fn,'' origin,NULL detail,NULL symbol FROM function_flags f WHERE instr(lower(f.name),'lazy')>0 AND rx_matches(lower(f.name),'async|sync') UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-011' issue,f.id||':LA-011' identity, f.id fn,'plan' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.__path GLOB 'impl/common/l2070_server_plan/*' AND f.name IN ('lower','compile','preprocess','pre_op','post_op') UNION ALL SELECT f.__path path,c.__start start_byte,c.__start end_byte,'LA-011' issue,f.id||':hydration' identity, f.id fn,'hydration' origin,NULL detail,NULL symbol FROM function_flags f JOIN call_targets c ON c.__path=f.__path AND c.fn=f.id WHERE f.__path GLOB 'impl/common/l2070_server_plan/*' AND c.target IN ('hydrate_many_post_op','hydrate_one_post_op','runtime_sql_conn_from_hydrator') AND c.__start=(SELECT min(other.__start) FROM call_targets other WHERE other.__path=f.__path AND other.fn=f.id AND other.target IN ('hydrate_many_post_op','hydrate_one_post_op','runtime_sql_conn_from_hydrator')) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-012' issue,f.id||':plan:'||e.id identity, f.id fn,'plan' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='plan' AND (NOT f.legacy AND e.detail IN ('lazy.resolve','lazy.resolve_async')) AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (NOT f.legacy AND other.detail IN ('lazy.resolve','lazy.resolve_async'))) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-013' issue,f.id||':forbidden_pure:'||e.id identity, f.id fn,'forbidden_pure' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='forbidden_pure' AND (f.pure))"
           },
           {
             "name": "diagnostics_3",
-            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\" FROM (SELECT f.__path path,l.location start_byte,l.location end_byte,'LA-013' issue,f.id||':legacy' identity FROM function_flags f JOIN legacy_matches l ON l.__path=f.__path AND l.root=f.id WHERE f.pure UNION ALL SELECT f.__path path,n.location start_byte,n.location end_byte,'LA-013' issue,f.id||':nonlazy' identity FROM function_flags f JOIN non_lazy_matches n ON n.__path=f.__path AND n.root=f.id WHERE (f.pure OR f.name GLOB '*_lazy') AND NOT (f.pure AND EXISTS(SELECT 1 FROM legacy_matches l WHERE l.__path=f.__path AND l.root=f.id)) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-014' issue,f.id||':payload:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='payload' AND (rx_matches(f.__path,'^(?:impl/common/l2070_server_plan/)') OR f.__path IN ('impl/common/l2200_sql_dialect/sql_connection.py','l2070_batching/post_op.py')) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-014' issue,f.id||':dynamic:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='dynamic' AND (rx_matches(f.__path,'^(?:impl/common/l2070_server_plan/)') OR f.__path IN ('impl/common/l2200_sql_dialect/sql_connection.py','l2070_batching/post_op.py')) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-015' issue,f.id||':of_return:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='of_return' AND (f.bootstrap) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-016' issue,f.id||':bootstrap:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='bootstrap' AND (f.bootstrap AND f.pure))"
+            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\",\"fn\",\"origin\",\"detail\",\"symbol\" FROM (SELECT f.__path path,l.location start_byte,l.location end_byte,'LA-013' issue,f.id||':legacy' identity, f.id fn,'legacy' origin,NULL detail,NULL symbol FROM function_flags f JOIN legacy_matches l ON l.__path=f.__path AND l.root=f.id WHERE f.pure UNION ALL SELECT f.__path path,n.location start_byte,n.location end_byte,'LA-013' issue,f.id||':nonlazy' identity, f.id fn,'nonlazy' origin,NULL detail,NULL symbol FROM function_flags f JOIN non_lazy_matches n ON n.__path=f.__path AND n.root=f.id WHERE (f.pure OR f.name GLOB '*_lazy') AND NOT (f.pure AND EXISTS(SELECT 1 FROM legacy_matches l WHERE l.__path=f.__path AND l.root=f.id)) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-014' issue,f.id||':payload:'||e.id identity, f.id fn,'payload' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='payload' AND (rx_matches(f.__path,'^(?:impl/common/l2070_server_plan/)') OR f.__path IN ('impl/common/l2200_sql_dialect/sql_connection.py','l2070_batching/post_op.py')) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-014' issue,f.id||':dynamic:'||e.id identity, f.id fn,'dynamic' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='dynamic' AND (rx_matches(f.__path,'^(?:impl/common/l2070_server_plan/)') OR f.__path IN ('impl/common/l2200_sql_dialect/sql_connection.py','l2070_batching/post_op.py')) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-015' issue,f.id||':of_return:'||e.id identity, f.id fn,'of_return' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='of_return' AND (f.bootstrap) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-016' issue,f.id||':bootstrap:'||e.id identity, f.id fn,'bootstrap' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='bootstrap' AND (f.bootstrap AND f.pure))"
           },
           {
             "name": "diagnostics_4",
-            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\" FROM (SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-017' issue,f.id||':reconciliation:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='reconciliation' AND (f.reconciliation) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-017' issue,f.id||':absence:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='absence' AND (f.reconciliation) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-017' issue,f.id||':plan:'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='plan' AND (rx_matches(lower(f.__path||' '||f.qualname),'reconcile|reconciliation|schema_ensure') AND (f.__path GLOB 'impl/common/l2200_sql_dialect/*' OR f.__path='l2000_connection/schema_transaction.py') AND e.detail IN ('lazy.resolve','lazy.resolve_async')) UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LA-017' issue,f.id identity FROM function_flags f WHERE f.reconciliation AND f.__path||'::'||f.qualname IN ('impl/common/l2200_sql_dialect/schema_ensure.py::cached_or_fetched_table_columns','impl/common/l2200_sql_dialect/schema_ensure.py::ensure_model_table_usable','impl/common/l2200_sql_dialect/schema_ensure.py::model_table_is_usable_lazy','impl/common/l2200_sql_dialect/sql_core_support_mixin.py::_SqlCoreSupportMixin._polymorphic_check_constraint_reconciliation_ddl_for_write','impl/common/l2200_sql_dialect/sql_core_support_mixin.py::_SqlCoreSupportMixin.table_exists_many_lazy','impl/common/l2200_sql_dialect/sql_schema_services.py::_SqlSchemaCreationMixin._polymorphic_check_constraint_reconciliation_ddl_for_write','impl/common/l2200_sql_dialect/sql_schema_services.py::_SqlSchemaMixin.table_exists_many_lazy','impl/common/l7245_versioned_backends/versioned_fk_triggers.py::reconcile_versioned_fk_triggers_for_existing_table','impl/mariadb/core_support_service.py::_MariaDBCoreSupportMixin._table_exists_many_uncached_lazy','impl/mariadb/metadata_schema_service.py::_MariaDBMetadataSchemaMixin._table_exists_many_uncached_lazy','impl/postgres/metadata_schema_service.py::_PostgresMetadataSchemaMixin._table_exists_many_uncached_lazy','impl/sqlite/connection.py::SqliteSchemaService.table_exists_many_lazy','l2000_connection/connection_caches.py::_ConnectionTableCacheMixin.table_exists_many_lazy','l2000_connection/schema_transaction.py::AsyncSchemaTransaction.create_table_from_schema_async','l2000_connection/schema_transaction.py::AsyncSchemaTransaction.create_tables_from_schema_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_many_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_many_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_info_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_info_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._introspect_physical_table_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._introspect_physical_table_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._list_physical_tables_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._list_physical_tables_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._prime_bulk_column_snapshots_for_existing_tables','l2000_connection/schema_transaction.py::LazySchemaTransaction._prime_bulk_column_snapshots_for_existing_tables_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._seed_bulk_column_snapshots_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._seed_bulk_column_snapshots_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction.create_tables_from_schema_lazy','l2000_connection/schema_transaction.py::LazySchemaTransaction.physical_columns_for_reconcile','l2000_connection/schema_transaction.py::LazySchemaTransaction.physical_table_exists_for_reconcile','l2000_connection/schema_transaction.py::SyncSchemaTransaction.create_tables_from_schema','l2000_connection/table_existence_authority.py::_table_exists_many_from_schema_service_lazy','l2000_connection/table_existence_authority.py::connection_table_exists_lazy','l2000_connection/table_existence_authority.py::connection_table_exists_many_lazy','l2000_connection/table_existence_authority.py::sql_schema_table_exists_lazy','l2000_connection/table_existence_authority.py::sql_schema_table_exists_many_lazy','logged_table.py::LoggedTable._ensure_log_columns_exist','logged_table.py::LoggedTable._log_column_repair_needed_from_schema_facts') UNION ALL SELECT a.__path path,a.__start start_byte,a.__end end_byte,'LA-016' issue,a.id||':sidequeue' identity FROM assignments a JOIN nodes expression ON expression.__path=a.__path AND expression.id=a.parent JOIN classes cls ON cls.__path=expression.__path AND expression.parent=cls.body_id WHERE a.target_kind='identifier' AND a.target_text IN ('pending_after_create_schema_ddl_async_batch_ref_id','pending_after_create_schema_ddl_async_statements','pending_after_create_schema_ddl_batch_ref_id','pending_after_create_schema_ddl_statements','pending_polymorphic_guard_ddl_async_batch_scheduled','pending_polymorphic_guard_ddl_async_statements','pending_polymorphic_guard_ddl_batch_scheduled','pending_polymorphic_guard_ddl_statements','pending_staged_trigger_ddl_async_batch_scheduled','pending_staged_trigger_ddl_async_statements','pending_staged_trigger_ddl_batch_scheduled','pending_staged_trigger_ddl_statements') AND rx_matches(lower(a.__path||' '||cls.name||'.'||a.target_text),'bootstrap|ddl') UNION ALL SELECT c.__path path,c.__start start_byte,c.__end end_byte,'LA-013' issue,c.id||':defer' identity FROM calls c WHERE c.callee='defer_lazy_result' AND c.callee_kind IN ('identifier','attribute') UNION ALL SELECT i.__path,i.__start,i.__end,'LA-013',i.id||':'||i.local FROM imports i WHERE i.module='l2055_lazy_result.transform' AND i.name='defer_lazy_result')"
+            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\",\"fn\",\"origin\",\"detail\",\"symbol\" FROM (SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-017' issue,f.id||':reconciliation:'||e.id identity, f.id fn,'reconciliation' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='reconciliation' AND (f.reconciliation) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-017' issue,f.id||':absence:'||e.id identity, f.id fn,'absence' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='absence' AND (f.reconciliation) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-017' issue,f.id||':plan:'||e.id identity, f.id fn,'plan' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='plan' AND (rx_matches(lower(f.__path||' '||f.qualname),'reconcile|reconciliation|schema_ensure') AND (f.__path GLOB 'impl/common/l2200_sql_dialect/*' OR f.__path='l2000_connection/schema_transaction.py') AND e.detail IN ('lazy.resolve','lazy.resolve_async')) UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LA-017' issue,f.id identity, f.id fn,'' origin,NULL detail,NULL symbol FROM function_flags f WHERE f.reconciliation AND f.__path||'::'||f.qualname IN ('impl/common/l2200_sql_dialect/schema_ensure.py::cached_or_fetched_table_columns','impl/common/l2200_sql_dialect/schema_ensure.py::ensure_model_table_usable','impl/common/l2200_sql_dialect/schema_ensure.py::model_table_is_usable_lazy','impl/common/l2200_sql_dialect/sql_core_support_mixin.py::_SqlCoreSupportMixin._polymorphic_check_constraint_reconciliation_ddl_for_write','impl/common/l2200_sql_dialect/sql_core_support_mixin.py::_SqlCoreSupportMixin.table_exists_many_lazy','impl/common/l2200_sql_dialect/sql_schema_services.py::_SqlSchemaCreationMixin._polymorphic_check_constraint_reconciliation_ddl_for_write','impl/common/l2200_sql_dialect/sql_schema_services.py::_SqlSchemaMixin.table_exists_many_lazy','impl/common/l7245_versioned_backends/versioned_fk_triggers.py::reconcile_versioned_fk_triggers_for_existing_table','impl/mariadb/core_support_service.py::_MariaDBCoreSupportMixin._table_exists_many_uncached_lazy','impl/mariadb/metadata_schema_service.py::_MariaDBMetadataSchemaMixin._table_exists_many_uncached_lazy','impl/postgres/metadata_schema_service.py::_PostgresMetadataSchemaMixin._table_exists_many_uncached_lazy','impl/sqlite/connection.py::SqliteSchemaService.table_exists_many_lazy','l2000_connection/connection_caches.py::_ConnectionTableCacheMixin.table_exists_many_lazy','l2000_connection/schema_transaction.py::AsyncSchemaTransaction.create_table_from_schema_async','l2000_connection/schema_transaction.py::AsyncSchemaTransaction.create_tables_from_schema_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_many_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_many_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_info_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_info_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._introspect_physical_table_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._introspect_physical_table_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._list_physical_tables_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._list_physical_tables_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._prime_bulk_column_snapshots_for_existing_tables','l2000_connection/schema_transaction.py::LazySchemaTransaction._prime_bulk_column_snapshots_for_existing_tables_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._seed_bulk_column_snapshots_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._seed_bulk_column_snapshots_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction.create_tables_from_schema_lazy','l2000_connection/schema_transaction.py::LazySchemaTransaction.physical_columns_for_reconcile','l2000_connection/schema_transaction.py::LazySchemaTransaction.physical_table_exists_for_reconcile','l2000_connection/schema_transaction.py::SyncSchemaTransaction.create_tables_from_schema','l2000_connection/table_existence_authority.py::_table_exists_many_from_schema_service_lazy','l2000_connection/table_existence_authority.py::connection_table_exists_lazy','l2000_connection/table_existence_authority.py::connection_table_exists_many_lazy','l2000_connection/table_existence_authority.py::sql_schema_table_exists_lazy','l2000_connection/table_existence_authority.py::sql_schema_table_exists_many_lazy','logged_table.py::LoggedTable._ensure_log_columns_exist','logged_table.py::LoggedTable._log_column_repair_needed_from_schema_facts') UNION ALL SELECT a.__path path,a.__start start_byte,a.__end end_byte,'LA-016' issue,a.id||':sidequeue' identity, NULL fn,'sidequeue' origin,a.name detail,replace(substr(a.__path,1,length(a.__path)-3),'/','.')||'.'||a.qualname symbol FROM side_queue_fields a WHERE rx_matches(lower(a.__path||' '||a.qualname),'bootstrap|ddl') UNION ALL SELECT c.__path path,c.__start start_byte,c.__end end_byte,'LA-013' issue,c.id||':defer' identity, NULL fn,'defer' origin,NULL detail,'defer_lazy_result' symbol FROM calls c WHERE c.callee='defer_lazy_result' AND c.callee_kind IN ('identifier','attribute'))"
           },
           {
             "name": "diagnostics_5",
-            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\" FROM (SELECT c.__path path,c.__start start_byte,c.__end end_byte,'LA-009' issue,c.id||':compat' identity FROM calls c WHERE c.callee IN ('RuntimeMapStep','RuntimeProjectionStep','_RuntimeMapConfig','_RuntimeProjectionConfig','_lazy_result_step_ref_id','_literal_lazy_result_value','_literalize_resolved_lazy_result','_object_ref_from_input','_object_sequence_ref_from_input','_scalar_ref_from_input','_scalar_sequence_ref_from_input','defer_lazy_result','flat_map_lazy_result','map_lazy_result','materialize_return_value_runtime_projection_builder') AND (rx_matches(c.__path,'^(?:l7450_versioned_revert/|l8100_ops_analytics/)') OR c.__path IN ('impl/common/l7300_revision_history/revision_history_query_impl.py','l7200_versioned_transactions/versioned_lazy_mixin.py') OR rx_matches(c.__path,'^(?:l7200_versioned_transactions/_lint_|impl/common/l7300_revision_history/_lint_)')))"
+            "query": "SELECT \"path\",\"start_byte\",\"end_byte\",\"issue\",\"identity\",\"fn\",\"origin\",\"detail\",\"symbol\" FROM (SELECT i.__path path,i.__start start_byte,i.__end end_byte,'LA-013' issue,i.id||':'||i.local identity, NULL fn,'defer' origin,NULL detail,i.local symbol FROM imports i WHERE i.module='l2055_lazy_result.transform' AND i.name='defer_lazy_result' UNION ALL SELECT c.__path path,c.__start start_byte,c.__end end_byte,'LA-009' issue,c.id||':compat' identity, NULL fn,'compat' origin,NULL detail,c.callee symbol FROM calls c WHERE c.callee IN ('RuntimeMapStep','RuntimeProjectionStep','_RuntimeMapConfig','_RuntimeProjectionConfig','_lazy_result_step_ref_id','_literal_lazy_result_value','_literalize_resolved_lazy_result','_object_ref_from_input','_object_sequence_ref_from_input','_scalar_ref_from_input','_scalar_sequence_ref_from_input','defer_lazy_result','flat_map_lazy_result','map_lazy_result','materialize_return_value_runtime_projection_builder') AND (rx_matches(c.__path,'^(?:l7450_versioned_revert/|l8100_ops_analytics/)') OR c.__path IN ('impl/common/l7300_revision_history/revision_history_query_impl.py','l7200_versioned_transactions/versioned_lazy_mixin.py') OR rx_matches(c.__path,'^(?:l7200_versioned_transactions/_lint_|impl/common/l7300_revision_history/_lint_)')) UNION ALL SELECT i.__path path,i.__start start_byte,i.__end end_byte,'LA-009' issue,i.id||':'||i.local||':compat_import' identity, NULL fn,'compat_import' origin,i.name detail,i.local symbol FROM imports i WHERE i.module='l2055_lazy_result.transform' AND i.name IN ('RuntimeMapStep','RuntimeProjectionStep','_RuntimeMapConfig','_RuntimeProjectionConfig','defer_lazy_result','flat_map_lazy_result','map_lazy_result','materialize_return_value_runtime_projection_builder') AND (rx_matches(i.__path,'^(?:l7450_versioned_revert/|l8100_ops_analytics/)') OR i.__path IN ('impl/common/l7300_revision_history/revision_history_query_impl.py','l7200_versioned_transactions/versioned_lazy_mixin.py') OR rx_matches(i.__path,'^(?:l7200_versioned_transactions/_lint_|impl/common/l7300_revision_history/_lint_)')) UNION ALL SELECT f.__path path,min(r.first) start_byte,min(r.first) end_byte,'LA-011' issue,f.id||':permission' identity, f.id fn,'permission' origin,NULL detail,NULL symbol FROM function_flags f JOIN reachable r ON r.__path=f.__path AND r.root=f.id JOIN function_flags target ON target.__path=r.path AND target.id=r.node WHERE f.__path GLOB 'impl/common/l2070_server_plan/*' AND f.name IN ('lower','compile','preprocess','pre_op','post_op') AND r.first IS NOT NULL AND target.symbol IN ('l4000_permissions.lazy_permission_support.check_object_write_permission_lazy','l4000_permissions.lazy_permission_support.check_upsert_conflict_write_permission_lazy','l4000_permissions.lazy_permission_support.check_write_permission_lazy','l4000_permissions.permission_enforcement.check_object_write_permission','l4000_permissions.permission_enforcement.check_write_permission') AND NOT EXISTS(SELECT 1 FROM rollups plan WHERE plan.__path=f.__path AND plan.root=f.id AND plan.category='plan') GROUP BY f.__path,f.id UNION ALL SELECT f.__path path,min(d.__start) start_byte,min(d.__start) end_byte,'LA-009' issue,f.id||':delegate' identity, f.id fn,'delegate' origin,NULL detail,NULL symbol FROM function_flags f JOIN delegate_targets d ON d.__path=f.__path AND d.fn=f.id JOIN function_flags target ON target.symbol=d.target WHERE f.name GLOB '*_lazy' AND NOT f.pure AND (EXISTS(SELECT 1 FROM function_events e WHERE e.__path=target.__path AND e.fn=target.id AND e.category='plan') OR EXISTS(SELECT 1 FROM call_targets c WHERE c.__path=target.__path AND c.fn=target.id AND rx_extract(c.target,'[^.]+$',0) IN ('ddl_effect_lazy','execute_grammar_leaf','execute_grammar_leaf_async','fetchall_grammar_leaf','fetchall_grammar_leaf_async','fetchone_grammar_leaf','fetchone_grammar_leaf_async','grammar_effect_lazy','grammar_execute','grammar_execute_async','grammar_fetchall','grammar_fetchall_async','grammar_fetchone','grammar_fetchone_async','grammar_row_lazy','grammar_rows_lazy','grammar_value_lazy','scalar_grammar_leaf'))) GROUP BY f.__path,f.id)"
           },
           {
             "name": "anchor_spans",
@@ -659,7 +728,14 @@
             ]
           }
         ],
-        "query": "SELECT d.path,d.start_byte,CASE WHEN d.end_byte>d.start_byte THEN d.end_byte ELSE a.__end END end_byte,d.issue,d.identity FROM (SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4 UNION ALL SELECT * FROM diagnostics_5) d JOIN anchor_spans a ON a.__path=d.path AND a.__start=d.start_byte",
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "collector-extra": "SELECT d.path,d.start_byte,d.end_byte,d.issue,d.identity,coalesce(d.symbol,f.symbol) symbol,CASE WHEN d.issue='LA-011' AND d.origin='hydration' THEN f.qualname||' uses forbidden terminal hydration/runtime-SQL helper' WHEN d.issue='LA-001' THEN f.qualname||' is lazy but performs eager plan/grammar I/O' WHEN d.issue='LA-002' THEN f.qualname||' mixes intent/lazy construction with direct execution fallback' WHEN d.issue='LA-003' THEN f.qualname||' is a public feature method performing direct plan/grammar I/O' WHEN d.issue='LA-004' THEN f.qualname||' mixes plan I/O with imperative native connection side effects' WHEN d.issue='LA-005' THEN f.qualname||' contains backend-native Dolt logic outside backend-local implementation' WHEN d.issue='LA-007' THEN f.qualname||' performs prepare-time imperative I/O' WHEN d.issue='LA-010' THEN f.qualname||' mixes ''lazy'' with ''sync'' or ''async'' in its name' WHEN d.issue='LA-011' THEN f.qualname||' performs server-plan pure-phase imperative I/O' WHEN d.issue='LA-012' THEN f.qualname||' terminates a LazyResult outside a legacy boundary' WHEN d.issue='LA-015' THEN f.qualname||' returns LazyResult.of(...) in bootstrap/DDL code; declare a ServerPlan ref, lazy primitive, or explicit terminal dependency instead'\n      WHEN d.issue='LA-008' THEN f.qualname||'/'||f.qualname||'_async use different sync vs async execution machinery'\n      WHEN d.issue='LA-006' THEN f.qualname||' passes _conn to '||d.detail||'() instead of the plan owner'\n      WHEN d.origin='defer' THEN 'defer_lazy_result is forbidden; publish a real ServerPlan step/ref instead'\n      WHEN d.origin='compat_import' THEN d.detail||' is forbidden in ServerPlan-sensitive files; use explicit steps/refs instead'\n      WHEN d.origin='compat' THEN d.symbol||' is a forbidden lazy compatibility surface in ServerPlan-sensitive files'\n      WHEN d.issue='LA-009' THEN f.qualname||CASE d.origin\n        WHEN 'delegate' THEN ' delegates lazy execution to eager method '||(SELECT target.qualname FROM delegate_targets delegate JOIN function_flags target ON target.symbol=delegate.target WHERE delegate.__path=d.path AND delegate.fn=d.fn AND delegate.__start=d.start_byte AND (EXISTS(SELECT 1 FROM function_events event WHERE event.__path=target.__path AND event.fn=target.id AND event.category='plan') OR EXISTS(SELECT 1 FROM call_targets call WHERE call.__path=target.__path AND call.fn=target.id AND rx_extract(call.target,'[^.]+$',0) IN ('ddl_effect_lazy','execute_grammar_leaf','execute_grammar_leaf_async','fetchall_grammar_leaf','fetchall_grammar_leaf_async','fetchone_grammar_leaf','fetchone_grammar_leaf_async','grammar_effect_lazy','grammar_execute','grammar_execute_async','grammar_fetchall','grammar_fetchall_async','grammar_fetchone','grammar_fetchone_async','grammar_row_lazy','grammar_rows_lazy','grammar_value_lazy','scalar_grammar_leaf'))) ORDER BY delegate.keyword_start LIMIT 1)||' (direct eager sink)'\n        WHEN 'context' THEN ' hides eager execution behind an ExecutionContext terminal'\n        WHEN 'internal' THEN ' peeks into LazyResult internals outside sanctioned runtime helpers'\n        WHEN 'state' THEN ' writes execution-derived planner state instead of surfaced refs'\n        WHEN 'private' THEN ' reaches through private runtime state instead of surfaced dependencies'\n        ELSE ' reaches eager downstream function '||taint.target||' ('||taint.reason||')' END\n      WHEN d.issue='LA-013' THEN f.qualname||CASE d.origin WHEN 'legacy' THEN ' reaches a legacy eager wrapper downstream' WHEN 'nonlazy' THEN ' reaches non-lazy helper '||nonlazy.target||'; every function in a lazy callchain must itself be *_lazy or @pure_lazy' ELSE ' marks runtime behavior as @pure_lazy: '||d.detail||'; @pure_lazy helpers must be pure planning code' END\n      WHEN d.issue='LA-014' THEN f.qualname||CASE WHEN d.origin='payload' THEN ' passes ' ELSE ' performs ' END||d.detail\n      WHEN d.issue='LA-016' THEN coalesce(f.qualname,substr(d.symbol,length(replace(substr(d.path,1,length(d.path)-3),'/','.'))+2))||' mutates state inside bootstrap/DDL @pure_lazy code ('||CASE WHEN d.origin='sidequeue' THEN 'forbidden side-queue declaration '||d.detail ELSE d.detail END||'); publish a ServerPlan step/ref and make mutation occur during plan execution'\n      WHEN d.issue='LA-017' THEN f.qualname||CASE d.origin\n        WHEN 'reconciliation' THEN ' uses reconciliation '||(SELECT event_kind FROM function_events e WHERE e.__path=d.path AND e.fn=d.fn AND e.__start=d.start_byte AND e.category=d.origin LIMIT 1)||' surface '||d.detail||'(); gather schema facts through a closed observation ServerPlan step and build reconciliation DDL from SchemaStateSnapshot'\n        WHEN 'absence' THEN ' uses '||d.detail||'; table or schema absence must come from observed initial facts or computed eventual state'\n        WHEN 'plan' THEN ' terminates a LazyResult inside reconciliation/schema code; only the wrapper may resolve observation or execution handles'\n        ELSE ' restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts' END\n      END message FROM (SELECT d.path,d.start_byte,CASE WHEN d.end_byte>d.start_byte THEN d.end_byte ELSE a.__end END end_byte,d.issue,d.identity,d.fn,d.origin,d.detail,d.symbol FROM (SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4 UNION ALL SELECT * FROM diagnostics_5) d JOIN anchor_spans a ON a.__path=d.path AND a.__start=d.start_byte) d LEFT JOIN function_flags f ON f.__path=d.path AND f.id=d.fn LEFT JOIN transitive_matches taint ON taint.__path=d.path AND taint.root=d.fn LEFT JOIN non_lazy_matches nonlazy ON nonlazy.__path=d.path AND nonlazy.root=d.fn WHERE d.origin IN ('defer','compat','compat_import')",
+            "analyzed-functions": "SELECT d.path,d.start_byte,d.end_byte,d.issue,d.identity,coalesce(d.symbol,f.symbol) symbol,CASE WHEN d.issue='LA-011' AND d.origin='hydration' THEN f.qualname||' uses forbidden terminal hydration/runtime-SQL helper' WHEN d.issue='LA-001' THEN f.qualname||' is lazy but performs eager plan/grammar I/O' WHEN d.issue='LA-002' THEN f.qualname||' mixes intent/lazy construction with direct execution fallback' WHEN d.issue='LA-003' THEN f.qualname||' is a public feature method performing direct plan/grammar I/O' WHEN d.issue='LA-004' THEN f.qualname||' mixes plan I/O with imperative native connection side effects' WHEN d.issue='LA-005' THEN f.qualname||' contains backend-native Dolt logic outside backend-local implementation' WHEN d.issue='LA-007' THEN f.qualname||' performs prepare-time imperative I/O' WHEN d.issue='LA-010' THEN f.qualname||' mixes ''lazy'' with ''sync'' or ''async'' in its name' WHEN d.issue='LA-011' THEN f.qualname||' performs server-plan pure-phase imperative I/O' WHEN d.issue='LA-012' THEN f.qualname||' terminates a LazyResult outside a legacy boundary' WHEN d.issue='LA-015' THEN f.qualname||' returns LazyResult.of(...) in bootstrap/DDL code; declare a ServerPlan ref, lazy primitive, or explicit terminal dependency instead'\n      WHEN d.issue='LA-008' THEN f.qualname||'/'||f.qualname||'_async use different sync vs async execution machinery'\n      WHEN d.issue='LA-006' THEN f.qualname||' passes _conn to '||d.detail||'() instead of the plan owner'\n      WHEN d.origin='defer' THEN 'defer_lazy_result is forbidden; publish a real ServerPlan step/ref instead'\n      WHEN d.origin='compat_import' THEN d.detail||' is forbidden in ServerPlan-sensitive files; use explicit steps/refs instead'\n      WHEN d.origin='compat' THEN d.symbol||' is a forbidden lazy compatibility surface in ServerPlan-sensitive files'\n      WHEN d.issue='LA-009' THEN f.qualname||CASE d.origin\n        WHEN 'delegate' THEN ' delegates lazy execution to eager method '||(SELECT target.qualname FROM delegate_targets delegate JOIN function_flags target ON target.symbol=delegate.target WHERE delegate.__path=d.path AND delegate.fn=d.fn AND delegate.__start=d.start_byte AND (EXISTS(SELECT 1 FROM function_events event WHERE event.__path=target.__path AND event.fn=target.id AND event.category='plan') OR EXISTS(SELECT 1 FROM call_targets call WHERE call.__path=target.__path AND call.fn=target.id AND rx_extract(call.target,'[^.]+$',0) IN ('ddl_effect_lazy','execute_grammar_leaf','execute_grammar_leaf_async','fetchall_grammar_leaf','fetchall_grammar_leaf_async','fetchone_grammar_leaf','fetchone_grammar_leaf_async','grammar_effect_lazy','grammar_execute','grammar_execute_async','grammar_fetchall','grammar_fetchall_async','grammar_fetchone','grammar_fetchone_async','grammar_row_lazy','grammar_rows_lazy','grammar_value_lazy','scalar_grammar_leaf'))) ORDER BY delegate.keyword_start LIMIT 1)||' (direct eager sink)'\n        WHEN 'context' THEN ' hides eager execution behind an ExecutionContext terminal'\n        WHEN 'internal' THEN ' peeks into LazyResult internals outside sanctioned runtime helpers'\n        WHEN 'state' THEN ' writes execution-derived planner state instead of surfaced refs'\n        WHEN 'private' THEN ' reaches through private runtime state instead of surfaced dependencies'\n        ELSE ' reaches eager downstream function '||taint.target||' ('||taint.reason||')' END\n      WHEN d.issue='LA-013' THEN f.qualname||CASE d.origin WHEN 'legacy' THEN ' reaches a legacy eager wrapper downstream' WHEN 'nonlazy' THEN ' reaches non-lazy helper '||nonlazy.target||'; every function in a lazy callchain must itself be *_lazy or @pure_lazy' ELSE ' marks runtime behavior as @pure_lazy: '||d.detail||'; @pure_lazy helpers must be pure planning code' END\n      WHEN d.issue='LA-014' THEN f.qualname||CASE WHEN d.origin='payload' THEN ' passes ' ELSE ' performs ' END||d.detail\n      WHEN d.issue='LA-016' THEN coalesce(f.qualname,substr(d.symbol,length(replace(substr(d.path,1,length(d.path)-3),'/','.'))+2))||' mutates state inside bootstrap/DDL @pure_lazy code ('||CASE WHEN d.origin='sidequeue' THEN 'forbidden side-queue declaration '||d.detail ELSE d.detail END||'); publish a ServerPlan step/ref and make mutation occur during plan execution'\n      WHEN d.issue='LA-017' THEN f.qualname||CASE d.origin\n        WHEN 'reconciliation' THEN ' uses reconciliation '||(SELECT event_kind FROM function_events e WHERE e.__path=d.path AND e.fn=d.fn AND e.__start=d.start_byte AND e.category=d.origin LIMIT 1)||' surface '||d.detail||'(); gather schema facts through a closed observation ServerPlan step and build reconciliation DDL from SchemaStateSnapshot'\n        WHEN 'absence' THEN ' uses '||d.detail||'; table or schema absence must come from observed initial facts or computed eventual state'\n        WHEN 'plan' THEN ' terminates a LazyResult inside reconciliation/schema code; only the wrapper may resolve observation or execution handles'\n        ELSE ' restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts' END\n      END message FROM (SELECT d.path,d.start_byte,CASE WHEN d.end_byte>d.start_byte THEN d.end_byte ELSE a.__end END end_byte,d.issue,d.identity,d.fn,d.origin,d.detail,d.symbol FROM (SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4 UNION ALL SELECT * FROM diagnostics_5) d JOIN anchor_spans a ON a.__path=d.path AND a.__start=d.start_byte) d LEFT JOIN function_flags f ON f.__path=d.path AND f.id=d.fn LEFT JOIN transitive_matches taint ON taint.__path=d.path AND taint.root=d.fn LEFT JOIN non_lazy_matches nonlazy ON nonlazy.__path=d.path AND nonlazy.root=d.fn WHERE d.origin NOT IN ('defer','compat','compat_import')"
+          },
+          "default": "SELECT d.path,d.start_byte,d.end_byte,d.issue,d.identity,coalesce(d.symbol,f.symbol) symbol,CASE WHEN d.issue='LA-011' AND d.origin='hydration' THEN f.qualname||' uses forbidden terminal hydration/runtime-SQL helper' WHEN d.issue='LA-001' THEN f.qualname||' is lazy but performs eager plan/grammar I/O' WHEN d.issue='LA-002' THEN f.qualname||' mixes intent/lazy construction with direct execution fallback' WHEN d.issue='LA-003' THEN f.qualname||' is a public feature method performing direct plan/grammar I/O' WHEN d.issue='LA-004' THEN f.qualname||' mixes plan I/O with imperative native connection side effects' WHEN d.issue='LA-005' THEN f.qualname||' contains backend-native Dolt logic outside backend-local implementation' WHEN d.issue='LA-007' THEN f.qualname||' performs prepare-time imperative I/O' WHEN d.issue='LA-010' THEN f.qualname||' mixes ''lazy'' with ''sync'' or ''async'' in its name' WHEN d.issue='LA-011' THEN f.qualname||' performs server-plan pure-phase imperative I/O' WHEN d.issue='LA-012' THEN f.qualname||' terminates a LazyResult outside a legacy boundary' WHEN d.issue='LA-015' THEN f.qualname||' returns LazyResult.of(...) in bootstrap/DDL code; declare a ServerPlan ref, lazy primitive, or explicit terminal dependency instead'\n      WHEN d.issue='LA-008' THEN f.qualname||'/'||f.qualname||'_async use different sync vs async execution machinery'\n      WHEN d.issue='LA-006' THEN f.qualname||' passes _conn to '||d.detail||'() instead of the plan owner'\n      WHEN d.origin='defer' THEN 'defer_lazy_result is forbidden; publish a real ServerPlan step/ref instead'\n      WHEN d.origin='compat_import' THEN d.detail||' is forbidden in ServerPlan-sensitive files; use explicit steps/refs instead'\n      WHEN d.origin='compat' THEN d.symbol||' is a forbidden lazy compatibility surface in ServerPlan-sensitive files'\n      WHEN d.issue='LA-009' THEN f.qualname||CASE d.origin\n        WHEN 'delegate' THEN ' delegates lazy execution to eager method '||(SELECT target.qualname FROM delegate_targets delegate JOIN function_flags target ON target.symbol=delegate.target WHERE delegate.__path=d.path AND delegate.fn=d.fn AND delegate.__start=d.start_byte AND (EXISTS(SELECT 1 FROM function_events event WHERE event.__path=target.__path AND event.fn=target.id AND event.category='plan') OR EXISTS(SELECT 1 FROM call_targets call WHERE call.__path=target.__path AND call.fn=target.id AND rx_extract(call.target,'[^.]+$',0) IN ('ddl_effect_lazy','execute_grammar_leaf','execute_grammar_leaf_async','fetchall_grammar_leaf','fetchall_grammar_leaf_async','fetchone_grammar_leaf','fetchone_grammar_leaf_async','grammar_effect_lazy','grammar_execute','grammar_execute_async','grammar_fetchall','grammar_fetchall_async','grammar_fetchone','grammar_fetchone_async','grammar_row_lazy','grammar_rows_lazy','grammar_value_lazy','scalar_grammar_leaf'))) ORDER BY delegate.keyword_start LIMIT 1)||' (direct eager sink)'\n        WHEN 'context' THEN ' hides eager execution behind an ExecutionContext terminal'\n        WHEN 'internal' THEN ' peeks into LazyResult internals outside sanctioned runtime helpers'\n        WHEN 'state' THEN ' writes execution-derived planner state instead of surfaced refs'\n        WHEN 'private' THEN ' reaches through private runtime state instead of surfaced dependencies'\n        ELSE ' reaches eager downstream function '||taint.target||' ('||taint.reason||')' END\n      WHEN d.issue='LA-013' THEN f.qualname||CASE d.origin WHEN 'legacy' THEN ' reaches a legacy eager wrapper downstream' WHEN 'nonlazy' THEN ' reaches non-lazy helper '||nonlazy.target||'; every function in a lazy callchain must itself be *_lazy or @pure_lazy' ELSE ' marks runtime behavior as @pure_lazy: '||d.detail||'; @pure_lazy helpers must be pure planning code' END\n      WHEN d.issue='LA-014' THEN f.qualname||CASE WHEN d.origin='payload' THEN ' passes ' ELSE ' performs ' END||d.detail\n      WHEN d.issue='LA-016' THEN coalesce(f.qualname,substr(d.symbol,length(replace(substr(d.path,1,length(d.path)-3),'/','.'))+2))||' mutates state inside bootstrap/DDL @pure_lazy code ('||CASE WHEN d.origin='sidequeue' THEN 'forbidden side-queue declaration '||d.detail ELSE d.detail END||'); publish a ServerPlan step/ref and make mutation occur during plan execution'\n      WHEN d.issue='LA-017' THEN f.qualname||CASE d.origin\n        WHEN 'reconciliation' THEN ' uses reconciliation '||(SELECT event_kind FROM function_events e WHERE e.__path=d.path AND e.fn=d.fn AND e.__start=d.start_byte AND e.category=d.origin LIMIT 1)||' surface '||d.detail||'(); gather schema facts through a closed observation ServerPlan step and build reconciliation DDL from SchemaStateSnapshot'\n        WHEN 'absence' THEN ' uses '||d.detail||'; table or schema absence must come from observed initial facts or computed eventual state'\n        WHEN 'plan' THEN ' terminates a LazyResult inside reconciliation/schema code; only the wrapper may resolve observation or execution handles'\n        ELSE ' restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts' END\n      END message FROM (SELECT d.path,d.start_byte,CASE WHEN d.end_byte>d.start_byte THEN d.end_byte ELSE a.__end END end_byte,d.issue,d.identity,d.fn,d.origin,d.detail,d.symbol FROM (SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4 UNION ALL SELECT * FROM diagnostics_5) d JOIN anchor_spans a ON a.__path=d.path AND a.__start=d.start_byte) d LEFT JOIN function_flags f ON f.__path=d.path AND f.id=d.fn LEFT JOIN transitive_matches taint ON taint.__path=d.path AND taint.root=d.fn LEFT JOIN non_lazy_matches nonlazy ON nonlazy.__path=d.path AND nonlazy.root=d.fn"
+        },
         "key": [
           "issue",
           "identity"
@@ -775,7 +851,8 @@
             }
           }
         },
-        "requireNonemptyInput": "syntax_gate"
+        "requireNonemptyInput": "syntax_gate",
+        "message": "message"
       },
       "violation": {
         "code": "architecture",
@@ -791,7 +868,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>BootstrapEngineRunMode\\.COLD)"
           },
@@ -807,7 +886,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -819,7 +898,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>BootstrapMode\\.COLD)"
           },
@@ -835,7 +916,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -847,7 +928,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>COLD_APPLICATION)"
           },
@@ -863,7 +946,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -875,7 +958,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>WRITE_TRANSITION_ARTIFACT)"
           },
@@ -891,7 +976,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -903,7 +988,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>WriteTransitionArtifactEffect)"
           },
@@ -919,7 +1006,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -931,7 +1018,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>_allow_post_commit_bootstrap_scope_invalidation)"
           },
@@ -947,7 +1036,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -959,7 +1048,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>_allow_versioned_base_table_creation)"
           },
@@ -975,7 +1066,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -987,7 +1078,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>_bootstrap_force_versioned_aux_cold_create_only)"
           },
@@ -1003,7 +1096,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1015,7 +1108,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>_lifecycle_effects_with_transition_payload)"
           },
@@ -1031,7 +1126,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1043,7 +1138,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>begin_bootstrap_transition_capture)"
           },
@@ -1059,7 +1156,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1071,7 +1168,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>cold_application)"
           },
@@ -1087,7 +1186,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1099,7 +1198,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>finish_bootstrap_transition_capture)"
           },
@@ -1115,7 +1216,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1127,7 +1228,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_after_create_schema_ddl_async_batch_ref_id)"
           },
@@ -1143,7 +1246,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1155,7 +1258,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_after_create_schema_ddl_async_statements)"
           },
@@ -1171,7 +1276,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1183,7 +1288,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_after_create_schema_ddl_batch_ref_id)"
           },
@@ -1199,7 +1306,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1211,7 +1318,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_after_create_schema_ddl_statements)"
           },
@@ -1227,7 +1336,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1239,7 +1348,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_polymorphic_guard_ddl_async_batch_scheduled)"
           },
@@ -1255,7 +1366,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1267,7 +1378,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_polymorphic_guard_ddl_async_statements)"
           },
@@ -1283,7 +1396,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1295,7 +1408,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_polymorphic_guard_ddl_batch_scheduled)"
           },
@@ -1311,7 +1426,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1323,7 +1438,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_polymorphic_guard_ddl_statements)"
           },
@@ -1339,7 +1456,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1351,7 +1468,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_staged_trigger_ddl_async_batch_scheduled)"
           },
@@ -1367,7 +1486,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1379,7 +1498,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_staged_trigger_ddl_async_statements)"
           },
@@ -1395,7 +1516,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1407,7 +1528,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_staged_trigger_ddl_batch_scheduled)"
           },
@@ -1423,7 +1546,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1435,7 +1558,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_staged_trigger_ddl_statements)"
           },
@@ -1451,7 +1576,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted cold-bootstrap surface was reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1463,7 +1588,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>DeletedSchemaState)"
           },
@@ -1479,7 +1606,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'DeletedSchemaState' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1491,7 +1618,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>SchemaSidecarProvider)"
           },
@@ -1507,7 +1636,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'SchemaSidecarProvider' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1519,7 +1648,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>SchemaTransactionSidecar)"
           },
@@ -1535,7 +1666,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'SchemaTransactionSidecar' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1547,7 +1678,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>_deleted_deleted_schema_state)"
           },
@@ -1563,7 +1696,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface '_deleted_deleted_schema_state' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1575,7 +1708,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>_deleted_schema_state)"
           },
@@ -1591,7 +1726,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface '_deleted_schema_state' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1603,7 +1738,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>_schema_sidecar)"
           },
@@ -1619,7 +1756,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface '_schema_sidecar' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1631,7 +1768,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>create_logged_tables)"
           },
@@ -1647,7 +1786,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'create_logged_tables' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1659,7 +1798,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>create_logged_tables_async)"
           },
@@ -1675,7 +1816,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'create_logged_tables_async' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1687,7 +1828,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>create_logged_tables_lazy)"
           },
@@ -1703,7 +1846,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'create_logged_tables_lazy' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1715,7 +1858,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>defer_retroactive_versioned_fk_triggers)"
           },
@@ -1731,7 +1876,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'defer_retroactive_versioned_fk_triggers' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1743,7 +1888,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>deleted_deleted_schema_state_accessor)"
           },
@@ -1759,7 +1906,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'deleted_deleted_schema_state_accessor' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1771,7 +1918,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>deleted_schema_state)"
           },
@@ -1787,7 +1936,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'deleted_schema_state' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1799,7 +1948,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>deleted_schema_state_accessor)"
           },
@@ -1815,7 +1966,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'deleted_schema_state_accessor' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1827,7 +1978,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>ensure_commit_triggers_lazy)"
           },
@@ -1843,7 +1996,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'ensure_commit_triggers_lazy' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1855,7 +2008,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>ensure_large_column_metadata_schema_lazy)"
           },
@@ -1871,7 +2026,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'ensure_large_column_metadata_schema_lazy' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1883,7 +2038,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>ensure_logged_table_lazy)"
           },
@@ -1899,7 +2056,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'ensure_logged_table_lazy' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1911,7 +2068,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>ensure_queue_lazy)"
           },
@@ -1927,7 +2086,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'ensure_queue_lazy' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1939,7 +2098,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>ensure_table_event_trigger_lazy)"
           },
@@ -1955,7 +2116,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'ensure_table_event_trigger_lazy' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1967,7 +2128,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>has_schema_sidecar)"
           },
@@ -1983,7 +2146,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'has_schema_sidecar' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -1995,7 +2158,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_constraint_metadata_models)"
           },
@@ -2011,7 +2176,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'pending_constraint_metadata_models' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2023,7 +2188,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_create_index_statements)"
           },
@@ -2039,7 +2206,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'pending_create_index_statements' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2051,7 +2218,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_create_table_statements)"
           },
@@ -2067,7 +2236,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'pending_create_table_statements' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2079,7 +2248,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_graph_config_metadata_models)"
           },
@@ -2095,7 +2266,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'pending_graph_config_metadata_models' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2107,7 +2278,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_large_column_metadata_models)"
           },
@@ -2123,7 +2296,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'pending_large_column_metadata_models' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2135,7 +2308,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_log_immutability_statements)"
           },
@@ -2151,7 +2326,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'pending_log_immutability_statements' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2163,7 +2338,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_polymorphic_metadata_models)"
           },
@@ -2179,7 +2356,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'pending_polymorphic_metadata_models' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2191,7 +2368,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_retroactive_versioned_fk_models)"
           },
@@ -2207,7 +2386,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'pending_retroactive_versioned_fk_models' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2219,7 +2398,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_staged_trigger_models)"
           },
@@ -2235,7 +2416,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'pending_staged_trigger_models' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2247,7 +2428,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>pending_versioned_aux_bootstrap_verifications)"
           },
@@ -2263,7 +2446,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'pending_versioned_aux_bootstrap_verifications' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2275,7 +2458,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>schema_sidecar)"
           },
@@ -2291,7 +2476,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'schema_sidecar' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     },
@@ -2303,7 +2488,9 @@
           "pattern": {
             "$option": "entryPoint",
             "cases": {
-              "scan_files.ast-component": "(?<SURFACE>\\b\\B)"
+              "scan_files.ast-component": "(?<SURFACE>\\b\\B)",
+              "collector-extra": "(?<SURFACE>\\b\\B)",
+              "analyzed-functions": "(?<SURFACE>\\b\\B)"
             },
             "default": "\\A[\\s\\S]*?(?<SURFACE>schema_transaction_sidecar)"
           },
@@ -2319,7 +2506,7 @@
       },
       "violation": {
         "code": "LA-018",
-        "message": "Deleted bootstrap or schema surface",
+        "message": "deleted schema sidecar surface 'schema_transaction_sidecar' must not be reintroduced",
         "anchor": "capture.SURFACE"
       }
     }

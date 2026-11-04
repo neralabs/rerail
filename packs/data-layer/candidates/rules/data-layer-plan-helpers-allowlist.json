@@ -6,9 +6,7 @@
   "description": "Candidate port of nera-data-layer plan_helpers_allowlist at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
-      "impl/**/*.py",
-      "api/**/*.py",
-      "l[0-9][0-9][0-9][0-9]_*/**/*.py"
+      "**/*.py"
     ],
     "exclude": [
       "**/tests/**",
@@ -20,8 +18,7 @@
       "**/.pytest_cache/**",
       "**/node_modules/**",
       "**/tmp/**",
-      "**/browser_build/**",
-      "**/test_*.py"
+      "**/browser_build/**"
     ]
   },
   "clauses": [
@@ -210,7 +207,7 @@
           },
           {
             "name": "modules",
-            "query": "SELECT \"__path\",\"raw\" FROM (SELECT __path,replace(substr(trim(replace(__path,char(92),'/'),'/'),1,length(trim(replace(__path,char(92),'/'),'/'))-3),'/','.') raw FROM nodes WHERE kind='module')",
+            "query": "SELECT \"__path\",NULL AS \"raw\" FROM (SELECT __path,replace(substr(trim(replace(__path,char(92),'/'),'/'),1,length(trim(replace(__path,char(92),'/'),'/'))-3),'/','.') raw FROM nodes WHERE kind='module')",
             "indexes": [
               [
                 "__path"
@@ -219,7 +216,7 @@
           },
           {
             "name": "module_names",
-            "query": "SELECT \"__path\",\"name\" FROM (SELECT __path,CASE WHEN instr('.'||raw||'.','.impl.')>0 THEN substr(raw,instr('.'||raw||'.','.impl.')) WHEN instr('.'||raw||'.','.api.')>0 THEN substr(raw,instr('.'||raw||'.','.api.')+4) ELSE coalesce(rx_extract(raw,'(?:^|\\.)(l[0-9]{4}_[^.]*.*)$',1),raw) END name FROM modules)",
+            "query": "SELECT \"__path\",\"name\" FROM (SELECT __path,CASE WHEN instr('.'||replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.')||'.','.impl.')>0 THEN substr(replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.'),instr('.'||replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.')||'.','.impl.')) WHEN instr('.'||replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.')||'.','.api.')>0 THEN substr(replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.'),instr('.'||replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.')||'.','.api.')+4) ELSE coalesce(rx_extract(replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.'),'(?:^|\\.)(l[0-9]{4}_.*)$',1),replace(CASE WHEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),-3)='.py' THEN substr(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'),1,length(trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/'))-3) ELSE trim(rx_replace(replace(__path,char(92),'/'),'/+','/'),'/') END,'/','.')) END name FROM modules)",
             "indexes": [
               [
                 "__path"
@@ -250,11 +247,11 @@
             "true": {
               "$option": "entryPoint",
               "cases": {
-                "scan_repo": "SELECT __path path,__start start_byte,__end end_byte,reason issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows') AND rx_matches(__path,'(?:^|/)(?:impl|api|l[0-9]{4}_[^/]*)/') AND NOT rx_matches(__path,'(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$)')"
+                "scan_repo": "SELECT __path path,__start start_byte,__end end_byte,reason issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows') AND substr(__path,-3)='.py' AND NOT rx_matches(__path,'(?:^|/)\\.py$') AND rx_matches(__path,'(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_') AND NOT rx_matches(__path,'(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$)')"
               },
               "default": "SELECT __path path,__start start_byte,__end end_byte,reason issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows')"
             },
-            "false": "SELECT __path path,__start start_byte,__end end_byte,'PHA001' issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows') AND rx_matches(__path,'(?:^|/)(?:impl|api|l[0-9]{4}_[^/]*)/') AND NOT rx_matches(__path,'(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$)')"
+            "false": "SELECT __path path,__start start_byte,__end end_byte,'PHA001' issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows') AND substr(__path,-3)='.py' AND NOT rx_matches(__path,'(?:^|/)\\.py$') AND rx_matches(__path,'(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_') AND NOT rx_matches(__path,'(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$)')"
           }
         },
         "key": [

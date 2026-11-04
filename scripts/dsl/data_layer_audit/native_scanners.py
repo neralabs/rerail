@@ -76,7 +76,7 @@ def install(backend):
                     except (OSError, UnicodeError): continue
                 name = logical(current, root)
                 files.append(dict(path=name, source=text)); originals[name] = current
-            native_entry = 'scan_file' if entry == '_violations_for_files' else entry
+            native_entry = 'analyzed-functions' if check=='lazy_architecture' and entry=='_scan_analyzed_files' else 'scan_file' if entry == '_violations_for_files' else entry
             findings = backend.execute(check, native_entry, files, options)
             if check == 'cached_pure_lazy_allowlist': return tuple(sorted(finding['code'] for finding in findings))
             result = [dto(check, module, finding, files, originals, root) for finding in findings]
@@ -91,7 +91,13 @@ def install(backend):
         module = backend.modules[check]
         for name in names:
             backend.replace(module, name, wrap(check, name, getattr(module, name), module))
+    from native_cached import install as cached
+    cached(backend)
+    from native_helpers import install as helpers
+    helpers(backend)
     install_plan_helpers(backend)
+    from native_lazy import install as lazy
+    lazy(backend)
 
 
 def install_plan_helpers(backend):
@@ -140,7 +146,7 @@ def dto(check, module, finding, files, originals, root):
     values = dict(code=finding['code'], rule=finding['code'], path=path, file=path, file_path=path,
                   line=line, line_num=line, line_number=line, message=message,
                   reason=finding['code'], text=row.get('text', text), pattern_name=finding['code'],
-                  symbol=row.get('symbol', ''), qualname=row.get('qualname', ''), callsite=row.get('callsite', ''),
+                  symbol=row.get('symbol', source.encode('utf-8')[finding['span']['startByte']:finding['span']['endByte']].decode('utf-8') if 'SURFACE' in finding.get('captures',{}) else ''), qualname=row.get('qualname', ''), callsite=row.get('callsite', ''),
                   linter_name=check, severity='hard-fail', stable_scope=row.get('stable_scope'))
     if check == 'plan_helpers_allowlist': values.update(file=Path(finding['path']), line=text, reason=finding['code'])
     if check == 'legacy_callback_quarantine': values['file_path'] = finding['path']

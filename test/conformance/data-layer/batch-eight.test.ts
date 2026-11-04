@@ -101,3 +101,22 @@ it("preserves diagnostic text, ordered graph targets and first matching owner ca
     expect(passed).toBe(true);
   } finally { log.mockRestore(); rmSync(directory, { recursive: true, force: true }); }
 }, 30_000);
+
+it("binds the completed native assertion suites to the current rules and adapters", () => {
+  const receipt = JSON.parse(readFileSync(fixturesPath("host", "data-layer-port", "batch-08-native-assertions.json"), "utf8"));
+  for (const path of ["snapshot", "workspace"]) {
+    const run = receipt.executionPaths[path];
+    expect(run).toMatchObject({ collected: 456, passed: 456, failed: 0, skipped: 0, semanticFallbacks: [] });
+    expect(Object.keys(run.cases)).toHaveLength(456);
+    expect(run.casesWithNativeCalls).toBe(336);
+    expect(run.nativeCalls).toBe(480);
+    expect(run.instrumentationTranslations).toHaveLength(4);
+    expect(run.cases["scripts/tests/test_lint_lazy_architecture.py::test_class_method_alias_for_self_call_resolution"].nativeHelperCalls).toBeGreaterThan(0);
+  }
+  for (const [check, digest] of Object.entries(receipt.policySha256))
+    expect(createHash("sha256").update(readFileSync(`packs/data-layer/candidates/rules/data-layer-${check.replaceAll("_", "-")}.json`)).digest("hex")).toBe(digest);
+  for (const [path, digest] of Object.entries(receipt.implementationSha256))
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(digest);
+  expect(Object.keys(receipt.positiveControls.rejectedByCheck)).toHaveLength(9);
+  expect(receipt.positiveControls.failedCases).toBeGreaterThan(100);
+});

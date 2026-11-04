@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Run unchanged upstream assertions with native rule execution substituted."""
+"""Run original upstream behavior assertions with native rule execution."""
 from __future__ import annotations
 import argparse
 import ast
 import importlib
 import inspect
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -29,6 +30,7 @@ class NativeSuite:
         self.item = None
         self.originals, self.calls, self.outcomes = [], [], {}
         self.trees = WeakKeyDictionary()
+        self.original_calls = {}
         self.worker = subprocess.Popen(['node', '--import', 'tsx', 'conformance/data-layer/native-worker.ts'],
             cwd=workspace, text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=output.with_suffix('.native.log').open('w'), env=os.environ)
@@ -48,8 +50,9 @@ class NativeSuite:
         response = json.loads(line)
         if 'error' in response: raise AssertionError(response['error'])
         result = response['result']
+        self.last_metrics = result.get('telemetry', result.get('profile', {}))
         self.calls.append(dict(test=self.item.nodeid if self.item else '<setup>', check=check,
-                               entry=entry, contract=contract, files=len(files), findings=len(result['violations'])))
+                               entry=entry, contract=contract, files=len(files), findings=len(result['violations']), metrics=self.last_metrics))
         return result['violations']
 
     def pytest_configure(self):
@@ -63,8 +66,15 @@ class NativeSuite:
             return tree
         self.replace(ast, 'parse', parse)
         self.modules = {name: importlib.import_module(module) for name, module in MODULES.items()}
+        from native_guard import codes, install as guard
+        original_codes=codes(self.modules)
         from native_scanners import install
         install(self)
+        guard(self,original_codes)
+
+    def pytest_collection_modifyitems(self,items):
+        from native_instrumentation import translate
+        translate(self,items)
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_runtest_setup(self, item): self.item = item
@@ -74,6 +84,8 @@ class NativeSuite:
         if report.when == 'teardown': self.item = None
 
     def pytest_unconfigure(self):
+        import threading
+        sys.setprofile(None);threading.setprofile(None)
         for module, name, original in reversed(self.originals): setattr(module, name, original)
         self.worker.stdin.close()
         try: self.worker.wait(timeout=5)
@@ -85,19 +97,26 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--repo', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--policies',type=Path,default=Path('packs/data-layer/candidates/rules'))
     parser.add_argument('--mode', choices=['snapshot', 'workspace'], required=True)
     parser.add_argument('tests', nargs='*')
     args = parser.parse_args(); workspace = Path.cwd(); root = args.source.resolve(); output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     sys.path[:0] = [str(root), str(root/'scripts'), str(Path(__file__).parent)]
+    policies=args.policies.resolve()
+    os.environ['RERAIL_NATIVE_POLICY_DIRECTORY']=str(policies)
     os.chdir(root)
     tests = args.tests or [path for check in BATCH_EIGHT for path in TESTS[check] if (root/path).exists()]
     backend = NativeSuite(root, workspace, args.mode, output)
     code = pytest.main(['--rootdir', str(root), '-c', str(root/'pyproject.toml'), '-q',
                         *[str(root/path) for path in tests]], plugins=[backend])
+    if backend.semantic_fallbacks:code=pytest.ExitCode.TESTS_FAILED
     checked = verify_sources(root, args.repo.resolve(), '2b1504adc4291daaf080b2e932962b134da1a69a')
-    report = dict(format='rerail.data-layer-native-pytest/v1', mode=args.mode, exitCode=int(code),
-                  sourceFilesChecked=checked, cases=backend.outcomes, calls=backend.calls)
+    engine=Path(os.environ['RERAIL_ENGINE_PATH'])
+    sha=lambda path:hashlib.sha256(path.read_bytes()).hexdigest()
+    report = dict(engineSha256=sha(engine),contractsSha256=sha(Path(os.environ['RERAIL_NATIVE_CONTRACTS'])),
+                  policySha256={check:sha(policies/('data-layer-'+check.replace('_','-')+'.json')) for check in BATCH_EIGHT},format='rerail.data-layer-native-pytest/v1', mode=args.mode, exitCode=int(code),
+                  instrumentationTranslations=backend.instrumentation_translations, sourceFilesChecked=checked, semanticFallbacks=backend.semantic_fallbacks, originalCalls=backend.original_calls, cases=backend.outcomes, calls=backend.calls)
     output.write_text(json.dumps(report, indent=2) + '\n')
     raise SystemExit(code)
 

@@ -607,6 +607,113 @@
           "entryPoint": "scan_sources"
         }
       }
+    },
+    {
+      "test": "probe:batch8:native-deferred-call-target",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "class C:\n    def eager(self):\n        grammar_fetchall()\n    def build_lazy(self):\n        return defer_lazy_result(sync_resolve=self.eager)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 5,
+          "column": null,
+          "code": "LA-013",
+          "message": "defer_lazy_result is forbidden; publish a real ServerPlan step/ref instead"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 5,
+          "column": null,
+          "code": "LA-009",
+          "message": "defer_lazy_result is a forbidden lazy compatibility surface in ServerPlan-sensitive files"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 5,
+          "column": null,
+          "code": "LA-009",
+          "message": "C.build_lazy delegates lazy execution to eager method C.eager (direct eager sink)"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-ordered-cycle",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "@pure_lazy\ndef first_lazy():\n    second_lazy()\n@pure_lazy\ndef second_lazy():\n    first_lazy()\n    helper_async()\nasync def helper_async(): return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 3,
+          "column": null,
+          "code": "LA-009",
+          "message": "first_lazy reaches eager downstream function l7450_versioned_revert.example.helper_async (async function)"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 3,
+          "column": null,
+          "code": "LA-013",
+          "message": "first_lazy reaches non-lazy helper l7450_versioned_revert.example.helper_async; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 7,
+          "column": null,
+          "code": "LA-009",
+          "message": "second_lazy reaches eager downstream function l7450_versioned_revert.example.helper_async (async function)"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 7,
+          "column": null,
+          "code": "LA-013",
+          "message": "second_lazy reaches non-lazy helper l7450_versioned_revert.example.helper_async; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
     }
   ]
 }

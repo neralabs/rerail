@@ -29,6 +29,19 @@ const projection = `SELECT n.__path path,n.__start start_byte,n.__end end_byte,f
     'errors',(SELECT json_group_array(error) FROM (SELECT error FROM cached_errors e WHERE e.__path=f.__path AND e.fn=f.id UNION SELECT error FROM extra_cached_errors e WHERE e.__path=f.__path AND e.fn=f.id ORDER BY error))) payload
   FROM actual_functions f JOIN nodes n ON n.__path=f.__path AND n.id=f.id`;
 
+export function cachedDiscoveryPolicy(moduleName?: string) {
+  const policy = codeRuleSchema.parse(JSON.parse(readFileSync("packs/data-layer/candidates/rules/data-layer-cached-pure-lazy-allowlist.json", "utf8")));
+  policy.scope = { include: ["**/*.py"], exclude: [] };
+  policy.clauses = policy.clauses.filter(clause => clause.define !== undefined || clause.id === "cached-policy");
+  const plan = policy.clauses.find(clause => clause.id === "cached-policy")!.relational!;
+  if (moduleName !== undefined) plan.stages!.find(stage => stage.name === "module_names")!.query =
+    `SELECT __path,'${moduleName.replaceAll("'", "''")}' module FROM nodes WHERE kind='module'`;
+  policy.clauses.push({ id: "native-syntax", forbid: { ast: { language: "python", syntax: "invalid", rule: { kind: "module" } } },
+    violation: { code: "NATIVE-SYNTAX", message: "Invalid Python syntax", anchor: "witness.span" } });
+  plan.query = projection; plan.key = ["identity"]; delete plan.code;
+  return policy;
+}
+
 function ordered(functions: z.infer<typeof functionSchema>[]): string[] {
   // Parse first to compare the same complete field set and field order.
   return functions.map(value => JSON.stringify(functionSchema.parse(value))).sort();
@@ -50,14 +63,7 @@ export async function replayCachedDiscovery(raw: unknown[]) {
       if (event.functions.length) report.positive++; else report.clean++;
       let rule = compiled.get(event.module_name);
       if (rule === undefined) {
-        const policy = codeRuleSchema.parse(JSON.parse(readFileSync("packs/data-layer/candidates/rules/data-layer-cached-pure-lazy-allowlist.json", "utf8")));
-        policy.scope = { include: ["**/*.py"], exclude: [] };
-        policy.clauses = policy.clauses.filter(clause => clause.define !== undefined || clause.id === "cached-policy");
-        const clause = policy.clauses.find(clause => clause.id === "cached-policy")!;
-        const plan = clause.relational!;
-        const module = plan.stages!.find(stage => stage.name === "module_names")!;
-        module.query = `SELECT __path,'${event.module_name.replaceAll("'", "''")}' module FROM nodes WHERE kind='module'`;
-        plan.query = projection; plan.key = ["identity"]; delete plan.code;
+        const policy = cachedDiscoveryPolicy(event.module_name);
         rule = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(policy), "json", capabilitiesJson());
         compiled.set(event.module_name, rule);
       }

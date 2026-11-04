@@ -101,8 +101,11 @@ def candidate(source,policy):
     stages[index:index]=graph
     from data_layer_eight.purity_graph import add_inherited_methods
     add_inherited_methods(stages)
+    from data_layer_eight.purity_messages import apply as messages,query as message_query
+    messages(stages,value)
     strings=E(A(O(K('string'),K('concatenated_string')),P('STRING'),{'regex':r'''(?i)^[ru]*["']'''},O({'inside':{'kind':'function_definition','stopBy':'end'}},{'inside':{'kind':'assignment','has':{'field':'left','kind':'identifier','regex':'^__all__$'},'stopBy':'end'}})),{'value':'capture.DECODED.text'},transform={'DECODED':{'substring':{'source':'$STRING','value':True,'startChar':0}}})
-    item=clause('pure-runtime-state',stages,"SELECT __path path,__start start_byte,__end end_byte,issue,identity,qualname FROM diagnostics",{'strings':strings})
+    item=clause('pure-runtime-state',stages,message_query(),{'strings':strings})
+    item['relational']['message']='message'
     item['relational'].pop('partitionBy',None)
     item['relational']['query']={'$option':'entryPoint','cases':{'scan_source':item['relational']['query']+" WHERE issue!='PLP-007'"},'default':item['relational']['query']}
     p['clauses'].append(item);return p

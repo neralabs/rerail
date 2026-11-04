@@ -1,21 +1,21 @@
 {
   "format": "rerail.data-layer-integrated-engine/v1",
   "base_commit": "9bc955cc5",
-  "commit": "899c3e53d2cb43a509a47d94e0bdc4fd36bb3c21",
+  "commit": "ebcfefa0a4b52a966cb664d72340a4ddc884a5d5",
   "branch": "jeremy/data-layer-integrated-compat-20261103",
-  "native_sha256": "4f5a112f088dc59713231e387e1bd62b3ec6192352e36a044688481007d49c3b",
+  "native_sha256": "a22a3cc134b84b9c954f4afdbaad686e039a232d404526c946993014028aa0f7",
   "build": {
     "package": "rerail-engine",
     "profile": "profiling",
     "extra_features": [],
     "allocator": "jemalloc",
-    "wallSeconds": 36.61
+    "wallSeconds": 59.91
   },
-  "frontend_schema_sha256": "cec776b6daec6170c586714d056a4b8c0515e0514f24f33eace1a2b4e403bea7",
+  "frontend_schema_sha256": "2e3489dcfebee002938200cc2fcbccae0f167f18dffb0bf8310148a809c902eb",
   "frontend_capabilities_sha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01",
   "python": "Python 3.13.12",
   "boundary": "Production schema and native compiled-rule/workspace APIs; relational compatibility, with wave/GPU lowering separate.",
-  "runtime_dependency": "CPython 3.13; one isolated batch per nonempty canonical Python producer wave.",
-  "replay_schema_sha256": "75234e4dbedf2aa6f61cb3a2c033c174a301e8ae5076777d5935963afaf37e71",
+  "runtime_dependency": "CPython 3.13 for canonical AST facts. Text-only identifier and byte-column requests perform no parse or AST walk.",
+  "replay_schema_sha256": "074c39f659ed708c496c928bbda33232a3297029a645ae2d512e5e69da46c2d3",
   "replay_capabilities_sha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01"
 }

@@ -8,6 +8,8 @@ def constants(path):
     def read(node):
         if isinstance(node,ast.Constant):return node.value
         if isinstance(node,ast.Name):return values[node.id]
+        if isinstance(node,ast.JoinedStr):
+            return ''.join(str(read(item.value)) if isinstance(item,ast.FormattedValue) and item.conversion==-1 and item.format_spec is None else read(item) for item in node.values)
         if isinstance(node,(ast.Tuple,ast.List,ast.Set)):
             constructor={ast.Tuple:tuple,ast.List:list,ast.Set:set}[type(node)]
             return constructor(read(item) for item in node.elts)

@@ -1451,7 +1451,7 @@ export const codeRuleClauseSchema = z
         siblingLinks: z.array(z.object({ decorator: nonEmptyString, name: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict()).min(1).max(32).optional(),
         constructorFields: z.object({ fieldToParameter: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict().optional(),
       }).strict().optional(),
-      query: nonEmptyString, key: z.array(nonEmptyString).min(1).max(16).optional(), code: nonEmptyString.optional(),
+      query: nonEmptyString, key: z.array(nonEmptyString).min(1).max(16).optional(), code: nonEmptyString.optional(), message: nonEmptyString.optional(),
     }).strict().refine(plan => plan.requireNonemptyInput === undefined || Object.hasOwn(plan.inputs, plan.requireNonemptyInput),
       "requireNonemptyInput must name a declared input.").refine(plan => plan.partitionBy !== "file" || (plan.references === undefined && plan.locations === undefined),
       "File partitions cannot declare references or diagnostic locations.").optional(),

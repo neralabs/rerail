@@ -179,8 +179,8 @@
         "query": {
           "$option": "oracleAnalyzer",
           "cases": {
-            "true": "SELECT __path path,__start start_byte,__end end_byte,message issue,id identity FROM diagnostics d WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=d.__path AND n.kind='module' AND rx_matches(n.text,'LazyResult|SyncSqlConnection|compile|execute|execute_async|explicit_execution_authority|grammar_lazy|legacy_async|legacy_sync')) AND NOT rx_matches(__path,'(?:^|/)(?:tests|conform)(?:/|$)')",
-            "false": "SELECT __path path,__start start_byte,__end end_byte,'LSS-001' issue,id identity FROM diagnostics d WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=d.__path AND n.kind='module' AND rx_matches(n.text,'LazyResult|SyncSqlConnection|compile|execute|execute_async|explicit_execution_authority|grammar_lazy|legacy_async|legacy_sync')) AND NOT rx_matches(__path,'(?:^|/)(?:tests|conform)(?:/|$)')"
+            "true": "SELECT __path path,__start start_byte,__end end_byte,message issue,id identity,message FROM diagnostics d WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=d.__path AND n.kind='module' AND rx_matches(n.text,'LazyResult|SyncSqlConnection|compile|execute|execute_async|explicit_execution_authority|grammar_lazy|legacy_async|legacy_sync')) AND NOT rx_matches(__path,'(?:^|/)(?:tests|conform)(?:/|$)')",
+            "false": "SELECT __path path,__start start_byte,__end end_byte,'LSS-001' issue,id identity,message FROM diagnostics d WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=d.__path AND n.kind='module' AND rx_matches(n.text,'LazyResult|SyncSqlConnection|compile|execute|execute_async|explicit_execution_authority|grammar_lazy|legacy_async|legacy_sync')) AND NOT rx_matches(__path,'(?:^|/)(?:tests|conform)(?:/|$)')"
           }
         },
         "key": [
@@ -252,7 +252,8 @@
             }
           }
         },
-        "requireNonemptyInput": "syntax_gate"
+        "requireNonemptyInput": "syntax_gate",
+        "message": "message"
       },
       "violation": {
         "code": "architecture",

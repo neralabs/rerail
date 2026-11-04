@@ -306,10 +306,17 @@
                           "has": {
                             "all": [
                               {
-                                "kind": "identifier"
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:read|read_async|read_version|read_version_async|write|write_async|write_version|write_version_async)$"
+                                  }
+                                ]
                               },
                               {
-                                "regex": "^(?:read|read_async|read_version|read_version_async|write|write_async|write_version|write_version_async)$"
+                                "pattern": "$METHOD"
                               }
                             ],
                             "stopBy": "neighbor",
@@ -442,7 +449,7 @@
       },
       "violation": {
         "code": "LCB-020",
-        "message": "LCB-020",
+        "message": "Internal call to legacy callback API $METHOD() is forbidden; use explicit plan scopes or lazy owners instead.",
         "anchor": "witness.span"
       }
     },
@@ -485,10 +492,17 @@
                           "has": {
                             "all": [
                               {
-                                "kind": "identifier"
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:commit_branch|commit_branch_async)$"
+                                  }
+                                ]
                               },
                               {
-                                "regex": "^(?:commit_branch|commit_branch_async)$"
+                                "pattern": "$METHOD"
                               }
                             ],
                             "stopBy": "neighbor",
@@ -600,7 +614,7 @@
       },
       "violation": {
         "code": "LCB-031",
-        "message": "LCB-031",
+        "message": "Internal call to connection-level $METHOD() is forbidden; use versioned transaction legacy wrappers or explicit versioned plan scopes.",
         "anchor": "witness.span"
       }
     },
@@ -637,10 +651,17 @@
                     "has": {
                       "all": [
                         {
-                          "kind": "identifier"
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:read|read_async|read_version|read_version_async|write|write_async|write_version|write_version_async)$"
+                            }
+                          ]
                         },
                         {
-                          "regex": "^(?:read|read_async|read_version|read_version_async|write|write_async|write_version|write_version_async)$"
+                          "pattern": "$METHOD"
                         }
                       ],
                       "stopBy": "neighbor",
@@ -954,7 +975,7 @@
       },
       "violation": {
         "code": "LCB-010",
-        "message": "LCB-010",
+        "message": "Callback API $METHOD() must be explicitly marked as legacy/eager.",
         "anchor": "witness.span"
       }
     },
@@ -991,10 +1012,17 @@
                     "has": {
                       "all": [
                         {
-                          "kind": "identifier"
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:commit_branch|commit_branch_async)$"
+                            }
+                          ]
                         },
                         {
-                          "regex": "^(?:commit_branch|commit_branch_async)$"
+                          "pattern": "$METHOD"
                         }
                       ],
                       "stopBy": "neighbor",
@@ -1135,7 +1163,7 @@
       },
       "violation": {
         "code": "LCB-030",
-        "message": "LCB-030",
+        "message": "Production connection class defines connection-level $METHOD(); publish must live on versioned transactions or explicit versioned plan scopes.",
         "anchor": "witness.span"
       }
     }

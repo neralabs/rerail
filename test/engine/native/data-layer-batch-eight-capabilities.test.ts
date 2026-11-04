@@ -29,6 +29,20 @@ it("rejects a missing SQL message column instead of silently using generic prose
   }] };
   expect(() => loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(authored), "json", capabilities)).toThrow(/unknown output column missing/);
 });
+it("rejects a null SQL diagnostic payload at execution", () => {
+  const authored = { format: "rerail.policy/v1", id: "null-message", revision: 1, mode: "log", clauses: [{
+    id: "diagnostic", relational: {
+      inputs: { files: { evidence: { as: "f", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } } },
+      query: "SELECT __path path,__start start_byte,__end end_byte,NULL detail FROM files", message: "detail",
+    }, violation: { code: "OWNER", message: "Fallback", anchor: "witness.span" },
+  }] };
+  const rule = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(authored)), "json", capabilities);
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
+    files: [{ path: "owner.py", language: "python", source: "pass\n" }] }), "report"));
+  expect(result.violations).toEqual([]);
+  expect(result.failures).toEqual([expect.objectContaining({ message: "relational message must be text" })]);
+});
+
 function policy() {
   return { format: "rerail.policy/v1", id: "python-fingerprints", revision: 1, mode: "log", clauses: [{ id: "fingerprints", relational: {
     inputs: { eligible: { evidence: { as: "row", query: { ast: { language: "python", syntax: "valid", rule: { kind: "module" } } }, project: { path: "file.path" } } } },

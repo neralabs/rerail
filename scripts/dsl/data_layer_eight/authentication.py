@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Semantic-step storage and same-class authentication helper reachability."""
+import ast
 from data_layer_six.common import S,q,literals
 from data_layer_eight.relations import clause
 from data_layer_eight.authority import source_paths
@@ -36,11 +37,15 @@ def candidate(source,policy):
         UNION SELECT r.__path,r.cls,r.entry,m.name FROM reachable r JOIN method_calls c ON c.__path=r.__path AND c.cls=r.cls AND c.name=r.name JOIN last_methods m ON m.__path=c.__path AND m.cls=c.cls AND m.name=c.callee WHERE m.name NOT IN ('_establish_legacy_write_authority','_establish_native_write_authority')) SELECT * FROM reachable""",('__path','cls','entry')),
       S('function_decorators',"""SELECT f.__path,f.id,coalesce(c.callee,a.attr,n.text) name FROM functions f JOIN nodes w ON w.__path=f.__path AND w.id=f.parent AND w.kind='decorated_definition' JOIN nodes d ON d.__path=w.__path AND d.parent=w.id AND d.kind='decorator' JOIN nodes n ON n.__path=d.__path AND n.parent=d.id LEFT JOIN calls c ON c.__path=n.__path AND c.id=n.id LEFT JOIN attributes a ON a.__path=n.__path AND a.id=n.id""",('__path','id','name')),
     ]
-    emit=lambda table,where,code:f"SELECT n.__path path,n.__start start_byte,n.__end end_byte,{q(code)} issue,n.id identity FROM {table} n WHERE {where}"
+    messages={}
+    for node in ast.walk(ast.parse(module.read_text())):
+        if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id=='Finding' and len(node.args)==4 and isinstance(node.args[2],ast.Constant) and isinstance(node.args[3],ast.Constant):
+            messages[node.args[2].value]=node.args[3].value
+    emit=lambda table,where,code:f"SELECT n.__path path,n.__start start_byte,n.__end end_byte,{q(code)} issue,n.id identity,{q(messages[code])} message FROM {table} n WHERE {where}"
     def suffixes(values):return r'(?:^|[\s\[\]|,])[^\s\[\]|,]*(?:'+'|'.join(values)+r')(?:$|[\s\[\]|,])'
     rows=[emit('store_contracts',"attr IN ('_client','client','_connection','connection','_callback','callback','_registry','registry') OR rx_matches(types,"+q(suffixes(['Client','Connection','Transaction','Callback','Registry','Transport']))+")",'APP001'),
       emit('store_contracts',"instr(attr,'batched_value')>0 OR instr(attr,'response')>0 OR instr(attr,'runtime_result')>0 OR rx_matches(types,"+q(suffixes(['Response','RuntimeResult']))+")",'APP002'),
       emit('last_methods',"name IN ('__enter__','__aenter__') AND EXISTS(SELECT 1 FROM entry_reach r JOIN method_calls c ON c.__path=r.__path AND c.cls=r.cls AND c.name=r.name WHERE r.__path=n.__path AND r.cls=n.cls AND r.entry=n.name AND (instr(c.callee,'bind_cache_to_current_authority')>0 OR instr(c.callee,'adopt_authenticated_remote_session')>0 OR instr(c.callee,'resolve')>0 AND (instr(c.callee,'auth')>0 OR instr(c.callee,'authority')>0 OR instr(c.callee,'credential')>0 OR instr(c.callee,'admission')>0)))",'APP003'),
       emit('functions',"(name GLOB '*_sync' OR name GLOB '*_async') AND (instr(lower(name),'auth')>0 OR instr(lower(name),'authority')>0 OR instr(lower(name),'credential')>0 OR instr(lower(name),'admission')>0) AND NOT EXISTS(SELECT 1 FROM function_decorators d WHERE d.__path=n.__path AND d.id=n.id AND (d.name IN ('legacy_sync','legacy_async') OR d.name IN ('direct_legacy_sync','direct_legacy_async') AND EXISTS(SELECT 1 FROM calls c WHERE c.__path=n.__path AND c.__start>n.__start AND c.__end<=n.__end AND c.callee GLOB '*_lazy')))",'APP004')]
-    p['clauses'].append(clause('authentication-contracts',stages,' UNION ALL '.join(rows)))
+    item=clause('authentication-contracts',stages,' UNION ALL '.join(rows));item['relational']['message']='message';p['clauses'].append(item)
     return p

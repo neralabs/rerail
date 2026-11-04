@@ -30,6 +30,6 @@ def candidate(source,policy):
     ]
     trigger='LazyResult|SyncSqlConnection|compile|execute|execute_async|explicit_execution_authority|grammar_lazy|legacy_async|legacy_sync'
     where=" FROM diagnostics d WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=d.__path AND n.kind='module' AND rx_matches(n.text,"+q(trigger)+")) AND NOT rx_matches(__path,'(?:^|/)(?:tests|conform)(?:/|$)')"
-    item=clause('sql-surface',stages,'SELECT __path path,__start start_byte,__end end_byte,message issue,id identity'+where)
-    item['relational']['query']={'$option':'oracleAnalyzer','cases':{'true':item['relational']['query'],'false':"SELECT __path path,__start start_byte,__end end_byte,'LSS-001' issue,id identity"+where}}
-    p['clauses'].append(item);return p
+    item=clause('sql-surface',stages,'SELECT __path path,__start start_byte,__end end_byte,message issue,id identity,message'+where)
+    item['relational']['query']={'$option':'oracleAnalyzer','cases':{'true':item['relational']['query'],'false':"SELECT __path path,__start start_byte,__end end_byte,'LSS-001' issue,id identity,message"+where}}
+    item['relational']['message']='message';p['clauses'].append(item);return p
