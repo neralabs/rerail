@@ -10,11 +10,23 @@
 //   - an import in a nested def counts against the outermost def;
 //   - each alias of `import a, b` is classified on its own.
 // (PR 2539's YAML port does not match this. See ../rule-syntax-options.md.)
+//
+// How to read this file
+//   1. imp() turns each import statement into (statement, module, name) rows, one per imported name.
+//      dotted() and from_module() are its helpers: they read the module and name text off the parse tree.
+//   2. top_def() and scope_of() find the function the import counts against and the "Class.func" label.
+//   3. names_typing() and skipped() are per-statement flags used by the classification.
+//   4. FUNCTION_IMPORT gives every import inside a function one code, from the first matching test in `first { }`.
+//   The .budget line above caps how many findings of each code may exist before the policy blocks.
 
+// Constant sets. `$x in typing_module` tests membership; the lists are copied from the oracle's _classify_import.
 .set typing_module = "typing" | "typing_extensions" | "collections.abc"
 .set typing_name   = "TYPE_CHECKING" | "TypeVar" | "TypeAlias" | "Protocol" | "Generic" | "ClassVar"
                    | "Final" | "Literal" | "Annotated" | "Union" | "Optional" | "Any"
+// Top-level packages of this repository: an import of one of these is treated as internal.
 .set internal_root = "api" | "impl" | "data_layer" | "_internal"
+// Kind sets name grammar node kinds, for the tree builtins: nearest($n, $a, fdef) = "a is n's closest enclosing def".
+// `async def` parses as function_definition too, so both kinds of def are covered; lambdas are not, as in the oracle.
 .kindset fdef = "function_definition"
 .kindset cdef = "class_definition"
 
@@ -22,46 +34,77 @@
 //   import a.b as c         → (i, "a.b", "a.b")
 //   from .x import y as z   → (i, "x", "y")
 //   from . import y         → (i, "", "y")
+// Every later relation starts from imp, so it also decides which statements are considered at all.
 .decl imp(i: node, m: sym, x: sym)
+// `import a.b`: the name is the module itself, as in the oracle's _classify_import(alias.name, [alias.name], …).
 imp($i, $m, $m)  :- kind($i, "import_statement"), field($i, "name", $n), dotted($n, $m).
+// `from m import x`: one row per name after `import`.
 imp($i, $m, $x)  :- kind($i, "import_from_statement"), from_module($i, $m), field($i, "name", $n), dotted($n, $x).
+// `from m import *`: the wildcard is a child node, not a `name` field, so it gets its own rule.
 imp($i, $m, "*") :- kind($i, "import_from_statement"), from_module($i, $m), child($i, $w, _), kind($w, "wildcard_import").
 
+// dotted(n, s): the imported name as written, with any `as alias` removed (the alias plays no part in classifying).
 .decl dotted(n: node, s: sym)
 dotted($n, $s) :- kind($n, "dotted_name"), text($n, $s).
-dotted($n, $s) :- kind($n, "aliased_import"), field($n, "name", $d), text($d, $s).
+dotted($n, $s) :- kind($n, "aliased_import"), field($n, "name", $d), text($d, $s).   // `a.b as c` → "a.b"
 
+// from_module(i, m): the module of a from-import, as the oracle's `node.module or ""` sees it.
 .decl from_module(i: node, m: sym)
+// Absolute: `from a.b import x` → "a.b".
 from_module($i, $m) :- field($i, "module_name", $mn), kind($mn, "dotted_name"), text($mn, $m).
+// Relative with a name: `from ..a.b import x` → "a.b". The leading dots are dropped here, as in the oracle.
 from_module($i, $m) :- field($i, "module_name", $mn), kind($mn, "relative_import"),
     child($mn, $d, _), kind($d, "dotted_name"), text($d, $m).
+// Relative with dots only: `from . import x` → "". The negated group says "the relative import has no dotted name".
 from_module($i, "") :- field($i, "module_name", $mn), kind($mn, "relative_import"),
     !(child($mn, $d, _), kind($d, "dotted_name")).
 
 // Attribution: the outermost def above the import, and the innermost class above that def.
+// The oracle's collector takes the last function in its ancestor list (the outermost) and the first class above it;
+// the message and the test-helper check both use this def, not the innermost one.
+// def_name(f, s): the name of a def or class (its `name` field).
 .decl def_name(f: node, s: sym)
 def_name($f, $s) :- field($f, "name", $n), text($n, $s).
+// top_def(i, f): f is a def that contains import i and is not itself inside any def. An import with no such f
+// (module level or class body) gets no row here and so is never reported.
 .decl top_def(i: node, f: node)
 top_def($i, $f) :- imp($i, _, _), within($i, $f), kind($f, "function_definition"), !nearest($f, _, fdef).
+// scope_of(i, fn, scope): fn is the outermost def's name; scope is "Class.fn" when a class encloses that def, else fn.
 .decl scope_of(i: node, fn: sym, scope: sym)
+// @cat(a, b) joins with a dot: "Class" + "fn" → "Class.fn". nearest(…, cdef) picks the closest class above the def.
 scope_of($i, $fn, @cat($cn, $fn)) :- top_def($i, $f), def_name($f, $fn), nearest($f, $c, cdef), def_name($c, $cn).
+// No class above the def: the scope is the def name alone.
 scope_of($i, $fn, $fn)            :- top_def($i, $f), def_name($f, $fn), !nearest($f, _, cdef).
 
 // A from-import counts as typing-only if any of its names is a typing construct.
+// This is statement-level: the oracle passes all of a from-import's names to one _classify_import call, so
+// `from x import Any, foo` makes the whole statement typing-only, including the row for foo.
 .decl names_typing(i: node)
 names_typing($i) :- kind($i, "import_from_statement"), imp($i, _, $y), $y in typing_name.
 
 // The closed deferred-import registry's dispatch table is skipped.
+// Mirrors the oracle's check on the path ending in _internal/dynamic_import.py and the function it names.
 .decl skipped(i: node)
 skipped($i) :- scope_of($i, _, "load_python_module"), docof($i, $d), doc($d, "_internal/dynamic_import.py", _).
 
+// The finding: one per (import statement, code). `at` is the statement, so {at.text} prints the import as written.
 .violation FUNCTION_IMPORT(at: node, code: sym) "{at.text} (in {scope})"
+// imp + scope_of keep only imports inside a def; !skipped drops the registry.
 FUNCTION_IMPORT($i, $c) :- imp($i, $m, $x), scope_of($i, $fn, _), !skipped($i),
+    // first { }: the tests run top to bottom and the first true one gives the code; the last line is the default.
+    // The order is the oracle's _classify_import order, and it matters: an internal typing helper is typing-only,
+    // and a test function's internal import is test-helper, not circular-avoidance.
     $c = first {
+      // Module or name is a typing construct (or another name in the same from-import is).
       "typing-only"        if $m in typing_module or $x in typing_name or names_typing($i);
+      // The outermost def is named test_….
       "test-helper"        if $fn =~ "^test_";
+      // Internal to the repository: a top-level package, a relative import with dots only (""),
+      // a dotted module under one of the internal packages, or a layered package such as l1000_schema or
+      // l9600_graphs.graph (l + 3 or 4 digits + _name, as the whole first segment).
       "circular-avoidance" if $m in internal_root or $m = ""
                            or $m =~ "^(api|impl|data_layer|_internal|conform|scripts)\."
                            or $m =~ "^l\d{3,4}_[a-z][a-z0-9_]*(\.|$)";
+      // Everything else: stdlib and third-party imports.
       "other"
     }.

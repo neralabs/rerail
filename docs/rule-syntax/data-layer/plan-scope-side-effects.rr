@@ -15,72 +15,112 @@
 //   side-effect calls match on resolved names: `from time import sleep; sleep(1)` and `import requests as r` are caught;
 //   a call on a receiver that does not resolve but whose text names one of the modules is reported `possible`;
 //   PSE_AUDIT_010 follows each name in the test to its binding (ref_site), not to any earlier same-named assignment.
+//
+// How to read this file
+//   1. cname / method_call name each call by its last identifier, as the oracle's _call_name does.
+//   2. item_call / plan / write_plan find the plan scopes: with-statements that open a plan.
+//   3. PSE_010 … PSE_050 are each "a forbidden node, inside some plan scope": nearest($n, _, plan).
+//   4. fx is three-valued (must, may): resolved side-effect calls are definite, unresolved look-alikes are possible.
+//   5. PSE_AUDIT_010 pairs eager reads bound inside a write plan (eager_site) with `if` tests in the same plan.
+// The oracle keeps a stack of open plan scopes while walking the tree; here "inside a plan" is a tree query instead.
 
 .use python/names
 .use python/calls
 
+// Calls that open a plan scope (the oracle's PLAN_OPENERS), and the subset that opens a write plan.
 .set opener       = "open_read_plan" | "open_write_plan" | "open_provider_read_plan" | "open_provider_write_plan"
                   | "open_provider_versioned_read_plan" | "open_provider_versioned_write_plan"
 .set write_opener = "open_write_plan" | "open_provider_write_plan" | "open_provider_versioned_write_plan"
+// Forbidden names, one set per code: PSE_020 eager resolution, PSE_030 raw SQL, PSE_040 legacy callbacks.
 .set eager_call   = "resolve" | "resolve_async"
 .set raw_call     = "execute_raw" | "fetchone_raw" | "fetchall_raw" | "nonportably_execute_sql"
 .set legacy_cb    = "read" | "write" | "read_async" | "write_async"
+// Typed eager query terminals (TYPED_EAGER_QUERY_TERMINALS): their result is a Python value, read for PSE_AUDIT_010.
 .set eager_read   = "count" | "count_async" | "execute" | "execute_async" | "execute_one" | "execute_one_async"
                   | "first" | "first_async" | "select_one" | "select_one_async"
+// Side-effect call names (SIDE_EFFECT_CALLS) and the modules they count on (SIDE_EFFECT_RECEIVERS).
 .set fx_name      = "open" | "sleep" | "run" | "Popen" | "request" | "get" | "post" | "put" | "patch" | "delete"
 .set fx_module    = "asyncio" | "subprocess" | "requests" | "httpx" | "socket" | "shutil" | "os" | "time"
+// Binding forms that carry a value: `x = …` and `x: T = …`.
 .set assign_form  = "assign" | "annassign"
+// `elif` is its own node in this grammar; the oracle sees it as a nested ast.If, so both kinds are tested.
 .set branch       = "if_statement" | "elif_clause"
 
 // cname(c, x): the name call c is made by, `f(…)` or `….f(…)`; method_call(c) for the second form.
 .decl cname(c: node, x: sym)
+// `f(…)`: the function's own name.
 cname($c, $x) :- callee($c, $n), kind($n, "identifier"), text($n, $x).
+// `obj.f(…)`: the attribute name, whatever the receiver is.
 cname($c, $x) :- callee($c, $n), kind($n, "attribute"), field($n, "attribute", $a), text($a, $x).
 .decl method_call(c: node)
 method_call($c) :- callee($c, $n), kind($n, "attribute").
 
 // item_call(w, c): c is the call in one of with-statement w's items (`with c as p` or `with c`).
 .decl item_call(w: node, c: node)
+// item_value(w, v): the expression of one item of `with` statement w. `async with` parses to the same node kind.
 .decl item_value(w: node, v: node)
 item_value($w, $v) :- kind($w, "with_statement"), child($w, $cl, _), kind($cl, "with_clause"), child($cl, $it, _),
     field($it, "value", $v).
+// `with open_write_plan(…):` — the item is the call itself.
 item_call($w, $c) :- item_value($w, $c), call($c).
+// `with open_write_plan(…) as p:` — the call is the first child of the `as` pattern.
 item_call($w, $c) :- item_value($w, $v), kind($v, "as_pattern"), child($v, $c, 0), call($c).
+// plan(w): w is a plan scope. Used as a set in nearest($n, $w, plan): "n is inside plan scope w", w the innermost.
+// Nodes in the with-items count as inside too, as in the oracle, which opens the scope before visiting the items.
 .decl plan(w: node)
 plan($w) :- item_call($w, $c), cname($c, $x), $x in opener.
+// write_plan(w): some item opens a write plan (the oracle's any(_is_write_plan_scope_item …)).
 .decl write_plan(w: node)
 write_plan($w) :- item_call($w, $c), cname($c, $x), $x in write_opener.
 
+// PSE_010: any `….resolved_value` attribute inside a plan scope (EAGER_VALUE_ATTRS has only this name).
 .violation PSE_010(at: node) "resolved_value is forbidden inside plan-scope construction."
 PSE_010($a) :- kind($a, "attribute"), field($a, "attribute", $t), text($t, "resolved_value"), nearest($a, _, plan).
 
+// PSE_020: resolve() or resolve_async() called, plain or as a method, inside a plan scope.
 .violation PSE_020(at: node, name: sym) "{name}() is eager resolution inside plan-scope construction."
 PSE_020($c, $x) :- cname($c, $x), $x in eager_call, nearest($c, _, plan).
 
+// PSE_030: a raw SQL call inside a plan scope.
 .violation PSE_030(at: node, name: sym) "{name}() is raw database execution inside plan-scope construction."
 PSE_030($c, $x) :- cname($c, $x), $x in raw_call, nearest($c, _, plan).
 
+// PSE_040: read/write callbacks only as method calls (`txn.read(…)`): a bare read() is some other function.
+// The four name sets are disjoint, so separate rules give the same result as the oracle's if/elif chain.
 .violation PSE_040(at: node, name: sym) "Nested legacy callback API {name}() is forbidden inside plan scopes."
 PSE_040($c, $x) :- method_call($c), cname($c, $x), $x in legacy_cb, nearest($c, _, plan).
 
+// must: proven by name resolution. may: only a textual hint. A PSE_050 resting only on a may row is "possible".
 // fx(c, x): call c is a Python side effect named x.
 .decl fx(c: node, x: sym)  must, may
+// The builtin open(). global_ref means no local binding shadows it; the oracle matches any name `open`.
 must fx($c, "open") :- callee($c, $n), global_ref($n, "open").
+// The callee resolves to q, e.g. "time.sleep" or "requests.get" (aliases and from-imports included). The first dotted
+// segment of q must be a side-effect module and the last segment a side-effect name.
 must fx($c, $x) :- callee($c, $n), sym_of($n, $q), $m = @re($q, "^([^.]+)\."), $m in fx_module,
     $x = @re($q, "([^.]+)$"), $x in fx_name.
+// `recv.get(…)` where recv does not resolve: the oracle's receiver-token test, as a word match on the receiver's text
+// (case-insensitive). The text includes call arguments inside the receiver, which the oracle's tokens do not.
 may  fx($c, $x) :- method_call($c), cname($c, $x), $x in fx_name, callee($c, $n), !sym_of($n, _),
     field($n, "object", $o), text($o, $t), $t =~ "(?i)\b(asyncio|subprocess|requests|httpx|socket|shutil|os|time)\b".
 
+// PSE_050: a side-effect call inside a plan scope.
 .violation PSE_050(at: node, name: sym) "Python side-effect call {name}() is forbidden inside plan scopes."
 PSE_050($c, $x) :- fx($c, $x), nearest($c, _, plan).
 
+// The oracle collects names assigned from eager reads per scope (on_Assign / on_AnnAssign); this keeps the binding
+// site itself, so a later rebinding of the same name to something else is not confused with it.
 // eager_site(s, w): binding site s, whose innermost plan scope is write plan w, takes a typed eager read (`n = q.count()`).
 .decl eager_site(s: node, w: node)
 eager_site($s, $w) :- binding(_, _, $s, $k), $k in assign_form, binding_value($s, $v), cname($v, $x), $x in eager_read,
     nearest($s, $w, plan), write_plan($w).
+// if_test(i, w, t): an if/elif i with condition t, whose innermost plan scope w is a write plan.
 .decl if_test(i: node, w: node, t: node)
 if_test($i, $w, $t) :- kind($i, $k), $k in branch, field($i, "condition", $t), nearest($i, $w, plan), write_plan($w).
 
+// PSE_AUDIT_010 has three cases: the test is itself an eager read call (`if q.count():`); the test is a name
+// bound to an eager read in the same plan (`if n:`); or a name anywhere inside the test is (`if n > 0 and ok:`).
+// Its mode is log (see .mode log PSE_AUDIT_010 above): reported, never blocking.
 .violation PSE_AUDIT_010(at: node)
     "Read-then-Python-branch write orchestration inside a write plan. Prefer SQL-visible ConditionalStep, GuardedInsert, or upsert forms."
 PSE_AUDIT_010($i) :- if_test($i, _, $t), cname($t, $x), $x in eager_read.

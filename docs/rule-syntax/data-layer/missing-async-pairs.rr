@@ -16,19 +16,32 @@
 //   a counterpart inherited from a base class counts, across files (the oracle looks only in the same class body);
 //   classes are told apart by definition, not by name (same-named classes in one file no longer merge);
 //   the whole parameter list is compared, keyword-only parameters included (the oracle compares positional ones).
+//
+// How to read this file
+//   1. named / side: each def that can take part in a pair, with its base name and side ("sync" or "async").
+//   2. own: the def sits directly in a class body. sees: the class has that side, own or inherited.
+//   3. io: the def does I/O (a connection-like parameter, or an I/O method call in its body).
+//   4. missing_pair: an own I/O def whose class sees no counterpart.
+//   5. pair / differ / signature_mismatch: both sides exist and their parameter lists differ.
+// Base names join the two sides: def foo and async def foo_async share base "foo".
 
 .use python/names
 .use python/calls
 
+// fdef / cdef: def and class nodes, for nearest(): "the closest enclosing def" and "the closest enclosing class".
 .kindset fdef = "function_definition"
 .kindset cdef = "class_definition"
+// Parameter names that mean "this method talks to the database" (the oracle's _IO_PARAM_NAMES).
 .set io_param  = "conn" | "connection" | "db" | "session" | "txn" | "transaction" | "session_id"
+// Method names whose call counts as I/O: the oracle's _IO_METHOD_NAMES plus execute / execute_async.
 .set io_method = "read" | "write" | "read_version" | "write_version" | "read_async" | "write_async"
     | "read_version_async" | "write_version_async" | "insert" | "insert_async" | "insert_many" | "insert_many_async"
     | "update" | "update_async" | "update_many" | "update_many_async" | "delete_by_id" | "delete_by_id_async"
     | "delete_many" | "delete_many_async" | "select_one" | "select_one_async" | "select_many" | "select_many_async"
     | "upsert" | "upsert_async" | "commit" | "commit_async" | "execute" | "execute_async" | "first" | "first_async"
     | "count" | "count_async"
+// Names never paired: builders, accessors, context-manager and dunder methods, raw and internal helpers.
+// An async def is exempt when its base is (execute_raw_async because of execute_raw), as in the oracle.
 .set exempt = "query" | "query_unfiltered" | "filter" | "order_by" | "limit" | "offset" | "for_object" | "for_objects"
     | "filter_revision" | "between_revisions" | "since" | "by_session" | "filter_eq" | "filter_ne" | "filter_gt"
     | "filter_gte" | "filter_lt" | "filter_lte" | "filter_in" | "where" | "group_by" | "aggregate" | "window" | "having"
@@ -51,37 +64,56 @@
 
 // side(f, b, k): def f is the k side ("sync" | "async") of base name b. An async def's base drops `_async`.
 // Every base starting with `_` is skipped: the oracle's private-name filter keeps none of them in the end.
+// named(f, n, b0): def f, named n with base b0 (n without a trailing _async), is not exempt and not a …_lazy member.
+// The non-greedy `.*?` lets the optional (?:_async)? group take the suffix when it is there.
 .decl named(f: node, n: sym, b0: sym)
 named($f, $n, $b0) :- def_name($f, $n), !($n in exempt), !($n =~ "_lazy$"),
     $b0 = @re($n, "^(.*?)(?:_async)?$"), !($b0 in exempt).
 .decl side(f: node, b: sym, k: sym)
+// A plain def's base is its whole name, as in the oracle's sync_methods[m.name]: a sync def foo_async has base
+// "foo_async" and is not the async side of foo.
 side($f, $n, "sync")   :- named($f, $n, _), !is_async($f), !($n =~ "^_").
+// An async def's base drops _async: async def foo_async and async def foo both have base "foo".
 side($f, $b, "async")  :- named($f, _, $b), is_async($f), !($b =~ "^_").
 
 // own(c, b, k, f): f sits directly in class c's body. sees(c, b, k, f): c has f as that side, own or inherited.
 .decl own(c: node, b: sym, k: sym, f: node)
+// nearest(f, c, cdef): c is f's closest class. !nearest(f, _, fdef): f is not inside any def, so a def nested in a
+// method is not a method (the oracle records only when its function stack is empty). _CachedQuery is skipped.
 own($c, $b, $k, $f) :- side($f, $b, $k), nearest($f, $c, cdef), !nearest($f, _, fdef), def_name($c, $x), !($x in exempt_class).
 .decl sees(c: node, b: sym, k: sym, f: node)
+// Own methods.
 sees($c, $b, $k, $f) :- own($c, $b, $k, $f).
+// Inherited: mro_method lists every method c has through its bases (python/names), in any file. own($c, …) limits
+// this to classes that have at least one candidate method of their own, so only those classes are examined.
 sees($c, $b, $k, $f) :- own($c, _, _, _), class_def($c, $cq), mro_method($cq, _, $f), side($f, $b, $k).
 
+// The oracle's has_io: set from parameters at entry, and by any I/O call anywhere below, nested defs included.
 // io(f): f takes a connection-like parameter, or calls an I/O method anywhere in its body.
 .decl io(f: node)
+// A parameter named conn, session, txn, … (any parameter; the oracle reads positional ones only).
 io($f) :- own(_, _, _, $f), params($f, $x, _), $x in io_param.
+// A call `….name(…)` anywhere in f's body, with name an I/O method.
 io($f) :- own(_, _, _, $f), within($c, $f), callee($c, $n), kind($n, "attribute"), field($n, "attribute", $a),
     text($a, $x), $x in io_method.
 
+// missing_pair: f is the class's own def on one side, does I/O, and the class has no def on the other side, neither
+// own nor inherited. `direction` names the side that is missing. A def without I/O needs no counterpart.
 .violation missing_pair(at: node, cls: sym, direction: sym) "{cls}.{at.name} missing {direction} counterpart"
 missing_pair($f, $x, "async") :- own($c, $b, "sync", $f), io($f), !sees($c, $b, "async", _), def_name($c, $x).
 missing_pair($f, $x, "sync")  :- own($c, $b, "async", $f), io($f), !sees($c, $b, "sync", _), def_name($c, $x).
 
+// Requiring one side to be own keeps a pair that is wholly inherited from being reported again in every subclass.
 // pair(c, s, a): c pairs sync s with async a, at least one of them its own.
 .decl pair(c: node, s: node, a: node)
 pair($c, $s, $a) :- own($c, $b, "sync", $s), sees($c, $b, "async", $a).
 pair($c, $s, $a) :- own($c, $b, "async", $a), sees($c, $b, "sync", $s).
+// differ(s, a): some parameter, self aside, is at a position in one def that the other does not have under the same
+// name. The two rules check both directions, so a longer list on either side is a difference.
 .decl differ(s: node, a: node)
 differ($s, $a) :- pair(_, $s, $a), params($s, $x, $i), $x != "self", !params($a, $x, $i).
 differ($s, $a) :- pair(_, $s, $a), params($a, $x, $i), $x != "self", !params($s, $x, $i).
 
+// signature_mismatch: reported at the sync def, naming the async def as `other`.
 .violation signature_mismatch(at: node, cls: sym, other: node) "{cls}.{at.name}/{other.name}: Argument mismatch"
 signature_mismatch($s, $x, $a) :- pair($c, $s, $a), differ($s, $a), def_name($c, $x).

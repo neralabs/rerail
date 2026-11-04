@@ -1,71 +1,124 @@
 // python/names: who binds a name, and what a reference reads.
 // Lifted from Typing-support's calls.rdl (LEGB, global/nonlocal, unconditional rebinding); the interface
 // relations at the end are what rules use. File-local except `sym_of` through re-exports (python/imports).
+//
+// How to read this file
+//   Every relation is a table of facts derived from the parse tree. Node ids are tree-sitter nodes (from lib/core.rr:
+//   kind, field, child, text, nearest, within, ...). A scope is a module, function, class or lambda node.
+//
+// Layering (bottom to top)
+//   1. Raw bindings, per syntactic scope: rdefn, rasg, rotgt, ribind/rifrom (the last two from python/imports).
+//      "r" = raw: the scope the statement sits in, before `global`/`nonlocal` move it.
+//   2. home: redirects a raw binding to the scope that really owns the name (global/nonlocal).
+//   3. Owned bindings: defn, asg, otgt, ifrom, ibind, and their union bound_in.
+//   4. Name lookup: walk/look (LEGB), miss/builtin_ref (nothing in the file binds it).
+//   5. Unconditional rebinding: live_def, live_asg (which of several bindings of x survive to the end of the body).
+//   6. Qualified names: qn, then sym_of (follows re-exports through python/imports' resolve_export).
+//   7. Interface (after "==== interface"): what rule files use: scope_node, binding, ref_site, sym_of, annotation,
+//      catches, class_def/class_base/subclass/mro_method, the site_* binding filters.
+//   Layers 1-6 are internal; python/calls also uses look, live_def, live_asg, qn, attr_of, miss, builtin_ref.
+//
+// Precision: this is approximate, file-local name resolution, not a type checker. Lookup lands on a scope, and every
+// binding of the name in that scope is a candidate (may-precise); only straight-line rebinding (layer 5) prunes.
 .use python/imports
 
+// Kind sets used with `nearest`/`within`. `scope` is every node that opens a Python scope.
 .kindset scope  = "module" | "function_definition" | "class_definition" | "lambda"
+// `fscope` is the scopes a nested reference can see. Python skips class bodies when resolving names from inside a
+// method: in `class C: x = 1; def m(self): return x`, the `x` in m does not see C's x.
 .kindset fscope = "module" | "function_definition" | "lambda"     // class scopes are skipped by lookup
 .kindset fdef   = "function_definition"
 
+// modnode(d, m): m is the root "module" node of document d.
 .decl modnode(d: int, m: node)
 modnode($d, $m) :- node($d, $m, "module", _, _).
+// modname(m, q): module node m has the dotted module name q (e.g. "pkg.sub.mod"), from the document facts.
 .decl modname(m: node, q: sym)
 modname($m, $q) :- modnode($d, $m), doc($d, _, $q).
 
 // ---- names read, and the scope that binds them ----------------------------------------------------------------
+// nameref(n, x): identifier n reads the name x. Excludes the attribute part of `a.b` (b is not a name lookup) and
+// any `name` field (the name of a def/class or the keyword in `f(k=1)`), which are not reads.
 .decl nameref(n: node, x: sym)
 nameref($n, $x) :- kind($n, "identifier"), text($n, $x), !field(_, "attribute", $n), !field(_, "name", $n).
+// rdefn(s, x, f): `def x(...)` or `class x:` statement f sits directly in scope s, so it binds x there.
+// e.g. in `def outer(): def inner(): ...`, rdefn(outer, "inner", <inner's def>).
 .decl rdefn(s: node, x: sym, f: node)
 rdefn($s, $x, $f) :- kind($f, "function_definition"), field($f, "name", $nm), text($nm, $x), nearest($f, $s, scope).
 rdefn($s, $x, $f) :- kind($f, "class_definition"), field($f, "name", $nm), text($nm, $x), nearest($f, $s, scope).
+// rasg(s, x, r, a): plain assignment a, `x = r`, with a single identifier on the left, sits in scope s.
+// Only this form has a tracked value r; `a, b = ...` and `x += 1` go to tgt/rotgt below instead.
 .decl rasg(s: node, x: sym, r: node, a: node)
 rasg($s, $x, $r, $a) :- kind($a, "assignment"), field($a, "left", $l), kind($l, "identifier"), text($l, $x), field($a, "right", $r), nearest($a, $s, scope).
+// param(f, x, i): function f's i-th parameter is named x. First rule: a bare `x`. Second: a wrapped one whose
+// first child is the identifier: `x: int`, `x=1`, `x: int = 1`, `*x`, `**x`.
 .decl param(f: node, x: sym, i: int)
 param($f, $x, $i) :- field($f, "parameters", $ps), child($ps, $p, $i), kind($p, "identifier"), text($p, $x).
 param($f, $x, $i) :- field($f, "parameters", $ps), child($ps, $p, $i), child($p, $id, 0), kind($id, "identifier"), text($id, $x).
 // Targets whose value is not tracked: patterns, loop and comprehension variables, `with`/`except` names, walrus,
 // augmented assignment, and names a `global`/`nonlocal` declaration hands to another scope.
+// patkind(k): node kinds that destructure: `a, b = ...`, `[a, *rest] = ...`, `(a, b) = ...`.
 .decl patkind(k: sym)
 patkind("pattern_list"). patkind("tuple_pattern"). patkind("list_pattern"). patkind("list_splat_pattern").
 patkind("parenthesized_expression"). patkind("tuple"). patkind("list"). patkind("expression_list").
+// tgt(t): t is a binding target whose bound value we do not follow. The first six rules find the top target of
+// each statement form; the last two descend into patterns so `a` and `b` in `for a, b in xs` are targets too.
+// Note tgt may be an attribute or subscript (`self.x = 1`); rotgt below keeps only identifiers.
 .decl tgt(t: node)
-tgt($l) :- kind($a, "assignment"), field($a, "left", $l), !kind($l, "identifier").
-tgt($l) :- kind($a, "augmented_assignment"), field($a, "left", $l).
-tgt($l) :- kind($a, "for_statement"), field($a, "left", $l).
-tgt($l) :- kind($a, "for_in_clause"), field($a, "left", $l).
-tgt($l) :- kind($a, "named_expression"), field($a, "name", $l).
-tgt($l) :- kind($l, "as_pattern_target").
+tgt($l) :- kind($a, "assignment"), field($a, "left", $l), !kind($l, "identifier").   // `a, b = ...`, `o.x = ...`
+tgt($l) :- kind($a, "augmented_assignment"), field($a, "left", $l).                  // `x += 1`
+tgt($l) :- kind($a, "for_statement"), field($a, "left", $l).                         // `for x in xs:`
+tgt($l) :- kind($a, "for_in_clause"), field($a, "left", $l).                         // `[... for x in xs]`
+tgt($l) :- kind($a, "named_expression"), field($a, "name", $l).                      // `(x := f())`
+tgt($l) :- kind($l, "as_pattern_target").                                            // `with f() as x`, `except E as x`
+// Recursive descent into destructuring patterns.
 tgt($c) :- tgt($t), kind($t, $k), patkind($k), child($t, $c, _).
 tgt($c) :- tgt($t), kind($t, "as_pattern_target"), child($t, $c, _).
+// rotgt(s, x): an untracked target binds name x in syntactic scope s. python/imports adds rows for relative
+// imports it cannot resolve (the name is bound, to something unknown).
 .decl rotgt(s: node, x: sym)
 rotgt($s, $x) :- tgt($t), kind($t, "identifier"), text($t, $x), nearest($t, $s, scope).
 
 // Imports, per scope: `ibind(s, x, q)` binds x to the qualified name q; `ifrom` also keeps the module and name.
+// The raw forms ribind/rifrom are parsed in python/imports. star(s): scope s has `from m import *`, which can bind
+// any name, so a name we cannot find in s is unknown rather than missing (see builtin_ref).
 star($s) :- kind($i, "import_from_statement"), child($i, $w, _), kind($w, "wildcard_import"), nearest($i, $s, scope).
 
 // `global x` / `nonlocal x`: the scope's bindings of x are the module's / the enclosing function's.
+// decl(s, x, t): scope s declares x global (t = the module node) or nonlocal (t = nearest enclosing function or
+// module scope, skipping classes). e.g. `def f(): global n; n = 1` assigns the module's n, not a local.
+// Simplification: nonlocal takes the nearest enclosing fscope, not the nearest one that actually binds x.
 .decl decl(s: node, x: sym, t: node)
 decl($s, $x, $m) :- kind($g, "global_statement"), child($g, $i, _), text($i, $x), nearest($g, $s, scope), docof($g, $d), modnode($d, $m).
 decl($s, $x, $p) :- kind($g, "nonlocal_statement"), child($g, $i, _), text($i, $x), nearest($g, $s, scope), nearest($s, $p, fscope).
+// rbound(s, x): some raw binding of x sits syntactically in s (parameters are excluded: they cannot be global).
 .decl rbound(s: node, x: sym)
 rbound($s, $x) :- rdefn($s, $x, _).
 rbound($s, $x) :- rasg($s, $x, _, _).
 rbound($s, $x) :- rotgt($s, $x).
 rbound($s, $x) :- ribind($s, $x, _).
+// home(s, x, t): a binding of x written in s really binds x in scope t. Usually t = s; with `global x` or
+// `nonlocal x` in s, t is the declared scope. Every owned relation below is "raw relation, moved by home".
 .decl home(s: node, x: sym, t: node)
 home($s, $x, $s) :- rbound($s, $x), !decl($s, $x, _).
 home($s, $x, $t) :- rbound($s, $x), decl($s, $x, $t).
+// The owned bindings: the same facts as rdefn/rasg/rotgt/rifrom/ribind, keyed by the scope that owns the name.
 .decl defn(s: node, x: sym, f: node)
 defn($t, $x, $f) :- rdefn($s, $x, $f), home($s, $x, $t).
 .decl asg(s: node, x: sym, r: node, a: node)
 asg($t, $x, $r, $a) :- rasg($s, $x, $r, $a), home($s, $x, $t).
 .decl otgt(s: node, x: sym)
 otgt($t, $x) :- rotgt($s, $x), home($s, $x, $t).
+// ifrom(s, x, m, y): `from m import y as x` binds x in s (y = x when there is no alias).
 .decl ifrom(s: node, x: sym, m: sym, y: sym)
 ifrom($t, $x, $m, $y) :- rifrom($s, $x, $m, $y), home($s, $x, $t).
+// ibind(s, x, q): any import binds x in s to qualified name q. `import os.path` gives ibind(s, "os", "os");
+// `import numpy as np` gives ibind(s, "np", "numpy"); `from a.b import c` gives ibind(s, "c", "a.b.c").
 .decl ibind(s: node, x: sym, q: sym)
 ibind($t, $x, $q) :- ribind($s, $x, $q), home($s, $x, $t).
 
+// bound_in(s, x): scope s owns some binding of x, of any form. This is what LEGB lookup tests at each scope.
+// Parameters bind in their own function and are never moved by global/nonlocal.
 .decl bound_in(s: node, x: sym)
 bound_in($s, $x) :- defn($s, $x, _).
 bound_in($s, $x) :- asg($s, $x, _, _).
@@ -74,34 +127,53 @@ bound_in($s, $x) :- otgt($s, $x).
 bound_in($s, $x) :- ibind($s, $x, _).
 
 // LEGB: from the nearest scope outwards, skipping class scopes, to the first that binds the name.
+// walk(n, x, s): reference n to x is looked up in scope s. Start at n's own scope (which may be a class: a name in
+// a class body does see the class's own bindings); if s does not bind x, step to the next enclosing fscope.
+// Recursive, but only over the scope chain, so it is short. The negation !bound_in is on a lower stratum.
+// Python detail modelled: a name bound anywhere in a function is local to the whole function (no "use before
+// assignment" check), which is why bound_in ignores statement order.
 .decl walk(n: node, x: sym, s: node)
 walk($n, $x, $s) :- nameref($n, $x), nearest($n, $s, scope).
 walk($n, $x, $p) :- walk($n, $x, $s), !bound_in($s, $x), nearest($s, $p, fscope).
+// look(n, x, s): the lookup of reference n stops at scope s, which binds x. At most one s per reference.
 .decl look(n: node, x: sym, s: node)
 look($n, $x, $s) :- walk($n, $x, $s), bound_in($s, $x).
 // Bound nowhere: a builtin, or (a star import, `globals()`) unknown.
+// miss(n, x): the walk reached the module and the module does not bind x either.
 .decl miss(n: node, x: sym)
 miss($n, $x) :- walk($n, $x, $m), kind($m, "module"), !bound_in($m, $x).
+// builtin_ref(n, x): a miss on a known builtin name, in a module with no star import (which might shadow it).
+// e.g. `len(xs)` with no local `len` gives builtin_ref(<len>, "len").
 .decl builtin_ref(n: node, x: sym)
 builtin_ref($n, $x) :- miss($n, $x), builtin($x), docof($n, $d), modnode($d, $m), !star($m).
 
 // ---- unconditional rebinding --------------------------------------------------------------------------------------
 // A statement of a scope's own body (not inside an `if`, loop or `try`) binding x; a later one replaces an earlier one.
+// e.g. `def f(): ...` followed later by `f = wrap(f)` at module top level: only the second binding is live.
+// A binding nested in an `if` is never shadowed and never shadows: either branch may have run.
+// stmt(st, s): st is a direct statement of scope s's body (module children, or the body block of a def/class).
 .decl stmt(st: node, s: node)
 stmt($st, $s) :- kind($s, "module"), child($s, $st, _).
 stmt($st, $s) :- kind($s, "function_definition"), field($s, "body", $b), child($b, $st, _).
 stmt($st, $s) :- kind($s, "class_definition"), field($s, "body", $b), child($b, $st, _).
+// defstmt(f, st): the statement that carries definition f: f itself, or the `@decorator` wrapper around it.
 .decl defstmt(f: node, st: node)
 defstmt($f, $f) :- kind($f, "function_definition").
 defstmt($f, $f) :- kind($f, "class_definition").
 defstmt($f, $st) :- kind($st, "decorated_definition"), field($st, "definition", $f).
+// asgstmt(a, st): assignment a is the whole expression statement st (`x = 1` on its own line).
 .decl asgstmt(a: node, st: node)
 asgstmt($a, $st) :- kind($st, "expression_statement"), child($st, $a, 0), kind($a, "assignment").
+// sbinds(s, x, st): top-level statement st of scope s binds x by a def/class or a plain assignment.
 .decl sbinds(s: node, x: sym, st: node)
 sbinds($s, $x, $st) :- defn($s, $x, $f), defstmt($f, $st), stmt($st, $s).
 sbinds($s, $x, $st) :- asg($s, $x, _, $a), asgstmt($a, $st), stmt($st, $s).
+// shadowed(st): a later top-level statement of the same scope rebinds the same name. Node ids grow in source order,
+// so `$st2 > $st` means "st2 comes after st".
 .decl shadowed(st: node)
 shadowed($st) :- sbinds($s, $x, $st), sbinds($s, $x, $st2), $st2 > $st.
+// live_def / live_asg: the bindings whose values may still be in the name at the end of the scope. A nested
+// (conditional) assignment has no asgstmt row in the scope body, so the first live_asg rule keeps it.
 .decl live_def(s: node, x: sym, f: node)
 live_def($s, $x, $f) :- defn($s, $x, $f), defstmt($f, $st), !shadowed($st).
 .decl live_asg(s: node, x: sym, r: node)
@@ -109,9 +181,12 @@ live_asg($s, $x, $r) :- asg($s, $x, $r, $a), !asgstmt($a, _).
 live_asg($s, $x, $r) :- asg($s, $x, $r, $a), asgstmt($a, $st), !shadowed($st).
 
 
+// attr_of(n, o, a): n is the attribute expression `o.a`.
 .decl attr_of(n: node, o: node, a: sym)
 attr_of($n, $o, $a) :- kind($n, "attribute"), field($n, "object", $o), field($n, "attribute", $at), text($at, $a).
 // Qualified names: an imported name and attributes of one (`os.path.join`), whether or not the workspace defines it.
+// qn(n, q): after `import os`, the `os` in `os.path.join` has qn "os", `os.path` has "os.path", and the whole
+// expression "os.path.join". Recursive along the attribute chain. Purely syntactic: no re-export following here.
 .decl qn(n: node, q: sym)
 qn($n, $q) :- look($n, $x, $s), ibind($s, $x, $q).
 qn($n, @cat($q, $a)) :- attr_of($n, $o, $a), qn($o, $q).
@@ -119,109 +194,157 @@ qn($n, @cat($q, $a)) :- attr_of($n, $o, $a), qn($o, $q).
 // ---- comparisons ---------------------------------------------------------------------------------------------------
 // cmp(c, op, l, r): c is a comparison with exactly one operator. op is the operator's text, two-token operators
 // ("not in", "is not") joined by op/2. Chained comparisons (a < b < c) have no row.
+// e.g. `x is None` gives cmp(c, "is", <x>, <None>).
 .decl cmp(c: node, op: sym, l: node, r: node)
 cmp($c, $o, $l, $r) :- kind($c, "comparison_operator"), child($c, $l, 0), child($c, $r, 1), !child($c, _, 2), op($c, $o).
 
 // ==== interface ===================================================================================================
+// scope_node(n, s): s is the innermost scope (module, def, class or lambda) containing n.
 .decl scope_node(n: node, s: node)
 scope_node($n, $s) :- nearest($n, $s, scope).
+// def_name(f, s): function or class definition f is named s.
 .decl def_name(f: node, s: sym)
 def_name($f, $s) :- kind($f, $k), $k in {"function_definition", "class_definition"}, field($f, "name", $n), text($n, $s).
+// qualname(f, q): dotted path of a definition from its module: `class C: def m` in pkg.mod gives "pkg.mod.C.m".
+// First rule: defined directly in the module. Second: inside another def/class, append to that one's qualname
+// (recursive). Unlike Python's __qualname__, functions nested in functions get no "<locals>" segment.
 .decl qualname(f: node, q: sym)
 qualname($f, @cat($m, $x)) :- def_name($f, $x), nearest($f, $s, scope), modname($s, $m).
 qualname($f, @cat($p, $x)) :- def_name($f, $x), nearest($f, $s, scope), !kind($s, "module"), qualname($s, $p).
+// scope_name(n, s): the enclosing function's name, prefixed by its class when it has one ("C.m"), for messages.
+// Note `nearest(..., {"class_definition"})` finds any enclosing class, not only the immediate parent scope.
 .decl scope_name(n: node, s: sym)       // "Class.method", as linters report it
 scope_name($n, $x) :- nearest($n, $f, fdef), def_name($f, $x), !nearest($f, _, {"class_definition"}).
 scope_name($n, @cat($c, $x)) :- nearest($n, $f, fdef), def_name($f, $x), nearest($f, $k, {"class_definition"}), def_name($k, $c).
+// is_async(f): `async def f`.
 .decl is_async(f: node)
 is_async($f) :- kind($f, "function_definition"), op($f, "async").
+// decorator(f, e): e is the expression of one of f's decorators: in `@app.route("/")`, e is the call node.
 .decl decorator(f: node, d: node)
 decorator($f, $e) :- kind($dd, "decorated_definition"), field($dd, "definition", $f), child($dd, $dc, _),
     kind($dc, "decorator"), child($dc, $e, 0).
+// params(f, x, i): public alias of param.
 .decl params(f: node, x: sym, i: int)
 params($f, $x, $i) :- param($f, $x, $i).
 
 // binding(s, x, site, form): scope s binds x at site.
+// The site is a node a rule can report on, and form says how: "def", "class", "assign", "param", "import", or a
+// target form from target_form ("augassign", "for", "walrus", "with", "except", "match").
+// e.g. in `def f(): x = 1`, binding(<f>, "x", <the assignment>, "assign"). global/nonlocal are honoured via home.
 .decl binding(s: node, x: sym, site: node, form: sym)
 binding($s, $x, $f, "def")    :- defn($s, $x, $f), kind($f, "function_definition").
 binding($s, $x, $f, "class")  :- defn($s, $x, $f), kind($f, "class_definition").
 binding($s, $x, $a, "assign") :- asg($s, $x, _, $a).
+// For a parameter the site is the parameter node itself (`x`, or `x: int = 1`).
 binding($f, $x, $p, "param")  :- param($f, $x, $i), field($f, "parameters", $ps), child($ps, $p, $i).
+// For an import the site is the alias node (`a as b`, or the dotted name), one per imported name.
 binding($s, $x, $i, "import") :- import_site($i, $x), nearest($i, $s0, scope), home($s0, $x, $s).
 binding($s, $x, $t, $form)    :- tgt($t), kind($t, "identifier"), text($t, $x), target_form($t, $form),
     nearest($t, $s0, scope), home($s0, $x, $s).
+// site_form(site, form): the form of a binding site, without the scope and name.
 .decl site_form(site: node, form: sym)
 site_form($site, $form) :- binding(_, _, $site, $form).
 
 // ref_site(r, site): reference r reads binding site `site` (every site of the scope LEGB lands on: may-precise).
+// e.g. `x = 1; if c: x = 2; print(x)`: the x in print has two ref_site rows. No flow pruning is done here.
 .decl ref_site(r: node, site: node)
 ref_site($r, $site) :- look($r, $x, $s), binding($s, $x, $site, _).
+// binding_value(site, v): the value expression a site stores, for `x = v` and `(x := v)`.
 .decl binding_value(site: node, v: node)
 binding_value($a, $v) :- kind($a, "assignment"), field($a, "right", $v).
 binding_value($a, $v) :- kind($a, "named_expression"), field($a, "value", $v).
 
 // sym_of(n, q): n denotes the qualified name q, through imports, aliases, attribute chains and module definitions.
+// The main "what is this expression" relation for rules. e.g. with `from django.db import models`, the expression
+// `models.Model` has sym_of "django.db.models.Model"; if a workspace package re-exports a name, resolve_export
+// (python/imports) follows it to the defining module.
+// Rule 1: through an import (qn) then re-exports. Rule 2: a local def/class, by its qualname. Rule 3: a builtin.
 .decl sym_of(n: node, q: sym)
 sym_of($n, $q) :- qn($n, $q0), resolve_export($q0, $q).
 sym_of($n, $q) :- look($n, $x, $s), defn($s, $x, $f), qualname($f, $q).
 sym_of($n, $q) :- builtin_ref($n, $x), $q = @cat("builtins", $x).
+// global_ref(n, x): n reads builtin x (kept as a separate name for rules that speak of "globals").
 .decl global_ref(n: node, x: sym)
 global_ref($n, $x) :- builtin_ref($n, $x).
 
+// annotation(n): n is (inside) a type annotation: parameter types, return types, `x: T = ...`, and the parsed
+// contents of string annotations such as `def f() -> "Foo[int]"`. Rules use it to ignore type-only uses of a name.
 .decl annotation(n: node)
 annotation($t) :- kind($p, $k), $k in {"typed_parameter", "typed_default_parameter"}, field($p, "type", $t).
 annotation($t) :- kind($f, "function_definition"), field($f, "return_type", $t).
 annotation($t) :- kind($a, "assignment"), field($a, "type", $t).
-annotation($n) :- annotation($t), within($n, $t).
+annotation($n) :- annotation($t), within($n, $t).                          // every node below an annotation root
 annotation($r) :- string_annotation($s), parsed($s, "annotation", $r).   // native sub-grammar parse of "Foo[int]"
+// type_checking_block(b): b is the body of `if TYPE_CHECKING:` (from typing or typing_extensions). Code there never
+// runs, so imports in it do not count as import-time (see python/imports' import_time).
 .decl type_checking_block(b: node)
 type_checking_block($b) :- kind($i, "if_statement"), field($i, "condition", $c), sym_of($c, $q),
     $q in {"typing.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING"}, field($i, "consequence", $b).
+// catches(x, q): except clause x catches exception class q. A bare `except:` (no child other than the body block)
+// catches everything, modelled as builtins.BaseException.
 .decl catches(x: node, q: sym)
 catches($x, "builtins.BaseException") :- kind($x, "except_clause"), !some { child($x, $e, _), !kind($e, "block") }.
 catches($x, $q) :- kind($x, "except_clause"), child($x, $e, _), caught($e, $q).
+// caught(e, q): the exception expression e names q: `except ValueError`, `except (A, B)`, `except A as err`.
+// Recursive through tuples and parentheses.
 .decl caught(e: node, q: sym)
 caught($e, $q) :- sym_of($e, $q).
 caught($e, $q) :- kind($e, $k), $k in {"tuple", "parenthesized_expression"}, child($e, $c, _), caught($c, $q).
 caught($e, $q) :- kind($e, "as_pattern"), child($e, $c, 0), caught($c, $q).
 
 // Classes: definitions, resolved bases, inheritance.
+// These work on qualified names (syms), so they cross files: `class B(a.A)` in one module links to A in another.
+// class_def(c, q): class node c has qualified name q.
 .decl class_def(c: node, q: sym)
 class_def($c, $q) :- kind($c, "class_definition"), qualname($c, $q).
+// class_base(c, q): c lists base q. Keyword arguments in the base list (`metaclass=M`) are not bases.
 .decl class_base(c: node, q: sym)
 class_base($c, $q) :- kind($c, "class_definition"), field($c, "superclasses", $al), child($al, $e, _),
     !kind($e, "keyword_argument"), sym_of($e, $q).
+// subclass(q, b): q inherits from b, directly or transitively (recursive transitive closure).
 .decl subclass(q: sym, b: sym)
 subclass($q, $b) :- class_def($c, $q), class_base($c, $b).
 subclass($q, $b) :- subclass($q, $m), subclass($m, $b).
+// method(cq, x, f): class cq defines method x as f, directly in its body.
 .decl method(cq: sym, x: sym, f: node)
 method($cq, $x, $f) :- class_def($c, $cq), kind($f, "function_definition"), nearest($f, $c, scope), def_name($f, $x).
+// mro_method(cq, x, f): what `cq().x` may resolve to: its own method, else one from any ancestor. This is an
+// approximation of Python's MRO: with no own method it takes every ancestor's x (may), not the first in C3 order.
 .decl mro_method(cq: sym, x: sym, f: node)
 mro_method($cq, $x, $f) :- method($cq, $x, $f).
 mro_method($cq, $x, $f) :- class_def(_, $cq), !method($cq, $x, _), subclass($cq, $b), method($b, $x, $f).
+// assigned_attr(f, obj, attr, rhs): in function f, `obj.attr = rhs` where obj is a plain name (typically
+// `self.x = ...` in `__init__`). obj is the name's text, not resolved.
 .decl assigned_attr(f: node, obj: sym, attr: sym, rhs: node)
 assigned_attr($f, $o, $a, $r) :- kind($s, "assignment"), field($s, "left", $l), kind($l, "attribute"),
     field($l, "object", $on), text($on, $o), field($l, "attribute", $an), text($an, $a), field($s, "right", $r),
     nearest($s, $f, fdef).
 
+// target_form(t, form): which statement form an untracked target t belongs to, from the nearest enclosing
+// statement kind of the list (e.g. `for x in xs` gives "for"). Used by binding for its last rule.
 .decl target_form(t: node, form: sym)
 target_form($t, $f) :- within($t, $a, {"assignment", "augmented_assignment", "for_statement", "for_in_clause",
     "named_expression", "with_item", "except_clause", "case_clause"}), kind($a, $k), form_of_kind($k, $f).
+// form_of_kind(k, form): node kind to the short form name used in binding.
 .decl form_of_kind(k: sym, form: sym)
 form_of_kind("assignment", "assign"). form_of_kind("augmented_assignment", "augassign").
 form_of_kind("for_statement", "for"). form_of_kind("for_in_clause", "for"). form_of_kind("named_expression", "walrus").
 form_of_kind("with_item", "with"). form_of_kind("except_clause", "except"). form_of_kind("case_clause", "match").
 
 // imported_sym(n, q): like sym_of, through an import binding only.
+// No re-export following and no local definitions: q is exactly what the import spelled.
 .decl imported_sym(n: node, q: sym)
 imported_sym($n, $q) :- qn($n, $q).
 
 // Binding filters, after Ruff's binding flags (rerail.policy/v1 `binding` / `binds` keys).
+// Each is a unary property of a binding site, so a rule can say e.g. "an unused, non-exported import".
+// site_scope(site, k): kind of the owning scope: "module", "function", "class" or "lambda".
 .decl site_scope(site: node, k: sym)
 site_scope($site, $k) :- binding($s, _, $site, _), kind($s, $sk), scope_kind($sk, $k).
 .decl scope_kind(k: sym, name: sym)
 scope_kind("module", "module"). scope_kind("function_definition", "function"). scope_kind("class_definition", "class").
 scope_kind("lambda", "lambda").
+// site_annotation(site, a): the site carries type annotation a (`x: int = 1`, `def f(x: int)`).
 .decl site_annotation(site: node, a: node)
 site_annotation($a, $t) :- kind($a, "assignment"), field($a, "type", $t).
 site_annotation($p, $t) :- kind($p, "typed_parameter"), field($p, "type", $t).
@@ -229,21 +352,26 @@ site_annotation($p, $t) :- kind($p, "typed_parameter"), field($p, "type", $t).
 site_used($site) :- ref_site(_, $site).
 .decl site_only(site: node)                       // no other binding of the name in its scope
 site_only($site) :- binding($s, $x, $site, _), !some { binding($s, $x, $o, _), $o != $site }.
+// site_latest: no later binding o of the same name lies inside a top-level statement st that binds the name.
 .decl site_latest(site: node)                     // not rebound later, unconditionally, in its scope
 site_latest($site) :- binding($s, $x, $site, _), !some { binding($s, $x, $o, _), sbinds($s, $x, $st), within($o, $st), $o > $site }.
 .decl site_exported(site: node)                   // a module-level binding listed in __all__ or not underscore-private
 site_exported($site) :- binding($s, $x, $site, _), kind($s, "module"), module_of($s, $m), public_name($m, $x).
 .decl site_outer(site: node)                     // bound in an enclosing function's scope, read from a nested one
 site_outer($site) :- ref_site($r, $site), nearest($r, $s, scope), binding($t, _, $site, _), $t != $s.
+// site_stop_at_global: the site sits in a scope that declared the name `global`, so it binds the module's name.
 .decl site_stop_at_global(site: node)
 site_stop_at_global($site) :- binding($s, $x, $site, _), decl($s, $x, $m), kind($m, "module").
 
+// builtin(x): x is a name in Python's builtins module (functions, constants, exception classes).
 .decl builtin(x: sym)        // shipped with the library as facts (generated from the Python version's builtins)
+// The block below repeats imported_sym and the binding filters above verbatim, then declares builtin again.
 // imported_sym(n, q): like sym_of, through an import binding only.
 .decl imported_sym(n: node, q: sym)
 imported_sym($n, $q) :- qn($n, $q).
 
 // Binding filters, after Ruff's binding flags (rerail.policy/v1 `binding` / `binds` keys).
+// (Duplicate of the filter block above; same meanings.)
 .decl site_scope(site: node, k: sym)
 site_scope($site, $k) :- binding($s, _, $site, _), kind($s, $sk), scope_kind($sk, $k).
 .decl scope_kind(k: sym, name: sym)
@@ -265,6 +393,8 @@ site_outer($site) :- ref_site($r, $site), nearest($r, $s, scope), binding($t, _,
 .decl site_stop_at_global(site: node)
 site_stop_at_global($site) :- binding($s, $x, $site, _), decl($s, $x, $m), kind($m, "module").
 
+// The builtin facts: one row per name builtin_ref accepts. Exceptions are included so `except ValueError` resolves
+// to "builtins.ValueError" through sym_of.
 .decl builtin(x: sym)
 builtin("abs"). builtin("aiter"). builtin("all"). builtin("anext"). builtin("any"). builtin("ascii"). builtin("bin").
 builtin("bool"). builtin("breakpoint"). builtin("bytearray"). builtin("bytes"). builtin("callable"). builtin("chr").
@@ -287,4 +417,3 @@ builtin("RecursionError"). builtin("UnicodeError"). builtin("UnicodeDecodeError"
 builtin("ZeroDivisionError"). builtin("KeyboardInterrupt"). builtin("SystemExit"). builtin("Warning").
 builtin("DeprecationWarning"). builtin("UserWarning"). builtin("RuntimeWarning"). builtin("EnvironmentError").
 builtin("IOError"). builtin("BufferError"). builtin("ConnectionError"). builtin("TimeoutError"). builtin("GeneratorExit").
-

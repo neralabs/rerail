@@ -14,11 +14,22 @@
 //   payload aliases follow bindings (ref_site): `p = x.literal_payload` then `p = {}` no longer taints p, and
 //   `self.literal_payload["k"]` is caught (the oracle wants a bare name before `.get`/`[…]`);
 //   enum cases are also matched through imports by resolved name, and deleted names inside import statements are 005.
+//
+// How to read this file
+//   1. in_fn ties each node to its innermost def, the unit the oracle counts in (its function-state stack).
+//   2. materializer / mat_body say which defs the materializer-only checks (002, 003, 007) apply to.
+//   3. enum_ref / enum_cmp find `E.CASE == x` comparisons; 001, 002 and 004 count or filter them per function.
+//   4. key_probe / kw_probe / payload / payload_probe find literal-key lookups; 003 and 007 report them.
+//   5. 005, 006, 008, 009 are single-node checks: a name, a def name, a base class, a keyword argument.
+// Each POSTOPDISPATCHnnn violation is one oracle code.
 
 .use python/names
 .use python/calls
 
+// fdef: def nodes (async included). nearest($n, $f, fdef) = "f is the innermost def around n". Lambdas do not count.
 .kindset fdef = "function_definition"
+// The post-op enums (POST_OP_ENUM_NAMES), the deleted surface names (LEGACY_RUNTIME_SURFACE_NAMES), and the
+// _materialize_* helpers in post_op.py that are still allowed (ALLOWED_POST_OP_MATERIALIZER_HELPERS).
 .set enum_name   = "ResultMaterializationKind" | "RuntimeBuilderKind" | "RuntimeBuilderName"
 .set deleted     = "ResultMaterializationKind" | "RuntimeBuilderKind" | "RuntimeBuilderName" | "RuntimeBuilderSpec"
                  | "runtime_builder_post_op" | "materialize_runtime_builder" | "_RUNTIME_BUILDER_NAMES_BY_KIND"
@@ -26,15 +37,22 @@
                  | "_materialize_scalar_row_value" | "_materialize_scalar_tuple" | "_materialize_scalar_column"
                  | "_materialize_scalar_column_list" | "_materialize_terminal_scalar" | "_materialize_terminal_object"
                  | "_materialize_terminal_array" | "_materialize_by_post_op_behavior"
+// Names that hold keyword arguments; a literal-key probe on them is 003.
 .set kwarg_alias = "kwargs" | "literal_kwargs"
+// The comparison operators that count as a dispatch test (the oracle's ast.Eq | ast.Is). `!=` and `is not` do not.
 .set eq_op       = "==" | "is"
+// Binding forms that carry a value, for following payload aliases: `p = …` and `p: T = …`.
 .set assign_form = "assign" | "annassign"
 
 // in_fn(n, f, x): f, named x, is the innermost function around n.
+// Every per-function finding carries x as its {fn}.
 .decl in_fn(n: node, f: node, x: sym)
 in_fn($n, $f, $x) :- nearest($n, $f, fdef), def_name($f, $x).
+// post_op_file(n): n is in l2070_batching/post_op.py (the oracle's POST_OP_SOURCE).
 .decl post_op_file(n: node)
 post_op_file($n) :- docof($n, $d), doc($d, "l2070_batching/post_op.py", _).
+// materializer(f): the oracle's _is_materializer_function, by name. mat_body(f) is _is_post_op_materializer_body:
+// a materializer, or any _materialize_* function in post_op.py.
 .decl materializer(f: node)          // materialize_result, materialize_runtime_builder, materialize_*builder
 materializer($f) :- def_name($f, $n), $n =~ "^(materialize_result|materialize_runtime_builder|materialize_.*builder)$".
 .decl mat_body(f: node)              // … or a _materialize_* function in post_op.py
@@ -42,62 +60,90 @@ mat_body($f) :- materializer($f).
 mat_body($f) :- def_name($f, $n), $n =~ "^_materialize_", post_op_file($f).
 
 // enum_cmp(c, s): comparison c tests enum case s ("RuntimeBuilderName.FOO") with a single == or is.
+// enum_ref(n, s): n names enum case s, written "Enum.CASE".
 .decl enum_ref(n: node, s: sym)
+// By text: `RuntimeBuilderName.FOO`, the enum's bare name before the dot, as the oracle's _attribute_symbol.
 enum_ref($n, $s) :- kind($n, "attribute"), field($n, "object", $o), kind($o, "identifier"), text($o, $e), $e in enum_name,
     field($n, "attribute", $a), text($a, $x), $s = @cat($e, $x).
+// By resolution: any attribute that resolves to a case of one of the enums, e.g. through `import … as RBN`.
+// The regex keeps the last "Enum.CASE" of the qualified name.
 enum_ref($n, $s) :- kind($n, "attribute"), sym_of($n, $q),
     $s = @re($q, "((?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)\.[^.]+)$").
 .decl enum_cmp(c: node, s: sym)
+// cmp(c, op, l, r) has a row only for single-operator comparisons, as _comparison_symbol requires. Left side first;
+// the right side is tried only when the left is no enum case (the oracle's `left or comparators[0]`).
 enum_cmp($c, $s) :- cmp($c, $o, $l, _), $o in eq_op, enum_ref($l, $s).
 enum_cmp($c, $s) :- cmp($c, $o, $l, $r), $o in eq_op, !enum_ref($l, _), enum_ref($r, $s).
 
+// 001: one case compared more than once in the same function, reported once, at the first comparison.
+// The !some { … precedes … } picks the comparison with no earlier one of the same case; count { } counts them all.
 .violation POSTOPDISPATCH001(at: node, fn: sym, case: sym, n: int) "{fn}: {case} is checked {n} times in one function"
 POSTOPDISPATCH001($c, $x, $s, $k) :- enum_cmp($c, $s), in_fn($c, $f, $x), !some { enum_cmp($p, $s), in_fn($p, $f, _), precedes($p, $c) },
     $k = count { enum_cmp($d, $s), in_fn($d, $f, _) }, $k > 1.
+// 002: a materializer (by name, post_op.py helpers excluded) compares a RuntimeBuilderName case at all.
 .violation POSTOPDISPATCH002(at: node, fn: sym, case: sym) "{fn}: materializers must not dispatch on {case}"
 POSTOPDISPATCH002($c, $x, $s) :- enum_cmp($c, $s), $s =~ "^RuntimeBuilderName\.", in_fn($c, $f, $x), materializer($f).
+// 004: a materialize_*builder function holds two or more enum comparisons in total, of any cases. Reported on the def.
 .violation POSTOPDISPATCH004(at: node, fn: sym)
     "{fn}: materialize_*builder functions may not contain multiple post-op enum comparisons"
 POSTOPDISPATCH004($f, $x) :- def_name($f, $x), $x =~ "^materialize_.*builder$",
     $k = count { enum_cmp($c, _), in_fn($c, $f, _) }, $k > 1.
 
 // Literal-key probes. key_probe(c, r): `"k" in r`.  kw_probe(c): r is kwargs / literal_kwargs, or `….keys()`.
+// key_probe: `"k" in r` with a static string on the left (value() exists only for literals with a static value).
+// kw_probe: r is a kwargs name, or a `….keys()` call on anything (the oracle's _is_literal_key_probe).
 .decl key_probe(c: node, r: node)
 key_probe($c, $r) :- cmp($c, "in", $l, $r), kind($l, "string"), value($l, _).
 .decl kw_probe(c: node)
 kw_probe($c) :- key_probe($c, $r), kind($r, "identifier"), text($r, $x), $x in kwarg_alias.
 kw_probe($c) :- key_probe($c, $r), callee($r, $n), kind($n, "attribute"), field($n, "attribute", $a), text($a, "keys").
+// 003: a kwargs probe inside a materializer body.
 .violation POSTOPDISPATCH003(at: node, fn: sym) "{fn}: materializers must not dispatch by probing literal kwarg keys"
 POSTOPDISPATCH003($c, $x) :- kw_probe($c), in_fn($c, $f, $x), mat_body($f).
 
 // payload(n): n evaluates to the literal payload: the name literal_payload, `….literal_payload`, or a name whose
 // binding takes a value mentioning `.literal_payload` or another payload name.
+// The oracle's _literal_payload_aliases: a fixed point over names assigned from payload values. Here payload and
+// tainted call each other, so the alias chain `a = x.literal_payload; b = a; c = b` is followed to any length.
+// Because ref_site links each read to its own binding, a name rebound to something else is not a payload there.
 .decl payload(n: node)
 payload($n) :- kind($n, "identifier"), text($n, "literal_payload").
 payload($n) :- kind($n, "attribute"), field($n, "attribute", $a), text($a, "literal_payload").
+// A read of a name whose binding (an assignment) takes a tainted value.
 payload($n) :- ref_site($n, $s), binding(_, _, $s, $k), $k in assign_form, binding_value($s, $v), tainted($v).
+// tainted(v): an assigned value that carries the payload: itself a payload, or containing `….literal_payload`.
 .decl tainted(v: node)
 tainted($v) :- payload($v).
 tainted($v) :- within($a, $v), kind($a, "attribute"), field($a, "attribute", $t), text($t, "literal_payload").
+// payload_probe(p): the four probe forms of 007, the oracle's _is_literal_payload_key_probe.
 .decl payload_probe(p: node)
+// `p.get("k", …)`: the first positional argument (keyword "") is a string literal.
 payload_probe($c) :- cname_get($c, $o), payload($o), call_arg($c, 0, "", $k), kind($k, "string"), value($k, _).
+// `p["k"]`.
 payload_probe($s) :- kind($s, "subscript"), field($s, "value", $o), payload($o),
     field($s, "subscript", $k), kind($k, "string"), value($k, _).
+// `"k" in p`. And every kwargs probe, which the oracle also reports as 007 (its alias set includes kwargs).
 payload_probe($c) :- key_probe($c, $r), payload($r).
 payload_probe($c) :- kw_probe($c).
 .decl cname_get(c: node, o: node)    // `o.get(…)`
 cname_get($c, $o) :- callee($c, $n), kind($n, "attribute"), field($n, "attribute", $a), text($a, "get"), field($n, "object", $o).
+// 007: a payload probe inside a materializer body.
 .violation POSTOPDISPATCH007(at: node, fn: sym) "{fn}: materializers must not dispatch by probing literal_payload keys"
 POSTOPDISPATCH007($p, $x) :- payload_probe($p), in_fn($p, $f, $x), mat_body($f).
 
 // Deleted surfaces. Identifiers in a `name` field are def, class and keyword names, which the oracle never sees.
 .violation POSTOPDISPATCH005(at: node, name: sym) "<module>: deleted post-op dispatch surface {name} must not be referenced"
+// Any identifier with a deleted name, in any file and any position (attributes, imports, parameters), except the
+// `name` field: def and class names and keyword-argument names, which the oracle's on_Name / on_Attribute never see.
 POSTOPDISPATCH005($n, $x) :- kind($n, "identifier"), text($n, $x), $x in deleted, !field(_, "name", $n).
 
 .violation POSTOPDISPATCH006(at: node, fn: sym)
     "{fn}: domain-shaped post-op materializer helpers must move into SQL/IR/ServerPlan steps"
+// 006: a _materialize_* def in post_op.py that is not on the allowed list. Reported on the def.
 POSTOPDISPATCH006($f, $x) :- def_name($f, $x), $x =~ "^_materialize_", !($x in helper_ok), post_op_file($f).
 
+// 008: a class with ResultRowMaterializer among its bases, as a bare name or the last part of a dotted name.
+// Keyword arguments in the base list (metaclass=…) are neither, so last_name skips them.
 .violation POSTOPDISPATCH008(at: node) "{at.name}: deleted ResultRowMaterializer extension surface must not be referenced"
 POSTOPDISPATCH008($c) :- kind($c, "class_definition"), field($c, "superclasses", $bs), child($bs, $b, _),
     last_name($b, "ResultRowMaterializer").
@@ -105,6 +151,7 @@ POSTOPDISPATCH008($c) :- kind($c, "class_definition"), field($c, "superclasses",
 last_name($n, $x) :- kind($n, "identifier"), text($n, $x).
 last_name($n, $x) :- kind($n, "attribute"), field($n, "attribute", $a), text($a, $x).
 
+// 009: a call passes row_materializer= as a keyword. {fn} is the innermost def, or "<module>" outside any def.
 .violation POSTOPDISPATCH009(at: node, fn: sym) "{fn}: deleted row_materializer keyword escape hatch must not be used"
 POSTOPDISPATCH009($c, $x) :- call_arg($c, _, "row_materializer", _), in_fn($c, _, $x).
 POSTOPDISPATCH009($c, "<module>") :- call_arg($c, _, "row_materializer", _), !nearest($c, _, fdef).

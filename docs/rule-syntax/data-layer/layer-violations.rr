@@ -15,33 +15,62 @@
 // Improves on the oracle:
 //   relative imports are resolved before the checks (the oracle drops the dots, so `from ..l9600_x import y` passed);
 //   TYPE_CHECKING is resolved, not matched by name, and only its body is exempt (the oracle also exempts `else:`).
+//
+// How to read this file
+//   1. edge(i, d, m) is the one input every violation reads: import i in document d loads module m, at run time.
+//   2. Each violation is edge plus path tests on the importing file (path_part / file_name) and a regex on m.
+//   3. bridge() and api_exempt() are the oracle's hard-coded allowlist for api_impl; whitebox is conform_impl's.
+//   4. layer_group / group_allows come from LAYER_GROUPS.yaml as input facts and drive group_dependency.
+//   5. internal_import is not a finding: .output publishes it as counts for the ratchet's metrics.
+// Path tests read whole path components: path_part($d, "tests") is true when some directory of d's path is `tests`,
+// which is the oracle's `"tests" in source_file.parts`.
 
 .use python/imports
 //   import_alias(i, a, module, name, local)   module absolute, relative imports resolved
 .use python/names
 //   type_checking_block(b)
 
+// fdef: plain defs (async defs included). Used only to tell deferred imports from module-level ones in the metrics.
 .kindset fdef = "function_definition"
+// Directories whose files the layer-number rule applies to (oracle check_layer_dependency: "api" or "impl" in parts).
 .set app            = "api" | "impl"
+// Directories exempt from the layer-number rule: tests, and the shims/aggregators the oracle names one by one.
 .set layer_free_dir = "tests" | "l0500_ts_models" | "l2070_server_plan" | "l3000_schema_builder"
+// Files in l7200_versioned_transactions allowed to import higher layers (graph and history types as base classes).
 .set vt_file        = "versioned_lazy_mixin.py" | "versioned_transactions.py" | "plan_revision_history_query.py"
+// Paths never checked against LAYER_GROUPS.yaml.
 .set group_skip     = "tests" | "__pycache__" | ".venv" | "conform"
 
 // edge(i, d, m): import statement i in document d imports module m, outside TYPE_CHECKING.
+// tc(i): import i sits under `if TYPE_CHECKING:` (anywhere below its body, however deeply nested).
+// The oracle skips these before every check (_check_import_violations), and so does edge.
 .decl tc(i: node)
 tc($i) :- import_alias($i, _, _, _, _), within($i, $b), type_checking_block($b).
 .decl edge(i: node, d: int, m: sym)
+// import_alias gives one row per imported name; edge keeps only (statement, module), so `from m import a, b` is one
+// edge, as in the oracle's ImportFrom handling. $m != "" drops rows whose module could not be resolved.
 edge($i, $d, $m) :- import_alias($i, _, $m, _, _), $m != "", !tc($i), docof($i, $d).
 
 // Ratchet metrics internal_module_level / internal_deferred / internal_type_checking: api.* and impl.* imports
 // by style, TYPE_CHECKING ones included. Counted, never reported.
 .decl internal_import(i: node, m: sym, style: sym)
 .output internal_import
+// Mirrors the oracle's classify_import_style: TYPE_CHECKING first, then "inside some function", else module level.
+// The first {} order matters: a deferred import under TYPE_CHECKING counts as type_checking.
 internal_import($i, $m, $s) :- import_alias($i, _, $m, _, _), $m =~ "^(api|impl)\.",
     $s = first { "type_checking" if tc($i); "deferred" if nearest($i, _, fdef); "module_level" }.
 
+// layer_dependency: a file in layer lNNNN imports from a higher-numbered layer.
+// Oracle: check_layer_dependency. Each negated test below is one of its early returns.
 .violation layer_dependency(at: node, src: sym, dst: sym, module: sym)
     "Layer {src} importing from higher layer {dst}: {module}"
+// Line 1: the file is under api/ or impl/.   Line 2: not under tests/ or one of the exempt layer directories.
+// Line 3: not one of the three versioned-transaction files.
+// Line 4: $s is the importing file's layer: the digits of the first `lNNNN_` segment of its dotted module name
+//   (the oracle's extract_layer_number reads path parts the same way). $t is the imported module's layer: the first
+//   `.lNNNN_` segment, which needs a dot before it, as the oracle's re.search does, so a top-level
+//   `import l9600_graphs` has no $t and is never a layer_dependency. No layer on either side: no row.
+// Line 5: the one pairwise exemption: the SQL grammar (l2100) may use the SQL dialect (l2200).
 layer_dependency($i, $s, $t, $m) :- edge($i, $d, $m), some { path_part($d, $p), $p in app },
     !some { path_part($d, $p), $p in layer_free_dir },
     !( path_part($d, "l7200_versioned_transactions"), file_name($d, $f), $f in vt_file ),
@@ -49,6 +78,8 @@ layer_dependency($i, $s, $t, $m) :- edge($i, $d, $m), some { path_part($d, $p), 
     !( path_part($d, "l2100_sql_grammar"), $t = "2200" ).
 
 // api/ files allowed to reach impl/: (file name, a directory on its path; "" for any).
+// The oracle's allowed_api_impl_bridges list of (filename, layer_dir) tuples, one fact per tuple. Several facts share a
+// line to keep the list short; each `bridge(…).` is a separate fact.
 .decl bridge(file: sym, dir: sym)     // hard-coded in check_layer_violations.py:736-829
 bridge("validation.py", "l4000_permissions").  bridge("validation.py", "l4100_queue").  bridge("logged_table.py", "").
 bridge("fts_search_manager.py", "l5100_fts").  bridge("versioned_operations.py", "l7250_versioned_operations").
@@ -70,11 +101,15 @@ bridge("plan_query_builder.py", "l2060_query_builder").  bridge("sql_query_spec.
 bridge("query_spec.py", "l2060_query_builder").  bridge("cursor_pagination.py", "l2090_response").
 bridge("sql_graph_runtime.py", "l9700_graph_query").  bridge("queue_definition.py", "l4100_queue").
 bridge("versioned_connection.py", "l7000_versioned_schema").  bridge("dynamic_import.py", "_internal").
+// The l2070_batching facade files, also allowed: one rule covers them all instead of one fact per file.
 .set batching_facade = "executor.py" | "intent_diff_bytes.py" | "intent_embedding.py" | "intent_fts_search.py"
     | "intent_infrastructure.py" | "intent_query_extended.py" | "permission_filter.py" | "plan_helpers.py"
     | "plan_runtime.py" | "lazy_runtime.py" | "resolve_branch_steps.py" | "server_query_builder.py" | "versioned_select_steps.py"
 bridge($f, "l2070_batching") :- $f in batching_facade.
 
+// api_exempt(d): document d may import impl/ although it is under api/. One rule per early return of the oracle's
+// check_api_impl_separation: TypeScript bridge, metadata, tests, admin tools, event-pipeline bridges, the
+// connection factory, and the bridge() list (a "" directory matches any path; otherwise the directory must appear).
 .decl api_exempt(d: int)
 api_exempt($d) :- path_part($d, "l9900_ts_models").
 api_exempt($d) :- path_part($d, "l3200_metadata").
@@ -85,9 +120,11 @@ api_exempt($d) :- file_name($d, "connection_factory.py"), path_part($d, "l2000_c
 api_exempt($d) :- file_name($d, $f), bridge($f, "").
 api_exempt($d) :- file_name($d, $f), bridge($f, $p), path_part($d, $p).
 
+// api_impl: an api/ file (not an __init__.py, not exempt) imports a module under impl.
 .violation api_impl(at: node, module: sym) "api/ modules cannot import from impl/ (except api/__init__.py): {module}"
 api_impl($i, $m) :- edge($i, $d, $m), $m =~ "^impl\.", path_part($d, "api"), !file_name($d, "__init__.py"), !api_exempt($d).
 
+// White-box conform tests allowed to import impl/ (the oracle's whitebox_test_files set, matched by file name only).
 .set whitebox = "test_migration_ddl_bugs_round2.py" | "test_permission_evolution.py" | "test_schema_drift_e2e.py"
     | "test_permission_introspection.py" | "test_uuid_introspection.py" | "test_uuid_validation.py" | "test_fts_validation.py"
     | "test_neo4j_validation.py" | "test_permission_validation.py" | "test_log_table_export_import.py" | "test_bulk_loader.py"
@@ -103,15 +140,25 @@ api_impl($i, $m) :- edge($i, $d, $m), $m =~ "^impl\.", path_part($d, "api"), !fi
     | "test_pgvector_e2e.py" | "test_pgvector_low_level.py" | "test_pgvector_migrations.py" | "test_pgvector_stress.py"
     | "test_pgvector_vs_hnsw_comparison.py"
 
+// conform_impl: a conform/ test imports impl.*. conftest.py may, to build backends; so may the whitebox files.
+// Oracle: check_conform_imports. It does not require api/ or impl/ in the path, so conform/ files are checked here
+// even though the layer-number rule skips them.
 .violation conform_impl(at: node, module: sym) "conform/ tests must be backend-agnostic, cannot import from impl/: {module}"
 conform_impl($i, $m) :- edge($i, $d, $m), $m =~ "^impl\.", path_part($d, "conform"),
     file_name($d, $f), $f != "conftest.py", !($f in whitebox).
 
+// Input facts read from a policy file, not from the code: which layers form each group, and which groups each may use.
+// The oracle adds "a group may import itself"; the rule gets that from $g != $h below.
 .input layer_group(layer: sym, group: sym)     // api/LAYER_GROUPS.yaml: groups.<g>.layers
 .input group_allows(group: sym, dep: sym)      // api/LAYER_GROUPS.yaml: groups.<g>.depends_on and cross_group_deps
 
 .violation group_dependency(at: node, src: sym, dst: sym, module: sym)
     "Group violation: {src} imports from {dst}, which is not in its declared dependencies: {module}"
+// Oracle: _check_group_violation.
+// $a: the importing file's layer directory: the first path component that is `l` + 4 digits + …_… (l1000_schema),
+//   or the special directories `types` / `row_id`. Leftmost match = first such component, as the oracle loops.
+// $b: the imported module's layer: the first dotted segment of the same shape.
+// Then both layers must be in a known group (layer_group); unknown layers give no row, as in the oracle.
 group_dependency($i, $g, $h, $m) :- edge($i, $d, $m), !some { path_part($d, $p), $p in group_skip },
     doc($d, $path, _), $a = @re($path, "(?:^|/)(l\d{4}[^/]*_[^/]*|types|row_id)(?:/|$)"),
     $b = @re($m, "(?:^|\.)(l\d{4}[^.]*_[^.]*)"),

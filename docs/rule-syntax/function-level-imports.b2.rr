@@ -6,6 +6,7 @@
 .scope tests false
 .budget FUNCTION_IMPORT by code { "total": 7844 }   // per-code budgets re-baselined on the first signed run
 
+// allow(path, scope): imports that are deliberate and never reported. A fact written inline (a rule with no body).
 .decl allow(path: sym, scope: sym)
 allow("_internal/dynamic_import.py", "load_python_module").   // closed deferred-import registry
 // B2: classifies from evidence, not from module names.
@@ -17,6 +18,15 @@ allow("_internal/dynamic_import.py", "load_python_module").   // closed deferred
 //   deferred-no-cycle    a workspace module that could move to the top (B1 counted these as circular-avoidance)
 //   heavy-dependency     a known expensive package (the Python declares KNOWN_EXPENSIVE_IMPORTS and never uses it)
 //   other
+//
+// How to read this file
+//   1. The libraries give each import statement its module, the modules it loads, and the names it binds.
+//   2. import_time / runs / reaches build the module graph that exists when modules are imported, and its
+//      transitive closure: reaches(a, b) means importing a eventually runs b.
+//   3. local_import picks the imports inside a function: the only ones this rule reports.
+//   4. cycle, workspace, guarded, read, value_read, test_fn, allowed are one fact of evidence each.
+//   5. FUNCTION_IMPORT gives each local import the first code in `first { }` whose evidence holds.
+// Unlike B1, nothing here matches module names against a list of internal packages; the module graph decides.
 
 .use python/imports
 //   import_stmt(i)      i is an import or from-import statement
@@ -34,50 +44,76 @@ allow("_internal/dynamic_import.py", "load_python_module").   // closed deferred
 //   catches(x, q)             except clause x catches q, tuples included
 //   decorator(f, d), def_name(f, s), scope_name(n, s)   scope_name is "Class.method", as the Python reports it
 
+// fdef: what counts as "inside a function" for this rule. nearest($i, _, fdef) = "i has an enclosing def or lambda".
 .kindset fdef = "function_definition" | "lambda"
+// Exception names an optional-dependency guard may catch, as resolved qualified names.
 .set import_error = "builtins.ImportError" | "builtins.ModuleNotFoundError"
 
 // The import graph at import time: module-level and class-body statements, outside TYPE_CHECKING.
+// import_time(i): i runs when its module is first imported. No enclosing def (a class body runs at import time),
+// and not under `if TYPE_CHECKING:`, which is false at run time. `!some { … }` = "no such block contains i".
 .decl import_time(i: node)
 import_time($i) :- import_stmt($i), !nearest($i, _, fdef), !some { within($i, $b), type_checking_block($b) }.
+// runs(a, b): importing module a directly loads module b (an edge of the graph).
 .decl runs(a: sym, b: sym)
 runs($a, $b) :- import_time($i), module_of($i, $a), loads($i, $b).
+// reaches(a, b): importing a eventually loads b, through any chain of runs edges. This is the one recursive relation.
 .decl reaches(a: sym, b: sym)
 .demand reaches(bound, bound)     // only (target, importer) pairs of local imports: a forward search per target
 reaches($a, $b) :- runs($a, $b).
 reaches($a, $c) :- reaches($a, $b), runs($b, $c).
 
+// local_import(i): an import inside a def or lambda. Every finding is about one of these.
 .decl local_import(i: node)
 local_import($i) :- import_stmt($i), nearest($i, _, fdef).
 
 // The evidence.
 .decl cycle(i: node)              // importing b at the top of a would close a → b → … → a
+// Module a holds the import of b. b != a: importing yourself is no cycle. !pkg_above: a package that contains a is
+// already initialising when a runs, so importing it is no cycle either. reaches(b, a): b already leads back to a.
 cycle($i) :- local_import($i), module_of($i, $a), loads($i, $b), $b != $a, !pkg_above($a, $b), reaches($b, $a).
+// workspace(i): i loads at least one module of this repository (third-party and stdlib imports load none).
 .decl workspace(i: node)
 workspace($i) :- local_import($i), loads($i, _).
+// guarded(i): i sits in the body of a `try:` that has an `except` catching ImportError or ModuleNotFoundError.
+// Only the try body counts: an import inside an except or finally branch is not guarded.
 .decl guarded(i: node)
 guarded($i) :- local_import($i), within($i, $body), field($t, "body", $body), kind($t, "try_statement"),
     child($t, $x, _), catches($x, $q), $q in import_error.
+// read(i): some reference anywhere reads a name that i binds.
 .decl read(i: node)
 read($i) :- binds($i, $s), ref_site(_, $s).
+// value_read(i): some read of a name i binds is outside annotations, so the name is needed at run time.
 .decl value_read(i: node)
 value_read($i) :- binds($i, $s), ref_site($r, $s), !annotation($r).
+// test_fn(f): f is a test (name starts test_) or a pytest fixture, the decorator resolved by sym_of, not by its text.
 .decl test_fn(f: node)
 test_fn($f) :- def_name($f, $n), $n =~ "^test_".
 test_fn($f) :- decorator($f, $d), sym_of($d, "pytest.fixture").
+// allowed(i): i matches an allow() row: same file path, and its enclosing scope has the listed name.
 .decl allowed(i: node)
 allowed($i) :- allow($p, $s), docof($i, $d), doc($d, $p, _), scope_name($i, $s).
 
+// The finding: one per local import that is not allowed, with one code.
 .violation FUNCTION_IMPORT(at: node, code: sym) "{at.text} (in {scope_name(at)})"
 FUNCTION_IMPORT($i, $c) :- local_import($i), !allowed($i),
+    // first { }: the first line whose condition holds gives the code; "other" is the default.
+    // The order is a priority: stronger, more specific evidence first. An unread import is reported as unread even
+    // inside a test, and a cycle is only claimed for imports that are read, unguarded and not test code.
     $c = first {
+      // Explicitly deferred for type checking (the block never runs).
       "typing-only"         if some { within($i, $b), type_checking_block($b) };
+      // No name it binds is read anywhere.
       "unread"              if !read($i);
+      // Read, but only in annotations. Comes after "unread" so that an unused import is not called typing-only.
       "typing-only"         if !value_read($i);
+      // Any enclosing function is a test or fixture, not only the nearest one.
       "test-helper"         if some { within($i, $f), test_fn($f) };
       "optional-dependency" if guarded($i);
       "circular-avoidance"  if cycle($i);
+      // Loads workspace code but closes no cycle: it could move to the top of the file.
       "deferred-no-cycle"   if workspace($i);
+      // The regex matches the package name alone or followed by a dot: numpy, numpy.linalg, not numpyx.
       "heavy-dependency"    if some { module_text($i, $m), $m =~ "^(torch|tensorflow|numpy|pandas|scipy|matplotlib)(\.|$)" };
       "other"
     }.
