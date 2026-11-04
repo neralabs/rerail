@@ -87,6 +87,15 @@ pub(in crate::code_rule_dsl) trait Source: Send + Sync {
     ) -> rusqlite::Result<Option<Vec<usize>>> {
         Ok(None)
     }
+    fn range_lookup_scoped(
+        &self,
+        column: usize,
+        lower: Option<(&Value, bool)>,
+        upper: Option<(&Value, bool)>,
+        _paths: &[Value],
+    ) -> rusqlite::Result<Option<Vec<usize>>> {
+        self.range_lookup(column, lower, upper)
+    }
     fn lookup(&self, column: usize, values: &[Value]) -> rusqlite::Result<Option<Vec<usize>>>;
     fn column(&self, row: usize, column: usize, ctx: &mut Context) -> rusqlite::Result<()>;
     fn charge(&self, count: usize) -> rusqlite::Result<()>;
@@ -963,6 +972,37 @@ impl Source for Union {
     fn range_indexed(&self, c: usize) -> bool {
         self.sources[0].range_indexed(c)
     }
+    fn range_lookup_scoped(
+        &self,
+        c: usize,
+        lo: Option<(&Value, bool)>,
+        hi: Option<(&Value, bool)>,
+        paths: &[Value],
+    ) -> rusqlite::Result<Option<Vec<usize>>> {
+        if paths
+            .iter()
+            .any(|p| !matches!(p, Value::Text(_) | Value::Null))
+        {
+            return self.range_lookup(c, lo, hi);
+        }
+        let mut rows = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for path in paths {
+            self.charge(1)?;
+            if let Value::Text(path) = path
+                && let Some(&file) = self.by_path.get(path)
+                && seen.insert(file)
+            {
+                match self.sources[file].range_lookup(c, lo, hi)? {
+                    Some(found) => rows.extend(found.into_iter().map(|r| r + self.offsets[file])),
+                    None => return Ok(None),
+                }
+            }
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        Ok(Some(rows))
+    }
     fn range_lookup(
         &self,
         c: usize,
@@ -1188,26 +1228,55 @@ mod scoped_index_tests {
     }
     #[test]
     fn path_and_span_lookups_do_not_enumerate_other_files() {
-        let file = FileInput::new("seed.py".into(), "python".into(),
-            Arc::new("value = 1\n".repeat(64)), None, None, "test").unwrap();
+        let file = FileInput::new(
+            "seed.py".into(),
+            "python".into(),
+            Arc::new("value = 1\n".repeat(64)),
+            None,
+            None,
+            "test",
+        )
+        .unwrap();
         let facts = Facts::build(&file).unwrap();
         let spec: Spec = serde_json::from_value(serde_json::json!({
             "name":"nodes","gate":"gate","columns":["__path","__start","__end","id"]
-        })).unwrap();
-        let meter = Arc::new(Meter { work: Arc::new(AtomicUsize::new(5_000_000)), steps: AtomicUsize::new(0) });
-        let sources = (0..32).map(|i| load_one(&spec, &format!("f{i:03}.py"),
-            Arc::clone(&facts), Arc::clone(&meter)).unwrap().remove(0)).collect::<Vec<_>>();
+        }))
+        .unwrap();
+        let meter = Arc::new(Meter {
+            work: Arc::new(AtomicUsize::new(5_000_000)),
+            steps: AtomicUsize::new(0),
+        });
+        let sources = (0..32)
+            .map(|i| {
+                load_one(
+                    &spec,
+                    &format!("f{i:03}.py"),
+                    Arc::clone(&facts),
+                    Arc::clone(&meter),
+                )
+                .unwrap()
+                .remove(0)
+            })
+            .collect::<Vec<_>>();
         let db = Connection::open_in_memory().unwrap();
-        let stats = super::super::table::register(&db, "nodes", Arc::new(Union::new(sources))).unwrap();
-        let demand = (0..32).map(|i| format!("('f{i:03}.py',0,5)")).collect::<Vec<_>>().join(",");
-        let query = format!("WITH demand(path,lo,hi) AS MATERIALIZED (VALUES {demand}) SELECT count(*) FROM demand d CROSS JOIN nodes n ON n.__path=d.path AND n.__start>=d.lo AND n.__end<=d.hi");
+        let stats =
+            super::super::table::register(&db, "nodes", Arc::new(Union::new(sources))).unwrap();
+        let demand = (0..32)
+            .map(|i| format!("('f{i:03}.py',0,5)"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let query = format!(
+            "WITH demand(path,lo,hi) AS MATERIALIZED (VALUES {demand}) SELECT count(*) FROM demand d CROSS JOIN nodes n ON n.__path=d.path AND n.__start>=d.lo AND n.__end<=d.hi"
+        );
         let count: i64 = db.query_row(&query, [], |r| r.get(0)).unwrap();
         assert_eq!(count, 32);
-        assert!(stats.candidates.load(Ordering::Relaxed) < 32 * 8,
-            "scoped ranges enumerated {} candidates", stats.candidates.load(Ordering::Relaxed));
+        assert!(
+            stats.candidates.load(Ordering::Relaxed) < 32 * 8,
+            "scoped ranges enumerated {} candidates",
+            stats.candidates.load(Ordering::Relaxed)
+        );
         let count: i64 = db.query_row("SELECT count(*) FROM nodes WHERE __path IN ('f000.py','f001.py') AND __start>=0 AND __end<=5", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 2);
-        assert!(stats.batches.load(Ordering::Relaxed)>0);
+        assert!(stats.batches.load(Ordering::Relaxed) > 0);
     }
-
 }
