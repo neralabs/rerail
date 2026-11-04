@@ -96,6 +96,8 @@ jobs:
             rust:
               - 'native/**'
               - 'conformance/**'
+              - 'scripts/dsl/**'
+              - 'test/conformance/data-layer/**'
               - 'fixtures/**'
               - 'packs/**'
               - 'languages/**'
@@ -173,6 +175,12 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
+
+      - name: Set up canonical Python
+        if: matrix.task == 'test'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.12"
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -368,8 +376,104 @@ jobs:
         with:
           built: "true"
 
+      - name: Set up canonical Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.12"
+
       - name: Unit tests
         run: npm test -- --shard=${{ matrix.shard }}/2
+
+  data-layer-parity:
+    name: Data-layer upstream assertions (${{ matrix.mode }})
+    needs: build
+    if: >-
+      ${{ github.head_ref != 'changeset-release/main' &&
+          (github.event_name != 'pull_request' ||
+           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [snapshot, workspace]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/lfs
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.12"
+      - uses: astral-sh/setup-uv@v7
+      - name: Get read-only upstream access
+        id: upstream-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: neralabs
+          repositories: nera-data-layer
+          permission-contents: read
+      - name: Checkout unchanged upstream tests
+        uses: actions/checkout@v7
+        with:
+          repository: neralabs/nera-data-layer
+          ref: 2b1504adc4291daaf080b2e932962b134da1a69a
+          path: .rerail/data-layer-upstream
+          token: ${{ steps.upstream-token.outputs.token }}
+          persist-credentials: false
+      - name: Install upstream assertion dependencies
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/batch-eight-venv
+        run: >-
+          uv sync --directory .rerail/data-layer-upstream --python 3.13.12 --frozen
+          --no-default-groups --no-install-workspace --no-install-package nera-usearch-native
+          --extra sqlite --group ci-conformance
+      - name: Compare all original assertions and complete results
+        env:
+          PYTHONHASHSEED: "0"
+          RERAIL_NATIVE_CONTRACTS: ${{ github.workspace }}/.rerail/batch-eight-contracts.json
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          unset RERAIL_ENGINE_PATH GIT_PAGER
+          python scripts/dsl/data_layer_audit/native_contracts.py --source .rerail/data-layer-upstream --output "$RERAIL_NATIVE_CONTRACTS"
+          reports="$RUNNER_TEMP/batch-eight-reports"
+          mkdir -p "$reports"
+          py="$RUNNER_TEMP/batch-eight-venv/bin/python"
+          for part in 0 1 2 3; do
+            timeout 115s "$py" scripts/dsl/data_layer_audit/api_parity.py compare               --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream               --oracle fixtures/host/data-layer-port/batch-08-complete-api.json               --part "$part" --parts 4 --mode "$MODE" --output "$reports/api-$MODE-$part.json"
+          done
+          python scripts/dsl/data_layer_audit/collect.py --reports "$reports" --mode "$MODE"
+          timeout 115s "$py" scripts/dsl/data_layer_audit/facts_parity.py compare             --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream             --input fixtures/host/data-layer-port/batch-08-complete-facts.json             --mode "$MODE" --output "$reports/complete-facts-final-$MODE.json"
+          timeout 115s "$py" scripts/dsl/data_layer_audit/graph_api.py compare             --source .rerail/data-layer-upstream --input fixtures/host/data-layer-port/batch-08-graph-api.json             --mode "$MODE" --output "$reports/graph-$MODE.json"
+      - name: Require original positives to reject disabled detectors
+        if: matrix.mode == 'snapshot'
+        env:
+          PYTHONHASHSEED: "0"
+          RERAIL_NATIVE_CONTRACTS: ${{ github.workspace }}/.rerail/batch-eight-contracts.json
+        run: |
+          set -euo pipefail
+          unset RERAIL_ENGINE_PATH GIT_PAGER
+          reports="$RUNNER_TEMP/batch-eight-reports"
+          python scripts/dsl/data_layer_audit/native_mutation.py --output "$RUNNER_TEMP/batch-eight-mutants"
+          for part in 0 1 2 3; do
+            status=0
+            timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_audit/native_suite.py               --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream --mode snapshot               --policies "$RUNNER_TEMP/batch-eight-mutants/rules" --part "$part" --parts 4               --output "$reports/controls-$part.json" || status=$?
+            if [ "$status" -ne 1 ]; then echo "Expected assertion failures, got $status"; exit 1; fi
+          done
+          python scripts/dsl/data_layer_audit/collect.py --reports "$reports" --mode snapshot --controls
+      - name: Upload assertion receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: batch-eight-${{ matrix.mode }}
+          path: ${{ runner.temp }}/batch-eight-reports/
+          if-no-files-found: error
 
   integration:
     name: Integration tests

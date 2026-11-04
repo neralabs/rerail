@@ -2304,8 +2304,8 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
             "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
         })
     };
-    // Enough roots to exhaust the clause allowance even when candidate selection and sibling
-    // checks share their work. No required literal rules the file out before matching.
+    // Every integer has a matching preceding sibling, so source admission and
+    // candidate selection cannot prune away the work this allowance test needs.
     let costly = json!({
         "id": "costly", "violation": { "anchor": "witness.span", "code": "SLOW", "message": "slow" },
         "forbid": { "ast": { "language": "python", "rule": {
@@ -2320,7 +2320,7 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
         .collect::<Vec<_>>()
         .join(", ");
     let file = json!([{ "path": "big.py", "language": "python",
-        "source": format!("print(1)\nx = [{numbers}]\n") }]);
+        "source": format!("print(1)\nx = [{}, {numbers}]\n", "a".repeat(40)) }]);
     let workspace = stored_workspace(&store, "/clause-allowance", &code_rule);
     TEST_CLAUSE_WORK_BUDGET.set(Some(20));
     let evaluated = apply_json(&workspace, 1, file.clone());

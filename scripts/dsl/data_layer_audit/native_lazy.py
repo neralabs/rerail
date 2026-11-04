@@ -93,5 +93,5 @@ def install(backend):
     backend.replace(module,'_resolve_callable_targets',resolve)
     def transitive(facts_by_symbol,callable_targets,symbol,target_symbols,memo,visiting):
         value=graph('reach',dict(mode='reach',root=symbol,facts=list(facts_by_symbol),calls=callable_targets,targets=sorted(target_symbols),memo=memo,visiting=sorted(visiting)))
-        memo[symbol]=value['line'];return value['line']
+        memo.clear();memo.update(json.loads(value['memo']));return value['line']
     backend.replace(module,'_transitive_line_to_target_symbols',transitive)

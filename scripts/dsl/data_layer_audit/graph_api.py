@@ -4,7 +4,9 @@
 import argparse
 import copy
 import importlib
+import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -14,6 +16,7 @@ def main():
     parser.add_argument('action',choices=['record','compare'])
     for name in ('source','input','output'):parser.add_argument('--'+name,type=Path,required=True)
     parser.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot')
+    parser.add_argument('--repo',type=Path)
     args=parser.parse_args();workspace=Path.cwd();root=args.source.resolve();output=args.output.resolve()
     sys.path[:0]=[str(root),str(root/'scripts'),str(Path(__file__).parent)]
     module=importlib.import_module('scripts.lint_lazy_architecture');raw=json.loads(args.input.read_text());backend=None
@@ -34,6 +37,11 @@ def main():
     if backend:
         report['differences']=[row for row in rows if row['expected']!=row['actual']]
         report['semanticFallbacks']=backend.semantic_fallbacks
+        from data_layer_probe_record import verify_sources
+        report['sourceFilesChecked']=verify_sources(root,(args.repo or root).resolve(),'2b1504adc4291daaf080b2e932962b134da1a69a')
+        report['engineSha256']=hashlib.sha256(backend.engine_path.read_bytes()).hexdigest()
+        report['oracleSha256']=hashlib.sha256(args.input.read_bytes()).hexdigest()
+        report['contractsSha256']=hashlib.sha256(Path(os.environ['RERAIL_NATIVE_CONTRACTS']).read_bytes()).hexdigest()
     output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(dict(cases=len(rows),differences=len(report.get('differences',[])))))
     if report.get('differences') or report.get('semanticFallbacks'):raise SystemExit(1)

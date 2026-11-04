@@ -24,7 +24,9 @@ mod forest;
 mod functions;
 mod inputs;
 mod insert;
+pub(super) mod ordered_first;
 mod producer;
+pub(super) mod python_ast;
 mod reachability;
 pub(super) mod schema;
 mod source;
@@ -47,6 +49,7 @@ pub(super) struct Stage {
     pub(super) query: Arc<str>,
     pub(super) indexes: Vec<Vec<String>>,
     pub(super) reachability: Option<Reachability>,
+    pub(super) python_ast: Option<python_ast::Spec>,
     pub(super) deferred: BTreeMap<String, String>,
     pub(super) stored_columns: Vec<String>,
     pub(super) output_columns: Vec<String>,
@@ -80,6 +83,7 @@ pub(super) struct Plan {
     pub(super) query: String,
     pub(super) key: Vec<String>,
     pub(super) code: Option<String>,
+    pub(super) message: Option<String>,
     pub(super) last_uses: BTreeMap<String, usize>,
     pub(super) reads_source: bool,
 }
@@ -170,7 +174,12 @@ pub(super) fn inspect_fields_recursive(
 ) -> Result<(Vec<String>, FieldReads, bool, bool)> {
     let observed = authorizer::install(db, tables).map_err(sql_error)?;
     let result = (|| {
-        let statement = db.prepare(query).map_err(sql_error)?;
+        let statement =
+            db.prepare(query)
+                .map_err(|error| match observed.denied.lock().as_ref() {
+                    Some(action) => invalid(format!("relational query: {error}; denied {action}")),
+                    None => sql_error(error),
+                })?;
         if !statement.readonly() || statement.parameter_count() != 0 {
             return Err(invalid(
                 "relational queries must be read-only SELECT statements without parameters",
@@ -558,7 +567,32 @@ impl<'a> Session<'a> {
             }
         };
         if rows.iter().any(|r| !r.incomplete.is_empty()) {
-            return Err(invalid("A relational input is incomplete"));
+            let details = plan
+                .inputs
+                .iter()
+                .zip(&rows)
+                .filter(|(_, rows)| !rows.incomplete.is_empty())
+                .map(|((name, _), rows)| {
+                    format!(
+                        "{name}: {}{}",
+                        rows.incomplete
+                            .iter()
+                            .take(8)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if rows.incomplete.len() > 8 {
+                            " (more files omitted)"
+                        } else {
+                            ""
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(invalid(format!(
+                "A relational input is incomplete: {details}"
+            )));
         }
         let syntax_files = if let Some(spec) = &plan.syntax {
             let gate = plan
@@ -679,6 +713,7 @@ impl<'a> Session<'a> {
                     tables.insert(name.clone());
                 }
             }
+            metrics.syntax_loads += syntax_files.len();
             for (name, source) in syntax::sources(&physical, &syntax_files, Arc::clone(&work))? {
                 table::bind(&db, &name, source.clone()).map_err(sql_error)?;
                 db.module(name.clone());
@@ -817,7 +852,7 @@ impl<'a> Session<'a> {
             } else {
                 shared::layout(layouts[&stage.name])
             };
-            if stage.reachability.is_none() {
+            if stage.reachability.is_none() && stage.python_ast.is_none() {
                 let slot = if stage.deferred.is_empty() {
                     name.clone()
                 } else {
@@ -1033,6 +1068,15 @@ impl<'a> Session<'a> {
             self.db.stage(&logical.name);
             // The compiler validated the complete logical query. Stable native
             // bindings enforce its schema; prepare only the actual execution.
+            if let Some(spec) = &stage.python_ast {
+                return Ok(Step::Native(python_ast::demand(
+                    &self.db,
+                    spec,
+                    &self.syntax_trees,
+                    &self.syntax_files,
+                    Arc::clone(&self.work),
+                )?));
+            }
             if let Some(spec) = stage.reachability.as_ref().filter(|s| s.syntax.is_some()) {
                 return Ok(Step::Native(syntax::demand(
                     &self.db,
@@ -1041,6 +1085,15 @@ impl<'a> Session<'a> {
                     &self.syntax_files,
                     Arc::clone(&self.work),
                 )?));
+            }
+            if let Some((request, spec)) = stage
+                .reachability
+                .as_ref()
+                .and_then(|r| r.ordered_first.as_ref().map(|s| (r, s)))
+            {
+                let source = ordered_first::prepare(&self.db, request, spec, &self.work)?;
+                self.publish_source(source)?;
+                return Ok(Step::Sql);
             }
             #[cfg(feature = "code-rule-profile")]
             let operation = self
@@ -1063,7 +1116,10 @@ impl<'a> Session<'a> {
             }
             created
                 .map_err(|e| invalid(format!("relational stage {}: {}", logical.name, e.reason)))?;
-            if stage.reachability.is_none() && stage.deferred.is_empty() {
+            if stage.reachability.is_none()
+                && stage.python_ast.is_none()
+                && stage.deferred.is_empty()
+            {
                 self.db.storage.borrow_mut().publish(&stage.name);
             }
             #[cfg(feature = "code-rule-profile")]
@@ -1074,6 +1130,10 @@ impl<'a> Session<'a> {
         Ok(Step::Done)
     }
     fn publish(&mut self, output: producer::Completed) -> Result<()> {
+        let source = output.into_source(Arc::clone(&self.work))?;
+        self.publish_source(source)
+    }
+    fn publish_source(&mut self, source: Arc<dyn syntax::Source>) -> Result<()> {
         self.activate()?;
         let stage = &self.physical_stages[self.next];
         #[cfg(feature = "code-rule-profile")]
@@ -1086,7 +1146,6 @@ impl<'a> Session<'a> {
             ),
             self.next,
         );
-        let source = output.into_source(Arc::clone(&self.work))?;
         table::bind(&self.db, &stage.name, source.clone()).map_err(sql_error)?;
         self.db.module(stage.name.clone());
         self.native_sources.insert(stage.name.clone(), source);
@@ -1230,7 +1289,17 @@ impl<'a> Session<'a> {
                 path: path.to_owned(),
                 span,
                 captures: Captures::default(),
-                message: None,
+                message: plan
+                    .message
+                    .as_ref()
+                    .map(|field| {
+                        values
+                            .get(field)
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                            .ok_or_else(|| invalid("relational message must be text"))
+                    })
+                    .transpose()?,
                 fix: None,
                 ignored: false,
             };

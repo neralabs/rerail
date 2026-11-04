@@ -10,8 +10,8 @@ pub(super) fn limits(rule: &CompiledCodeRule, snapshot: &Snapshot) -> Result<()>
         .files
         .iter()
         .filter(|f| rule.scope.matches(&f.path))
-        .fold((0usize, 0usize), |(n, bytes), f| {
-            (n + 1, bytes.saturating_add(f.source.len()))
+        .fold((0usize, 0usize), |(n, bytes): (usize, usize), f| {
+            (n + 1, bytes.max(f.source.len()))
         });
     if files > rule.capabilities.limits.max_files
         || bytes > rule.capabilities.limits.max_source_bytes

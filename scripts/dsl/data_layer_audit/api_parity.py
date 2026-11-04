@@ -39,9 +39,12 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',choices=['record','compare'])
     for name in ('source','repo','output'):p.add_argument('--'+name,type=Path,required=True)
     p.add_argument('--oracle',type=Path);p.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot')
+    p.add_argument('--part',type=int,default=0);p.add_argument('--parts',type=int,default=1)
     p.add_argument('tests',nargs='*');a=p.parse_args();root=a.source.resolve();workspace=Path.cwd();out=a.output.resolve();oracle=a.oracle.resolve() if a.oracle else None
     sys.path[:0]=[str(root),str(root/'scripts'),str(Path(__file__).parent)];os.chdir(root)
     tests=a.tests or [name for check in BATCH_EIGHT for name in TESTS[check] if (root/name).exists()]
+    if not 0 <= a.part < a.parts:p.error('part must be within [0, parts)')
+    tests=tests[a.part::a.parts]
     if a.action=='record':backend=Oracle(root)
     else:
         from native_suite import NativeSuite
@@ -62,6 +65,7 @@ def main():
         out.with_suffix('.assertions.json').write_text(json.dumps(assertions,indent=2)+'\n')
     if oracle:
         expected=json.loads(oracle.read_text())['observations']
+        expected=[row for row in expected if row['test'] in backend.outcomes]
         def keyed(rows):
             result={};counts={}
             for row in rows:

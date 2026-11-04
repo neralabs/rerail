@@ -3,6 +3,13 @@ members = ["native"]
 exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation"]
 resolver = "2"
 
+[profile.profiling]
+inherits = "release"
+debug = 2
+strip = "none"
+lto = false
+codegen-units = 16
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

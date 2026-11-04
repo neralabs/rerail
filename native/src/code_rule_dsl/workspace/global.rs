@@ -607,7 +607,10 @@ pub(super) fn evaluate_batched_relations(
             .flat_map(|(_, rule, _)| {
                 crate::code_rule_dsl::matcher::anchor_plans_for_file(rule, &input, &doc)
             })
-            .collect();
+            .collect::<Vec<_>>();
+        if plans.is_empty() {
+            continue;
+        }
         demands.insert(path.clone(), plans);
         if let Err(error) = state.anchor_corpus.put(&path, &doc, &|| {
             closed.load(std::sync::atomic::Ordering::Acquire)
@@ -712,14 +715,18 @@ pub(super) fn evaluate_batched_relations(
             } else {
                 // Queue file identities only; admission precedes source hydration.
                 let empty = std::sync::Arc::new(String::new());
-                let files = state.files.values().map(|file| &file.input)
+                let files = state
+                    .files
+                    .values()
+                    .map(|file| &file.input)
                     .chain(state.evicted_inputs.values())
                     .filter(|file| code_rule.scope.matches(&file.path))
                     .map(|file| {
                         let mut input = file.clone();
                         input.source = std::sync::Arc::clone(&empty);
                         input
-                    }).collect();
+                    })
+                    .collect();
                 jobs.push(Job {
                     code_rule,
                     clause,
@@ -843,7 +850,7 @@ pub(super) fn evaluate_batched_relations(
                             .or_else(|| state.evicted_inputs.get(&path).cloned())
                             .ok_or_else(|| invalid("relational source removed"))?;
                         input.source = super::documents::source(state, &path)?;
-                        bytes = bytes.saturating_add(input.source.len());
+                        bytes = bytes.max(input.source.len());
                         if bytes > code_rule.capabilities.limits.max_source_bytes {
                             return Err(invalid(
                                 "relational source snapshot exceeds maxSourceBytes",
@@ -891,11 +898,19 @@ pub(super) fn evaluate_batched_relations(
                         .enumerate()
                         .map(|(slot, file)| (file.path.clone(), slot))
                         .collect::<std::collections::HashMap<_, _>>();
-                    let mut remaining = code_rule.capabilities.limits.max_source_bytes;
+                    let per_file_source_limit = code_rule.capabilities.limits.max_source_bytes;
                     for paths in paths.chunks(128) {
-                        let documents = super::documents::load_many(state, paths, remaining)?;
+                        let documents = super::documents::load_many(
+                            state,
+                            paths,
+                            per_file_source_limit.saturating_mul(paths.len()),
+                        )?;
                         for (path, (version, document)) in paths.iter().zip(documents) {
-                            remaining = remaining.saturating_sub(document.source.len());
+                            if document.source.len() > per_file_source_limit {
+                                return Err(invalid(
+                                    "relational source file exceeds maxSourceBytes",
+                                ));
+                            }
                             let slot = *file_slots
                                 .get(path)
                                 .ok_or_else(|| invalid("syntax source snapshot is incomplete"))?;

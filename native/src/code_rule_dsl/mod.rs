@@ -77,6 +77,17 @@ pub struct CodeRuleDslRuntime;
 
 #[napi]
 impl CodeRuleDslRuntime {
+    /// Canonical front-end facts for one complete demand batch, including invalid syntax.
+    /// This only parses source; it never imports or executes a source module.
+    #[napi]
+    pub fn python_ast_batch(documents_json: String) -> Result<String> {
+        let documents: Vec<value::python_ast::Document> =
+            serde_json::from_str(&documents_json).map_err(json_error)?;
+        let response =
+            value::python_ast::batch_with_metrics(&documents).map_err(|error| invalid(error.0))?;
+        serde_json::to_string(&response).map_err(json_error)
+    }
+
     #[napi]
     pub fn compile(
         source: String,

@@ -116,6 +116,7 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
         .filter(|s| {
             (!s.indexes.is_empty() && readers.get(&s.name).is_some_and(|&n| n > 1))
                 || s.reachability.is_some()
+                || s.python_ast.is_some()
                 || !s.deferred.is_empty()
                 || s.recursive
                 || s.query.to_ascii_uppercase().contains("COLLATE")
@@ -127,7 +128,7 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
         .iter()
         .filter(|s| retained.contains(&s.name))
         .map(|s| {
-            let reason = if s.reachability.is_some() {
+            let reason = if s.reachability.is_some() || s.python_ast.is_some() {
                 "native readiness or recursive graph boundary"
             } else if !s.deferred.is_empty() {
                 "deferred columns remain lazy"
@@ -148,7 +149,7 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
             if !retained.contains(&stage.name) {
                 continue;
             }
-            if stage.reachability.is_some()
+            if (stage.reachability.is_some() || stage.python_ast.is_some())
                 && let Some(name) = stage
                     .inputs
                     .iter()

@@ -139,6 +139,7 @@ enum Key {
     Reach {
         roots: String,
         edges: String,
+        semantics: String,
         forest: bool,
         expand: bool,
         inputs: Vec<(String, usize)>,
@@ -176,10 +177,11 @@ impl Hash for Key {
             Self::Reach {
                 roots,
                 edges,
+                semantics,
                 forest,
                 expand,
                 inputs,
-            } => (roots, edges, forest, expand, inputs).hash(state),
+            } => (roots, edges, semantics, forest, expand, inputs).hash(state),
         }
     }
 }
@@ -364,13 +366,24 @@ impl Bindings {
             if stage.reads_source {
                 inputs.push(("__source_text".into(), sources["__source_text"]));
             }
-            let key = if let Some(spec) = &stage.reachability {
+            let key = if let Some(spec) = &stage.python_ast {
+                inputs.push(("__syntax_tree".into(), sources[&spec.syntax]));
+                Key::Reach {
+                    roots: spec.roots.clone(),
+                    edges: String::new(),
+                    semantics: format!("python:{:?}", spec.fields),
+                    forest: false,
+                    expand: false,
+                    inputs,
+                }
+            } else if let Some(spec) = &stage.reachability {
                 if let Some(syntax) = &spec.syntax {
                     inputs.push(("__syntax_tree".into(), sources[syntax]));
                 }
                 Key::Reach {
                     roots: spec.roots.clone(),
                     edges: spec.edges.clone(),
+                    semantics: format!("{:?}", spec.ordered_first),
                     forest: spec.forest,
                     expand: spec.expand,
                     inputs,
@@ -510,10 +523,22 @@ pub(super) fn stage(stage: &Stage, name: &str, aliases: &BTreeMap<String, String
         super::quote(&super::deferred::physical_name(&out))
     )
     .into();
+    if let Some(spec) = &mut out.python_ast {
+        spec.roots = resolve(&spec.roots, aliases);
+    }
     if let Some(spec) = &mut out.reachability {
         spec.roots = resolve(&spec.roots, aliases);
         if spec.syntax.is_none() {
             spec.edges = resolve(&spec.edges, aliases);
+            if let Some(ordered) = &mut spec.ordered_first {
+                ordered.sinks = resolve(&ordered.sinks, aliases);
+                if let Some(query) = &mut ordered.memo {
+                    *query = resolve(query, aliases);
+                }
+                if let Some(query) = &mut ordered.visiting {
+                    *query = resolve(query, aliases);
+                }
+            }
         }
     }
     out

@@ -199,7 +199,7 @@ export interface CodeRuleDslRelational {
   stages?: ({ name: string } & (
     | { query: string; indexes?: string[][]; deferred?: Record<string, string>; reachability?: never }
     | { pythonAst: { roots: string; syntax: string; fields: ("dump" | "body_sha256" | "signature_sha256" | "identifier" | "unparse" | "literal_json" | "dump_sha256" | "column" | "repr_unparse")[] }; query?: never; indexes?: never; deferred?: never; reachability?: never }
-    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest"; selection?: "memoized-first"; sinks?: string; match?: "node" | "edge" }; query?: never; indexes?: never; deferred?: never }
+    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest"; selection?: "memoized-first"; memo?: string; visiting?: string; emit?: "memo"; sinks?: string; match?: "node" | "edge" }; query?: never; indexes?: never; deferred?: never }
   ))[];
   query: string;
   key?: string[];
@@ -1380,7 +1380,7 @@ export interface CodeRuleViolation {
   path?: string | undefined; // NOSONAR - exactOptionalPropertyTypes: zod-parsed native violations carry `path: undefined`
   span?: CodeRuleSourceSpan | undefined; // NOSONAR - as `path`
   captures: Record<string, CodeRuleSourceSpan[]>;
-  variables: Record<string, boolean | number | string>;
+  variables: Record<string, CodeRuleDslValue>;
   fix?: CodeRuleViolationFix | undefined; // NOSONAR - exactOptionalPropertyTypes: zod-parsed native violations carry `fix: undefined`
 }
 

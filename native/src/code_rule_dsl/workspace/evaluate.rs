@@ -103,15 +103,6 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
             )
         })?;
         let failures = std::mem::replace(&mut file.failures, old_failures);
-        if let Some(doc) = &doc
-            && let Err(error) = work.run(|| {
-                context
-                    .anchor_corpus
-                    .put(&file.input.path, doc, &matcher_budget_exhausted)
-            })
-        {
-            eprintln!("SQL AST batch publication unavailable: {error}");
-        }
         if let Some(doc) = &doc {
             let errors = SyntaxErrors::of_doc(doc);
             let root = Root::doc(doc.clone());
@@ -133,7 +124,16 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
                     .then(|| Arc::clone(&grammar.anchors))
                 })
                 .collect::<Vec<_>>();
-            demands.insert(file.input.path.clone(), plans);
+            if !plans.is_empty() {
+                if let Err(error) = work.run(|| {
+                    context
+                        .anchor_corpus
+                        .put(&file.input.path, doc, &matcher_budget_exhausted)
+                }) {
+                    eprintln!("SQL AST batch publication unavailable: {error}");
+                }
+                demands.insert(file.input.path.clone(), plans);
+            }
         }
         file.prepared = Some(Box::new(PreparedAst {
             doc,

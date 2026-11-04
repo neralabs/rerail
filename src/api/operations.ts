@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
+import { codeRuleValueSchema } from "../engine/code-rule/code-rule-schema.js";
 import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
 import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, type AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
@@ -61,7 +62,7 @@ const codeRuleViolationSchema: z.ZodType<CodeRuleViolation> = z.object({
   path: z.string().optional(),
   span: codeRuleSourceSpanSchema.optional(),
   captures: z.record(z.string(), z.array(codeRuleSourceSpanSchema)),
-  variables: z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])),
+  variables: z.record(z.string(), codeRuleValueSchema),
   fix: codeRuleViolationFixSchema.optional(),
 }).strict();
 

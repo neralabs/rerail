@@ -98,6 +98,26 @@ pub(in crate::code_rule_dsl) struct Facts {
     selections: Selections,
 }
 impl Facts {
+    pub(super) fn python_ast_source(&self) -> String {
+        ast_grep_core::Doc::get_source(&self.doc).clone()
+    }
+    pub(super) fn python_ast_request(
+        &self,
+        id: u32,
+        fields: Vec<String>,
+    ) -> Result<crate::code_rule_dsl::value::python_ast::Request> {
+        if self.positions.get(id as usize).is_none_or(Option::is_none) {
+            return Err(invalid("invalid Python AST root"));
+        }
+        let span = self.packed.span(id);
+        Ok(crate::code_rule_dsl::value::python_ast::Request {
+            start: span.start,
+            end: span.end,
+            kind: self.packed.kind(id).into(),
+            fields,
+        })
+    }
+
     pub(super) fn version(&self) -> (u32, [u8; 32]) {
         use ast_grep_core::Doc;
         (
@@ -1062,5 +1082,6 @@ pub(super) fn demand(
         trees,
         paths,
         work,
+        python_ast: None,
     })
 }

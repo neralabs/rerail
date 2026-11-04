@@ -35,6 +35,19 @@ fn verifies(public_key: &str, message: &str, signature: &str) -> bool {
 
 pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
     db.create_scalar_function(
+        "sha256",
+        1,
+        FunctionFlags::SQLITE_UTF8
+            | FunctionFlags::SQLITE_DETERMINISTIC
+            | FunctionFlags::SQLITE_INNOCUOUS,
+        |context| {
+            use sha2::{Digest, Sha256};
+            let text: Option<String> = context.get(0)?;
+            Ok(text.map(|s| format!("{:x}", Sha256::digest(s.as_bytes()))))
+        },
+    )?;
+
+    db.create_scalar_function(
         "verify_ed25519",
         3,
         FunctionFlags::SQLITE_UTF8

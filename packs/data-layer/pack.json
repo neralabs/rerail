@@ -3,7 +3,68 @@
   "id": "data-layer",
   "name": "Data-layer architecture rules",
   "category": "repository",
-  "covers": "Eighty nera-data-layer candidate checks at the pinned revision. Recorded source-detection gates pass for all eight batches. All 80 match the complete 9,021-file repository. Activation remains a separate integration task.",
-  "reason": "Repository-specific candidate ports; activation remains a separate integration task.",
-  "rules": []
+  "covers": "Ten batch-eight data-layer architecture rules. Seventy earlier ports remain candidates.",
+  "reason": "Repository-specific rules for explicit installation in nera-data-layer.",
+  "rules": [
+    {
+      "id": "data-layer-readthrough-authority-architecture",
+      "document": "rules/data-layer-readthrough-authority-architecture.json",
+      "title": "Readthrough authority architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-authentication-plan-purity",
+      "document": "rules/data-layer-authentication-plan-purity.json",
+      "title": "Authentication plan purity",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-legacy-callback-quarantine",
+      "document": "rules/data-layer-legacy-callback-quarantine.json",
+      "title": "Legacy callback quarantine",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-lazy-adapter-ownership",
+      "document": "rules/data-layer-lazy-adapter-ownership.json",
+      "title": "Lazy adapter ownership",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-plan-helpers-allowlist",
+      "document": "rules/data-layer-plan-helpers-allowlist.json",
+      "title": "Plan helpers allowlist",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-lazy-sql-surface",
+      "document": "rules/data-layer-lazy-sql-surface.json",
+      "title": "Lazy sql surface",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-pure-lazy-runtime-purity",
+      "document": "rules/data-layer-pure-lazy-runtime-purity.json",
+      "title": "Pure lazy runtime purity",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-eager-resolve",
+      "document": "rules/data-layer-eager-resolve.json",
+      "title": "Eager resolve",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-lazy-architecture",
+      "document": "rules/data-layer-lazy-architecture.json",
+      "title": "Lazy architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-cached-pure-lazy-allowlist",
+      "document": "rules/data-layer-cached-pure-lazy-allowlist.json",
+      "title": "Cached pure lazy allowlist",
+      "group": "Data-layer architecture"
+    }
+  ]
 }

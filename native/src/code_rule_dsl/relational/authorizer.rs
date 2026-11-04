@@ -12,12 +12,15 @@ use std::{
 };
 
 pub(super) struct Reads {
+    pub denied: Arc<parking_lot::Mutex<Option<String>>>,
     pub fields: Arc<parking_lot::Mutex<BTreeMap<String, BTreeSet<String>>>>,
     pub source: Arc<AtomicBool>,
     pub recursive: Arc<AtomicBool>,
 }
 pub(super) fn install(db: &Connection, tables: &BTreeSet<String>) -> Result<Reads> {
     let tables = tables.clone();
+    let denied = Arc::new(parking_lot::Mutex::new(None));
+    let rejection = Arc::clone(&denied);
     let reads = Arc::new(parking_lot::Mutex::new(
         BTreeMap::<String, BTreeSet<String>>::new(),
     ));
@@ -109,7 +112,9 @@ pub(super) fn install(db: &Connection, tables: &BTreeSet<String>) -> Result<Read
                         | "typeof"
                         | "unicode"
                         | "upper"
-                        | "verify_ed25519" | "rx_matches"
+                        | "sha256"
+                        | "verify_ed25519"
+                        | "rx_matches"
                         | "rx_extract"
                         | "rx_replace"
                         | "source_text"
@@ -120,10 +125,14 @@ pub(super) fn install(db: &Connection, tables: &BTreeSet<String>) -> Result<Read
                 }
                 Authorization::Allow
             }
-            _ => Authorization::Deny,
+            action => {
+                *rejection.lock() = Some(format!("{action:?} via {:?}", context.accessor));
+                Authorization::Deny
+            }
         },
     ))?;
     Ok(Reads {
+        denied,
         fields: reads,
         source: source_read,
         recursive,

@@ -63,10 +63,14 @@ def main():
         if api['exitCode'] or api['differences'] or api['semanticFallbacks'] or len(api['observations'])!=305:raise ValueError('Complete API comparison failed: '+mode)
         if facts['differences'] or facts['semanticFallbacks'] or facts['cases']!=85:raise ValueError('Complete function-fact comparison failed: '+mode)
         if any(facts[key]!=snapshot[key] for key in ('engineSha256','contractsSha256')):raise ValueError('Stale function-fact execution: '+mode)
-        comparisons[mode]=dict(apiObservations=len(api['observations']),analyzerInputs=facts['cases'],differences=0,semanticFallbacks=[],apiReportSha256=sha(api_path),factsReportSha256=sha(facts_path))
+        graph_path=args.reports/f'graph-final-{mode}.json';graph=json.loads(graph_path.read_text())
+        if len(graph['cases'])!=12 or graph['differences'] or graph['semanticFallbacks']:raise ValueError('Graph state comparison failed: '+mode)
+        if any(graph[key]!=snapshot[key] for key in ('engineSha256','contractsSha256')):raise ValueError('Stale graph execution: '+mode)
+        if graph['oracleSha256']!=sha(Path('fixtures/host/data-layer-port/batch-08-graph-api.json')):raise ValueError('Stale graph oracle')
+        comparisons[mode]=dict(apiObservations=len(api['observations']),analyzerInputs=facts['cases'],graphInputs=len(graph['cases']),differences=0,semanticFallbacks=[],apiReportSha256=sha(api_path),factsReportSha256=sha(facts_path),graphReportSha256=sha(graph_path))
     report=dict(format='rerail.data-layer-native-assertions/v1',sourceCommit='2b1504adc4291daaf080b2e932962b134da1a69a',
       engineCommit=engine['commit'],engineSha256=snapshot['engineSha256'],contractsSha256=snapshot['contractsSha256'],policySha256=snapshot['policySha256'],factPolicySha256=snapshot['factPolicySha256'],
-      implementationSha256={str(path):sha(path) for path in sorted([*Path('scripts/dsl/data_layer_audit').glob('native_*.py'),*Path('scripts/dsl/data_layer_eight').glob('*.py'),*[Path('scripts/dsl/data_layer_audit')/name for name in ('api_observations.py','api_parity.py','facts_parity.py','fact_api_record.py')],Path('conformance/data-layer/native-worker.ts'),Path('conformance/data-layer/fact-api.ts'),Path('conformance/data-layer/cached-discovery.ts')])},
+      implementationSha256={str(path):sha(path) for path in sorted([*Path('scripts/dsl/data_layer_audit').glob('native_*.py'),*Path('scripts/dsl/data_layer_eight').glob('*.py'),*[Path('scripts/dsl/data_layer_audit')/name for name in ('api_observations.py','api_parity.py','facts_parity.py','fact_api_record.py','graph_api.py','collect.py')],Path('conformance/data-layer/native-worker.ts'),Path('conformance/data-layer/fact-api.ts'),Path('conformance/data-layer/cached-discovery.ts')])},
       executionPaths={mode:summarize(path) for mode,path in paths.items()},completeComparisons=comparisons,
       oracleSha256={path.name:sha(path) for path in sorted(Path('fixtures/host/data-layer-port').glob('batch-08-complete-*.json'))},
       positiveControls=dict(reportSha256=sha(controls_path),exitCode=controls['exitCode'],failedCases=len(failed),

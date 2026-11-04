@@ -13,22 +13,34 @@ pub(super) fn finish(
 ) -> Result<()> {
     let mut inference = schema::inference::Inference::default();
     for stage in &plan.stages {
-        if stage.reachability.is_some() {
-            // This is the declared native output contract, not an inferred SQL expression.
-            let columns = Arc::new(vec![
-                schema::Column {
-                    name: "__path".into(),
-                    declared_type: "TEXT".into(),
-                },
-                schema::Column {
-                    name: "root".into(),
-                    declared_type: String::new(),
-                },
-                schema::Column {
-                    name: "node".into(),
-                    declared_type: String::new(),
-                },
-            ]);
+        if stage.reachability.is_some() || stage.python_ast.is_some() {
+            let columns = Arc::new(
+                stage
+                    .output_columns
+                    .iter()
+                    .map(|name| schema::Column {
+                        name: name.clone(),
+                        declared_type: if stage.python_ast.is_some() {
+                            if name == "id" { "INTEGER" } else { "TEXT" }
+                        } else if stage
+                            .reachability
+                            .as_ref()
+                            .is_some_and(|r| r.ordered_first.is_some())
+                        {
+                            if matches!(name.as_str(), "location" | "ordinal") {
+                                "INTEGER"
+                            } else {
+                                "TEXT"
+                            }
+                        } else if name == "__path" {
+                            "TEXT"
+                        } else {
+                            ""
+                        }
+                        .into(),
+                    })
+                    .collect::<Vec<_>>(),
+            );
             schema::bind(db, &stage.name, schema::declaration(&stage.name, &columns))
                 .map_err(relational::sql_error)?;
             schemas.insert(stage.name.clone(), columns);
@@ -70,6 +82,7 @@ pub(super) fn finish(
         .iter()
         .map(|(name, _)| name.clone())
         .chain(plan.stages.iter().map(|stage| stage.name.clone()))
+        .chain(schemas.keys().cloned())
         .chain(plan.syntax.iter().flat_map(|syntax| {
             [
                 Some(syntax.name.clone()),

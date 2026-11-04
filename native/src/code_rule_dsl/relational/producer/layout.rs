@@ -87,6 +87,7 @@ mod tests {
             trees: vec![Tree { facts, visible }],
             paths: vec![file.path],
             work: Arc::new(AtomicUsize::new(100_000)),
+            python_ast: None,
         }
     }
     #[test]

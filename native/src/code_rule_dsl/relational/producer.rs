@@ -25,6 +25,8 @@ impl Drop for ReadOnly {
 pub(super) struct Allowance {
     used: usize,
     resident: Resident,
+    pub(super) python_ast_parses: usize,
+    pub(super) python_ast_module_walks: usize,
 }
 impl Allowance {
     pub(super) fn clear_resident(&mut self) {
@@ -36,7 +38,7 @@ impl Allowance {
             self.clear_resident();
         }
     }
-    fn reserve(&mut self, n: usize) -> Result<()> {
+    pub(super) fn reserve(&mut self, n: usize) -> Result<()> {
         if READERS.get() != 0 {
             return Err(invalid("producer execution inside SQL callback"));
         }
@@ -80,6 +82,7 @@ pub(super) struct Demand {
     pub trees: Vec<Tree>,
     pub paths: Vec<String>,
     pub work: Arc<AtomicUsize>,
+    pub python_ast: Option<Vec<String>>,
 }
 struct Output {
     roots: Vec<u32>,
@@ -90,9 +93,25 @@ struct Output {
 pub(super) struct Completed {
     output: Output,
     paths: Vec<String>,
+    python_ast: Option<super::python_ast::Output>,
 }
 impl Completed {
+    pub(super) fn python(output: super::python_ast::Output, paths: Vec<String>) -> Self {
+        Self {
+            output: Output {
+                roots: vec![],
+                nodes: vec![],
+                files: vec![],
+            },
+            paths,
+            python_ast: Some(output),
+        }
+    }
+
     pub fn into_source(self, work: Arc<AtomicUsize>) -> Result<Arc<dyn super::syntax::Source>> {
+        if let Some(output) = self.python_ast {
+            return super::python_ast::into_source(output, self.paths, work);
+        }
         completed::into_source(self, work)
     }
 }
@@ -222,6 +241,48 @@ pub(super) fn execute(
     contexts: &mut [crate::code_rule_dsl::budget::Context],
     allowance: &mut Allowance,
 ) -> Vec<Result<Completed>> {
+    if pending.iter().all(|(_, d)| d.python_ast.is_none()) {
+        return execute_subtrees(pending, contexts, allowance);
+    }
+    let n = pending.len();
+    let mut slots: Vec<Option<Result<Completed>>> = (0..n).map(|_| None).collect();
+    let mut trees = Vec::new();
+    let mut tree_slots = Vec::new();
+    let mut ast = Vec::new();
+    let mut ast_slots = Vec::new();
+    for (slot, item) in pending.into_iter().enumerate() {
+        if item.1.python_ast.is_some() {
+            ast_slots.push(slot);
+            ast.push(item);
+        } else {
+            tree_slots.push(slot);
+            trees.push(item);
+        }
+    }
+    if !trees.is_empty() {
+        for (slot, result) in tree_slots
+            .into_iter()
+            .zip(execute_subtrees(trees, contexts, allowance))
+        {
+            slots[slot] = Some(result);
+        }
+    }
+    for (slot, result) in ast_slots
+        .into_iter()
+        .zip(super::python_ast::execute(ast, contexts, allowance))
+    {
+        slots[slot] = Some(result);
+    }
+    slots
+        .into_iter()
+        .map(|r| r.expect("every producer output is assigned"))
+        .collect()
+}
+fn execute_subtrees(
+    pending: Vec<(usize, Demand)>,
+    contexts: &mut [crate::code_rule_dsl::budget::Context],
+    allowance: &mut Allowance,
+) -> Vec<Result<Completed>> {
     #[cfg(feature = "code-rule-profile")]
     let mut wave = crate::code_rule_dsl::profile::trace::Span::start("producer-wave", "subtrees");
     let (indices, demands): (Vec<_>, Vec<_>) = pending.into_iter().unzip();
@@ -320,6 +381,7 @@ pub(super) fn execute(
             outputs.push(result.map(|()| Completed {
                 output,
                 paths: demand.paths,
+                python_ast: None,
             }));
         }
     }

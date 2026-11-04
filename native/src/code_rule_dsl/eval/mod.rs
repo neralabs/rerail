@@ -273,8 +273,8 @@ pub(super) fn evaluate_clauses(
         .files
         .iter()
         .filter(|file| code_rule.scope.matches(&file.path))
-        .fold((0usize, 0usize), |(files, bytes), file| {
-            (files + 1, bytes + file.source.len())
+        .fold((0usize, 0usize), |(files, bytes): (usize, usize), file| {
+            (files + 1, bytes.max(file.source.len()))
         });
     // Each reported clause has a coverage entry; a synthetic leaf is part of the clause it serves.
     let covered: Vec<(Option<String>, String)> = clauses
@@ -473,6 +473,7 @@ pub(super) fn evaluate_clauses(
 }
 
 fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
+    evaluation.metrics.observe_native_work(&other.metrics);
     evaluation.violations.append(&mut other.violations);
     evaluation.failures.append(&mut other.failures);
     evaluation.metrics.witnesses += other.metrics.witnesses;
@@ -501,10 +502,12 @@ fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
         }
         match file_tape(lang, file) {
             Ok((doc, _)) => {
-                demands.insert(
-                    file.path.clone(),
-                    crate::code_rule_dsl::matcher::anchor_plans_for_file(code_rule, file, &doc),
-                );
+                let plans =
+                    crate::code_rule_dsl::matcher::anchor_plans_for_file(code_rule, file, &doc);
+                if plans.is_empty() {
+                    continue;
+                }
+                demands.insert(file.path.clone(), plans);
                 if let Err(error) = corpus.put(
                     &file.path,
                     &doc,

@@ -126,7 +126,7 @@ pub(super) fn into_source(
     completed: Completed,
     work: Arc<AtomicUsize>,
 ) -> super::Result<Arc<dyn Source>> {
-    let Completed { output, paths } = completed;
+    let Completed { output, paths, .. } = completed;
     let size = output
         .roots
         .iter()

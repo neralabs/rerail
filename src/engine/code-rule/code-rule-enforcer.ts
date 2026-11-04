@@ -5,6 +5,7 @@ import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { setImmediate as yieldToHost, setTimeout as pause } from "node:timers/promises";
 import { diffLines } from "diff";
 import { z } from "zod";
+import { codeRuleValueSchema } from "./code-rule-schema.js";
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
@@ -108,7 +109,7 @@ const violationSchema = z.strictObject({
   path: z.string().optional(),
   span: sourceSpanSchema.optional(),
   captures: z.record(z.string(), z.array(sourceSpanSchema)),
-  variables: z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])),
+  variables: z.record(z.string(), codeRuleValueSchema),
   fix: z.strictObject({ span: sourceSpanSchema, text: z.string() }).optional(),
 });
 const failureSchema = z.strictObject({

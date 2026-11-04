@@ -140,8 +140,16 @@ def lazy_graph():
       S('resolved',"SELECT l.symbol source,c.key ordinal,json_extract(c.value,'$[0]') line,coalesce((SELECT symbol FROM local_facts f WHERE f.symbol=json_extract(c.value,'$[1]')),(SELECT symbol FROM global_facts f WHERE f.symbol=json_extract(c.value,'$[1]')),(SELECT g.symbol FROM local_facts f JOIN global_facts g ON g.symbol=f.symbol WHERE json_array_length(json_extract(f.data,'$.scope'))=0 AND json_extract((SELECT data FROM request),'$.module')||'.'||json_extract(f.data,'$.name')=json_extract(c.value,'$[1]') ORDER BY f.ordinal DESC LIMIT 1)) target FROM local_facts l,json_each(l.data,'$.calls') c"),
       S('target_rows',"SELECT l.symbol,json((SELECT json_group_array(json_array(line,target)) FROM (SELECT line,target FROM resolved r WHERE r.source=l.symbol AND r.target IS NOT NULL AND r.target!=l.symbol ORDER BY r.ordinal))) calls FROM local_facts l"),
       S('edges',"SELECT s.key source,CAST(c.key AS INTEGER) ordinal,json_extract(c.value,'$[0]') line,json_extract(c.value,'$[1]') target FROM request,json_each(data,'$.calls') s,json_each(s.value) c"),
-      S('reach',"WITH RECURSIVE walk(node,first,order_,seen) AS (SELECT json_extract(data,'$.root'),NULL,'',json_array(json_extract(data,'$.root')) FROM request UNION ALL SELECT e.target,coalesce(w.first,e.line),w.order_||printf('%010d.',e.ordinal),substr(w.seen,1,length(w.seen)-1)||','||substr(json_array(e.target),2) FROM walk w JOIN edges e ON e.source=w.node JOIN request r WHERE NOT EXISTS(SELECT 1 FROM json_each(w.seen) WHERE value=e.target) AND NOT EXISTS(SELECT 1 FROM json_each(r.data,'$.visiting') WHERE value=e.target) AND NOT EXISTS(SELECT 1 FROM json_each(r.data,'$.targets') WHERE value=w.node) AND EXISTS(SELECT 1 FROM json_each(r.data,'$.facts') WHERE value=w.node)) SELECT * FROM walk")]
-    return metadata(stages,"(SELECT json_group_object(symbol,json(calls)) FROM target_rows) targets,(SELECT first FROM reach,request r WHERE first IS NOT NULL AND EXISTS(SELECT 1 FROM json_each(r.data,'$.targets') WHERE value=reach.node) ORDER BY order_ LIMIT 1) line FROM request")
+      {'name':'memo_results','reachability':{
+        'selection':'memoized-first','match':'edge','emit':'memo',
+        'roots':"SELECT 'request' __path,json_extract(data,'$.root') id,0 ordinal FROM request WHERE json_extract(data,'$.mode')='reach'",
+        'edges':"SELECT 'request' __path,e.source src,e.target dst,e.ordinal,e.line location FROM edges e JOIN request r WHERE EXISTS(SELECT 1 FROM json_each(r.data,'$.targets') WHERE value=e.target) OR EXISTS(SELECT 1 FROM json_each(r.data,'$.facts') WHERE value=e.target)",
+        'sinks':"SELECT 'request' __path,t.value id,0 location FROM request r,json_each(r.data,'$.targets') t",
+        'memo':"SELECT 'request' __path,m.key id,NULL node,m.value location,row_number() OVER()-1 ordinal FROM request r,json_each(r.data,'$.memo') m",
+        'visiting':"SELECT 'request' __path,v.value id FROM request r,json_each(r.data,'$.visiting') v",
+      }}]
+    return metadata(stages,"(SELECT json_group_object(symbol,json(calls)) FROM target_rows) targets,(SELECT location FROM memo_results WHERE root=json_extract(request.data,'$.root')) line,(SELECT json_group_object(root,location) FROM (SELECT root,location FROM memo_results ORDER BY ordinal)) memo FROM request")
+
 
 
 def lazy_analyzed(source):

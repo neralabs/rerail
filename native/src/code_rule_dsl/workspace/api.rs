@@ -1162,6 +1162,7 @@ impl WorkspaceApplyTask {
                         overflow_evaluation("runtime", "global evaluation time budget exceeded");
                 }
                 metrics.visited_nodes += evaluation.metrics.visited_nodes;
+                metrics.observe_native_work(&evaluation.metrics);
                 let previous = state.global_results.insert(index, evaluation);
                 complete |= !replace_global_changes(
                     previous.as_ref(),

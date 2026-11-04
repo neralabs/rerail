@@ -21,13 +21,18 @@ const authoredSchema = z.object({ clauses: z.array(z.object({ define: z.object({
 const pageSchema = z.object({ done: z.boolean(), cursor: z.number(), violations: z.array(z.unknown()), failures: z.array(z.unknown()) });
 const syntaxFinding = z.object({ code: z.literal("NATIVE-SYNTAX"), path: z.string(), variables: z.record(z.string(), z.unknown()) }).passthrough();
 process.env.RERAIL_CODE_RULE_PROFILE = "1";
-const execution = replayExecution();
+let execution = replayExecution();
 const compiled = new Map<string, NativeCompiledCodeRuleDsl>();
 const contracts = process.env.RERAIL_NATIVE_CONTRACTS === undefined ? {} : JSON.parse(readFileSync(process.env.RERAIL_NATIVE_CONTRACTS, "utf8"));
 try {
   for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
     try {
-      const request = requestSchema.parse(JSON.parse(line));
+      const raw: unknown = JSON.parse(line);
+      if (z.object({ reset: z.literal(true) }).strict().safeParse(raw).success) {
+        execution.close(); execution = replayExecution();
+        process.stdout.write(JSON.stringify({ reset: true }) + "\n"); continue;
+      }
+      const request = requestSchema.parse(raw);
       const authored = authoredSchema.parse(request.contract === undefined
         ? JSON.parse(readFileSync(`${process.env.RERAIL_NATIVE_POLICY_DIRECTORY ?? "packs/data-layer/candidates/rules"}/data-layer-${request.check.replaceAll("_", "-")}.json`, "utf8"))
         : ["lazy-analyzed", "cached-policy-comparison", "memoized-policy-comparison"].includes(request.contract) ? JSON.parse(readFileSync(resolve(dirname(process.env.RERAIL_NATIVE_POLICY_DIRECTORY ?? "packs/data-layer/candidates/rules"), "facts", `${request.contract}.json`), "utf8")) : request.contract === "cached-discovery" ? cachedDiscoveryPolicy(request.parameters?.module_name as string | undefined) : structuredClone(contracts[request.contract]));
