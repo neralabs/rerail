@@ -182,7 +182,7 @@ An update:
 
 Activation binds an install to one customer deployment via a signed entitlement.
 
-Internal testing: activation profiles (`rerail activate`, `rerail activation request`, `rerail profile` and `--profile`) are not part of Rerail 0.1.0. See the README's [Internal testing](../README.md#internal-testing) section.
+Internal testing: activation profiles (`rerail activate`, `rerail activation request`, `rerail profile` and `--profile`) are not part of Rerail's latest release. See the README's [Internal testing](../README.md#internal-testing) section.
 
 Package access authorizes download; the entitlement authorizes execution.
 

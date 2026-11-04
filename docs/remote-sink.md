@@ -106,7 +106,7 @@ Rerail posts NDJSON batches of records with stable ids to one endpoint.
 one is the batch header; each further line is a record:
 
 ```jsonc
-{"type":"batch","protocol":1,"batchId":"<uuid>","machineId":"<uuid>","machineLabel":"<hostname>","rerailVersion":"0.1.0","sentAt":1793732129819}
+{"type":"batch","protocol":1,"batchId":"<uuid>","machineId":"<uuid>","machineLabel":"<hostname>","rerailVersion":"<version>","sentAt":1793732129819}
 {"type":"repository","id":"remote:github.com/org/repo","displayName":"repo","aliases":[]}
 {"type":"session","id":"<session id>","host":"claude-code","cwd":"/abs","repositoryKey":"…","startedAt":…,"endedAt":…|null}
 {"type":"event","id":"<machineId>:<sequence>","sessionId":"…","eventId":"…","kind":"user-prompt","observedAt":…,"sequence":42,"payload":{…}}
