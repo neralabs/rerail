@@ -248,6 +248,8 @@ pub(crate) const PY_COLUMNS: [&[&str]; 5] = [
 #[derive(Clone, Copy)]
 enum View {
     Node,
+    /// `line(n, l)`: a node's first line, 1-based (rows laid out as `node`'s).
+    Line,
     Child,
     Field,
     Tape,
@@ -358,7 +360,7 @@ impl Batch {
 
     fn offsets(&self, view: View) -> &[usize] {
         match view {
-            View::Node | View::Tape => &self.nodes,
+            View::Node | View::Line | View::Tape => &self.nodes,
             View::Child => &self.children,
             View::Field => &self.fields,
         }
@@ -384,7 +386,7 @@ impl Batch {
     fn row(&self, view: View, doc: usize, local: u32) -> Option<usize> {
         let p = &self.docs[doc];
         let within = match view {
-            View::Node | View::Tape => Some(local as usize),
+            View::Node | View::Line | View::Tape => Some(local as usize),
             View::Child => (local > 0).then(|| local as usize - 1),
             View::Field => p.fielded.binary_search(&local).ok(),
         }?;
@@ -415,6 +417,7 @@ impl Viewed {
     fn columns(view: View) -> &'static [&'static str] {
         match view {
             View::Node => &["d", "n", "kind", "start", "end_"],
+            View::Line => &["n", "l"],
             View::Child => &["p", "c", "idx"],
             View::Field => &["p", "f", "c"],
             View::Tape => &["n", "par", "size", "depth"],
@@ -424,6 +427,7 @@ impl Viewed {
     fn own(&self) -> usize {
         match self.view {
             View::Node | View::Child => 1,
+            View::Line => 0,
             View::Field => 2,
             View::Tape => 0,
         }
@@ -433,7 +437,7 @@ impl Viewed {
         match self.view {
             View::Child | View::Field => Some(0),
             View::Tape => Some(1),
-            View::Node => None,
+            View::Node | View::Line => None,
         }
     }
 }
@@ -510,7 +514,7 @@ impl Source for Viewed {
     fn value(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
         let local = match self.view {
-            View::Node | View::Tape => i as u32,
+            View::Node | View::Line | View::Tape => i as u32,
             View::Child => i as u32 + 1,
             View::Field => p.fielded[i],
         };
@@ -525,6 +529,7 @@ impl Source for Viewed {
             }
             (View::Node, 3) => i64::from(p.facts.start[id]),
             (View::Node, 4) => i64::from(p.facts.end[id]),
+            (View::Line, 1) => i64::from(p.facts.start_line[id]),
             (View::Child | View::Field, 0) | (View::Tape, 1) => parent(),
             (View::Child, 2) => i64::from(p.idx[l]),
             (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field[id])),
@@ -552,7 +557,7 @@ pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreRe
 /// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
 fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
-    for (name, view) in [("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape)] {
+    for (name, view) in [("node", View::Node), ("line", View::Line), ("child", View::Child), ("field", View::Field), ("tape", View::Tape)] {
         out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view })));
     }
     for (family, name) in PY.into_iter().enumerate() {

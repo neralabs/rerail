@@ -497,6 +497,8 @@ impl Parser<'_> {
         let l = self.term()?;
         let op = match self.peek() {
             Tok::P(p @ ("=" | "!=" | "<" | "<=" | ">" | ">=")) => *p,
+            // A literal test on its own (`logic::strings`): `@prefix($s, "_")` is `@prefix($s, "_") = 1`.
+            _ if matches!(&l, Term::Call(f, _) if crate::code_rule_dsl::logic::strings::is_test(f)) => return Ok(Literal::Cmp { l, op: "=", r: Term::Int(1) }),
             _ => return self.fail("a comparison"),
         };
         self.i += 1;

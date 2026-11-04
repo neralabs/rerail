@@ -526,3 +526,39 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     assert_eq!(std::fs::read_to_string(dir.join("out-cold/type_of.csv")).unwrap(), "");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Step 30's primitives through the corpus runner: `line(n, l)`, and literal tests on names and paths (`@glob`,
+/// `@prefix`, `@suffix`) in place of regexes.
+#[test]
+fn rules_test_names_paths_and_lines_without_regexes() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("strings");
+    for (p, text) in [
+        ("impl/sqlite/fts/manager.py", "x = 1\n_hidden = 2\nfetch_async = 3\n"),
+        ("impl/base.py", "_also = 1\n"),
+        ("lib/other.py", "_outside = 1\n"),
+    ] {
+        let p = dir.join(p);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let program = r#"
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl text(n: node, s: sym)
+.decl line(n: node, l: int)
+.input doc, node, text, line
+.decl private_in_impl(p: sym, s: sym, l: int)
+private_in_impl($p, $s, $l) :- doc($d, $p, _), @glob($p, "impl/**/*.py"), node($d, $n, "identifier", _, _), text($n, $s),
+    @prefix($s, "_"), line($n, $l).
+.decl async_in_fts(s: sym)
+async_in_fts($s) :- doc($d, $p, _), @glob($p, "impl/*/fts/**"), node($d, $n, "identifier", _, _), text($n, $s), @suffix($s, "_async").
+.output private_in_impl, async_in_fts
+"#;
+    let out = dir.join("out");
+    let r = super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(r.files, 3);
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("private_in_impl"), "impl/base.py\t_also\t1\nimpl/sqlite/fts/manager.py\t_hidden\t2\n");
+    assert_eq!(read("async_in_fts"), "fetch_async\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}

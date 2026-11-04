@@ -91,6 +91,7 @@ impl Source {
 pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
     Some(match rel {
         "node" => &["d", "n", "kind", "start", "end_"],
+        "line" => &["n", "l"],
         "doc" => &["d", "path", "module"],
         "child" => &["p", "c", "idx"],
         "field" => &["p", "f", "c"],

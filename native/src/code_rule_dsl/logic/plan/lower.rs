@@ -75,7 +75,7 @@ impl Vars<'_> {
         if let Term::Call(f, args) = t {
             for (i, a) in args.iter().enumerate() {
                 if let Term::Var(v) = a
-                    && (f == "cat" || (f == "flat_bin" && i == 0))
+                    && (f == "cat" || (f == "flat_bin" && i == 0) || crate::code_rule_dsl::logic::strings::is_test(f))
                 {
                     changed |= self.set(v, Domain::Name)?;
                 }
@@ -205,7 +205,7 @@ impl Constants<'_> {
             Term::Call(f, args) => {
                 let f = f.clone();
                 for (i, a) in args.iter_mut().enumerate() {
-                    let d = (f == "cat" || (f == "flat_bin" && i == 0)).then_some(Domain::Name);
+                    let d = (f == "cat" || (f == "flat_bin" && i == 0) || crate::code_rule_dsl::logic::strings::is_test(&f)).then_some(Domain::Name);
                     self.term(a, d)?;
                 }
             }
