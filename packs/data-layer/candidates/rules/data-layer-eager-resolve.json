@@ -111,7 +111,7 @@
               "anchor": "capture.LINE"
             }
           },
-          "strings": {
+          "raw_strings": {
             "evidence": {
               "as": "row",
               "query": {
@@ -209,6 +209,16 @@
           }
         },
         "stages": [
+          {
+            "name": "strings",
+            "query": "SELECT \"__path\",\"__start\",NULL AS \"__end\",\"value\" FROM (SELECT __path,__start,__end,value FROM raw_strings)",
+            "indexes": [
+              [
+                "__path",
+                "__start"
+              ]
+            ]
+          },
           {
             "name": "functions",
             "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",\"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"condition_id\",NULL AS \"condition_start\",NULL AS \"condition_end\",NULL AS \"condition_kind\",NULL AS \"alias_id\",NULL AS \"alias_source\",NULL AS \"module_name_id\",NULL AS \"module_name_source\",\"name\" FROM (SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='function_definition')",
@@ -338,6 +348,11 @@
               [
                 "__path",
                 "name"
+              ],
+              [
+                "__path",
+                "qualname",
+                "__start"
               ]
             ]
           },

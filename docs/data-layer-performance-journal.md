@@ -5958,3 +5958,31 @@ The existing index starts with `(__path,fn,id)` and cannot serve either complete
 Purity also scans each function's node range before selecting global names.
 The next query starts with global names and the indexed expression-root name relation.
 The findings and source scopes remain unchanged.
+
+### Batch eight: completed queries expose semantic failures
+
+The event-index run completes purity analysis. It reports 275 findings against 269 expected findings.
+There are ten extra findings, four missing findings, and one lazy-architecture execution failure.
+Its diagnostic cold wall time is 437.063 seconds. Parent CPU is 380.254 seconds and maximum RSS is 8.593 GB.
+The external receipt reports 438.65 seconds wall and 382.07 seconds process-family CPU.
+The run overlaps builds and tests. It does not establish a performance improvement.
+
+The isolated lazy trace identifies 529,844,318 full-scan steps in `function_events`.
+Two correlated subqueries scan the decoded-string input without its required file/start index.
+The selected shape copies that input once into an indexed SQL relation used by all its consumers.
+Its scope is unchanged. There is no per-subquery materialization or optional backend.
+The event stage then completes with 5,845,913 scan steps and 54,403,412 VM steps, without automatic indexes.
+Its measured CPU falls from 27.908 seconds before interruption to 1.266 seconds with a complete result.
+These instrumented stage figures are diagnostic, not an end-to-end performance gate.
+
+Completion exposes 942 extra lazy findings. Final symbol selection must exclude overload stubs as call targets.
+Declaration diagnostics must still inspect each declaration. A new positive oracle case detects the lost overload diagnostics.
+Purity also needs final-definition selection for its record map and taint propagation from protected `getattr` assignments.
+A managed cache inside parentheses loses its constructor identity in the old SQL relation.
+A shared binding-value relation now removes those parentheses for cache classification and context-variable lookup.
+Reduced oracle probes retain these contracts, including managed cache reads and writes.
+
+The source-cap compatibility test now uses the documented per-file limit.
+Several admitted files can exceed that limit in total. One oversized file still causes an explicit failure.
+The broader TypeScript command was stopped after 125 seconds while replaying the older sixth-batch corpus.
+It did not pass and is not included in the completed gate counts.

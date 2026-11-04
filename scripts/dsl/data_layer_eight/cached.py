@@ -48,8 +48,8 @@ def build(stages,query,name,producers):
     else:
         gate={'regex':normalized_trigger(['cached_pure_lazy','cache_args'] if name=='cached-policy' else ['memoized_pure_lazy'])}
     plan['inputs']['syntax_gate']['evidence']['query']['ast']['rule']['all'].append(gate)
-    if name!='cached-policy':plan['inputs'].pop('strings',None)
-    else:plan['inputs']['strings']['evidence']['query']['ast']['rule']['all'].append({'inside':{'kind':'module',**gate,'stopBy':'end'}})
+    if name!='cached-policy':plan['inputs'].pop('raw_strings',None)
+    else:plan['inputs']['raw_strings']['evidence']['query']['ast']['rule']['all'].append({'inside':{'kind':'module',**gate,'stopBy':'end'}})
     for stage in plan['stages']:
         if stage['name'] in producers:
             roots,fields=producers[stage['name']]

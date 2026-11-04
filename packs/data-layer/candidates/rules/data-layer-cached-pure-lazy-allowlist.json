@@ -49,7 +49,7 @@
       "id": "cached-policy",
       "relational": {
         "inputs": {
-          "strings": {
+          "raw_strings": {
             "evidence": {
               "as": "row",
               "query": {
@@ -150,6 +150,16 @@
               [
                 "__path",
                 "kind"
+              ]
+            ]
+          },
+          {
+            "name": "strings",
+            "query": "SELECT \"__path\",\"__start\",NULL AS \"__end\",\"value\" FROM (SELECT __path,__start,__end,value FROM raw_strings)",
+            "indexes": [
+              [
+                "__path",
+                "__start"
               ]
             ]
           },
@@ -296,6 +306,11 @@
               [
                 "__path",
                 "name"
+              ],
+              [
+                "__path",
+                "qualname",
+                "__start"
               ]
             ]
           },
@@ -875,6 +890,11 @@
               [
                 "__path",
                 "name"
+              ],
+              [
+                "__path",
+                "qualname",
+                "__start"
               ]
             ]
           },

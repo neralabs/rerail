@@ -45,6 +45,10 @@ def candidate(source,policy):
         FROM owned_calls c JOIN function_flags f ON f.__path=c.__path AND f.id=c.fn LEFT JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver""",('target',)),
       S('architecture_edges',"SELECT c.__path,c.fn,c.__start,c.id,t.__path target_path,t.id target FROM call_targets c JOIN function_flags t ON t.symbol=c.target WHERE t.__path!=c.__path OR t.id!=c.fn",('__path','fn')),
     ]
+    # The visitor retains declaration diagnostics, while the callable symbol map
+    # selects the final definition for each qualified name.
+    targets=next(stage for stage in stages if stage['name']=='architecture_edges')
+    targets['query']=targets['query'].replace("WHERE t.__path!=c.__path OR t.id!=c.fn", "WHERE (t.__path!=c.__path OR t.id!=c.fn) AND NOT EXISTS(SELECT 1 FROM declaration_contexts later WHERE later.__path=t.__path AND later.qualname=t.qualname AND later.kind='function_definition' AND later.__start>t.__start)")
     events=[]
     def event(query):events.append(query)
     def calls(category,where,detail="c.leaf"):
@@ -81,13 +85,13 @@ def candidate(source,policy):
     rows=[]
     def finding(code,query):rows.append(query.replace('{code}',q(code)))
     def local(code,category,where='1',first=False):
-        finding(code,"SELECT f.__path path,e.__start start_byte,e.__end end_byte,{code} issue,f.id||':"+category+":'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category="+q(category)+" AND "+where+(" AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category)" if first else ''))
+        finding(code,"SELECT f.__path path,e.__start start_byte,e.__end end_byte,{code} issue,f.id||':"+category+":'||e.id identity FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category="+q(category)+" AND ("+where+")"+(" AND e.__start=(SELECT min(other.__start) FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category)" if first else ''))
     def rolled(code,category,where):
         finding(code,"SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,{code} issue,f.id||':"+code+"' identity FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category="+q(category)+" WHERE "+where)
     rolled('LA-001','plan','f.pure')
     rolled('LA-002','plan',"EXISTS(SELECT 1 FROM rollups intent WHERE intent.__path=f.__path AND intent.root=f.id AND intent.category='intent')")
     rolled('LA-003','plan',"f.name NOT GLOB '_*' AND f.name NOT GLOB '*_lazy' AND NOT f.pure AND (rx_matches(f.__path,"+prefixes('FEATURE_PUBLIC_PREFIXES')+") OR f.__path='impl/common/l5200_sql_query/_insert_from_query.py') AND NOT EXISTS(SELECT 1 FROM rollups intent WHERE intent.__path=f.__path AND intent.root=f.id AND intent.category='intent')")
-    rolled('LA-004','native',"NOT rx_matches(f.__path,'migration') AND EXISTS(SELECT 1 FROM rollups plan WHERE plan.__path=f.__path AND plan.root=f.id AND plan.category='plan')")
+    rolled('LA-004','native',"NOT rx_matches(f.__path,'migration') AND EXISTS(SELECT 1 FROM rollups plan WHERE plan.__path=f.__path AND plan.root=f.id AND plan.category='orchestration')")
     finding('LA-005',"SELECT f.__path path,CASE WHEN min(r.location)<0 THEN min(r.location)+1000000000 ELSE min(r.location) END start_byte,CASE WHEN min(r.location)<0 THEN min(r.location)+1000000000 ELSE min(r.location) END end_byte,{code} issue,f.id identity FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category IN ('dolt','native') WHERE rx_matches(f.__path,"+prefixes('NATIVE_ORCHESTRATION_PATHS')+") GROUP BY f.__path,f.id")
     local('LA-006','plan',"EXISTS(SELECT 1 FROM classified_calls c WHERE c.__path=e.__path AND c.id=e.id AND EXISTS(SELECT 1 FROM attributes attr WHERE attr.__path=c.__path AND attr.attr='_conn' AND (EXISTS(SELECT 1 FROM arguments a WHERE a.__path=c.__path AND a.call=c.id AND a.position=0 AND attr.__start>=a.__start AND attr.__end<=a.__end) OR EXISTS(SELECT 1 FROM keywords k WHERE k.__path=c.__path AND k.call=c.id AND k.name IN ('owner','txn','tx','conn','connection') AND attr.__start>=k.__start AND attr.__end<=k.__end))))")
     rolled('LA-007','plan',"f.name GLOB 'prepare_*'")
@@ -117,6 +121,8 @@ def candidate(source,policy):
     final=' UNION ALL '.join('SELECT * FROM '+s['name'] for s in stages if s['name'].startswith('diagnostics_'))
     strings=E(A(O(K('string'),K('concatenated_string')),P('STRING'),{'regex':r'''(?i)^[ru]*["']'''},{'inside':{'kind':'function_definition','stopBy':'end'}}),{'value':'capture.DECODED.text'},transform={'DECODED':{'substring':{'source':'$STRING','value':True,'startChar':0}}})
     final="SELECT d.path,d.start_byte,CASE WHEN d.end_byte>d.start_byte THEN d.end_byte ELSE a.__end END end_byte,d.issue,d.identity FROM ("+final+") d JOIN anchor_spans a ON a.__path=d.path AND a.__start=d.start_byte"
+    from data_layer_eight.lazy_bindings import apply
+    apply(stages)
     item=clause('lazy-architecture',stages,final,{'strings':strings});item['relational'].pop('partitionBy',None)
     ast=item['relational']['inputs']['syntax_gate']['evidence']['query']['ast']
     ast['rule']=A(ast['rule'],{'$option':'entryPoint','cases':{'_scan_deleted_cold_bootstrap_surfaces':{'regex':r'\b\B'}},'default':{'regex':'(?s).*'}})

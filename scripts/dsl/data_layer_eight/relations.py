@@ -9,11 +9,16 @@ def clause(name,stages,query,inputs=None):
     for stage in expressions:
         if stage['name']=='parameters':
             stage['query']=stage['query'].replace("(n.id=p.id AND p.kind='identifier' OR n.parent=p.id AND n.ordinal=0 AND n.kind='identifier')", "n.id=CASE WHEN p.kind='identifier' THEN p.id ELSE (SELECT child.id FROM nodes child WHERE child.__path=p.__path AND child.parent=p.id AND child.ordinal=0 AND child.kind='identifier' LIMIT 1) END")
+        elif stage['name']=='assignments' and any(s['name']=='module_alias_bindings' for s in stages):
+            stage['indexes'].append(['__path','target_text','__start'])
         elif stage['name']=='arguments':
             stage['query']=stage['query'].replace("(n.parent=c.arguments_kind||':'||c.arguments_start||':'||c.arguments_end AND c.arguments_kind!='generator_expression' OR n.id=c.arguments_kind||':'||c.arguments_start||':'||c.arguments_end AND c.arguments_kind='generator_expression')", "n.parent=CASE WHEN c.arguments_kind='generator_expression' THEN c.id ELSE c.arguments_kind||':'||c.arguments_start||':'||c.arguments_end END AND (c.arguments_kind!='generator_expression' OR n.id=c.arguments_kind||':'||c.arguments_start||':'||c.arguments_end)")
     item=relational(name,[*expressions,*stages],query)
     plan=item['relational'];plan['partitionBy']='file'
     plan['inputs'].update(inputs or {})
+    if 'strings' in plan['inputs']:
+        plan['inputs']['raw_strings']=plan['inputs'].pop('strings')
+        plan['stages'].insert(0, {'name':'strings','query':'SELECT __path,__start,__end,value FROM raw_strings','indexes':[['__path','__start']]})
     # Retain only actual consumers; do not publish generic unused relations.
     catalog={s['name']:s for s in plan['stages']};needed=set();pending=[query]
     while pending:
