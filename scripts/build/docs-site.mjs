@@ -18,7 +18,8 @@
 //
 // Every page, the DSL reference too, has the same top bar with a search box over `search-index.json` (each page's h2
 // and h3 sections, the reference's cards and grammar productions); a page with three or more sections has an outline
-// beside it on wide screens.
+// beside it on wide screens. The bar also has the one theme toggle: every page follows the colour scheme until a reader
+// chooses, and that choice holds on every page.
 //
 // For agents (llmstxt.org), every page also gets a Markdown twin at the same path with `.md` (a doc's own Markdown with
 // its links pointed at twins; the DSL reference converted from its HTML), named in its <head> and in a line at the top
@@ -323,7 +324,61 @@ const HEADER_CSS = `
 .site-search li a:hover, .site-search li[aria-selected] a { background: var(--brand-subtle); text-decoration: none; }
 .site-search li small { display: block; color: var(--muted-foreground); font-size: 0.78rem; }
 .site-search li.none { padding: 0.45rem 0.65rem; color: var(--muted-foreground); font-size: 0.9rem; }
+.site-theme { display: inline-flex; padding: 0.35rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: none; color: var(--muted-foreground); cursor: pointer; }
+.site-theme svg { display: block; }
+.site-theme .ico-sun { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .site-theme .ico-sun { display: block; }
+  :root:not([data-theme="light"]) .site-theme .ico-moon { display: none; }
+}
+:root[data-theme="dark"] .site-theme .ico-sun { display: block; }
+:root[data-theme="dark"] .site-theme .ico-moon { display: none; }
+.site-theme:hover { color: var(--brand-foreground); border-color: var(--brand-border); }
 @media (max-width: 640px) { .site-search { flex-basis: 100%; } .site-search input { width: 100%; } }
+`;
+
+/** Where a reader's theme is kept: the key the DSL reference's own script reads, so that page agrees with the rest. */
+const THEME_KEY = "rerail-dsl-ref-theme";
+
+/** Applies the reader's theme in <head>, before the page paints. Without a choice, the colour scheme decides. */
+const THEME_SCRIPT = `<script>
+(() => {
+  let stored = null;
+  try { stored = localStorage.getItem("${THEME_KEY}"); } catch { /* private mode */ }
+  if (stored === "light" || stored === "dark") {
+    document.documentElement.dataset.theme = stored;
+    document.documentElement.style.colorScheme = stored;
+  }
+})();
+</script>
+`;
+
+/**
+ * The toggle's glyphs, Phosphor bold on a 256 grid as the dashboard's are (ui/dom.js). It shows the theme a click switches
+ * to: the sun in dark, the moon in light. CSS picks one from the same selectors as the tokens, so it is right before any
+ * script runs.
+ */
+const THEME_ICONS = [
+  ["ico-sun", "M116,36V20a12,12,0,0,1,24,0V36a12,12,0,0,1-24,0Zm80,92a68,68,0,1,1-68-68A68.07,68.07,0,0,1,196,128Zm-24,0a44,44,0,1,0-44,44A44.05,44.05,0,0,0,172,128ZM51.51,68.49a12,12,0,1,0,17-17l-12-12a12,12,0,0,0-17,17Zm0,119-12,12a12,12,0,0,0,17,17l12-12a12,12,0,1,0-17-17ZM196,72a12,12,0,0,0,8.49-3.51l12-12a12,12,0,0,0-17-17l-12,12A12,12,0,0,0,196,72Zm8.49,115.51a12,12,0,0,0-17,17l12,12a12,12,0,0,0,17-17ZM48,128a12,12,0,0,0-12-12H20a12,12,0,0,0,0,24H36A12,12,0,0,0,48,128Zm80,80a12,12,0,0,0-12,12v16a12,12,0,0,0,24,0V220A12,12,0,0,0,128,208Zm108-92H220a12,12,0,0,0,0,24h16a12,12,0,0,0,0-24Z"],
+  ["ico-moon", "M236.37,139.4a12,12,0,0,0-12-3A84.07,84.07,0,0,1,119.6,31.59a12,12,0,0,0-15-15A108.86,108.86,0,0,0,49.69,55.07,108,108,0,0,0,136,228a107.09,107.09,0,0,0,64.93-21.69,108.86,108.86,0,0,0,38.44-54.94A12,12,0,0,0,236.37,139.4Zm-49.88,47.74A84,84,0,0,1,68.86,69.51,84.93,84.93,0,0,1,92.27,48.29Q92,52.13,92,56A108.12,108.12,0,0,0,200,164q3.87,0,7.71-.27A84.79,84.79,0,0,1,186.49,187.14Z"],
+].map(([name, path]) => `<svg class="${name}" viewBox="0 0 256 256" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="${path}"/></svg>`).join("");
+
+/** The top bar's toggle. A page with a diagram reloads, since mermaid takes its colours from the tokens once. */
+const THEME_TOGGLE_SCRIPT = `<script>
+(() => {
+  const root = document.documentElement;
+  document.querySelector(".site-theme")?.addEventListener("click", () => {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    const theme = dark ? "light" : "dark";
+    root.dataset.theme = theme;
+    root.style.colorScheme = theme;
+    try {
+      localStorage.setItem("${THEME_KEY}", theme);
+      if (document.querySelector("pre.mermaid")) location.reload();
+    } catch { /* private mode: this page only */ }
+  });
+})();
+</script>
 `;
 
 /** The outline beside a long page marks the section being read: the last one whose heading is above the fold's top. */
@@ -504,7 +559,7 @@ html { scroll-padding-top: 4rem; }
 /**
  * The DSL reference's palette mapped onto the tokens, for the site's copy of it. Its own dark blocks are more specific
  * than `:root`, so each mapping is `!important`; the values follow the tokens, whose own selectors (`data-theme`, which
- * its toggle sets, and the colour scheme) pick the theme. Its --card and --border are the tokens' own names, and the
+ * the top bar's toggle sets, and the colour scheme) pick the theme. Its own toggle is hidden: the top bar's replaces it. Its --card and --border are the tokens' own names, and the
  * tokens' sheet comes after its <style>, so those need no mapping.
  */
 const REFERENCE_MAP = `:root {
@@ -532,6 +587,7 @@ const REFERENCE_MAP = `:root {
   --hm5: color-mix(in srgb, var(--brand) 78%, var(--card)) !important;
   --hm6: var(--brand) !important;
 }
+#theme-toggle { display: none; }
 body { font-family: var(--font-sans); }
 code, pre, .mono { ${MONO} }
 .grammar .about, .grammar .d, .grammar .gnote { font-family: var(--font-sans); }
@@ -569,7 +625,7 @@ mermaid.initialize({
   startOnLoad: false,
   theme: "base",
   themeVariables: {
-    darkMode: matchMedia("(prefers-color-scheme: dark)").matches,
+    darkMode: document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches,
     fontFamily: token("--font-sans"),
     background: token("--card"),
     primaryColor: token("--card"),
@@ -661,12 +717,12 @@ const SEARCH_SCRIPT = `<script>
 </script>
 `;
 
-/** The bar across the top of every page, the DSL reference's too: the docs' name, its main pages, GitHub, search. */
+/** The bar across the top of every page, the DSL reference's too: the docs' name, its main pages, GitHub, theme, search. */
 function siteHeader(root, current, pages) {
   const link = (target, label) => `<a href="${root}/${target}"${target === current ? ' aria-current="page"' : ""}>${label}</a>`;
-  const nav = [link("index.html", "Docs"), ...NAV.filter(([target]) => pages.has(target)).map(([target, label]) => link(target, label)), `<a href="${REPO}">GitHub</a>`];
+  const nav = [link("index.html", "Docs"), ...NAV.filter(([target]) => pages.has(target)).map(([target, label]) => link(target, label)), `<a href="${REPO}">GitHub</a>`, `<button type="button" class="site-theme" aria-label="Switch between light and dark" title="Switch between light and dark">${THEME_ICONS}</button>`];
   const search = `<div class="site-search" data-root="${root}" role="search"><input type="search" placeholder="Search docs" aria-label="Search the docs (press /)" autocomplete="off"><ol hidden></ol></div>`;
-  return `<header class="site-header"><nav><a class="brand" href="${root}/index.html">Rerail docs</a>${nav.join("")}${search}</nav></header>\n${SEARCH_SCRIPT}`;
+  return `<header class="site-header"><nav><a class="brand" href="${root}/index.html">Rerail docs</a>${nav.join("")}${search}</nav></header>\n${SEARCH_SCRIPT}${THEME_TOGGLE_SCRIPT}`;
 }
 
 /** Plain text of an HTML fragment, its whitespace collapsed. */
@@ -714,7 +770,7 @@ function page({ title, body, mermaid, copyable, sections }, path, pages) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>${escapeHtml(title)} · Rerail docs</title>
+${THEME_SCRIPT}<title>${escapeHtml(title)} · Rerail docs</title>
 <link rel="alternate" type="text/markdown" href="${root}/${twinPath(current)}">
 <link rel="stylesheet" href="${root}/tokens.css">
 <style>
@@ -742,7 +798,7 @@ function themedReference(html, pages) {
   const at = end + "</style>".length;
   const open = body + "<body>".length;
   const top = main + '<main id="top">'.length;
-  return `${html.slice(0, at)}\n<link rel="alternate" type="text/markdown" href="${twinPath(REFERENCE)}">\n<link rel="stylesheet" href="tokens.css">\n<style>\n${SITE_TOKENS}${HEADER_CSS}${REFERENCE_MAP}${REFERENCE_UNDER_HEADER}</style>${html.slice(at, open)}\n${siteHeader(".", REFERENCE, pages)}${html.slice(open, top)}\n${agentNote(".", REFERENCE)}${html.slice(top)}`;
+  return `${html.slice(0, at)}\n${THEME_SCRIPT}<link rel="alternate" type="text/markdown" href="${twinPath(REFERENCE)}">\n<link rel="stylesheet" href="tokens.css">\n<style>\n${SITE_TOKENS}${HEADER_CSS}${REFERENCE_MAP}${REFERENCE_UNDER_HEADER}</style>${html.slice(at, open)}\n${siteHeader(".", REFERENCE, pages)}${html.slice(open, top)}\n${agentNote(".", REFERENCE)}${html.slice(top)}`;
 }
 
 /** A page's Markdown twin, which agents read instead of the HTML: `x.html` → `x.md`. */
