@@ -2,8 +2,11 @@
 // table of its documents (`DocView`, `residency::slabs`); each document's v9np columns, parents,
 // codes, source and line starts are read from its slab. Node indices here are document-local; a
 // batch's numbering is `doc.nodeBase + local`. NONE is u32's max.
-struct DocView{uint slab,nodes,nodeBase,widths,code,size,base,off,tail,parent,codes,source,sourceLen,lines,lineCount,reserved;};
-static_assert(sizeof(DocView)==64u,"document view layout");
+// kidStart, kids: each node's first child in its document's child lists, and the lists (the
+// interpreter's children by index); childBase, sourceBase, lineBase: the document's place in the
+// batch's numbering of children, source bytes and lines.
+struct DocView{uint slab,nodes,nodeBase,widths,code,size,base,off,tail,parent,codes,source,sourceLen,lines,lineCount,reserved,kidStart,kids,kidCount,childBase,sourceBase,lineBase,padding0,padding1;};
+static_assert(sizeof(DocView)==96u,"document view layout");
 // `tape::resident::DeviceCode`: flags are named, extra<<1, missing<<2, error<<3.
 struct DeviceCode{ushort kind,field;uchar flags,classCount;ushort reserved;ushort classes[8];};
 static_assert(sizeof(DeviceCode)==24u,"device code layout");

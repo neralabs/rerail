@@ -262,6 +262,9 @@ impl Drop for MetalWorkspaceLease {
 }
 
 const BATCH_ENTRY: &str = include_str!("metal_batch_runtime.metal");
+/// The interpreter over resident tapes (decision 0032): `run_batch` reading the batch's documents
+/// in the slabs through the tape view, as the label passes bind it.
+const RESIDENT_PREFIX: &str = concat!("#define RERAIL_RESIDENT 1\n#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"));
 
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct ProgramBufferKey {
@@ -563,6 +566,20 @@ fn jit_kernel_source(programs: &[Program]) -> Result<String, Error> {
 const INTERPRETER_FETCH: &str =
     "uint word=words[program.wordStart+path.pc];op=word&255u;mode=(word>>8u)&255u;operand=word>>16u;";
 
+/// The interpreter over resident tapes (the label passes'), compiled once (until the residency's
+/// drop releases it with the other pipelines' caches: it is held by the label runs' callers).
+pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
+    static INTERPRETER: Mutex<Option<Engine>> = Mutex::new(None);
+    let mut cached = INTERPRETER.lock().map_err(|_| Error::BackendFailure)?;
+    if let Some(engine) = &*cached {
+        return Ok(engine.clone());
+    }
+    let source = format!("{RESIDENT_PREFIX}{}", kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    let engine = Engine::Interpreter { pipeline: pipeline_named(&source, "run_batch")?, buffers: Arc::new(Mutex::new(None)) };
+    *cached = Some(engine.clone());
+    Ok(engine)
+}
+
 pub(super) fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
         pipeline: pipeline_named(
@@ -588,7 +605,8 @@ pub(super) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
     if let Some(pipeline) = &*cached {
         return Ok(pipeline.clone());
     }
-    let source = kernel_source(INTERPRETER_FETCH, None, "", "", "");
+    // The label passes' sweep, over resident tapes as their interpreter.
+    let source = format!("{RESIDENT_PREFIX}{}", kernel_source(INTERPRETER_FETCH, None, "", "", ""));
     let edit = |source: String, from: &str, to: &str| {
         assert_eq!(source.matches(from).count(), 1, "the runtime has one {from}");
         source.replacen(from, to, 1)
@@ -605,8 +623,8 @@ pub(super) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
     let source = edit(source, "status.reserved=taskWork", "status.reserved=taskWork|(sweepChanged?0x80000000u:0u)");
     let source = edit(
         source,
-        "void run_task(",
-        "static bool sweep_mark(device atomic_uint* bits,uint node){uint bit=1u<<(node%32u);return (atomic_fetch_or_explicit(&bits[node/32u],bit,memory_order_relaxed)&bit)==0u;}\nvoid run_task(",
+        "void run_task_in(",
+        "static bool sweep_mark(device atomic_uint* bits,uint node){uint bit=1u<<(node%32u);return (atomic_fetch_or_explicit(&bits[node/32u],bit,memory_order_relaxed)&bit)==0u;}\nvoid run_task_in(",
     );
     let begin = source.find("kernel void run_batch(").expect("the runtime has run_batch") + "kernel void run_batch(".len();
     let end = begin + source[begin..].find("uint tid [[thread_position_in_grid]]){").expect("run_batch's thread position");

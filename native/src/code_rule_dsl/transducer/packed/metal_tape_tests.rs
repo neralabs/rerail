@@ -6,7 +6,7 @@ use crate::code_rule_dsl::prefilter::tests::{document, temp};
 use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
 use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION};
 use crate::content_store::ContentStore;
-use sha2::{Digest as _, Sha256};
+use sha2::Sha256;
 
 const TAPE: &str = include_str!("metal_tape.metal");
 const FIELDS: usize = 12;

@@ -330,6 +330,54 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
     assert!(differ.is_empty(), "{} lowered clauses differ between CPU and Metal", differ.len());
 }
 
+/// S2 on the interpreter (decision 0032): every pass runs as programs in `run_batch` over the
+/// resident tapes (as a run whose walks outgrew their frames does), every fourth clause. A clause
+/// whose programs need more interpreter states than the buffer budget holds is refused
+/// (`BackendCapacity`) on the packed batch alike (`RERAIL_PACKED_INTERPRETER`, 24 of 39), and
+/// runs as walks in production.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
+    use super::compile_matcher::Backend;
+    use metal_program_backend::label_passes::{INTERPRET_ONLY, PACKED_INTERPRETER};
+    PACKED_INTERPRETER.set(std::env::var_os("RERAIL_PACKED_INTERPRETER").is_some());
+    let tapes = fixtures();
+    let compiled = clauses();
+    let (mut lowered, mut differ, mut refused, mut equal) = (0, Vec::new(), 0, 0);
+    INTERPRET_ONLY.set(true);
+    for (policy, compiled) in &compiled {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            let Ok(program) = LoweredMatcher::lower(&tree) else { continue };
+            lowered += 1;
+            if lowered % 4 != 0 {
+                continue;
+            }
+            let cpu = program.roots_batch(Backend::Cpu, &tapes);
+            let metal = program.roots_metal(&tapes).map(|(roots, outcome)| {
+                assert!(outcome.interpreted, "{policy}/{clause} ran its walks");
+                roots
+            });
+            match (cpu, metal) {
+                (Ok(cpu), Ok(metal)) if cpu == metal => equal += 1,
+                (Ok(_), Err(Error::BackendCapacity)) => refused += 1,
+                (cpu, metal) => differ.push(format!("{policy}/{clause}: cpu {:?}, metal {:?}", cpu.as_ref().err(), metal.as_ref().err())),
+            }
+        }
+    }
+    INTERPRET_ONLY.set(false);
+    PACKED_INTERPRETER.set(false);
+    eprintln!("S2 interpreted: {equal} of {} clauses equal, {refused} over the interpreter's budget", lowered / 4);
+    for differ in &differ {
+        eprintln!("  {differ}");
+    }
+    assert!(differ.is_empty(), "{} clauses differ on the resident interpreter", differ.len());
+    assert!(equal > 0, "no clause ran on the interpreter");
+}
+
 /// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]

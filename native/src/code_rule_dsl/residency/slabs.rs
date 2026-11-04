@@ -74,8 +74,20 @@ pub(in crate::code_rule_dsl) struct DocView {
     pub(in crate::code_rule_dsl) lines: u32,
     pub(in crate::code_rule_dsl) line_count: u32,
     pub(in crate::code_rule_dsl) reserved: u32,
+    /// Each node's first entry in `kids` (u32, `nodes + 1` of them), and the children of every
+    /// node in node order (u32, document-local; `kid_count` of them, a tree's `nodes - 1`): the
+    /// child lists a reader builds at admission, for the interpreter's child by index.
+    pub(in crate::code_rule_dsl) kid_start: u32,
+    pub(in crate::code_rule_dsl) kids: u32,
+    pub(in crate::code_rule_dsl) kid_count: u32,
+    /// The document's place in a batch's numbering of children, source bytes and lines, as a
+    /// packed batch concatenates them (set by `DocTable`).
+    pub(in crate::code_rule_dsl) child_base: u32,
+    pub(in crate::code_rule_dsl) source_base: u32,
+    pub(in crate::code_rule_dsl) line_base: u32,
+    pub(in crate::code_rule_dsl) padding: [u32; 2],
 }
-const _: () = assert!(std::mem::size_of::<DocView>() == 64);
+const _: () = assert!(std::mem::size_of::<DocView>() == 96);
 
 /// A slab: its buffer and identity. Its bump position is the residency's (`State`).
 pub(in crate::code_rule_dsl) struct Slab {
@@ -131,6 +143,7 @@ impl DocTable {
         let mut slabs: Vec<Arc<Slab>> = Vec::new();
         let mut views = Vec::with_capacity(documents.len());
         let mut nodes = 0usize;
+        let (mut children, mut source, mut lines) = (0usize, 0usize, 0usize);
         for document in &documents {
             let slab = match slabs.iter().position(|slab| slab.id == document.slab.id) {
                 Some(at) => at,
@@ -140,10 +153,21 @@ impl DocTable {
                 }
                 None => return None,
             };
-            views.push(DocView { slab: slab as u32, node_base: u32::try_from(nodes).ok()?, ..document.view });
+            views.push(DocView {
+                slab: slab as u32,
+                node_base: u32::try_from(nodes).ok()?,
+                child_base: u32::try_from(children).ok()?,
+                source_base: u32::try_from(source).ok()?,
+                line_base: u32::try_from(lines).ok()?,
+                ..document.view
+            });
             nodes += document.view.nodes as usize;
+            children += document.view.kid_count as usize;
+            source += document.view.source_len as usize;
+            lines += document.view.line_count as usize;
         }
         u32::try_from(nodes).ok()?;
+        u32::try_from(source).ok()?;
         Some(Self { views, slabs, nodes, documents })
     }
 }
@@ -204,7 +228,12 @@ struct Plan {
 
 impl Plan {
     fn bytes(&self) -> usize {
-        aligned(self.tape) + aligned(self.source) + aligned(4 * self.nodes) + aligned(24 * self.codes) + aligned(4 * self.lines)
+        aligned(self.tape) + aligned(self.source) + self.derived()
+    }
+
+    /// The reader's state: parents, codes, line starts and child lists.
+    fn derived(&self) -> usize {
+        aligned(4 * self.nodes) + aligned(24 * self.codes) + aligned(4 * self.lines) + aligned(4 * (self.nodes + 1)) + aligned(4 * self.nodes.saturating_sub(1))
     }
 }
 
@@ -404,6 +433,8 @@ fn place(
     let parent_at = source_at + aligned(plan.source);
     let codes_at = parent_at + aligned(4 * plan.nodes);
     let lines_at = codes_at + aligned(24 * plan.codes);
+    let kid_start_at = lines_at + aligned(4 * plan.lines);
+    let kids_at = kid_start_at + aligned(4 * (plan.nodes + 1));
     let tape = region(tape_at, plan.tape);
     let source = region(source_at, plan.source);
     match parts {
@@ -452,6 +483,32 @@ fn place(
         lines[line] = at as u32 + 1;
         line += 1;
     }
+    // Child lists from the parents: counts, their prefix, then each node into its parent's list
+    // in node order (a parent's children ascend).
+    // SAFETY: as the parents', `4 * (nodes + 1)` and `4 * (nodes - 1)` bytes.
+    let kid_start = unsafe { std::slice::from_raw_parts_mut(base.add(kid_start_at).cast::<u32>(), plan.nodes + 1) };
+    let kids = unsafe { std::slice::from_raw_parts_mut(base.add(kids_at).cast::<u32>(), plan.nodes.saturating_sub(1)) };
+    kid_start.fill(0);
+    let mut kid_count = 0usize;
+    for &parent in parents.iter() {
+        if parent != u32::MAX {
+            kid_start[parent as usize + 1] += 1;
+            kid_count += 1;
+        }
+    }
+    if kid_count != kids.len() {
+        return Err(invalid("a tape that is not one tree"));
+    }
+    for node in 0..plan.nodes {
+        kid_start[node + 1] += kid_start[node];
+    }
+    let mut fill = kid_start[..plan.nodes].to_vec();
+    for (node, &parent) in parents.iter().enumerate() {
+        if parent != u32::MAX {
+            kids[fill[parent as usize] as usize] = node as u32;
+            fill[parent as usize] += 1;
+        }
+    }
     let widths = u32::from(layout.widths[0]) | u32::from(layout.widths[1]) << 4 | u32::from(layout.widths[2]) << 8 | u32::from(layout.from_start) << 12;
     let at = |offset: usize| u32::try_from(offset).map_err(|_| invalid("a slab offset past 4 GiB"));
     let view = DocView {
@@ -471,13 +528,20 @@ fn place(
         lines: at(lines_at)?,
         line_count: at(plan.lines)?,
         reserved: 0,
+        kid_start: at(kid_start_at)?,
+        kids: at(kids_at)?,
+        kid_count: at(kid_count)?,
+        child_base: 0,
+        source_base: 0,
+        line_base: 0,
+        padding: [0; 2],
     };
     crate::code_rule_dsl::prof::count("residency.decompressed_kb", (plan.tape + plan.source) >> 10);
     Ok(Resident {
         digest: *digest,
         slab: Arc::clone(slab),
         view,
-        bytes: [aligned(plan.tape), aligned(plan.source), aligned(4 * plan.nodes) + aligned(24 * plan.codes) + aligned(4 * plan.lines)],
+        bytes: [aligned(plan.tape), aligned(plan.source), plan.derived()],
         tape_length: plan.tape,
     })
 }

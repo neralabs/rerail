@@ -642,7 +642,7 @@ pub(in crate::code_rule_dsl) fn warm() {
             // device is not opened here: on S7 a wave waiting on this thread's open waited longer
             // (to 0.8 s under load) than opening it itself (50-80 ms).
             let _ = super::set_steps::pipelines();
-            let _ = compile_interpreter_cached();
+            let _ = compile_resident_interpreter_cached();
             let _ = pipelines();
             let _ = compile_sweep_cached();
         });
@@ -808,6 +808,33 @@ struct Runner<'a> {
     roots: Option<RootsEncoded>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: the passes run on the interpreter, as a run whose walks outgrew their frames does.
+    pub(in crate::code_rule_dsl) static INTERPRET_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: the interpreter reads the packed batch, not the resident tapes (an A/B oracle while
+    /// the packed buffers are still built).
+    pub(in crate::code_rule_dsl) static PACKED_INTERPRETER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn packed_interpreter() -> bool {
+    #[cfg(test)]
+    return PACKED_INTERPRETER.get();
+    #[cfg(not(test))]
+    false
+}
+
+fn interpret_only() -> bool {
+    #[cfg(test)]
+    return INTERPRET_ONLY.get();
+    #[cfg(not(test))]
+    false
+}
+
 pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     // The run's command buffers and encoders are autoreleased, and they retain its buffers: drained
     // here, its buffers go with it rather than living until the thread's pool drains (06 S7: the
@@ -918,7 +945,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let mut rounds = plan_rounds(0, &wanted)?;
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
-    let (mut lanes, mut micro, mut deep, mut released) = (NARROW, true, false, false);
+    let (mut lanes, mut micro, mut deep, mut released) = (NARROW, !interpret_only(), false, false);
     loop {
         let mut outcome = match encode(device, plan, files, &rounds, lanes, micro, deep) {
             // Workspaces kept from earlier runs hold the budget: freed once, the same run again.
@@ -1041,7 +1068,7 @@ fn encode(
     command.set_label("Rerail label passes");
     let mut runner = Runner {
         device,
-        engine: compile_interpreter_cached()?,
+        engine: if packed_interpreter() { compile_interpreter_cached()? } else { compile_resident_interpreter_cached()? },
         kernels: pipelines()?,
         sweep: if plan.steps.iter().any(|(recursive, levels)| *recursive && sweeps(levels)) {
             Some(compile_sweep_cached()?)
@@ -1908,20 +1935,30 @@ impl Runner<'_> {
         Ok(())
     }
 
-    /// The interpreter's buffers for a prepared batch, in `run_batch`'s order.
+    /// The interpreter's buffers for a prepared batch, in `run_batch`'s order: over resident
+    /// tapes, the document table at `files` and the slabs at `nodes`, `children`, `source` and
+    /// `lineStarts` (`RERAIL_RESIDENT`).
     fn bound(&self, prepared: &Prepared) -> Vec<Buffer> {
         let lease = &self.workspace.as_ref().expect("a workspace").lease;
         let tapes = &self.tapes;
+        let slabs = &tapes.table.slabs;
+        let slab = |slot: usize| slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| &slab.buffer.buffer);
         let program_buffers = &prepared.program;
+        let packed = packed_interpreter();
+        let (files, nodes, children, source, lines) = if packed {
+            (&tapes.files.buffer, &tapes.nodes.buffer, &tapes.children.buffer, &tapes.source.buffer, &tapes.line_starts.buffer)
+        } else {
+            (&tapes.docs.buffer, slab(0), slab(1), slab(2), slab(3))
+        };
         [
             &prepared.tasks.buffer,
             &prepared.header.buffer,
-            &tapes.files.buffer,
-            &tapes.nodes.buffer,
+            files,
+            nodes,
             &program_buffers.programs.buffer,
             &program_buffers.words.buffer,
             &program_buffers.longs.buffer,
-            &tapes.children.buffer,
+            children,
             &tapes.supertypes.buffer,
             &lease.pending.buffer,
             &lease.captures.buffer,
@@ -1940,9 +1977,9 @@ impl Runner<'_> {
             &program_buffers.assertions.buffer,
             &program_buffers.assertion_data.buffer,
             &program_buffers.string_bytes.buffer,
-            &tapes.source.buffer,
+            source,
             &lease.value_states.buffer,
-            &tapes.line_starts.buffer,
+            lines,
             &lease.final_captures.buffer,
             &lease.output_storage.buffer,
         ]
