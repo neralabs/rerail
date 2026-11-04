@@ -2100,12 +2100,16 @@ impl TapeDoc {
         rec.start as usize..rec.end as usize
     }
 
+    /// Whether the node is named (its alias's, else its kind's).
+    pub(super) fn transducer_is_named(&self, node: u32) -> bool {
+        self.node_is_named(node)
+    }
+
     pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_children(&self, node: u32) -> impl Iterator<Item = u32> + '_ {
         let mut next = self.data[node as usize].first;
         std::iter::from_fn(move || {

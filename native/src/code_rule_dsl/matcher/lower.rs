@@ -85,6 +85,9 @@ impl Fact {
     ) -> Vec<FactRow> {
         use super::util::{THREE_VALUED, UNKNOWN, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STEPS_LEFT};
         use ast_grep_core::matcher::Matcher;
+        if let AstMatcher::NthChild(nth) = &self.producer {
+            return nth.rows(file, starts).into_iter().map(|node| (node, Vec::new())).collect();
+        }
         let mut rows = Vec::new();
         super::resolve::CURRENT_CLAUSE.set(self as *const Self as usize);
         THREE_VALUED.set(true);
@@ -282,6 +285,8 @@ struct Lowering {
     /// far: a fact's key.
     source: ([u8; 32], Option<crate::code_rule_dsl::language::GrammarDialect>),
     facts: usize,
+    /// The kinds an `all`'s `kind` conjuncts allow, while its `nthChild` conjunct is lowered.
+    conjunct_kinds: Option<BTreeSet<u16>>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -312,7 +317,29 @@ impl Lowering {
             }
             AstMatcher::Supertype(supertype) => MatchTree::Supertype(supertype.class, Arc::clone(&supertype.kinds)),
             AstMatcher::Regex(regex) => MatchTree::Regex(regex.clone()),
-            AstMatcher::All(matchers) => MatchTree::All(self.trees(matchers, shares)?),
+            AstMatcher::All(matchers) => {
+                // An `nthChild` beside a `kind` holds only at nodes of that kind: its fact's
+                // producer starts only there (not at every node).
+                let kinds = matchers
+                    .iter()
+                    .filter_map(|m| match m {
+                        AstMatcher::Kind(kind) => kind.potential_kinds().map(|ks| ks.iter().filter_map(|k| u16::try_from(k).ok()).collect::<BTreeSet<u16>>()),
+                        _ => None,
+                    })
+                    .reduce(|a, b| a.intersection(&b).copied().collect());
+                let trees = matchers
+                    .iter()
+                    .map(|matcher| {
+                        if matches!(matcher, AstMatcher::NthChild(_)) {
+                            self.conjunct_kinds = kinds.clone();
+                        }
+                        let tree = self.tree(matcher, shares);
+                        self.conjunct_kinds = None;
+                        tree
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                MatchTree::All(trees)
+            }
             AstMatcher::Any(matchers) => MatchTree::Any(self.trees(matchers, shares)?),
             AstMatcher::Not(matcher) => {
                 self.path.push(Step::Not);
@@ -362,7 +389,15 @@ impl Lowering {
                     None => tree,
                 }
             }
-            AstMatcher::NthChild(_) => return Err(Unsupported("nthChild")),
+            // A node's position among its parent's named children (of `ofRule`): a fact W's matcher
+            // reports per node (two-valued, binding nothing), read by the walks as a label.
+            AstMatcher::NthChild(_) => {
+                let (digest, dialect) = &self.source;
+                let key = format!("{}|{dialect:?}|{}", digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>(), self.facts);
+                self.facts += 1;
+                let kinds = self.conjunct_kinds.take();
+                MatchTree::Fact(Arc::new(Fact { producer: matcher.clone(), slots: Vec::new(), name: "nthChild", key, kinds }))
+            }
             AstMatcher::Call(_) => return Err(Unsupported("utility call")),
             AstMatcher::Constrained(constrained) => self.constrained(constrained, shares)?,
             AstMatcher::Compare(_) => return Err(Unsupported("compare")),

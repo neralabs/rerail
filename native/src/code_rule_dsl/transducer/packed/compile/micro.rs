@@ -130,6 +130,29 @@ fn searcher(source: &str) -> Option<std::sync::Arc<regex_automata::meta::Regex>>
         .clone()
 }
 
+/// The literals every match of `source` starts with (its prefix literals; at most 64, none empty), or
+/// `None` where there is no such finite set (`.*`, a class too wide). Decision 0036: a text test reads
+/// the file once for these, not every node's text.
+fn prefixes(source: &str) -> Option<std::sync::Arc<Vec<memchr::memmem::Finder<'static>>>> {
+    static PREFIXES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Option<std::sync::Arc<Vec<memchr::memmem::Finder<'static>>>>>>> =
+        std::sync::LazyLock::new(Default::default);
+    let mut known = PREFIXES.lock().ok()?;
+    known
+        .entry(source.to_owned())
+        .or_insert_with(|| {
+            let hir = regex_syntax::parse(source).ok()?;
+            let mut extractor = regex_syntax::hir::literal::Extractor::new();
+            extractor.kind(regex_syntax::hir::literal::ExtractKind::Prefix).limit_total(64);
+            let seq = extractor.extract(&hir);
+            let literals = seq.literals()?;
+            if literals.is_empty() || literals.iter().any(|literal| literal.as_bytes().is_empty()) {
+                return None;
+            }
+            Some(std::sync::Arc::new(literals.iter().map(|literal| memchr::memmem::Finder::new(literal.as_bytes()).into_owned()).collect()))
+        })
+        .clone()
+}
+
 impl Micro {
     /// Why `program` is not a micro walk: its first operation outside the walk's, by name.
     pub(in crate::code_rule_dsl) fn refusal(program: &Program) -> &'static str {
@@ -309,20 +332,49 @@ impl Micro {
                 .and_then(searcher)
                 .map(|regex| {
                     let cache = regex.create_cache();
-                    (regex, cache, super::MAX_STEPS_PER_PATH / nfa.work_per_byte())
+                    let _ = nfa;
+                    (regex, cache, ())
                 }),
             _ => None,
         };
         // The search's cache is this call's: the regex's own pool would keep one per thread for
         // the process (06 S7: ~18 MB at the labels' GPU peak).
         let mut fast = fast;
+        // Decision 0036: where every match starts with one of a few literals, the file is searched
+        // once for them (SIMD `memmem`); a node can match only if one starts inside its span, so
+        // only those are confirmed. Without it every node's text is searched, and nested spans
+        // read each byte once per ancestor.
+        let starts = match &program.predicates[usize::from(value)] {
+            TextPredicate::Regex { source, .. } => std::str::from_utf8(&program.strings[usize::from(*source)]).ok().and_then(prefixes).map(|finders| {
+                let text = tape.transducer_source();
+                let mut starts = finders.iter().flat_map(|finder| finder.find_iter(text)).collect::<Vec<_>>();
+                starts.sort_unstable();
+                starts.dedup();
+                starts
+            }),
+            _ => None,
+        };
+        crate::code_rule_dsl::prof::count(if starts.is_some() { "texts.scan_literal" } else { "texts.scan_nodes" }, 1);
+        if starts.as_ref().is_some_and(Vec::is_empty) {
+            return Some(bits);
+        }
         for node in 0..len as u32 {
             if kind.is_some_and(|kind| tape.transducer_kind(node) != kind) {
                 continue;
             }
+            if let Some(starts) = &starts {
+                let span = tape.transducer_span(node);
+                let first = starts.partition_point(|&at| at < span.start);
+                if starts.get(first).is_none_or(|&at| at >= span.end) {
+                    continue;
+                }
+            }
             let text = tape.transducer_text(node);
             let matched = match &mut fast {
-                Some((regex, cache, longest)) if text.len() < *longest => {
+                // On the host the DFA search has no work limit, and gives the NFA's bit at any
+                // length (W tests the same regex on the node's text): a long text (a module, a
+                // class) does not fail the slot.
+                Some((regex, cache, _)) => {
                     regex.search_with(cache, &regex_automata::Input::new(text).earliest(true)).is_some()
                 }
                 _ => {

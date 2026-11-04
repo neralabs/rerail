@@ -186,6 +186,8 @@ fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::match
     if distinct.is_empty() {
         return FactRows::new();
     }
+    crate::code_rule_dsl::prof::count("labels.facts.distinct", distinct.len());
+    crate::code_rule_dsl::prof::count("labels.facts.anywhere", distinct.iter().filter(|fact| fact.kinds.is_none()).count());
     crate::code_rule_dsl::prof::time("labels.facts", || {
         tapes
             .par_iter()

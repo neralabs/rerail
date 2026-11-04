@@ -151,6 +151,85 @@ impl NthChild {
     }
 }
 
+impl NthChild {
+    /// The nodes of `starts` (ascending) at which the predicate holds on `file`'s tape, as
+    /// `match_node` decides them (a fact's rows, decision 0030), in one pass per parent: each parent
+    /// of a start lists its counted children once, and each start's index is a search in that list.
+    /// `ofRule` is read off the tape's kinds where it is only `kind`, `all`, `any` and `not`, else
+    /// tested by W's matcher once per child. A child whose verdict is unknown leaves its parent's
+    /// children without one (no rows), as `index` does.
+    pub(in crate::code_rule_dsl) fn rows(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        starts: impl Iterator<Item = u32>,
+    ) -> Vec<u32> {
+        let tape = file.root().get_doc();
+        let mut counted = std::collections::HashMap::<u32, Option<Vec<u32>>>::new();
+        let mut rows = Vec::new();
+        for node in starts {
+            let Some(parent) = tape.transducer_parent(node) else { continue };
+            let list = counted.entry(parent).or_insert_with(|| self.counted(file, tape, parent));
+            let Some(list) = list else { continue };
+            let Ok(position) = list.binary_search(&node) else { continue };
+            let index = if self.reverse { list.len() - 1 - position } else { position };
+            if self.position.holds(index) {
+                rows.push(node);
+            }
+        }
+        rows
+    }
+
+    fn counted(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        tape: &crate::code_rule_dsl::tape::TapeDoc,
+        parent: u32,
+    ) -> Option<Vec<u32>> {
+        let mut list = Vec::new();
+        for child in tape.transducer_children(parent) {
+            if !tape.transducer_is_named(child) {
+                continue;
+            }
+            let counts = match &self.of_rule {
+                None => true,
+                Some(rule) => match on_kinds(rule, tape.transducer_kind(child)) {
+                    Some(verdict) => verdict,
+                    None => {
+                        use super::util::{UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STEPS_LEFT};
+                        THREE_VALUED.set(true);
+                        UTIL_DEPTH.set(0);
+                        UTIL_EXCEEDED.set(None);
+                        UTIL_STEPS_LEFT.set(usize::MAX);
+                        UNKNOWN.set(false);
+                        let mut env = Cow::Owned(MetaVarEnv::new());
+                        let node = super::node_at(file, child);
+                        let matched = rule.match_node_with_env(node, &mut env).is_some();
+                        if UNKNOWN.replace(false) {
+                            return None;
+                        }
+                        matched
+                    }
+                },
+            };
+            if counts {
+                list.push(child);
+            }
+        }
+        Some(list)
+    }
+}
+
+/// `rule`'s verdict at a node of kind `kind`, where the rule tests only kinds.
+fn on_kinds(rule: &AstMatcher, kind: u16) -> Option<bool> {
+    match rule {
+        AstMatcher::Kind(matcher) => Some(matcher.potential_kinds()?.contains(usize::from(kind))),
+        AstMatcher::All(items) => items.iter().try_fold(true, |all, item| Some(all && on_kinds(item, kind)?)),
+        AstMatcher::Any(items) => items.iter().try_fold(false, |any, item| Some(any || on_kinds(item, kind)?)),
+        AstMatcher::Not(item) => Some(!on_kinds(item, kind)?),
+        _ => None,
+    }
+}
+
 /// A parent's named children counted by `nthChild` (all, or those its `ofRule` matches), by node
 /// id in order; `unknown` where a probe's verdict was.
 pub(super) struct Siblings {

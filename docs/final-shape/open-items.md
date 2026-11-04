@@ -1238,3 +1238,10 @@ value-creating builtin that the front end does not check. `block_results` folds 
 tree it is a negation of `raises` in its own component (`serverplan_quality.block_results.rdl`), stratified only by
 depth. Both are declared inputs in the programs. **Closure:** a tape builtin for attribute-chain text, and a
 bottom-up tree fold (or per-file lattice in the dispatch, §7) for `block_results`.
+
+## O66. Device text matching is still a byte-at-a-time NFA
+
+Decision 0036: text matching is chunk-at-a-time. The host slots are done. On the device, a text
+test is still a `ByteNfa` stepped per byte per path, under a work limit. **Closure:** a chunked
+automaton per file, where each workgroup computes its chunk's state map and the maps are composed
+by a prefix scan, differentially tested against the host's DFA.
