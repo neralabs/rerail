@@ -475,3 +475,54 @@ fn own_ingestion_derives_what_t_facts_do() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// O42: the corpus runner's typing inputs and outputs, end to end. A site package is summarized into the cache
+/// (a declaration that differs from what it derives is reported, not used); an application importing it reads the
+/// summaries and a user declaration as `declared_ret` facts, which type its calls, and each typed node gets a
+/// union term; with an empty cache the package's modules are pending, not ⊤, and the calls stay untyped.
+#[test]
+fn typed_corpus_reads_declarations_and_dependency_summaries() {
+    use super::corpus::{Typing, run_typed};
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("typed");
+    let write = |p: &str, text: &str| {
+        let p = dir.join(p);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    };
+    write("site/vendor/__init__.py", "from .core import make\n\ndef version():\n    return \"1.0\"\n");
+    write("site/vendor/core.py", "def make():\n    return 1\n");
+    write("site/vendor-1.0.dist-info/RECORD", "vendor/__init__.py,sha256=AAA,60\nvendor/core.py,sha256=BBB,30\nvendor-1.0.dist-info/RECORD,,\n");
+    write("decl/make.pyi", "# rerail.types/v1\n# module: vendor.core\ndef make() -> str: ...\n");
+    write("app/main.py", "from vendor import version\nfrom vendor.core import make\nimport other\na = version()\nb = make()\nc = other.thing()\n");
+    write("decl/other.pyi", "# rerail.types/v1\n# module: other\ndef thing() -> bytes | None: ...\n");
+    let src = std::fs::read_to_string(root().join("../typing/programs/workload.rdl")).unwrap();
+    let cache = dir.join("cache");
+
+    let summarize = Typing { summarize: Some(cache.clone()), declarations: vec![dir.join("decl/make.pyi")], ..Default::default() };
+    let r = run_typed(&src, &dir.join("site"), None, &dir.join("out-site"), "program", Binding::Cpu, 1 << 18, &summarize).unwrap();
+    assert_eq!(r.typing.summaries, 2, "{:?}", r.typing);
+    assert_eq!(r.typing.conflicts, vec![("vendor.core.make".to_owned(), "int".to_owned(), "str".to_owned())]);
+
+    let app = Typing { declarations: vec![dir.join("decl/other.pyi")], site: Some((dir.join("site"), cache.clone())), ..Default::default() };
+    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-app"), "program", Binding::Cpu, 1 << 18, &app).unwrap();
+    println!("{:?}", r.typing);
+    assert!(r.typing.pending.is_empty(), "{:?}", r.typing);
+    assert_eq!(r.typing.declared, 4, "version: str, make: int, thing: bytes | None");
+    let types: BTreeSet<String> = std::fs::read_to_string(dir.join("out-app/type_of.csv")).unwrap().lines().map(|l| l.rsplit('\t').next().unwrap().to_owned()).collect();
+    assert_eq!(types, BTreeSet::from(["str", "int", "bytes", "None"].map(String::from)));
+    // One term per typed node (the three calls and the three names they are assigned to): other.thing()'s, and
+    // `c`'s through it, are the closed union bytes | None.
+    let x = rusqlite::Connection::open(dir.join("out-app/cross.sqlite")).unwrap();
+    let nodes: i64 = x.query_row("SELECT count(*) FROM node_type", [], |r| r.get(0)).unwrap();
+    assert_eq!(nodes as usize, r.typing.typed_nodes);
+    let unions: Vec<i64> = x.prepare("SELECT t.arity FROM node_type n JOIN type_term t USING (tid) WHERE t.ctor = 1").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+    assert_eq!(r.typing.typed_nodes, 6);
+    assert_eq!(unions, vec![2, 2]);
+
+    let cold = Typing { site: Some((dir.join("site"), dir.join("empty-cache"))), ..Default::default() };
+    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
+    assert_eq!(r.typing.pending, vec!["vendor".to_owned(), "vendor.core".to_owned()]);
+    assert_eq!(std::fs::read_to_string(dir.join("out-cold/type_of.csv")).unwrap(), "");
+    let _ = std::fs::remove_dir_all(&dir);
+}

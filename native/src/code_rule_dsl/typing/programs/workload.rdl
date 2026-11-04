@@ -108,6 +108,11 @@ type_of($n, $t) :- kind($n, "parenthesized_expression"), child($n, $c, 0), type_
 type_of($c, $q) :- kind($c, "call"), field($c, "function", $f), class_ref($f, $q).
 type_of($c, $t) :- kind($c, "call"), field($c, "function", $f), fn_ref($f, $fn), returns($fn, $t).
 returns($f, $t) :- kind($r, "return_statement"), nearest($r, $f, scope), kind($f, "function_definition"), child($r, $e, 0), type_of($e, $t).
+// Declared signatures (`typing::declare`, rerail.types/v1) and dependency summaries (`typing::deps`): the corpus
+// runner adds a `declared_ret(q, t)` fact per member name of each declared return. They fill gaps only: a call to a
+// name the corpus defines keeps the corpus's types.
+.decl declared_ret(q: sym, t: sym)
+type_of($c, $t) :- kind($c, "call"), field($c, "function", $f), resolves($f, $q), !fn_q($q, _), declared_ret($q, $t).
 .output type_of
 
 // W4b: a declared flat lattice. `top` is its top; the join of two different constants is `top`.

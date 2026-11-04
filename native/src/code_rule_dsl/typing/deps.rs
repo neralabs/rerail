@@ -258,5 +258,59 @@ impl Universe {
     }
 }
 
+/// A Python source's absolute imports, from its import statements (syntax only): `import a.b, c as d` gives
+/// (`a.b`, []) and (`c`, []); `from a.b import x, y` gives (`a.b`, [x, y]). Relative imports (the corpus's own) are
+/// kept only if `relative`.
+pub(crate) fn imports(text: &str, relative: bool) -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    for l in text.lines() {
+        let l = l.trim();
+        if let Some(rest) = l.strip_prefix("import ") {
+            for m in rest.split(',') {
+                let m = m.trim().split(" as ").next().unwrap_or("").trim();
+                if !m.is_empty() {
+                    out.push((m.to_owned(), Vec::new()));
+                }
+            }
+        } else if let Some(rest) = l.strip_prefix("from ")
+            && let Some((m, names)) = rest.split_once(" import ")
+            && (relative || !m.starts_with('.'))
+        {
+            let names = names.trim().trim_matches(['(', ')']).split(',').map(|n| n.trim().split(" as ").next().unwrap_or("").trim().to_owned()).filter(|n| !n.is_empty() && n != "*");
+            out.push((m.trim().to_owned(), names.collect()));
+        }
+    }
+    out
+}
+
+/// The modules a corpus's imports demand: each imported module, and `m.x` for each `from m import x` (a
+/// submodule, when one is installed).
+pub(crate) fn roots(imports: &[(String, Vec<String>)]) -> Vec<String> {
+    let mut out = BTreeSet::new();
+    for (m, names) in imports {
+        out.insert(m.clone());
+        for n in names {
+            out.insert(format!("{m}.{n}"));
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// A module's summary: its functions' return types (the member names the program derived; none is `Any`) and the
+/// `from` imports it re-exports, as a `rerail.types/v1` file.
+pub(crate) fn summary(module: &str, functions: &BTreeMap<String, BTreeSet<String>>, reexported: &[(String, Vec<String>)]) -> String {
+    let mut out = format!("{}\n# module: {module}\n", declare::HEADER);
+    for (m, names) in reexported {
+        if !names.is_empty() {
+            out.push_str(&format!("from {m} import {}\n", names.join(", ")));
+        }
+    }
+    for (name, ret) in functions {
+        let ret = if ret.is_empty() { "Any".to_owned() } else { ret.iter().cloned().collect::<Vec<_>>().join(" | ") };
+        out.push_str(&format!("def {name}(*args, **kwargs) -> {ret}: ...\n"));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests;

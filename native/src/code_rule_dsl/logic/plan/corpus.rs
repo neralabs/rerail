@@ -24,6 +24,8 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
+mod typing;
+pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
 use crate::content_store::ContentStore;
 use rusqlite::Connection;
@@ -160,6 +162,8 @@ pub(crate) struct Report {
     pub(crate) chunks: usize,
     /// The cross-file part's bounded rounds (`typing::cross_rounds`).
     pub(crate) rounds: cross_rounds::Rounds,
+    /// Declarations, summaries and terms (`corpus::typing`).
+    pub(crate) typing: TypingReport,
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -174,6 +178,12 @@ use std::collections::{BTreeMap, BTreeSet};
 /// runs once, over the base relations held in memory and the exports read once from `x`, all bound in `main`. Memory
 /// is two chunks', the held base columns, and the cross-file part's own.
 pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
+    run_typed(program, root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
+}
+
+/// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<Report> {
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     // The main thread's CPU (the chunk builder's is its own, below) and the process's peak RSS.
     let main_usage = || { let (u, s) = thread_usage(); (u, s, usage().2) };
@@ -194,7 +204,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path
         }
         last = now;
     };
-    let prog = front::parse(program)?;
+    let mut prog = front::parse(program)?;
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     let (docs, first, rust): (Vec<(i64, String)>, HashMap<i64, i64>, bool) = match &t {
         Some(t) => {
@@ -211,6 +221,17 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path
         }
     };
     let paths: HashMap<i64, String> = docs.iter().cloned().collect();
+    // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
+    let mut typed = TypingReport::default();
+    let mut declared = BTreeMap::new();
+    if prog.decls.contains_key("declared_ret") {
+        let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
+        let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
+        if !facts.is_empty() {
+            prog = front::parse(&format!("{program}\n{facts}"))?;
+        }
+        declared = d;
+    }
     let (label, dialect) = if rust { ("rust", "rust") } else { ("python", "python") };
     let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
@@ -448,14 +469,20 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path
     phase("stats", statements.count());
     statements.enter("cross");
     let mut rounds = cross_rounds::Rounds::default();
+    // `returns`, held for the typing outputs (`corpus::typing`).
+    let wanted: BTreeSet<String> = cross.program.decls.contains_key("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
+    let mut returns = Vec::new();
     if !cross.program.rules.is_empty() {
         let bounded = cross_rounds::bound(&cross.program)?;
         let got = if bounded.hops.is_empty() {
             rounds = cross_rounds::Rounds { run: 1, converged: true, rows: vec![] };
-            super::run_atoms_native_over(&cross, &db, "main", cross_stats, BTreeSet::new(), modes)?
+            super::run_atoms_native_over(&cross, &db, "main", cross_stats, wanted.clone(), modes)?
         } else {
-            run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &cross_stats, modes, &mut rounds)?
+            run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &wanted, &cross_stats, modes, &mut rounds)?
         };
+        if wanted.contains("returns") {
+            returns = held_rows(&db, &got, "returns", 2)?;
+        }
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
     }
@@ -487,11 +514,14 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path
         std::fs::write(out.join(format!("{rel}.csv")), text).map_err(|e| Error::Plan(e.to_string()))?;
         rows.insert(rel.clone(), decoded.len());
     }
+    if prog.decls.contains_key("declared_ret") {
+        typing::outputs(typing, &db, &store, root, outputs.get("type_of"), &returns, &declared, &mut typed)?;
+    }
     phase("write", statements.count());
     let rss = usage().2;
     phases.insert(1, ("parse (worker)", parse_cpu.0, parse_cpu.1, rss, 0));
     phases.insert(2, ("batch (worker)", batch_cpu.0, batch_cpu.1, rss, 0));
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed })
 }
 
 
@@ -499,7 +529,19 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path
 /// `<rel>__prev`, a table in `x` that holds the previous round's rows (none in round 0). Each round's rows of the
 /// hop relations are digested; an unchanged digest ends the rounds (the fixpoint), as does round `K`. The last
 /// round's outcome is the part's.
-fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
+/// A relation's rows after a run: held by the engine (`kept`), or in its table.
+fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<Vec<Vec<i64>>> {
+    use crate::code_rule_dsl::logic::native::component;
+    let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
+        component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?
+    } else {
+        Arc::new(Rows::read(db, rel)?)
+    };
+    Ok((0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &BTreeSet<String>, wanted: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
     use crate::code_rule_dsl::logic::native::component;
     let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).collect() };
     for rel in hops {
@@ -529,7 +571,7 @@ fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &
         let mut st = stats.clone();
         prev_totals.apply(&mut st);
         // A hop relation the program outputs is written to its table, to be decoded; the others are held.
-        let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).cloned().collect();
+        let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).chain(wanted).cloned().collect();
         let got = super::run_atoms_native_over(&round, db, "main", st, held, modes)?;
         // This round's rows of the hop relations: from the engine, or their table.
         let mut rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
