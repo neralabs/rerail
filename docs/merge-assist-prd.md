@@ -203,12 +203,14 @@ the context-injection eval ([§6.3.1](#631-what-the-eval-showed)):
 
 - **Session focus.** When a session starts, Rerail asks the person's agent CLI once, in the background, which decisions
   in force this task will most likely need: the person's prompt and the decisions whose scope covers the repository,
-  under opaque ids, answered as at most 5 ids, most relevant first (`rankPrompt`). The session's *focus* is the top 3.
-  The session never waits for it; the answer usually arrives within the agent's first few tool calls (about 4 s).
+  under opaque ids, answered as at most 12 ids, most relevant first (`rankPrompt` with `max` 12). These picks are the
+  session's *focus*. The session never waits for it; the answer usually arrives within the agent's first few tool calls
+  (4–8 s).
 - **Area orientation.** The first time the agent reads or edits a file in an *area* (the file's folder cut to two
-  segments, such as `src/ui`), Rerail gives it, once, the focus decisions whose scope covers that file or that area.
-  An area touched before the focus arrived is served at the next tool call after it does. One line each. Directory
-  listings and searches do not count as touching.
+  segments, such as `src/ui`), Rerail gives it, once, at most 3 focus decisions whose scope covers that file or that
+  area, in rank order, so a task spanning several areas gets each area's decisions. An area touched before the focus
+  arrived is served at the next tool call after it does. One line each. Directory listings and searches do not count
+  as touching.
 - **Fallback.** If the focus is not there when the agent is about to edit, Rerail waits up to 15 s, then ranks that
   area's decisions by the bundled embedding model's similarity to the prompt and gives the top 3. If the agent CLI is
   unavailable, the fallback serves the whole session.
@@ -258,6 +260,45 @@ agent's own context.
   of 9 and fourth for the ninth. Ranking by prompt words fitted the dev prompts' wording (dev 0/27, held-out 7/27).
 - Signals at the edit deliver late and fix after the fact: fewest injected tokens, most total tokens.
 - An embedding match between the decision and *code* (the patch) found nothing within the noise budget.
+
+#### 6.3.2 Confirmed against fixing after the fact
+
+Pre-registered in `benchmark/README.md` before any run, on 18 tasks never used in design (6 small, 6 medium, 6 large
+spanning 3–4 areas), 224 decisions in the index. Each arm ran to a clean, finished result: after the agent's first
+finish, anything that still broke a decision got a reviewer message naming every violating line, up to 3 rounds.
+Human review time is not counted, which favours fixing after the fact. Two looks, 4 trials per task and arm, 144
+runs, no errors; all four primaries rejected at the Pocock boundary (one-sided, 0.0221 per look), so the stopping rule
+fired at look 2.
+
+| Primary (session focus against fixing after) | Effect | 95% CI | Holm p |
+| --- | --- | --- | --- |
+| First pass clean | +0.39 | [+0.22, +0.57] | 0.0002 |
+| Total tokens to completion | ×0.74 | [×0.61, ×0.91] | 0.0002 |
+| Time to completion, not worse than ×1.10 | ×0.90 | [×0.77, ×1.04] | 0.0002 |
+| Large tasks needing a fix round | −0.33 | [−0.63, −0.04] | 0.0049 |
+
+| Size | Arm | First pass clean | Needing a fix round | Median time | Median tokens |
+| --- | --- | --- | --- | --- | --- |
+| Small | fix after | 13/24 | 11/24 | 36 s | 143k |
+| Small | session focus | 23/24 | 1/24 | 36 s | 131k |
+| Medium | fix after | 9/24 | 15/24 | 54 s | 313k |
+| Medium | session focus | 19/24 | 5/24 | 41 s | 149k |
+| Large | fix after | 1/24 | 23/24 | 105 s | 537k |
+| Large | session focus | 9/24 | 15/24 | 93 s | 475k |
+
+- Every arm ended clean; the difference is how much rework it took. Fixes after the fact changed 10.7 more lines per
+  task (CI [−17.7, −4.7]).
+- Time is not worse, and is likely better (×0.90), but time *superiority* did not reach the per-look bar (p 0.025).
+- Session focus with a single top 5 across the session (no per-area cap) did as well as the per-area version on the
+  held-out large tasks (needing a fix round 12/24 against 15/24, not significant either way): the per-area cap that won
+  on the design tasks did not carry over. Both are far better than fixing after.
+
+**Across agents.** A second check runs two agents on two branches. Agent A works, its person corrects it, and the
+product's capture turns the correction into a decision on A's branch; agent B, on another branch cut from `main`,
+gets it only through the index (its original entry removed). B either has session focus or nothing. Capture produced
+the decision in 18/18 trials (all 9 graded decisions, 2 trials each). B broke the decision 4/46 times with session
+focus against 19/46 without (−0.38, CI [−0.61, −0.16], p 5e−5, 14 B tasks); every one of those 4 was a run in which
+the decision was not among the focus picks.
 
 The same lookup drives comparison: a peer decision is compared with this branch's only when an agent here works in
 its scope. A branch nobody's work touches costs nothing.
