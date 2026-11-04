@@ -37,7 +37,7 @@ on:
         default: ""
         type: string
       publish:
-        description: The version to publish from main, retrying a tagged release that failed before publishing; nothing core ships may have changed since its tag
+        description: The version to publish from main, retrying a tagged release that failed before publishing; nothing core ships may have changed since its tag. Leave latest empty
         required: false
         default: ""
         type: string
@@ -58,7 +58,7 @@ jobs:
   # tag can name a commit PR CI never ran on.
   metadata:
     name: Release metadata
-    if: ${{ !inputs.latest }}
+    if: ${{ !inputs.latest || inputs.publish }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -77,14 +77,14 @@ jobs:
       - name: Refuse a retry of anything but what main holds
         if: ${{ inputs.publish }}
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.publish }}
+          LATEST: ${{ inputs.latest }}
         run: node scripts/release/core-retry-check.mjs
 
       - id: release-channel
         name: Derive npm dist-tag
         env:
-          PUBLISHES: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish != '') }}
+          PUBLISHES: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish != '' && github.ref == 'refs/heads/main') }}
           RELEASE_TAG: ${{ inputs.publish && format('v{0}', inputs.publish) || github.ref_name }}
         run: |
           node --input-type=module <<'EOF'
@@ -239,7 +239,7 @@ jobs:
   publish:
     name: Publish to npmjs
     needs: [metadata, package, shrinkwrap, windows-install, unix-install]
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish != '')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish != '' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
@@ -323,7 +323,7 @@ jobs:
   # publishing, as for publish: core's trusted publisher on npmjs must allow `npm dist-tag` as well as `npm publish`.
   put-back:
     name: Point latest at ${{ inputs.latest }}
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest && !inputs.publish && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release

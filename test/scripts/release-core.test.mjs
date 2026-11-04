@@ -61,6 +61,10 @@ describe("publishRetryRefusal", () => {
     expect(publishRetryRefusal({ ...retry, packageVersion: "0.1.3" })).toBe("main's package.json says 0.1.3, so 0.1.2 can't be retried from it");
   });
 
+  it("refuses a run that also asks for a put-back, so the retry is never dropped in silence", () => {
+    expect(publishRetryRefusal({ ...retry, latest: "0.1.1" })).toBe("publish retries 0.1.2 and latest puts core back to 0.1.1: run them separately");
+  });
+
   it("refuses a version with no tag, which never went through the Release pull request", () => {
     expect(publishRetryRefusal({ ...retry, tagged: false })).toContain("v0.1.2 has no tag");
   });

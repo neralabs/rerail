@@ -118,7 +118,7 @@ gh workflow run release.yml --ref main -f publish=<version>
 The run builds `main`, runs every check and publishes behind the same approval. The tag stays where it is, and npm's
 provenance names the `main` commit. It is refused unless all of these hold, so core's own code is the tag's:
 
-- it runs from `main`, and `main`'s `package.json` names that version;
+- it runs from `main` with `latest` left empty, and `main`'s `package.json` names that version;
 - the `v<version>` tag exists;
 - nothing core ships has changed since the tag (`publishRetryRefusal` in `scripts/release/core-paths.mjs`).
 

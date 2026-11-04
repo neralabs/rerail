@@ -77,19 +77,22 @@ export function coreChanges(changed, readLock) {
 /**
  * Why release.yml's `publish` input can't publish core's `version`, or null. It retries a release that failed before
  * publishing, once whatever broke it is fixed on main, so a failed release never blocks its version: run from main
- * (`ref`), for the version main's package.json names (`packageVersion`), whose tag exists (`tagged`), with no path
+ * (`ref`), with no put-back asked for in the same run (`latest`), for the version main's package.json names (`packageVersion`), whose tag exists (`tagged`), with no path
  * that ships changed since that tag (`shipped`, as `coreChanges` gives). So core's own code is the tag's; how the
  * package is built and its changelog can differ (PACKAGE_INPUTS), so that a fix to the build can be retried too, and
  * retrySummary shows them to whoever approves the publish. A fix to what ships takes the next version, which the Release
  * pull request already offers.
  */
-export function publishRetryRefusal({ version, ref, packageVersion, tagged, shipped }) {
-  if (ref !== "refs/heads/main") return `a retry runs from main, not ${ref}`;
-  if (!/^\d+\.\d+\.\d+(?:-(?:beta|next)\.\d+)?$/u.test(version)) return `${version} is not X.Y.Z, X.Y.Z-beta.N or X.Y.Z-next.N`;
-  if (version !== packageVersion) return `main's package.json says ${packageVersion}, so ${version} can't be retried from it`;
-  if (!tagged) return `v${version} has no tag: a release starts from the Release pull request, and a retry only repeats one`;
-  if (shipped.length > 0) return `what core ships changed since v${version} (${shipped.join(", ")}): release it as the next version, through the Release pull request`;
-  return null;
+export function publishRetryRefusal({ version, ref, latest = "", packageVersion, tagged, shipped }) {
+  const refusals = [
+    [latest !== "", `publish retries ${version} and latest puts core back to ${latest}: run them separately`],
+    [ref !== "refs/heads/main", `a retry runs from main, not ${ref}`],
+    [!/^\d+\.\d+\.\d+(?:-(?:beta|next)\.\d+)?$/u.test(version), `${version} is not X.Y.Z, X.Y.Z-beta.N or X.Y.Z-next.N`],
+    [version !== packageVersion, `main's package.json says ${packageVersion}, so ${version} can't be retried from it`],
+    [!tagged, `v${version} has no tag: a release starts from the Release pull request, and a retry only repeats one`],
+    [shipped.length > 0, `what core ships changed since v${version} (${shipped.join(", ")}): release it as the next version, through the Release pull request`],
+  ];
+  return refusals.find(([refused]) => refused)?.[1] ?? null;
 }
 
 /**
