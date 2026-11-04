@@ -59,6 +59,18 @@
     {
       "path": "src/setup/windows-install.ts",
       "content": "import { execFileSync } from \"node:child_process\";\n\nexport function installedFrom(root: string): string {\n  return execFileSync(String.raw`C:\\Program Files\\Git\\cmd\\git.exe`, [\"-C\", root, \"remote\", \"get-url\", \"origin\"], { encoding: \"utf8\" }).trim();\n}\n"
+    },
+    {
+      "path": "src/cli/headless-scan.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nexport function changed(root: string, against: string): string {\n  return runGit(root, [\"diff\", \"--name-only\", \"--relative\", \"--diff-filter=ACMRTUXB\", \"-z\", against, \"--\"]).stdout;\n}\n"
+    },
+    {
+      "path": "src/engine/audit/audit-control.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nconst staged = (root: string) => runGit(root, ['--literal-pathspecs', 'diff', '--cached', '--name-only', '-z', '--']);\n"
+    },
+    {
+      "path": "src/cli/status.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nconst STATUS_ARGS = [\"status\", \"--porcelain=v1\", \"-z\"];\n\nexport const dirty = (root: string): boolean => runGit(root, STATUS_ARGS).stdout !== \"\";\n"
     }
   ],
   "passed": [
@@ -117,6 +129,18 @@
     {
       "path": "src/cli/doctor.ts",
       "content": "import { gitExecutable, GitUnavailableError } from \"../engine/git.js\";\n\nexport function gitLine(): string {\n  try {\n    const path = gitExecutable();\n    return `Git: ${path}`;\n  } catch (error) {\n    if (error instanceof GitUnavailableError) return \"Git: not found\";\n    throw error;\n  }\n}\n"
+    },
+    {
+      "path": "src/cli/headless-scan.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nexport function changed(root: string, against: string): string {\n  return runGit(root, [\"diff\", \"--name-only\", \"--no-renames\", \"--relative\", \"--diff-filter=ACMRTUXB\", \"-z\", against, \"--\"]).stdout;\n}\n"
+    },
+    {
+      "path": "src/cli/status.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nexport const dirty = (root: string): boolean => runGit(root, [\"status\", \"--porcelain=v1\", \"--no-renames\", \"-z\"]).stdout !== \"\";\n"
+    },
+    {
+      "path": "src/engine/catalog/repository-registry.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nexport const head = (root: string) => runGit(root, [\"log\", \"-1\", \"--format=%H\"]).stdout.trim();\nexport const files = (root: string) => runGit(root, [\"ls-files\", \"-z\", \"--\", \"diff\"]).stdout;\nexport const ACTIONS = [\"setup\", \"status\", \"diff\"] as const;\n"
     }
   ]
 }

@@ -450,6 +450,26 @@
         "anchor": "witness.span",
         "message": "Run Git through runGit, gitText or readGitBlobs in src/engine/git.ts, adding a helper there if none fits: they find Git on a trusted PATH entry or a usual install location and turn off hooks, fsmonitor and lazy fetch."
       }
+    },
+    {
+      "id": "rename-detection",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "array",
+            "regex": "^\\[\\s*(?:[\"'`]-[^\"'`]*[\"'`]\\s*,\\s*)*[\"'`](?:diff|status)[\"'`]\\s*[,\\]]",
+            "not": {
+              "regex": "[\"'`]--no-renames[\"'`]"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "GIT_RENAME_DETECTION",
+        "anchor": "witness.span",
+        "message": "Add \"--no-renames\" to this git diff or status: with lazy fetch off, rename detection fails in a partial clone on a source blob it doesn't hold. A rename then lists its new path."
+      }
     }
   ]
 }

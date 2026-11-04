@@ -2,7 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "rerail-language-branching",
   "revision": 1,
-  "mode": "steer",
+  "mode": "log",
   "description": "Branch on a language, family or embedding only in its Engine Adapter, embedder, the registry or the family's own modules; elsewhere ask the adapter or read the registry.",
   "scope": {
     "include": [

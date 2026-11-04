@@ -5,9 +5,10 @@ written down (REVIEW.md, CONTEXT.md, `src/README.md`, `docs/`) and has broken be
 repository with a `packs/*/pack.json`; it is a `repository` pack, added for the whole repository (see
 `docs/rule-packs.md`).
 
-The pack ships 34 rules: 16 in Steer mode, which steer the coding agent in the session, and 18 in Log mode,
-which only record, because today's code still breaks them or the place the code should use does not exist yet. Each
-rule's details say why it is Log and what has to land before it can steer. Every rule is a code rule but
+The pack ships 34 rules: 14 in Steer mode, which steer the coding agent in the session, and 20 in Log mode, which only
+record. A Steer rule matches nothing on `main` today. A rule is in Log when code the maintainers merged still breaks
+it, when the place the code should use does not exist yet, or when it should run a while before it steers. Each Log
+rule's Gaps say which, and what has to land before it can steer. Every rule is a code rule but
 `rerail-pack-data-through-publish`, a conversation rule on the commands the coding agent runs.
 
 The pack is private (`"private": true` in its `package.json`): it is never published, and
@@ -25,7 +26,7 @@ rules, whose files are under `.github/`, come from a copy of the tree. Live chec
 | Layering | `rerail-conformance-boundary` | Programs started in `conformance/` outside its command runner, and authoring code (recorders, expected-findings writers, pack-data imports) in it | Steer |
 | Layering | `rerail-conformance-pinned-data` | Network calls and download or install programs in `conformance/` | Log |
 | Layering | `rerail-host-sdk-imports` | A coding agent's SDK imported outside `src/hosts/` | Log |
-| Layering | `rerail-language-branching` | Branching on a language, family or embedding outside its Engine Adapter | Steer |
+| Layering | `rerail-language-branching` | Branching on a language, family or embedding outside its Engine Adapter | Log |
 | Ownership | `rerail-command-sigil` | A command sigil decided in place, or a hard-coded `/rerail…` a Codex user reads | Steer |
 | Ownership | `rerail-fixed-value-lists` | Hosts, audit values, rule modes or pack categories listed again instead of taken from their constant | Log |
 | Ownership | `rerail-git-no-lazy-fetch` | Git started outside `src/engine/git.ts`, or without lazy fetch off | Steer |
@@ -46,7 +47,7 @@ rules, whose files are under `.github/`, come from a copy of the tree. Live chec
 | Release and pack data | `rerail-pack-data-runtime-names` | A versioned runtime name written in a pack-data recipe | Steer |
 | Release and pack data | `rerail-pack-data-through-publish` | Pack data uploaded to S3 from a workstation (a command, not code) | Steer |
 | Release and pack data | `rerail-provenance-writers` | Licence and provenance records written or parsed outside their owners | Steer |
-| Release and pack data | `rerail-workflow-script-facts` | Entry paths, shipped paths, tool-pack legs or pack-name tests hand-kept in workflows | Steer |
+| Release and pack data | `rerail-workflow-script-facts` | Entry paths, shipped paths, tool-pack legs or pack-name tests hand-kept in workflows | Log |
 | Release and pack data | `rerail-workflow-shared-conditions` | The release pull request skip repeated in one workflow | Log |
 | Dashboard | `rerail-ui-api-precedence` | Setting precedence worked out in the dashboard | Log |
 | Dashboard | `rerail-ui-color-tokens` | Raw colours in the dashboard, or a Nera token redefined | Steer |
@@ -120,11 +121,12 @@ History: Built on #32's Blade branches and #132's first draft, where PHP's scope
 embedding; it caught both and five unmerged branch commits, dropped 259 → 22 → 2 across #33's and #44's moves into the
 adapter, and was quiet on #52's merge and 17 recent merged PRs.
 
-Gaps: Misses `use Family::*` with bare variants, `as` aliases, label constants, `.eq("python")`, `grammar.name() == "blade"`,
-`if let "python" = language`, TypeScript `{…}[language]` lookups and template literals; `scripts/` is out of scope. A new
-family module with a neutral name is steered until the exemption names it. 4 matches on main today: the Forte choices in
-`tape.rs` and `workspace/evaluate.rs`, the Blade guard in `encode_blade`, and `import_target.rs` refusing `importTarget`
-by family. Grammar node kinds (`node.kind() == "block"`) are branching too (#373 review) but are flagged by
+Gaps: Log until the 4 branches on main today move onto the family's adapter: the Forte choices in `tape.rs:1170` and
+`workspace/evaluate.rs:856`, the Blade guard in `encode_blade` (`tape.rs:1278`), and `import_target.rs:89` refusing
+`importTarget` by family. Misses `use Family::*` with bare variants, `as` aliases, label constants, `.eq("python")`,
+`grammar.name() == "blade"`, `if let "python" = language`, TypeScript `{…}[language]` lookups and template literals;
+`scripts/` is out of scope. A new family module with a neutral name is flagged until the exemption names it. Grammar
+node kinds (`node.kind() == "block"`) are branching too (#373 review) but are flagged by
 [`rerail-grammar-node-kinds`](#rerail-grammar-node-kinds), in Log, not here.
 
 ### `rerail-command-sigil`
@@ -160,16 +162,21 @@ Misses reordered lists; matches inside comments and strings. UI host maps and Ru
 
 ### `rerail-git-no-lazy-fetch`
 
-Flags a Git spawn whose environment does not turn lazy fetch off (`GIT_NO_LAZY_FETCH`), and any Git started outside the
+Flags a Git spawn whose environment does not turn lazy fetch off (`GIT_NO_LAZY_FETCH`), any Git started outside the
 engine's Git module, `src/engine/git.ts` (`runGit`), including bare `"git"`, a hand-built Git path and shell command
-strings. It runs on `src/**/*.ts`, leaving out tests and declaration files.
+strings, and a `git diff` or `git status` argument list (`["diff", …]`, after any leading options) without
+`"--no-renames"`: with lazy fetch off, rename detection fails in a partial clone that lacks the source's blob. It runs
+on `src/**/*.ts`, leaving out tests and declaration files.
 
 History: Built on #152's first draft, whose `readGitBlobs` spawned `cat-file --batch` without the variable, and on #1's
 four Git spawns outside any owner that #23 gathered; it caught #152's draft (3 → 4) and was quiet on its fix, its merge
-and 20 recent merged PRs.
+and 20 recent merged PRs. The rename clause came from #373's review: `headless-scan.ts`'s `git diff` failed in a sparse
+partial clone on an edited rename, and #373 fixed it (1 → 0).
 
 Gaps: Misses a local function returning a Git path, an aliased `gitExecutable` import, `Bun.spawnSync(["git", …])`, an
-execa tagged template, and an env passed as a value. Rust's `Command::new("git")` is not covered.
+execa tagged template, and an env passed as a value. Rust's `Command::new("git")` is not covered. The rename clause
+reads only array literals that start with `diff` or `status`: an argument list built another way, `git log` or
+`git show` with `--name-status`, `--stat` or `--follow`, and `-c diff.renames=false` instead of the flag are not seen.
 
 ### `rerail-home-file-names`
 
@@ -244,11 +251,10 @@ the owner `src/engine/catalog/rule-packs.ts`, generated files and tests. Build R
 `RULE_PACK_PACKAGE_NAME` beside it.
 
 History: Built on #140, which added 8 restatements of the prefix (0 before it, 4 already on its branch); #340 took it
-from 8 to 1, and it stayed quiet on 15 recent merged PRs.
+from 8 to 1, it stayed quiet on 15 recent merged PRs, and #373 fixed the last, the folder join in `rule-pack-store.ts`.
 
-Gaps: 1 match is on main today, the folder join in `rule-pack-store.ts` that #340 kept. A substitution that reads like
-words (`${id as string}`) is let through, and `rulePackPackageName` builds only `@neralabs` names, so it is wrong for a
-third party's pack.
+Gaps: A substitution that reads like words (`${id as string}`) is let through, and `rulePackPackageName` builds only
+`@neralabs` names, so it is wrong for a third party's pack.
 
 ### `rerail-session-paths`
 
@@ -391,10 +397,11 @@ leaving out tests and fixtures. Take the runtime from the upstream runtime its g
 so a version bump reaches it.
 
 History: Built on the first draft of #179 (two breaks) and #338's head, which built a new name the day after #234 fixed
-one; it drops on #234's fix and stays quiet on #177, the only other merged PR touching recipes.
+one; it drops on #234's fix and stays quiet on #177, the only other merged PR touching recipes. #373 fixed the last
+two, in `python.ts` and `complexity.ts`.
 
-Gaps: 2 matches are on main today, real breaks in `python.ts` and `complexity.ts`. Not flagged by design: `rust.ts`
-installs its toolchain from `common.TOOLCHAIN`, not from the clippy runtime in the gates manifest.
+Gaps: Not flagged by design: `rust.ts` installs its toolchain from `common.TOOLCHAIN`, not from the clippy runtime in the
+gates manifest.
 
 ### `rerail-pack-data-through-publish`
 
@@ -450,10 +457,11 @@ History: caught #1's hook paths (fixed by #51), the first draft of #85's hand-li
 by #211) and the PHP and Clippy name tests of #155 and #141; quiet on #51, #211, #177 and 16 of 18 recent merged PRs,
 while #85's merge keeps its test-pinned nightly and recorder lists.
 
-Gaps: Misses a trigger list by file type (`**/*.ts`, `**/*.rs`); in a `src`+`native` list only the second core entry
-is reported; `inputs.pack == 'complexity'` on a rule pack gets the generic advice. On main today it matches the PHP
-test in `upstream-bump.yml` twice, and no planning step emits the per-leg runtime it points to yet. The repo pass skips
-hidden `.github/`, so these counts come from a copy of the tree; live checks are unaffected.
+Gaps: Log until `upstream-bump.yml:161` stops testing `matrix.pack == 'php' || matrix.pack == 'blade'` (2 matches on
+main today): no planning step emits the runtime a leg needs yet. Misses a trigger list by file type (`**/*.ts`,
+`**/*.rs`); in a `src`+`native` list only the second core entry is reported; `inputs.pack == 'complexity'` on a rule
+pack gets the generic advice. The repo pass skips hidden `.github/`, so these counts come from a copy of the tree;
+live checks are unaffected.
 
 ### `rerail-workflow-shared-conditions`
 

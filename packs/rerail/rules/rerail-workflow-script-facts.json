@@ -2,7 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "rerail-workflow-script-facts",
   "revision": 1,
-  "mode": "steer",
+  "mode": "log",
   "description": "Take hook paths, what core ships, tool-pack lists and per-pack needs in workflows from the code and data that own them, not hand-kept copies or name tests; copies go stale.",
   "scope": {
     "include": [
