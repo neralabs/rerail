@@ -1,1 +1,0 @@
-Set-up keeps Claude Code's file tools and sandboxed commands, and the Cursor CLI's file tools, out of Rerail's data; Codex, the Cursor editor, OMP and Pi have no setting for this. `rerail status` and Settings → Coding agents say whether each connected agent can read it ([what a coding agent can reach](docs/installation.md#what-a-coding-agent-can-reach)).

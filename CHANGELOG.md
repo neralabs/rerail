@@ -6,7 +6,7 @@ Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-0.1.1 closes the daemon to any request without its access capability, keeps a coding agent's Rerail tools to its own repository, and loads rules from a checkout's own folder and from third parties' packs. When you update, open the dashboard with `rerail manage`, since old bookmarks and links no longer get in, and have your own scripts and HTTP or MCP clients send the `x-rerail-access` header from `daemon.json`. A daemon reachable from other machines starts only with `--tls-cert` and `--tls-key`, or with `--insecure-http`. Rules Rerail did not publish (ones a coding agent writes, a worktree's own, and third parties' or folders' packs) run in Log until you approve them, though your existing library rules stay approved, and `rerail update rollback` is gone.
+0.1.1 locks the daemon to you, keeps each coding agent's Rerail tools inside its own repository, and loads rules from a checkout's own folder and from third parties' packs, in Log until you approve them. Before you update: open the dashboard with `rerail manage`, since old bookmarks stop working; have scripts that call the daemon send `x-rerail-access`; and give a daemon reachable from other machines a TLS certificate or `--insecure-http`.
 
 ## 0.1.0 (2026-10-27)
 

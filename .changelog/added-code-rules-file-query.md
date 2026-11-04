@@ -1,1 +1,0 @@
-A new `file` query, `{ "forbid": { "file": {} } }`, reports every file in a rule's scope, once per file and with no line number, for rules that say a file should not exist. Rule documents also gain a `toPrecision` transform and `value: { name: true }`, which tests a node's name with its escapes decoded.

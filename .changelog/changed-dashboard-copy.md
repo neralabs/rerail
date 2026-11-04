@@ -1,1 +1,0 @@
-The dashboard says less, and only what Rerail knows: shorter intros, a top-bar status whose warnings name the next step, toasts that name the rule or repository they acted on and what did not happen, an Overview that says plainly when a repository has no sessions yet, and no claim that a steered violation was fixed.

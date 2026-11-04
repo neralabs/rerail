@@ -1,1 +1,0 @@
-Code rules with a `regex` read every text file in their scope, `Justfile`, `LICENSE` and lock files included, not only files with a suffix Rerail knows. Binary and secret-like files are never read, and rules made only of syntax queries read the same files as before.

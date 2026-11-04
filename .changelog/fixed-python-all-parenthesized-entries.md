@@ -1,1 +1,0 @@
-Python: the engine reads `__all__` as Ruff does, parenthesized entries (`[(("a"))]`) and bare tuples (`__all__ = "a", "b"`) included, so `ruff-f822-undefined-export` and the rules that read `__all__` see those names. In a `.py` file, a functional `TypedDict`'s string field types are read as forward annotations, as in stubs.

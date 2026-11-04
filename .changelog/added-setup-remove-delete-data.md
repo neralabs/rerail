@@ -1,1 +1,0 @@
-`rerail install --remove --delete-data` deletes Rerail's data with the install: the databases, every `~/.rerail-clean-*` backup, the content cache and the checkouts' session ledgers; `--dry-run` lists them first. `--remove` alone keeps them, as before.

@@ -1,1 +1,0 @@
-Code rules resolve TypeScript names more as typescript-eslint does: the head of a qualified type name (`foo` in `let x: foo.Foo`) resolves only to a type of that name, never to a value, and a `declare` member directly inside a `declare module` body counts as used.

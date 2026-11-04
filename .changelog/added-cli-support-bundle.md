@@ -1,1 +1,0 @@
-`rerail support-bundle` writes one file of diagnostics to attach to an issue, leaving out prompts, replies, tool input and output, source code and rule text, and sends nothing. `/rerail-bug-report` reads the file with you and offers to report a bug in Rerail, or helps fix your own rule ([support bundles](docs/privacy.md#support-bundles)).

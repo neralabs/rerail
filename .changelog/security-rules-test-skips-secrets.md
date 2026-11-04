@@ -1,1 +1,0 @@
-`rerail rules test` no longer reads hidden or secret-like files, symlinks, nested checkouts or files Git ignores when it checks a draft against the repository, so their lines never reach the coding agent, and its report counts what it left out. It reads ignored files only once Follow .gitignore is off for the repository.

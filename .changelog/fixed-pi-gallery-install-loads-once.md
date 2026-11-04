@@ -1,1 +1,0 @@
-Installing Rerail from Pi's package gallery and then running `/rerail-start` no longer loads it twice: set-up and `rerail update` replace the gallery's `npm:@neralabs/rerail` entry in Pi's settings with the managed install, and say so. When OMP also has Rerail as a plugin, they say to remove it with `omp plugin uninstall @neralabs/rerail`.

@@ -1,1 +1,0 @@
-Code rules read JavaScript and TypeScript more as ESLint does: a `/* global x */` comment no longer adds `x` to a rule's globals, `using` in a `for…of` head binds in the loop, a `\u`-escaped name matches its plain spelling, `file.content` reads past a byte-order mark, and `static`, `get` or `set` before a line break stays a modifier.

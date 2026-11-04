@@ -1,1 +1,1 @@
-`rerail update rollback` is removed. `rerail update` still copies the database to `rerail.sqlite.pre-update` first, and `rerail update status` names the previous version, which stays under `versions/`. To put the database back, stop Rerail and copy that file over `rerail.sqlite` ([database compatibility](docs/how-setup-works.md#database-compatibility)).
+`rerail update rollback` is removed. `rerail update` still saves `rerail.sqlite.pre-update`; to go back, stop Rerail and copy it over `rerail.sqlite` ([database compatibility](docs/how-setup-works.md#database-compatibility)).

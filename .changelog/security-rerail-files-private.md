@@ -1,1 +1,0 @@
-Rerail keeps its files private: it tightens an existing Rerail home, cache, database, log or state file that other users could read, and keeps its engine socket in a folder only you can use. Session records under a checkout's `.rerail/` are never written through a symlink, and a planted `.gitignore` there is replaced with Rerail's own.

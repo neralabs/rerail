@@ -1,1 +1,0 @@
-New guides: [Writing path and text rules](docs/path-and-text-rules.md) covers rules over files' text and paths, and [How set-up works](docs/how-setup-works.md) holds the detail of each set-up step, leaving [Installing Rerail](docs/installation.md) short. The [DSL reference](docs/code-rule-dsl-reference.html#files-read) lists which files each query reads.

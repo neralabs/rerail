@@ -1,0 +1,1 @@
+Also hardened: request limits and timeouts, files and sockets private to you, more file names treated as secret-like and kept out of `rerail rules test` and stored transcripts, and steers stripped of control and invisible characters.

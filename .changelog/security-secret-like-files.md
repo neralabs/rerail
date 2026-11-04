@@ -1,1 +1,0 @@
-More files count as secret-like: token files, `*secret*.json`, `serviceAccountKey.json`, `*-key.json`, `kubeconfig`, `*.tfvars.json`, `*.sops.*`, shell histories, and a file that links to one. Rerail stores no output of a tool call that names one, keeps no copy of its text before an edit, and gives a coding agent a finding in one by rule and place only.

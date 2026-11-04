@@ -1,1 +1,0 @@
-A daemon reachable from other machines serves HTTPS: pass `--tls-cert` and `--tls-key`, or `--insecure-http` to stay on plain HTTP, which it now refuses otherwise. Rerail's own clients pin the certificate recorded in `daemon.json` before sending anything.

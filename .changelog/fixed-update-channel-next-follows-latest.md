@@ -1,1 +1,0 @@
-The `next` update channel no longer falls behind `latest`: each stable release of `@neralabs/rerail` or a rule pack moves `next` up to it unless `next` holds a newer preview, so `rerail update --channel next` gets every stable release and set-up on that channel fetches the newest packs.
