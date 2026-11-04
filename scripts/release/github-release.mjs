@@ -22,7 +22,7 @@
 //   node scripts/release/github-release.mjs --backfill [--dry-run]
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { changelogSection, CORE_NAME, coreTag, NO_CHANGELOG_ENTRIES } from "./core.mjs";
@@ -37,6 +37,9 @@ const PACK_RELEASE_TAG = /^(@neralabs\/rerail-pack-[a-z0-9-]+)@(\d+\.\d+\.\d+\S*
 const HASH_LED_ENTRY = new RegExp(`^(\\s*- )(?:${COMMIT_HASH.source}): `, "u");
 /** The remote the backfill takes the release tags from. */
 const REMOTE = "origin";
+/** Where docs/ is published (`SITE` in scripts/build/docs-site.mjs), and the repository other links point into. */
+const DOCS_SITE = "https://neralabs.github.io/rerail";
+const REPOSITORY = "https://github.com/neralabs/rerail";
 
 /** The changelog holding `name`'s release notes: core's root CHANGELOG.md, or a pack's packs/<id>/CHANGELOG.md. */
 export function changelogPath(name) {
@@ -59,15 +62,33 @@ export function packReleaseNotes(section) {
 }
 
 /**
+ * `notes` with each relative Markdown link, written relative to `base` (the changelog's folder), made absolute: GitHub
+ * resolves a Release's relative links against the release page, where they lead nowhere. A page of docs/ goes to its
+ * page on the docs website, as docs-site.mjs names it (`x.md` and `x.html` become `x.html`, `README.md` `index.html`);
+ * any other path to the file on GitHub at `tag`. Absolute URLs and in-page anchors are left alone.
+ */
+export function absoluteLinks(notes, base, tag) {
+  return notes.replace(/\]\(([^)\s]+)\)/gu, (link, target) => {
+    if (/^(?:[a-z][a-z0-9+.-]*:|#|\/)/iu.test(target)) return link;
+    const hash = target.indexOf("#");
+    const anchor = hash === -1 ? "" : target.slice(hash);
+    const file = posix.normalize(posix.join(base, hash === -1 ? target : target.slice(0, hash)));
+    const page = /^docs\/([^/]+)\.(?:md|html)$/u.exec(file)?.[1];
+    if (page !== undefined) return `](${DOCS_SITE}/${page === "README" ? "index" : page}.html${anchor})`;
+    return `](${REPOSITORY}/blob/${tag}/${file}${anchor})`;
+  });
+}
+
+/**
  * The GitHub Release of `name`'s `version`, published under npm dist-tag `distTag`, given the text of its changelog:
  * `{ tag, title, notes, prerelease, latest }`, its notes the version's changelog section (a pack's as
- * packReleaseNotes reads it), or that none was written.
+ * packReleaseNotes reads it) with its links made absolute (absoluteLinks), or that none was written.
  */
 export function githubRelease({ name, version, distTag }, changelog) {
   const core = name === CORE_NAME;
   const tag = core ? coreTag(version) : releaseTag(name, version);
   const section = changelogSection(changelog, version);
-  const notes = section === "" ? NO_CHANGELOG_ENTRIES : core ? section : packReleaseNotes(section);
+  const notes = section === "" ? NO_CHANGELOG_ENTRIES : absoluteLinks(core ? section : packReleaseNotes(section), posix.dirname(changelogPath(name)), tag);
   return { tag, title: tag, notes, prerelease: distTag !== "latest", latest: core && distTag === "latest" };
 }
 
