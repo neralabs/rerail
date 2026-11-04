@@ -19,13 +19,13 @@ Status: ten candidates implemented; the complete 70-rule repository parity gate 
 | `post_op_side_effects` | Production inventories, runtime references, signed surfaces, and verification bypasses |
 
 The unchanged upstream suite passes 208 tests.
-The [source recording](../fixtures/host/data-layer-port/batch-07-recording.json) contains 148 eligible observations: 104 positive and 44 clean.
-The [supplements](../fixtures/host/data-layer-port/batch-07-probes.json) contain 62 observations: 38 positive and 24 clean.
-All 210 observations pass snapshot and resident-workspace replay with zero finding differences and zero failures.
+The [source recording](../fixtures/host/data-layer-port/batch-07-recording.json) contains 153 eligible observations: 106 positive and 47 clean.
+The [supplements](../fixtures/host/data-layer-port/batch-07-probes.json) contain 64 observations: 40 positive and 24 clean.
+All 217 observations pass snapshot and resident-workspace replay with zero finding differences and zero failures.
 
 Seven captured observations retain findings from an unused legacy helper visitor.
 Production code does not instantiate that visitor. These observations remain visible but do not count as production detector passes.
-There are also 53 uncaptured helper, CLI, or integration tests.
+There are also 49 tests without a recorded detector call. Captured helper calls do not certify surrounding signing assertions.
 Detection evidence does not certify every reporter, signing workflow, or integration contract.
 
 The edit harness checks four oracle transitions for each rule.
@@ -91,6 +91,8 @@ The [journal](data-layer-performance-journal.md) retains complete measurement bo
 The corrected run matches all 24,993 findings with zero engine failures across all 9,021 files.
 The final sealed build uses 1.357 seconds of compile CPU, 395.519 seconds of cold CPU, and 321.603 seconds of cold wall time.
 OS peak RSS through close is 15,398,617,088 bytes. The memory gate remains open.
+
+The [testsuite audit](data-layer-testsuite-coverage.md) adds native-only coverage enforcement and ten always-clean controls.
 
 ## Reproduce the gates
 

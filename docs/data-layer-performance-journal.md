@@ -5705,3 +5705,38 @@ The [full measurement](performance-decisions/data-layer-batch-seven-20261103.jso
 There are now 70 candidate policies out of the pinned 142 checks, leaving 72.
 The pack remains inactive. Signing workflows, uncaptured integration tests, and wave/GPU migration remain separate contracts.
 No Linear issue was created.
+
+
+## 2026-11-03 — Require positive coverage from the native engine
+
+The unchanged upstream suites for all 70 rules collect 4,227 tests: 4,224 pass and three retain their original skips.
+The native audit matches 3,427 observations: 1,777 positive and 1,650 clean.
+All 70 rules have both native positive and native clean coverage.
+There are zero extra findings, missing findings, engine failures, or snapshot/workspace differences.
+Three host signature observations remain separate and do not contribute to native coverage.
+
+Two TDD ladders strengthen acceptance.
+First, five newly captured original authority-helper observations fail against the previous post-op entry-point handling.
+The corrected helper modes match two positive and three clean observations without adding unrelated production findings.
+Ten always-clean candidate controls fail against original positives, and a fixture gate requires coverage for 35 diagnostic codes.
+Two new oracle probes cover the history sentinel and stale fate override.
+Batch seven now passes 217 native observations: 146 positive and 71 clean.
+Its original 208 pytest tests pass; seven unused-visitor calls remain outside production replay.
+
+Second, a host-only signature positive plus one native clean result previously passed replay certification.
+The new regression fails before the fix.
+Replay now requires native positive and clean coverage for each rule, separately from host-guard observations.
+All 54 focused conformance tests and typechecking pass after this change.
+The sixth-batch corpus again passes all 1,259 observations in bounded complete-observation shards.
+
+Fresh upstream tests expose two setup requirements for signing/CLI tests.
+The archive lacks the Git metadata needed for their committed-baseline read.
+A real worktree supplies it, but inherited `GIT_PAGER` still violates the upstream guard's environment whitelist.
+Removing only that variable makes all 933 sixth-batch tests pass.
+No scan guard or upstream assertion was disabled or changed.
+
+The [testsuite receipt](../fixtures/host/data-layer-port/testsuite-positive-coverage-20261103.json) records per-rule native positive and clean counts.
+The [coverage report](data-layer-testsuite-coverage.md) separates oracle tests, native observations, controls, and remaining exclusions.
+The resolved production post-op program has identical before/after SHA-256 `e6d5f2ff3ab1166ae96aa9718231568520f7da2bd022645e025d02a5fce732d8`.
+The historical repository benchmark remains unchanged; these tests do not establish a new performance result.
+No Linear issue was created.

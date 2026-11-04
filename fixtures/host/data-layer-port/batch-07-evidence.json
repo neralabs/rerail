@@ -13,18 +13,18 @@
   "recordings": [
     {
       "path": "fixtures/host/data-layer-port/batch-07-recording.json",
-      "sha256": "ae4435bd1a278db8375e5af0de37bf48bc9a1d72f6ad019493c0202187db038b"
+      "sha256": "369bbde9fb994c37c62a5dfeb96b8bc1540df2453787d158aa20ad0afa282d8a"
     },
     {
       "path": "fixtures/host/data-layer-port/batch-07-probes.json",
-      "sha256": "c7b273d894ccd8b307fdd5d10ebb24b28deca133d29e13e14de0486b52cead2f"
+      "sha256": "6aa1881200342bc8ffe6b5939ee31ae3e91e9ccccf5aa23382d3da8371ad5190"
     }
   ],
   "source_corpus": {
-    "nativeCalls": 210,
-    "replayedCalls": 210,
-    "positiveCalls": 142,
-    "cleanCalls": 68,
+    "nativeCalls": 217,
+    "replayedCalls": 217,
+    "positiveCalls": 146,
+    "cleanCalls": 71,
     "falsePositives": 0,
     "falseNegatives": 0,
     "engineFailures": 0,
@@ -33,8 +33,8 @@
     "coverage": [
       {
         "check": "post_op_side_effects",
-        "positive": 10,
-        "clean": 6
+        "positive": 13,
+        "clean": 9
       },
       {
         "check": "post_op_no_internal_dispatch",
@@ -48,7 +48,7 @@
       },
       {
         "check": "history_serverplan_projection",
-        "positive": 7,
+        "positive": 8,
         "clean": 4
       },
       {
@@ -90,6 +90,59 @@
       "diagnostic code",
       "backend comparison column",
       "diagnostic category where recorded"
+    ],
+    "missingNativeCoverage": [],
+    "nativeCoverage": [
+      {
+        "check": "post_op_side_effects",
+        "positive": 13,
+        "clean": 9
+      },
+      {
+        "check": "post_op_no_internal_dispatch",
+        "positive": 14,
+        "clean": 4
+      },
+      {
+        "check": "executor_publication_repairs",
+        "positive": 3,
+        "clean": 2
+      },
+      {
+        "check": "history_serverplan_projection",
+        "positive": 8,
+        "clean": 4
+      },
+      {
+        "check": "revision_ancestry_invariants",
+        "positive": 4,
+        "clean": 2
+      },
+      {
+        "check": "versioned_merged_identity",
+        "positive": 9,
+        "clean": 4
+      },
+      {
+        "check": "publication_registry_writes",
+        "positive": 15,
+        "clean": 9
+      },
+      {
+        "check": "declared_fact_interrogation",
+        "positive": 29,
+        "clean": 13
+      },
+      {
+        "check": "grammar_mutation_invalidation",
+        "positive": 28,
+        "clean": 17
+      },
+      {
+        "check": "unknown_contract_defaults",
+        "positive": 23,
+        "clean": 7
+      }
     ]
   },
   "retained_calls": [
@@ -220,12 +273,8 @@
     }
   ],
   "uncaptured_tests": [
-    "scripts/tests/test_lint_post_op_side_effects.py::test_runtime_allowlist_rejects_broad_kind_and_behavior_authority",
-    "scripts/tests/test_lint_post_op_side_effects.py::test_runtime_allowlist_accepts_only_exact_materializer_and_decoder_authority",
-    "scripts/tests/test_lint_post_op_side_effects.py::test_runtime_allowlist_must_cover_exact_reachable_symbols_without_stale_entries",
     "scripts/tests/test_lint_post_op_side_effects.py::test_branch_eol_result_is_terminal_materializer_not_runtime_op",
     "scripts/tests/test_lint_post_op_side_effects.py::test_scalar_column_materializers_are_terminal_sql_row_hydration",
-    "scripts/tests/test_lint_post_op_side_effects.py::test_signing_refuses_audit_required_post_op_fates",
     "scripts/tests/test_lint_post_op_side_effects.py::test_raw_result_exists_materializer_is_deleted",
     "scripts/tests/test_lint_post_op_side_effects.py::test_merge_result_materializer_is_terminal_sql_row_hydration",
     "scripts/tests/test_lint_post_op_side_effects.py::test_table_exists_many_materializer_is_terminal_sql_row_hydration",
@@ -281,7 +330,7 @@
     "checks": 10,
     "transitions": 50,
     "differences": 0,
-    "elapsedMs": 122.82066600000007,
+    "elapsedMs": 103.07375000000002,
     "rows": [
       {
         "check": "post_op_side_effects",
@@ -814,13 +863,21 @@
     "compilationMs": 1350.851666,
     "coldMs": 321603.251041,
     "osPeakRssBytes": 15398617088,
-    "receipt": "docs/performance-decisions/data-layer-batch-seven-20261103.json"
+    "receipt": "docs/performance-decisions/data-layer-batch-seven-20261103.json",
+    "productionPlanEquivalence": {
+      "baselineCommit": "194429e585615e471aeb2d616524d394b915c167",
+      "policy": "packs/data-layer/candidates/rules/data-layer-post-op-side-effects.json",
+      "beforeResolvedSha256": "e6d5f2ff3ab1166ae96aa9718231568520f7da2bd022645e025d02a5fce732d8",
+      "afterResolvedSha256": "e6d5f2ff3ab1166ae96aa9718231568520f7da2bd022645e025d02a5fce732d8",
+      "identical": true
+    },
+    "qualification": "Historical full run; the authored helper modes changed, but the resolved default production program is byte-identical. This run was not relabeled or repeated."
   },
   "policies": [
     {
       "check": "post_op_side_effects",
       "path": "packs/data-layer/candidates/rules/data-layer-post-op-side-effects.json",
-      "sha256": "6d41de2fc62f8e1d8dc8e385124035a7f1e5b34428baf7689a84817deaddf4f2"
+      "sha256": "655ff5697718438456d6a1e01767157a7c99b68689779cb60bb9f4ebc40fcb98"
     },
     {
       "check": "post_op_no_internal_dispatch",
@@ -869,8 +926,8 @@
     }
   ],
   "validation": {
-    "focused_production_tests": 16,
-    "first_fifty_and_batch_seven_tests": 41,
+    "focused_production_tests": 28,
+    "first_fifty_and_batch_seven_tests": 53,
     "integrated_schema_options_tests": 32,
     "sixth_batch_observations": 1259,
     "sixth_batch_differences": 0,
@@ -882,11 +939,13 @@
       "qualification": "Both checked files and the hash mismatch are unchanged from base 9bc955cc5."
     },
     "root_typecheck": true,
-    "integrated_typecheck": true
+    "integrated_typecheck": true,
+    "typescript_conformance_tests_including_native_coverage_guard": 54,
+    "always_clean_controls_rejected": 10
   },
   "limitations": [
     "Seven captured calls exercise an unused legacy helper visitor and do not count as production detector passes.",
-    "Fifty-three helper, CLI, or integration tests are not captured by detector replay.",
+    "Forty-nine tests have no recorded detector call; helper calls inside signing tests do not certify the surrounding workflow.",
     "Ten removal transitions compare with a fresh empty workspace; the other forty transitions use oracle observations.",
     "Peak RSS remains high; performance acceptance is not claimed.",
     "Relational clauses do not lower through the newer wave/GPU execution model."
@@ -954,5 +1013,6 @@
     "falseNegatives": 0,
     "engineFailures": 0,
     "executionPathDifferences": 0
-  }
+  },
+  "testsuite_coverage_receipt": "fixtures/host/data-layer-port/testsuite-positive-coverage-20261103.json"
 }

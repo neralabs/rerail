@@ -3,7 +3,7 @@
 Date: 2026-11-03. Status: restart in progress; ten batch-seven candidates are implemented.
 
 The recovery survey below describes the original 60-rule restart point.
-Batch seven now passes 210 source observations and 50 edit/removal transitions.
+Batch seven now passes 217 source observations and 50 edit/removal transitions.
 Integrated-engine compatibility is included, as requested.
 The first cumulative run failed with 22 engine errors; its results are not a parity pass.
 The admission and legacy-query regressions now pass. The corrected 70-rule repository gate matches all findings with zero engine failures.
