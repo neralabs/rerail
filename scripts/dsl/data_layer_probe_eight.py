@@ -60,7 +60,7 @@ def main():
                 return p.relative_to(root).as_posix() if p.is_absolute() and p.is_relative_to(root) else p.as_posix()
             findings=normalize(check,raw,files,logical)
             events.append({'test':'probe:batch8:'+case['id'],'check':check,'entry':entry,'call':1,'upstream_passed':True,
-                'scope':{'include':['**/*.py'],'exclude':[]},'production_scope':False,'files':files,'findings':findings,
+                'scope':{'include':['**/*.py'],'exclude':[]},'production_scope':False,'files':files,'findings':findings,'compare_message':case.get('compareMessage',False),
                 **({'compare_fields':[field]} if (field:={'eager_resolve':'symbol','pure_lazy_runtime_purity':'qualname','plan_helpers_allowlist':'callsite'}.get(check)) else {}),
                 'oracle_config':{'options':{'oracleAnalyzer':True,'entryPoint':entry,**({'policyEntries':policy_entries} if check=='cached_pure_lazy_allowlist' else {})}}})
     report={'format':'rerail.data-layer-recording/v1','commit':PIN,'checks':sorted({e['check'] for e in events}),

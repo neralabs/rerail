@@ -16,6 +16,7 @@ const eventSchema = z.object({
   production_scope: z.boolean().optional(), path_skip_override: z.boolean().optional(),
   compare_clause: z.boolean().optional(),
   compare_fields: z.array(z.string()).optional(),
+  compare_message: z.boolean().optional(),
   oracle_config: z.object({ categories: z.record(z.string(), z.array(z.string())).optional(), source_gate: z.boolean().optional(), options: z.record(z.string(), z.unknown()).optional(), allowlist_signature: z.string().optional() }).optional(),
   scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()) }).optional(),
   files: z.array(z.object({ path: z.string(), source: z.string() })).optional(),
@@ -188,14 +189,14 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
         if (finding.metadata?.[field] === undefined) throw new Error(`Missing oracle ${field}: ${event.test}`);
         return finding.metadata[field];
       });
-      return JSON.stringify([finding.path, finding.line, finding.code, ...(columns ? [finding.column] : []), ...(event.compare_clause ? [finding.tag] : []), ...fields]);
+      return JSON.stringify([finding.path, finding.line, finding.code, ...(event.compare_message ? [finding.message] : []), ...(columns ? [finding.column] : []), ...(event.compare_clause ? [finding.tag] : []), ...fields]);
     });
     const actual = (result: Result): string[] => result.violations.map(finding => {
       const file = event.files!.find(file => file.path === finding.path)!;
       const bytes = Buffer.from(file?.source ?? "");
       const prefix = bytes.subarray(finding.span.startByte - finding.span.startColumn, finding.span.startByte).toString("utf8");
       const category = event.check === "connection_caches" ? finding.clauseId.replace(/-file-\d+$/, "") : finding.clauseId;
-      return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(columns ? [[...prefix].length + 1] : []), ...(event.compare_clause ? [category] : []), ...(event.compare_fields ?? []).map(field => finding.variables?.row?.[field] ?? null)]);
+      return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(event.compare_message ? [finding.message] : []), ...(columns ? [[...prefix].length + 1] : []), ...(event.compare_clause ? [category] : []), ...(event.compare_fields ?? []).map(field => finding.variables?.row?.[field] ?? null)]);
     });
     const observed = actual(result);
     rows.push({ execution: signatureFailure === undefined ? "native" : "host-signature-guard", test: event.test, call: event.call, check: event.check,

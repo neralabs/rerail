@@ -88,3 +88,16 @@ it.each(checks)("rejects an always-clean %s detector on a recorded oracle positi
     expect(report.executionPathDifferences).toBe(0);
   } finally { log.mockRestore(); rmSync(directory, { recursive: true, force: true }); }
 }, 30_000);
+
+it("preserves diagnostic text, ordered graph targets and first matching owner calls", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-batch-eight-exact-"));
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const output = join(directory, "result.json");
+    const passed = await replay(fixturesPath("host", "data-layer-port", "batch-08-exact-probes.json"), output);
+    const report = JSON.parse(readFileSync(output, "utf8"));
+    expect(report.rows.filter((row: { falsePositives: unknown[]; falseNegatives: unknown[]; engineFailures: unknown[] }) =>
+      row.falsePositives.length || row.falseNegatives.length || row.engineFailures.length)).toEqual([]);
+    expect(passed).toBe(true);
+  } finally { log.mockRestore(); rmSync(directory, { recursive: true, force: true }); }
+}, 30_000);
