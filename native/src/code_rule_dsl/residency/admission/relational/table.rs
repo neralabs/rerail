@@ -124,6 +124,57 @@ unsafe impl<'a> VTab<'a> for Table {
                 }
             })
             .min_by_key(|v| v.2);
+        if let Some(scope) = self.shared.source.scope_column() {
+            let path = info.constraints().enumerate().find(|(i, c)| {
+                c.is_usable()
+                    && c.column() == scope as i32
+                    && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
+                    && info.collation(*i).is_ok_and(|v| v == "BINARY")
+            });
+            if let Some((path, _)) = path {
+                let primary = info
+                    .constraints()
+                    .enumerate()
+                    .filter(|(i, c)| {
+                        c.is_usable()
+                            && c.column() >= 0
+                            && c.column() != scope as i32
+                            && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
+                            && self.shared.source.indexed(c.column() as usize)
+                            && info.collation(*i).is_ok_and(|v| v == "BINARY")
+                    })
+                    .min_by_key(|(i, c)| {
+                        self.shared.source.scoped_estimate(
+                            c.column() as usize,
+                            info.is_in_constraint(*i).unwrap_or(false),
+                            info.is_in_constraint(path).unwrap_or(false),
+                        )
+                    });
+                if let Some((primary, c)) = primary {
+                    let col = c.column() as usize;
+                    let batch = info.is_in_constraint(primary)?;
+                    let path_batch = info.is_in_constraint(path)?;
+                    if batch {
+                        info.set_in_constraint(primary, true)?;
+                    }
+                    if path_batch {
+                        info.set_in_constraint(path, true)?;
+                    }
+                    info.constraint_usage(primary).set_argv_index(1);
+                    info.constraint_usage(path).set_argv_index(2);
+                    let estimate = self.shared.source.scoped_estimate(col, batch, path_batch);
+                    info.set_idx_num(
+                        (1 << 21)
+                            | (((col + 1) as i32) << 2)
+                            | i32::from(batch)
+                            | (i32::from(path_batch) << 1),
+                    );
+                    info.set_estimated_rows(estimate as i64);
+                    info.set_estimated_cost(estimate.max(1) as f64);
+                    return Ok(true);
+                }
+            }
+        }
         let range = info.constraints().enumerate().find_map(|(i, c)| {
             let col = c.column();
             if !c.is_usable()
@@ -265,7 +316,28 @@ unsafe impl VTabCursor for Cursor {
         self.position = 0;
         self.selected = None;
         self.range = 0..self.shared.source.len();
-        if index & (1 << 20) != 0 {
+        if index & (1 << 21) != 0 {
+            let column = ((index & ((1 << 20) - 1)) >> 2) - 1;
+            let values_for = |arg: usize, batch: bool| -> Result<Vec<Value>> {
+                if batch {
+                    self.shared.stats.batches.fetch_add(1, Ordering::Relaxed);
+                    let mut iter = args.in_values(arg)?;
+                    let mut values = Vec::new();
+                    while let Some(v) = iter.next()? {
+                        values.push(Value::try_from(v).map_err(|e| failure(&e.to_string()))?);
+                    }
+                    Ok(values)
+                } else {
+                    Ok(vec![args.get::<Value>(arg)?])
+                }
+            };
+            let values = values_for(0, index & 1 != 0)?;
+            let paths = values_for(1, index & 2 != 0)?;
+            self.selected = self
+                .shared
+                .source
+                .lookup_scoped(column as usize, &values, &paths)?;
+        } else if index & (1 << 20) != 0 {
             let column = ((index & ((1 << 20) - 1)) >> 4) - 1;
             let mut arg = 0;
             let lower = if index & 1 != 0 {

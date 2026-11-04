@@ -542,7 +542,32 @@ impl<'a> Session<'a> {
             }
         };
         if rows.iter().any(|r| !r.incomplete.is_empty()) {
-            return Err(invalid("A relational input is incomplete"));
+            let details = plan
+                .inputs
+                .iter()
+                .zip(&rows)
+                .filter(|(_, rows)| !rows.incomplete.is_empty())
+                .map(|((name, _), rows)| {
+                    format!(
+                        "{name}: {}{}",
+                        rows.incomplete
+                            .iter()
+                            .take(8)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if rows.incomplete.len() > 8 {
+                            " (more files omitted)"
+                        } else {
+                            ""
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(invalid(format!(
+                "A relational input is incomplete: {details}"
+            )));
         }
         let syntax_files = if let Some(spec) = &plan.syntax {
             let gate = plan

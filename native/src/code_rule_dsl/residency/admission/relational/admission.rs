@@ -63,7 +63,16 @@ pub(in crate::code_rule_dsl) fn check(
     }
     let rows = inputs.gate.as_ref().expect("prepared gate");
     if !rows.incomplete.is_empty() {
-        return Err(invalid("A relational input is incomplete"));
+        return Err(invalid(format!(
+            "A relational input is incomplete: {}: {}",
+            plan.inputs[slot].0,
+            rows.incomplete
+                .iter()
+                .take(8)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
     }
     let admitted = !rows.witnesses.is_empty();
     #[cfg(feature = "code-rule-profile")]
