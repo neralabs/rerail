@@ -455,7 +455,7 @@ Port of Ruff's T100 (debugger): imports of debugger modules (`is_debugger_import
 
 ### `bandit-b101-assert-used`
 
-Port of Bandit 1.9.4's B101 assert_used with its default configuration, which skips no file (tests included; scope is every file).
+Port of Bandit 1.9.4's B101 assert_used: every `assert` statement. Divergence: Bandit's default configuration skips no file; the port skips test code, where pytest's `assert` is the idiom and Bandit users skip B101: `tests/` directories and `test_*.py`, `*_test.py` and `conftest.py` files at any depth (`**/` also matches the repository root). A `test/` directory and a Django app's `tests.py` are still read: `test/` is often a library's own package (`django/test/`). No recorded Bandit finding is in a skipped path, so no divergence is declared.
 
 ### `bandit-b102-exec-used`
 
