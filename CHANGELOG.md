@@ -4,6 +4,10 @@ Every notable change to Rerail's core package, `@neralabs/rerail`, latest first.
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. A release is a patch unless it names a later version, and a patch can change or remove what you use, so read the notes before you update.
 
+## Unreleased
+
+0.1.2 stops counting what Git writes as your agent's work: after a pull, rebase or branch switch, an agent no longer gets findings for code it never touched. It also keeps Rerail's Git calls from fetching from the remote in a partial clone, and corrects what set-up and `rerail install --remove` tell you. Before you update: if you set `RERAIL_STORAGE_ROOT` or `RERAIL_MODEL_PATH`, check the values, since Rerail now reads them everywhere and resolves a relative one against the session's workspace.
+
 ## 0.1.1 (2026-11-04)
 
 0.1.1 locks the daemon to you, keeps each coding agent's Rerail tools inside its own repository, and loads rules from a checkout's own folder and from third parties' packs, in Log until you approve them. Before you update: open the dashboard with `rerail manage`, since old bookmarks stop working; have scripts that call the daemon send `x-rerail-access`; and give a daemon reachable from other machines a TLS certificate or `--insecure-http`.
