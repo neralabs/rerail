@@ -679,7 +679,7 @@ With `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` set for the runtime's proces
 
 #### How AI-output scope finds changed lines
 
-AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated.
+AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated. A file Git wrote is no edit at all, whichever session ran the command.
 
 <details>
 <summary>Fallbacks when no pre-edit source was captured</summary>
@@ -687,6 +687,18 @@ AI-output scope diffs source, not violation IDs: it compares each edit with pre-
 Without a boundary (a shell write, a Codex `apply_patch` its hooks don't show), Rerail uses the file's last-seen text this session (from the most recently changed 64 MB). Else it uses the file's Git index or `HEAD` blob. Each counts only if its SHA-256 matches the pre-change file. Blob reads never fetch a partial clone's missing objects.
 
 If nothing matches, the edit reports its whole file, as `touched-files` does, until Rerail has seen the file change in the session. Parsing and cross-file query context may exceed reporting scope. Source, parse and match caches are incremental; repository scans stream bounded batches through a separate native workspace.
+
+</details>
+
+<details>
+<summary>What counts as Git's write</summary>
+
+- a file that now holds exactly its `HEAD` blob after anything but a commit moved `HEAD` (a checkout, switch, pull, merge, rebase, reset), or with `HEAD` where it was (`git restore`, `git stash`);
+- a file a move removed;
+- the files of a merge or rebase stopped on a conflict;
+- a new linked worktree's files.
+
+A file written and committed in one command stays an edit, measured from the tree before the commit. One written in the command that moved `HEAD` is measured from what Git wrote.
 
 </details>
 
