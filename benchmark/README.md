@@ -24,16 +24,16 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   (per-case rows with `--verbose`). Capture, transfer and compare spend the person's model budget on every judge call;
   results are never committed.
 - `merge-assist-context.ts` (`node --import tsx benchmark/merge-assist-context.ts --build-index out.json
-  [--distractors N]`, then `--index index.json --variants none,guard-signals,... --split dev|heldout|size|confirm|all
-  [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--no-control] [--json out.json] [--keep]
-  [--verbose] [--model m] [-c key=value]`, `--sweep control.json`, `--list-variants`, `--validate-oracles`) asks
-  whether injecting teammates' decisions into
+  [--distractors N]`, then `--index index.json --variants none,guard-signals,...
+  --split dev|heldout|size|confirm|heldout-large|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N]
+  [--seed N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value]`, `--sweep control.json`,
+  `--list-variants`, `--validate-oracles`) asks whether injecting teammates' decisions into
   a real Codex loop, when it touches files they cover, makes its code follow them, and which protocol does so with the
   least chatter. The dataset, `fixtures/host/benchmark/merge-assist/context.json`, reuses cases.json's project and
   names its ten lasting decisions (team or peer, with the hand-written text and scope the oracles grade through), the
-  distractor pool and 53 tasks: per split (`dev` for tuning, `heldout` to confirm), nine that tempt one decision each,
-  two neutral ones and two where this branch's decision contradicts a teammate's; then the `size` and `confirm` splits
-  of `--arms` below. Nothing hand-written about a real
+  distractor pool and 69 tasks: per split (`dev` for tuning, `heldout` to confirm), nine that tempt one decision each,
+  two neutral ones and two where this branch's decision contradicts a teammate's; then the `size`, `confirm` and
+  `heldout-large` splits of `--arms` below. Nothing hand-written about a real
   decision reaches the agent: `--build-index` runs the product's `draftDecision` with the person's agent CLI judge on
   each decision's capture case (correction, before and after) and keeps the decision text, scope and validated signals
   it produces, leaving out any the judge calls one-off or does not answer; distractors and the conflict tasks'
@@ -70,7 +70,17 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   most 3 too). `focus-area` makes no session call: an area's first touch starts a ranker over the decisions covering
   the touched file or a project file in that area, answered as at most 3 and written to `focus-<area>.json`; areas rank
   concurrently, the picks go out at the first hook call after the answer, and a pre-edit patching an area still
-  ranking waits up to 15 s, then falls back to `area-embed` for that area, 3 at most. Before any focus run every prompt
+  ranking waits up to 15 s, then falls back to `area-embed` for that area, 3 at most. `focus-area5` is `focus-area`
+  with each area's ranker answering at most 5, all 5 injected. `area-all` calls no ranker: an area's first touch (as
+  focus counts it) injects its conflict pairs, then every undelivered decision covering the touched file or a project
+  file in that area, in index order, with no cap, the conflict's line to end with last. Whole decisions that would
+  take one hook call past 9,000 characters (Codex keeps about 2,500 tokens of one hook's `additionalContext` and shows
+  the model a preview of more) wait, in order, for the next hook call, which sends them first; nothing is truncated.
+  One area alone stays under it on the large tasks of `size` and `confirm` with every distractor (at most 8,725
+  characters, `src/ui`); a call that touches several areas at once is split. `oracle-area` is a DIAGNOSTIC ceiling,
+  never a product arm: `area-all`'s delivery with the task's targets (the grader's labels, which its hook config
+  carries) as the picks, so it shows what perfect selection would deliver; its injected text is still the index's
+  decision text, and the run prints that its selection uses the task's labels. Before any focus run every prompt
   its rankers would send (the session's, and one per project area for `focus-area`) is built offline and checked to
   hold no index id, oracle regex or task label; the report adds whether focus was ready at the first area touch,
   pre-edit waits, fallbacks, ranker time (per area for `focus-area`) and its prompt tokens (characters / 4).
@@ -84,8 +94,8 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   actually consumed) and the hill-climbing score (per-run rows with `--verbose`). Every run spends the person's Codex
   budget. `--timeout-min N` (default 6) bounds each Codex call.
 
-  `--arms focus-k3,posthoc` asks what a clean, finished result costs: a focus protocol (`focus-k3`, `focus-k5`,
-  `focus-pool` or `focus-area`), against no injection
+  `--arms focus-k3,posthoc` asks what a clean, finished result costs: an injection protocol (`focus-k3`, `focus-k5`,
+  `focus-pool`, `focus-area`, `focus-area5`, `area-all`, or the diagnostic `oracle-area`), against no injection
   with the violations fixed afterwards. It runs the `size` split by default: nine tasks, three each small (one file,
   one tempted decision), medium (two to four files, two) and large (api, db, ui and routes, three or four). Each run
   goes to the agent's end, then, in both arms, the oracles grade it and, while a target is violated, at most three fix
@@ -93,12 +103,21 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   the index states it and every violating line (`path:line: code`). That reviewer is perfect, which favours
   `posthoc`, and human review latency is left out. It prints per size and arm (medians and means, with n): time to
   completion, total and uncached tokens, fix rounds and the share of runs needing one, first-pass and final clean,
-  done, churn (lines changed by the fixes), and the focus − posthoc difference per size.
+  done, churn (lines changed by the fixes), and the focus − posthoc difference per size; and per run its injections
+  (decisions, targets among them, injected tokens, the most characters one hook call injected) and per area the
+  decisions it got.
 
   `--split confirm` holds 18 more tasks for the pre-registered confirmatory comparison, six per size (small one
   target, medium two, large three or four in at least three areas), with prompts, features and file names new to the
   dataset and each of the nine graded decisions targeted at least three times. It is held out: no agent runs on it
   before its pre-registration is committed.
+
+  `confirm`'s pre-registered comparison is done, so it is tuning data now, with `size`. `--split heldout-large` holds
+  16 large tasks for a new confirmation on large tasks only: each tempts three or four of the nine graded decisions
+  (every one at least five times), with the violations they invite in at least three areas (db, api, routes, ui,
+  lib), and prompts, features and file names new to the dataset. Each was checked offline, with no agent, against a
+  clean and a violating reference: the violating one breaks every target and no other decision, the clean one none,
+  and both meet every done check. It is held out: no agent runs on it before its pre-registration is committed.
 
   `--live [--trials N] [--decisions id,id] [--tasks id,id]` is the two-agent coordination check: does a person's
   correction of their agent (A) on one branch reach another agent (B) on another branch through the product's capture,
@@ -118,8 +137,8 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   capture, time and tokens per phase, and L1 for the batch alone; `--json` keeps it all. `--concurrency` bounds the
   Codex work at once: an A with its capture, or one B run.
 - `merge-assist-stats.ts` (`node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...]
-  --arms A,B [--metric m] [--look N] [--seed N]`, or `--self-test`) analyses `--arms` reports, no model involved. A
-  run is the unit, stratified by task; several reports' batches are pooled (one look each unless `--look` says
+  --arms A,B [--metric m] [--look N] [--seed N] [--diagnostic]`, or `--self-test`) analyses `--arms` reports, no model
+  involved. A run is the unit, stratified by task; several reports' batches are pooled (one look each unless `--look` says
   otherwise), and reports with a different index, arm definitions, fix-round limit or run settings are refused. `A` is
   the treatment, `B` the control, and every test is one-sided in A's favour. Binary metrics (`first_pass_clean`,
   `needs_fix_round`) get a stratified permutation test (arm labels shuffled within each task, 20,000 times, seeded) on
@@ -133,7 +152,9 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   P3 time to completion non-inferior at ×1.10, P4 needing a fix round lower on large tasks) with Holm's correction,
   then the secondary hypotheses (per-size P1–P3, time superiority, uncached tokens, churn), and judges each look
   against the Pocock boundary for three looks (nominal one-sided α 0.0221); the last line is `STOP: success`,
-  `CONTINUE` or `STOP: futility/max looks`. `--self-test` prints the false-positive rate under no effect and the power
+  `CONTINUE` or `STOP: futility/max looks`. It refuses the diagnostic `oracle-area` as the treatment of the primary
+  family unless `--diagnostic` is passed, and then heads the output as a diagnostic that decides nothing. `--self-test`
+  prints the false-positive rate under no effect and the power
   under a large one, and for P3's test the false-positive rate at a true ratio of 1.10 and the power at 0.9, 200
   synthetic datasets each. `--analyze-live live.json [...] [--look N] [--planned-looks N]` analyses `--live` reports:
   L1, B's violation of D lower with `focus-pool` than with `none`, by the same stratified permutation test with strata

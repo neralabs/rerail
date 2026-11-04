@@ -80,6 +80,7 @@ import {
   type GuardScore,
   GUARDS,
   type GuardSource,
+  HOOK_CONTEXT_CHARS,
   type HookConfig,
   type HookLogEntry,
   type IndexEntry,
@@ -107,9 +108,12 @@ const OWN_AUTHOR = "Tim Belanger";
 const DEFAULT_TIMEOUT_MIN = 6;
 /**
  * `dev` for tuning, `heldout` to confirm, `size` for the cost-to-clean comparison (`--arms`), `confirm` for the
- * pre-registered confirmatory `--arms` runs (held out: no agent runs on it before the pre-registration is committed).
+ * pre-registered confirmatory `--arms` runs (spent: its comparison is done, and it is tuning data now, like `size`),
+ * `heldout-large` for a new confirmation on large tasks (held out: no agent runs on it before its pre-registration).
  */
-const SPLITS = ["dev", "heldout", "size", "confirm"] as const;
+const SPLITS = ["dev", "heldout", "size", "confirm", "heldout-large"] as const;
+/** The splits whose tasks name their size. */
+const SIZED_SPLITS: ReadonlyArray<(typeof SPLITS)[number]> = ["size", "confirm", "heldout-large"];
 export const SIZES = ["small", "medium", "large"] as const;
 const KINDS = ["tempt", "neutral", "conflict"] as const;
 
@@ -137,6 +141,8 @@ const UPFRONT = { ...LISTINGS, when: "upfront", cap: null, dedupe: "session", fo
  * decisions, one terse line each, the conflict's line to end with last.
  */
 const AREA = { ...PER_FILE, format: "terse", rank: "scope-specificity", threshold: null, channels: "hybrid", orient: "area", areaRank: "index", cap: 12, guardCap: 3, guard: null, embedThreshold: null } as const;
+/** Per-area focus: an area's first touch starts a ranking call over its own decisions, which names at most 3. */
+const FOCUS_AREA = { ...AREA, orient: "area-focus", areaRank: null, cap: null, guardCap: null, focusK: null, rankMax: 3, areaCap: 3 } as const;
 
 /**
  * The protocols to compare, by name. `none` is the control: the hook runs and logs (each patch's guard scores
@@ -166,18 +172,32 @@ const VARIANTS: Readonly<Record<string, VariantParameters | null>> = {
   "focus-k5": { ...AREA, orient: "focus", areaRank: null, cap: null, guardCap: null, focusK: 5 },
   /** Session focus over a pool: the ranker names up to 12 picks, and an area's first touch takes at most 3 of them. */
   "focus-pool": { ...AREA, orient: "focus", areaRank: null, cap: null, guardCap: null, focusK: null, rankMax: 12, areaCap: 3 },
-  /** Per-area focus: an area's first touch starts a ranking call over its own decisions, which names at most 3. */
-  "focus-area": { ...AREA, orient: "area-focus", areaRank: null, cap: null, guardCap: null, focusK: null, rankMax: 3, areaCap: 3 },
+  "focus-area": FOCUS_AREA,
+  /** Per-area focus with each area's ranking call naming at most 5, all 5 injected. */
+  "focus-area5": { ...FOCUS_AREA, rankMax: 5, areaCap: 5 },
+  /** At an area's first touch, its conflict pairs and every undelivered decision covering it: no ranking, no cap. */
+  "area-all": { ...FOCUS_AREA, orient: "area-all", rankMax: null, areaCap: null },
+  /**
+   * DIAGNOSTIC ceiling, never a product arm: `area-all`'s delivery with the task's targets (the grader's labels) as
+   * the picks, so it measures what perfect selection would deliver; no ranker runs.
+   */
+  "oracle-area": { ...FOCUS_AREA, orient: "targets", rankMax: null, areaCap: null },
 };
 const CONTROL = "none";
+
+/** What `orient: targets` presets are: a ceiling that selects with the grader's labels. */
+const DIAGNOSTIC_NOTE = "DIAGNOSTIC ceiling, never a product arm: its picks are the task's targets (the grader's labels), no ranker";
 
 function describeVariant(parameters: VariantParameters | null): string {
   if (parameters === null) return "control: no injection (the hook only logs)";
   const embed = parameters.guard === "embed" || parameters.guard === "both" ? ` embedThreshold=${parameters.embedThreshold ?? "NOT FROZEN"}` : "";
-  const focus = parameters.orient === "focus" || parameters.orient === "area-focus" ? ` focusK=${parameters.focusK ?? "all"} rankMax=${parameters.rankMax ?? MAX_RANKED} areaCap=${parameters.areaCap ?? "none"}` : "";
+  const focus = parameters.orient === "focus" || parameters.orient === "area-focus"
+    ? ` focusK=${parameters.focusK ?? "all"} rankMax=${parameters.rankMax ?? MAX_RANKED} areaCap=${parameters.areaCap ?? "none"}`
+    : parameters.orient === "area-all" || parameters.orient === "targets" ? ` areaCap=none callChars=${HOOK_CONTEXT_CHARS} (the rest at the next call)` : "";
   const orient = `orient=${parameters.orient}${parameters.orient === "area" ? ` areaRank=${parameters.areaRank}` : ""}${focus}`;
   const channels = parameters.channels === "hybrid" ? ` channels=hybrid ${orient} guard=${parameters.guard ?? "none"} guardCap=${parameters.guardCap ?? "none"}${embed}` : "";
-  return `when=${parameters.when} budget=${parameters.budget} cap=${parameters.cap ?? "all"} sessionCap=${parameters.sessionCap ?? "all"} dirs=${parameters.dirs} dedupe=${parameters.dedupe} format=${parameters.format} rank=${parameters.rank} threshold=${parameters.threshold ?? "none"} only=${parameters.only} conflict=${parameters.conflict}${channels}`;
+  const diagnostic = parameters.orient === "targets" ? `${DIAGNOSTIC_NOTE}. ` : "";
+  return `${diagnostic}when=${parameters.when} budget=${parameters.budget} cap=${parameters.cap ?? "all"} sessionCap=${parameters.sessionCap ?? "all"} dirs=${parameters.dirs} dedupe=${parameters.dedupe} format=${parameters.format} rank=${parameters.rank} threshold=${parameters.threshold ?? "none"} only=${parameters.only} conflict=${parameters.conflict}${channels}`;
 }
 
 // ---------------------------------------------------------------------------------------------------------- dataset
@@ -200,7 +220,7 @@ type DatasetEntry = z.infer<typeof entrySchema>;
 const taskSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/u),
   split: z.enum(SPLITS),
-  /** `size` and `confirm` splits only: how big the task is. */
+  /** `size`, `confirm` and `heldout-large` splits only: how big the task is. */
   size: z.enum(SIZES).optional(),
   kind: z.enum(KINDS),
   prompt: z.string().min(1),
@@ -261,7 +281,7 @@ export function loadDataset(): Dataset {
       if (ORACLES[target] === undefined) throw new Error(`Task ${task.id} targets ${target}, which has no oracle`);
     }
     if ((task.kind === "neutral") !== (task.targets.length === 0)) throw new Error(`Task ${task.id}: a neutral task, and only one, has no targets`);
-    if ((task.split === "size" || task.split === "confirm") !== (task.size !== undefined)) throw new Error(`Task ${task.id}: a size or confirm task, and only one, names its size`);
+    if (SIZED_SPLITS.includes(task.split) !== (task.size !== undefined)) throw new Error(`Task ${task.id}: a task of ${SIZED_SPLITS.join(", ")}, and only one, names its size`);
     if ((task.kind === "conflict") !== (task.conflict !== undefined)) throw new Error(`Task ${task.id}: a conflict task, and only one, names its conflict`);
     if (task.conflict !== undefined && !task.targets.includes(task.conflict.own)) throw new Error(`Task ${task.id}: its own decision must be its target`);
     for (const done of task.done) new RegExp(done.regex, "u");
@@ -568,7 +588,7 @@ export function loadIndex(path: string): BuiltIndex {
  * favour the real decisions. A decision absent from the index stays absent. `--seed` 1 is this layout; another seed
  * draws other distractors, places them elsewhere and then shuffles the whole index, so ties and prompt order change.
  */
-function runIndex(dataset: Dataset, built: BuiltIndex, task: Task, distractors: number, seed: number): IndexEntry[] {
+export function runIndex(dataset: Dataset, built: BuiltIndex, task: Task, distractors: number, seed: number): IndexEntry[] {
   if (distractors > built.distractors) throw new Error(`--distractors takes at most ${built.distractors}, what ${built.path} holds`);
   const find = (id: string) => built.entries.find(entry => entry.id === id);
   const ownPresent = task.conflict !== undefined && find(task.conflict.own) !== undefined;
@@ -638,7 +658,7 @@ interface Options {
   decisions: string[] | null;
 }
 
-const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|size|confirm|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--timeout-min N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --arms focus-k3,posthoc [--split size|confirm] [--tasks id,id] [--trials N] [--timeout-min N] ... | --index index.json --live [--trials N] [--decisions id,id] [--tasks id,id] [--concurrency N] [--timeout-min N] [--json out.json] [--keep] | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
+const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|size|confirm|heldout-large|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--timeout-min N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --arms focus-k3,posthoc [--split size|confirm|heldout-large] [--tasks id,id] [--trials N] [--timeout-min N] ... | --index index.json --live [--trials N] [--decisions id,id] [--tasks id,id] [--concurrency N] [--timeout-min N] [--json out.json] [--keep] | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
 
 function positive(flag: string, value: string | undefined): number {
   const number = Number(value);
@@ -1404,6 +1424,8 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
       embeddings: Object.fromEntries(index.map(entry => [entry.id, built.embeddings[entry.id]!])),
       modelPath: MODEL_PATH,
       files: Object.keys(dataset.project),
+      // `oracle-area` only: the diagnostic ceiling selects with the task's labels.
+      ...(VARIANTS[job.variant]?.orient === "targets" ? { targets: task.targets } : {}),
       root: repo,
       folder,
       log: logPath,
@@ -1841,6 +1863,10 @@ function replay(dataset: Dataset, built: BuiltIndex, path: string, thresholds: r
       console.log(`skip ${name}: focus depends on when its rankers answered, which a replay cannot reproduce`);
       continue;
     }
+    if (parameters.orient === "area-all" || parameters.orient === "targets") {
+      console.log(`skip ${name}: its picks have no threshold to replay`);
+      continue;
+    }
     const runs = report.runs.filter(run => run.variant === name && run.error === null && (run.hookLog ?? []).some(entry => entry.candidates !== undefined));
     if (runs.length === 0) {
       console.log(`skip ${name}: its runs logged no scored candidates (a report from before relevance scoring?)`);
@@ -1872,13 +1898,23 @@ function replay(dataset: Dataset, built: BuiltIndex, path: string, thresholds: r
 // ---------------------------------------------------------------------------------------------------------- arms
 
 /**
- * The cost-to-clean comparison (`--arms`): a focus protocol (`focus-k3`, `focus-k5`, `focus-pool` or `focus-area`)
- * against no injection with the violations fixed after the agent finishes (`posthoc`, the control's hooks), the way a
- * landing check or a reviewer would. Both arms then go through the same fix rounds, so both end clean when they can.
+ * The cost-to-clean comparison (`--arms`): an injection protocol (`focus-k3`, `focus-k5`, `focus-pool`, `focus-area`,
+ * `focus-area5`, `area-all`, or the diagnostic ceiling `oracle-area`) against no injection with the violations fixed
+ * after the agent finishes (`posthoc`, the control's hooks), the way a landing check or a reviewer would. Both arms
+ * then go through the same fix rounds, so both end clean when they can.
  */
-export const ARMS = ["focus-k3", "focus-k5", "focus-pool", "focus-area", "posthoc"] as const;
+export const ARMS = ["focus-k3", "focus-k5", "focus-pool", "focus-area", "focus-area5", "area-all", "oracle-area", "posthoc"] as const;
 export type Arm = (typeof ARMS)[number];
-const ARM_VARIANTS: Readonly<Record<Arm, string>> = { "focus-k3": "focus-k3", "focus-k5": "focus-k5", "focus-pool": "focus-pool", "focus-area": "focus-area", posthoc: CONTROL };
+const ARM_VARIANTS: Readonly<Record<Arm, string>> = {
+  "focus-k3": "focus-k3",
+  "focus-k5": "focus-k5",
+  "focus-pool": "focus-pool",
+  "focus-area": "focus-area",
+  "focus-area5": "focus-area5",
+  "area-all": "area-all",
+  "oracle-area": "oracle-area",
+  posthoc: CONTROL,
+};
 /** The most fix rounds a run gets after the agent's first finish. */
 const MAX_FIX_ROUNDS = 3;
 /** The most oracle hits one decision's part of a reviewer message names. */
@@ -1984,6 +2020,8 @@ async function runArmJob(arm: Arm, task: Task, trial: number, dataset: Dataset, 
       embeddings: Object.fromEntries(index.map(entry => [entry.id, built.embeddings[entry.id]!])),
       modelPath: MODEL_PATH,
       files: Object.keys(dataset.project),
+      // `oracle-area` only: the diagnostic ceiling selects with the task's labels.
+      ...(variant?.orient === "targets" ? { targets: task.targets } : {}),
       root: repo,
       folder,
       log: logPath,
@@ -2082,6 +2120,44 @@ function summarizeArm(size: string, arm: Arm, runs: readonly ArmRun[]): ArmSumma
 /** `median / mean` of `values`, `digits` decimals. */
 const centre = (values: readonly number[], digits = 0): string => `${fixed(median(values), digits)} / ${fixed(mean(values), digits)}`;
 
+/**
+ * Each run's injections over all its Codex calls: per run, the hook calls that injected, the decisions, the injected
+ * tokens (characters / 4) and the most characters one hook call injected (Codex keeps about 2,500 tokens of one
+ * hook's `additionalContext`); per area, the decisions it got, the targets among them marked `*`.
+ */
+function printInjections(runs: ReadonlyArray<{ readonly arm: string; readonly taskId: string; readonly trial: number; readonly targets: readonly string[]; readonly hookLog: readonly HookLogEntry[] }>): void {
+  const injecting = (run: (typeof runs)[number]) => run.hookLog.filter(entry => entry.injected.length > 0);
+  const injectedRuns = runs.filter(run => injecting(run).length > 0);
+  if (injectedRuns.length === 0) return;
+  console.log(`\nInjections per run (every Codex call of the run; tokens = characters / 4; split: hook calls that held decisions back for the next call to stay under ${HOOK_CONTEXT_CHARS} characters)`);
+  console.log(table(
+    ["arm", "task", "#", "hook calls injecting", "decisions", "targets injected", "injected tokens", "max chars at one hook call", "split (decisions held)"],
+    injectedRuns.map(run => {
+      const calls = injecting(run);
+      const ids = calls.flatMap(entry => entry.injected.map(item => item.decisionId));
+      const chars = calls.map(entry => entry.chars);
+      const split = run.hookLog.filter(entry => (entry.deferred?.length ?? 0) > 0);
+      return [
+        run.arm, run.taskId, String(run.trial), String(calls.length), String(ids.length), `${run.targets.filter(id => ids.includes(id)).length}/${run.targets.length}`,
+        String(Math.ceil(chars.reduce((sum, value) => sum + value, 0) / 4)), String(Math.max(...chars)),
+        split.length === 0 ? "0" : `${split.length} (${split.map(entry => entry.deferred!.length).join("+")})`,
+      ];
+    }),
+  ));
+  console.log("\nInjections per area (in the order the areas got them; * a target)");
+  console.log(table(
+    ["arm", "task", "#", "area", "hook calls", "decisions", "targets", "injected"],
+    injectedRuns.flatMap(run => {
+      const areas = Map.groupBy(injecting(run).flatMap(entry => entry.injected.map(item => ({ entry, item }))), ({ item }) => item.area ?? "?");
+      return [...areas].map(([area, items]) => [
+        run.arm, run.taskId, String(run.trial), area || ".", String(new Set(items.map(({ entry }) => entry)).size), String(items.length),
+        items.flatMap(({ item }) => (run.targets.includes(item.decisionId) ? [item.decisionId] : [])).join(" ") || "-",
+        clip(items.map(({ item }) => `${item.decisionId}${run.targets.includes(item.decisionId) ? "*" : ""}`).join(" "), 160),
+      ]);
+    }),
+  ));
+}
+
 function printArms(runs: readonly ArmRun[], arms: readonly Arm[]): void {
   console.log("\nRuns (phase 1, then each fix round: wall s, input/cached/output tokens, targets violated, done)");
   console.log(table(
@@ -2099,6 +2175,7 @@ function printArms(runs: readonly ArmRun[], arms: readonly Arm[]): void {
     }),
   ));
   printAreaRankers(runs.map(run => ({ name: run.arm, run })));
+  printInjections(runs);
   const sizes = SIZES.filter(size => runs.some(run => run.size === size));
   const summaries = sizes.flatMap(size => arms.map(arm => summarizeArm(size, arm, runs.filter(run => run.size === size && run.arm === arm))));
   const rows: Array<[string, (summary: ArmSummary) => string]> = [
@@ -2149,6 +2226,7 @@ async function runArms(dataset: Dataset, built: BuiltIndex, tasks: readonly Task
   const startedAt = new Date().toISOString();
   const codexVersion = execFileSync("codex", ["--version"], { encoding: "utf8" }).trim();
   console.log(`\nMerge Assist cost to clean (${codexVersion}${options.model === undefined ? ", default model" : `, model ${options.model}`}): index ${built.path}; arms ${arms.join(",")}; ${tasks.length} tasks × ${options.trials} trials = ${jobs.length} runs; ${options.distractors} distractors; seed ${options.seed}; ${options.timeoutMin} min per Codex call; concurrency ${options.concurrency}`);
+  for (const arm of arms.filter(name => VARIANTS[ARM_VARIANTS[name]]?.orient === "targets")) console.log(`  ${arm}: ${DIAGNOSTIC_NOTE}; not a treatment for the pre-registered comparison`);
   const runs = await pool(jobs, options.concurrency, job => runArmJob(job.arm, job.task, job.trial, dataset, built, options), (done, run) => {
     console.error(`run ${done}/${jobs.length}: ${run.arm} ${run.taskId} #${run.trial} ${run.error ?? `${run.firstPassClean ? "clean first" : `${run.rounds.length} fix rounds`}, ${run.finalClean ? "clean" : "NOT clean"}, ${run.finalDone ? "done" : "not done"}, ${(run.wallMs / 1000).toFixed(0)}s`}`);
   });
@@ -3117,6 +3195,14 @@ async function main(): Promise<void> {
     console.log(`\nRanker input integrity (the task prompt and decision texts under opaque ids; ${checks.reduce((sum, check) => sum + check.prompts, 0)} prompts for ${tasks.length} tasks): ${failures.length === 0 ? "PASS" : `FAIL (${failures.length})`}`);
     for (const failure of failures) console.log(`  FAIL ${failure}`);
     if (failures.length > 0) throw new Error("A focus ranker would see grader knowledge; no run starts.");
+  }
+  const labelled = names.filter(name => VARIANTS[name]?.orient === "targets");
+  if (labelled.length > 0) {
+    const absent = tasks.flatMap(task => {
+      const index = runIndex(dataset, built, task, options.distractors ?? built.distractors, options.seed);
+      return task.targets.filter(id => !index.some(entry => entry.id === id)).map(id => `${task.id}: ${id}`);
+    });
+    console.log(`\nSelection integrity for ${labelled.join(", ")}: DIAGNOSTIC. Its selection uses the task's labels: the hook config carries the task's targets, and they are the picks, with no ranker. What it injects is still each picked decision's text from the built index, rendered by the hook; nothing hand-written reaches the agent. Targets absent from the run index (never injected): ${absent.join(", ") || "none"}`);
   }
   if (options.arms !== null) {
     await runArms(dataset, built, tasks, options);

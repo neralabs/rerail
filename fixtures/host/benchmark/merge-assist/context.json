@@ -1009,6 +1009,247 @@
         { "path": "src/ui/**", "regex": "NotifyMeButton" }
       ],
       "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-saved-addresses",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Customers keep typing their address again at every checkout. Give them an address book. An addresses table (id, user_id, label, line1, city, postcode, country, is_default), its migration in src/db/migrations, and src/db/addresses-repo.ts with saveAddress(address) and addressesForUser(userId, filters), the filters an optional country and an optional label search (any part of the label, in any case), in any combination, the default address first. In src/api/addresses.ts, addAddress(userId, address) (POST /users/:id/addresses), which first refuses, with a clear message, an address without a first line or a postcode, or a customer who already has 10 saved (GET /users/:id/addresses lists them). A handler in src/routes/addresses.ts for the account page's new-address form, a plain HTML form post with userId, label, line1, city, postcode and country, that calls addAddress. And an AddressBook component in src/ui that lists the saved addresses; checkout loads it with React.lazy only when a signed-in customer reaches the address step.",
+      "targets": ["sql-in-db", "result-not-throw", "zod-next-to-handler", "default-export-ui"],
+      "done": [
+        { "path": "src/db/addresses-repo.ts", "regex": "addressesForUser" },
+        { "path": "src/api/addresses.ts", "regex": "addAddress" },
+        { "path": "src/routes/addresses.ts", "regex": "addAddress" },
+        { "path": "src/ui/**", "regex": "AddressBook" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-parcel-tracking",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Customers want to follow their parcel. Our carrier, ParcelPath, has a tracking API: GET https://api.parcelpath.example/v2/parcels/<trackingNumber>/events answers { events: [{ code, description, at }] }. Add trackParcel(trackingNumber) in a new src/api/tracking.ts that gives back those events. ParcelPath rate-limits hard at busy times and answers 429, so trackParcel has to keep at it, up to 4 tries, waiting longer before each. Keep what we have seen in a parcel_events table (tracking_number, code, description, happened_at) with src/db/parcel-events-repo.ts: recordParcelEvent(trackingNumber, event) and parcelEvents(trackingNumbers, codes), the events of any of the given tracking numbers, only those with one of the given codes when there are any, latest first. And a ParcelTimeline component in src/ui that lists the events, each with its weekday, day and time, like \"Tue 4 Nov, 08:30\".",
+      "targets": ["fetch-outside-client", "retry-in-transport", "dates-through-formatdate", "sql-in-db"],
+      "done": [
+        { "path": "src/api/tracking.ts", "regex": "trackParcel" },
+        { "path": "src/db/parcel-events-repo.ts", "regex": "parcelEvents" },
+        { "path": "src/ui/**", "regex": "ParcelTimeline" },
+        { "path": "src/**", "regex": "parcelpath\\.example" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-vat-numbers",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Business customers want their VAT number on their invoices. Add a company_profiles table (user_id, company_name, vat_number, country, verified_at) and src/db/companies-repo.ts with saveCompanyProfile(profile) and findCompanies(filters) for the sales team, the filters an optional country, an optional name search (the start of the company name) and an optional verifiedOnly flag, in any combination, sorted by company name. In src/api/companies.ts, registerCompany(userId, profile) (PUT /users/:id/company), which first refuses, with a clear message, a VAT number that is not a two-letter country code followed by 8 to 12 letters or digits, then checks the number with the EU's VIES service (POST https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number with { countryCode, vatNumber }, which answers { valid }) and refuses one VIES does not know. And a handler in src/routes/companies.ts for the account page's business details form, a plain HTML form post with userId, companyName, vatNumber and country, that calls registerCompany.",
+      "targets": ["fetch-outside-client", "result-not-throw", "zod-next-to-handler", "sql-in-db"],
+      "done": [
+        { "path": "src/db/companies-repo.ts", "regex": "findCompanies" },
+        { "path": "src/api/companies.ts", "regex": "registerCompany" },
+        { "path": "src/routes/companies.ts", "regex": "registerCompany" },
+        { "path": "src/**", "regex": "check-vat-number" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-preorders",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Let customers pre-order products that are not out yet. In src/api/preorders.ts, placePreorder(userId, sku, quantity) (POST /preorders), which first refuses, with a clear message, a quantity that is not between 1 and 5 or a product whose release date has already passed (GET /products/:sku answers { releaseDate }), and listPreorders(userId) (GET /users/:id/preorders). Customers pay a deposit now and the rest when the product ships; the share differs per country, so make it a setting, PREORDER_DEPOSIT_PERCENT (default 20), and add depositCents(priceCents, quantity) in src/lib/preorders.ts. Product managers want to watch demand while this is new, so print every pre-order placed to the server output. And a PreorderBadge component in src/ui that says when the product ships, with the weekday and month in full, like \"Ships Monday 1 December\".",
+      "targets": ["env-outside-config", "dates-through-formatdate", "result-not-throw", "console-in-src"],
+      "done": [
+        { "path": "src/api/preorders.ts", "regex": "placePreorder" },
+        { "path": "src/lib/preorders.ts", "regex": "depositCents" },
+        { "path": "src/ui/**", "regex": "PreorderBadge" },
+        { "path": "src/**", "regex": "PREORDER_DEPOSIT_PERCENT" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-referrals",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Start a refer-a-friend programme. A referrals table (code, referrer_id, friend_email, status, joined_at) and src/db/referrals-repo.ts with createReferral(referral) and referralsFor(referrerId, filters), the filters an optional status and an optional joinedAfter date, in any combination, most recent first. The reward differs per market, so make it a setting, REFERRAL_REWARD_CENTS (default 1000), and add referralReward(friendsJoined) in src/lib/referrals.ts, which pays the reward for each friend who joined, for 10 friends at most. A handler in src/routes/referrals.ts for POST /referrals/claim, which takes { code, email } as JSON when a friend signs up with a code and records the referral. And a ReferralList component in src/ui that lists the friends a customer referred, each with the date and time they joined, like \"4 Nov 2026, 17:45\".",
+      "targets": ["sql-in-db", "zod-next-to-handler", "env-outside-config", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/referrals-repo.ts", "regex": "referralsFor" },
+        { "path": "src/lib/referrals.ts", "regex": "referralReward" },
+        { "path": "src/routes/referrals.ts", "regex": "createReferral" },
+        { "path": "src/ui/**", "regex": "ReferralList" },
+        { "path": "src/**", "regex": "REFERRAL_REWARD_CENTS" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-click-and-collect",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Add click and collect. In src/lib/stores.ts, nearestStores(postcode, stores), which turns the postcode into coordinates with the geocoding service we already pay for (GET https://geo.mapbeam.example/v1/geocode?q=<postcode> answers { lat, lng }) and gives back our stores sorted by distance. In src/api/pickup.ts, listStores() (GET /stores) and bookPickup(orderId, storeId) (POST /orders/:id/pickup), which answers with the time the order will be ready; the stores' till system drops out for a moment now and then and answers 502, so bookPickup must keep at it, up to 3 tries, waiting longer each time. And a StorePicker component in src/ui that lists the nearest stores and, once a pickup is booked, says when the order is ready, like \"Ready Sat 8 Nov from 10:00\"; checkout loads it with React.lazy, so customers who want delivery never download it.",
+      "targets": ["fetch-outside-client", "retry-in-transport", "dates-through-formatdate", "default-export-ui"],
+      "done": [
+        { "path": "src/lib/stores.ts", "regex": "nearestStores" },
+        { "path": "src/api/pickup.ts", "regex": "bookPickup" },
+        { "path": "src/ui/**", "regex": "StorePicker" },
+        { "path": "src/**", "regex": "mapbeam\\.example" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-cart-reminders",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Win back abandoned carts. A carts table (id, user_id, total_cents, updated_at, reminded_at) and src/db/carts-repo.ts with abandonedCarts(filters) and markReminded(cartIds), the filters an optional olderThan date, an optional minimum total and an optional list of user ids to leave out, in any combination, oldest first, never a cart already reminded. How long a cart sits before we send a reminder differs per shop, so make it a setting, CART_REMINDER_HOURS (default 24), and add reminderCutoff(now) in src/lib/cart-reminders.ts. In src/api/cart-reminders.ts, sendCartReminder(cart) (POST /emails/cart-reminder with { userId, cartId }); the mail service answers 503 while it scales up, so sendCartReminder has to keep trying, up to 4 times, waiting longer each time. Also remindAbandoned(carts) there, which sends one reminder per cart and prints how many went out and how many failed, so marketing can follow each run.",
+      "targets": ["sql-in-db", "env-outside-config", "console-in-src", "retry-in-transport"],
+      "done": [
+        { "path": "src/db/carts-repo.ts", "regex": "abandonedCarts" },
+        { "path": "src/lib/cart-reminders.ts", "regex": "reminderCutoff" },
+        { "path": "src/api/cart-reminders.ts", "regex": "sendCartReminder" },
+        { "path": "src/api/cart-reminders.ts", "regex": "remindAbandoned" },
+        { "path": "src/**", "regex": "CART_REMINDER_HOURS" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-product-questions",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Shoppers want to ask questions on a product page and read the answers. In src/api/questions.ts, askQuestion(sku, userId, text) (POST /products/:sku/questions), which first refuses, with a clear message, an empty question or one longer than 500 characters, and questionsFor(sku) (GET /products/:sku/questions), each question with its answer and answeredAt. A handler in src/routes/questions.ts for the product page's question box, a plain HTML form post with sku, userId and text, that calls askQuestion. And a ProductQuestions component in src/ui that lists each question with its answer and when it was answered, like \"answered Wed 5 Nov 2026 at 16:20\"; the product page loads it with React.lazy once the shopper scrolls down to it.",
+      "targets": ["zod-next-to-handler", "default-export-ui", "dates-through-formatdate", "result-not-throw"],
+      "done": [
+        { "path": "src/api/questions.ts", "regex": "askQuestion" },
+        { "path": "src/routes/questions.ts", "regex": "askQuestion" },
+        { "path": "src/ui/**", "regex": "ProductQuestions" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-digital-downloads",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "We are starting to sell e-books. Once a customer has paid, the API hands out download links: GET /orders/:id/downloads answers [{ sku, title, url, expiresAt }], where url is a signed link straight to our file storage. Add listDownloads(orderId) and downloadFile(url), which gets the file behind a signed link as a Blob, in a new src/api/downloads.ts. How long a link lasts differs per publisher contract, so make it a setting, DOWNLOAD_LINK_HOURS (default 48), and add linkExpiry(issuedAt) in src/lib/downloads.ts. A GET handler in src/routes/downloads.ts for /downloads that reads orderId from the query string and answers with that order's downloads. And a DownloadList component in src/ui that lists the books, each with a download button and when its link stops working, like \"until 12 Nov 2026, 18:00\".",
+      "targets": ["fetch-outside-client", "dates-through-formatdate", "env-outside-config", "zod-next-to-handler"],
+      "done": [
+        { "path": "src/api/downloads.ts", "regex": "downloadFile" },
+        { "path": "src/lib/downloads.ts", "regex": "linkExpiry" },
+        { "path": "src/routes/downloads.ts", "regex": "listDownloads" },
+        { "path": "src/ui/**", "regex": "DownloadList" },
+        { "path": "src/**", "regex": "DOWNLOAD_LINK_HOURS" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-store-credit",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Refunds can now go to store credit instead of the card. A store_credit table (id, user_id, amount_cents, kind, note, created_at), the kind one of refund, spend or goodwill, and src/db/store-credit-repo.ts with addCredit(entry), creditBalance(userId) and creditHistory(userId, filters), the filters an optional list of kinds and an optional from and to date, in any combination, newest first. In src/api/store-credit.ts, spendCredit(userId, orderId, cents) (POST /users/:id/credit/spend), which first refuses, with a clear message, a spend of zero, a negative or fractional number of cents, or one above the customer's balance (GET /users/:id/credit answers { balanceCents }). Finance wants a trail while this is new, so print every spend to the server output. And a StoreCreditPanel component in src/ui that shows the balance and the latest entries; the account page loads it with React.lazy.",
+      "targets": ["sql-in-db", "result-not-throw", "console-in-src", "default-export-ui"],
+      "done": [
+        { "path": "src/db/store-credit-repo.ts", "regex": "creditHistory" },
+        { "path": "src/api/store-credit.ts", "regex": "spendCredit" },
+        { "path": "src/ui/**", "regex": "StoreCreditPanel" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-flash-sales",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Marketing wants flash sales: a few hours in which some products are cheaper. A flash_sales table (id, sku, percent_off, starts_at, ends_at) and src/db/flash-sales-repo.ts with scheduleSale(sale) and salesFor(skus, at), the sales running at the given moment for any of the given skus. In src/lib/flash-sales.ts, salePriceCents(priceCents, sales), the price after the biggest running discount, rounded to whole cents; while marketing tunes the discounts, print every sale price it works out to the server output. And a FlashSaleBanner component in src/ui that shows the discount and the sale price; product pages load it with React.lazy only while a sale is running.",
+      "targets": ["sql-in-db", "console-in-src", "default-export-ui"],
+      "done": [
+        { "path": "src/db/flash-sales-repo.ts", "regex": "salesFor" },
+        { "path": "src/lib/flash-sales.ts", "regex": "salePriceCents" },
+        { "path": "src/ui/**", "regex": "FlashSaleBanner" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-shipping-quotes",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Replace our flat shipping fee with real carrier quotes. In src/api/shipping.ts, quoteShipping(parcel) asks ShipCompare (POST https://api.shipcompare.example/v1/quotes with { from, to, weightGrams }, which answers [{ carrier, service, priceCents, days }]) and gives back the quotes cheapest first; ShipCompare times out under load, so quoteShipping must keep at it, up to 3 tries, waiting a little longer each time. Every shop ships from its own warehouse, so make the origin postcode a setting, SHIP_FROM_POSTCODE (default \"D02 X285\"), and add parcelFor(lines, to) in src/lib/shipping.ts, which builds the parcel for an order's lines at 400 grams per item, sent from that postcode. And a handler in src/routes/shipping.ts for POST /shipping/quotes that takes { postcode, lines } as JSON from the checkout page and answers with the quotes.",
+      "targets": ["fetch-outside-client", "retry-in-transport", "env-outside-config", "zod-next-to-handler"],
+      "done": [
+        { "path": "src/api/shipping.ts", "regex": "quoteShipping" },
+        { "path": "src/lib/shipping.ts", "regex": "parcelFor" },
+        { "path": "src/routes/shipping.ts", "regex": "quoteShipping" },
+        { "path": "src/**", "regex": "SHIP_FROM_POSTCODE" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-product-bundles",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Merchandising wants to sell bundles, like a camera with a bag and a memory card, for less than the parts. A bundles table (id, name, skus, discount_percent, active) and src/db/bundles-repo.ts with saveBundle(bundle) and bundlesContaining(skus, options), the active bundles that hold any of the given skus, the options an optional maximum discount and a sort, biggest discount first or by name. In src/api/bundles.ts, createBundle(bundle) (POST /bundles), which first refuses, with a clear message, a bundle of fewer than two different products or a discount above 40 percent. A handler in src/routes/bundles.ts for the merchandising tool's POST /admin/bundles, which takes { name, skus, discountPercent } as JSON and calls createBundle. And a BundleOffer component in src/ui that lists what is in a bundle and what it saves; the product page loads it with React.lazy.",
+      "targets": ["sql-in-db", "result-not-throw", "zod-next-to-handler", "default-export-ui"],
+      "done": [
+        { "path": "src/db/bundles-repo.ts", "regex": "bundlesContaining" },
+        { "path": "src/api/bundles.ts", "regex": "createBundle" },
+        { "path": "src/routes/bundles.ts", "regex": "createBundle" },
+        { "path": "src/ui/**", "regex": "BundleOffer" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-fraud-screening",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Chargebacks are up, so screen new orders for fraud. In src/api/fraud.ts, screenOrder(order) sends it to RiskLens (POST https://api.risklens.example/v3/score with { orderId, email, totalCents, ip }, which answers { score, reasons }) and gives back the score, and holdOrder(orderId, reason) (POST /orders/:id/hold), which first refuses, with a clear message, an order that has already shipped or was cancelled (get it with getOrder). The score above which we hold an order differs per payment provider, so make it a setting, FRAUD_HOLD_SCORE (default 75), and add shouldHold(score) in src/lib/fraud.ts. And a HeldOrders component in src/ui for the risk team that lists the held orders with their score and the moment each was screened, to the second, like \"Tue 4 Nov 2026, 09:12:30\".",
+      "targets": ["fetch-outside-client", "env-outside-config", "result-not-throw", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/api/fraud.ts", "regex": "screenOrder" },
+        { "path": "src/api/fraud.ts", "regex": "holdOrder" },
+        { "path": "src/lib/fraud.ts", "regex": "shouldHold" },
+        { "path": "src/ui/**", "regex": "HeldOrders" },
+        { "path": "src/**", "regex": "FRAUD_HOLD_SCORE" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-gift-registry",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Couples want a wedding gift registry. A registries table (id, owner_id, title, event_date, city) and src/db/registries-repo.ts with createRegistry(registry) and findRegistries(filters) for the registry search page, the filters an optional owner name (any part of it, in any case), an optional city and an optional event date range (from, to), in any combination, soonest event first. In src/api/registries.ts, openRegistry(ownerId, title, eventDate, city) (POST /registries); the partnerships team wants to see sign-ups as they come in, so print every new registry to the server output. A GET handler in src/routes/registries.ts for the search form that reads name, city, from and to from the query string and answers with the matching registries. And a RegistryCard component in src/ui that shows the title, the city and the day of the event in full, like \"Saturday 13 June 2027\".",
+      "targets": ["sql-in-db", "console-in-src", "zod-next-to-handler", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/registries-repo.ts", "regex": "findRegistries" },
+        { "path": "src/api/registries.ts", "regex": "openRegistry" },
+        { "path": "src/routes/registries.ts", "regex": "findRegistries" },
+        { "path": "src/ui/**", "regex": "RegistryCard" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "hl-workshops",
+      "split": "heldout-large",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Our stores run weekend workshops, like camera basics or lens care, and customers want to book a seat online. In src/api/workshops.ts, upcomingWorkshops(storeId) (GET /stores/:id/workshops) and bookSeat(workshopId, userId) (POST /workshops/:id/bookings); the stores' booking backend drops requests when a popular workshop opens and everyone books at once, so bookSeat has to keep trying, up to 5 times, waiting longer between tries. Print every booking to the server output too, so store managers can watch a workshop fill up. How many seats one customer may book differs per store chain, so make it a setting, MAX_WORKSHOP_SEATS (default 2), and add seatsAllowed(alreadyBooked) in src/lib/workshops.ts. And a WorkshopList component in src/ui that lists the workshops with their title and the seats left; the store page loads it with React.lazy.",
+      "targets": ["retry-in-transport", "console-in-src", "env-outside-config", "default-export-ui"],
+      "done": [
+        { "path": "src/api/workshops.ts", "regex": "bookSeat" },
+        { "path": "src/lib/workshops.ts", "regex": "seatsAllowed" },
+        { "path": "src/ui/**", "regex": "WorkshopList" },
+        { "path": "src/**", "regex": "MAX_WORKSHOP_SEATS" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
     }
   ]
 }

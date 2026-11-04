@@ -25,7 +25,9 @@
  * Holm-corrected, then the secondary hypotheses, never used for stopping. With `--metric`, that one metric over every
  * task, superiority. Each look is
  * judged against the Pocock boundary for at most three looks, nominal one-sided α = 0.0221 per look, and the last line
- * says whether to stop. Everything here is a pure function of the reports and a seed; nothing calls a model.
+ * says whether to stop. The primary family refuses a diagnostic ceiling (`oracle-area`, which selects with the task's
+ * labels) as the treatment unless `--diagnostic` is passed. Everything here is a pure function of the reports and a
+ * seed; nothing calls a model.
  *
  * `--analyze-live` reads `--live` reports (the two-agent coordination check): L1, B's violation of the decision lower
  * with `focus-pool` than with `none`, by the same stratified permutation test with strata = B task, the effect the
@@ -349,6 +351,12 @@ export const PRIMARY: readonly Hypothesis[] = [
 ];
 
 /**
+ * Arms that select with the task's labels (merge-assist-context.ts `oracle-area`): diagnostic ceilings, which the
+ * primary family refuses as the treatment unless `--diagnostic` says the analysis is one.
+ */
+export const DIAGNOSTIC_ARMS: readonly string[] = ["oracle-area"];
+
+/**
  * The secondary hypotheses: per-size P1–P3 (P3 still against its margin), then time superiority, uncached tokens and
  * churn over every task. Never used for stopping.
  */
@@ -615,7 +623,7 @@ function selfTest(): boolean {
 
 // ---------------------------------------------------------------------------------------------------------- CLI
 
-const USAGE = `Usage: node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric ${METRICS.join("|")}] [--look N] [--seed N] | --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N] | --self-test`;
+const USAGE = `Usage: node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric ${METRICS.join("|")}] [--look N] [--seed N] [--diagnostic] | --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N] | --self-test`;
 
 function main(): void {
   const args = process.argv.slice(2);
@@ -630,6 +638,7 @@ function main(): void {
   let look: number | null = null;
   let plannedLooks = 1;
   let seed = 1;
+  let diagnostic = false;
   for (let index = 0; index < args.length; index++) {
     const flag = args[index]!;
     const value = (): string => {
@@ -638,6 +647,9 @@ function main(): void {
       return next;
     };
     switch (flag) {
+      case "--diagnostic":
+        diagnostic = true;
+        break;
       case "--analyze":
         while (args[index + 1] !== undefined && !args[index + 1]!.startsWith("--")) paths.push(args[++index]!);
         break;
@@ -685,6 +697,10 @@ function main(): void {
   }
   if (paths.length === 0 || arms === null) throw new Error(USAGE);
   if (look === null && paths.length > MAX_LOOKS) throw new Error(`${paths.length} reports is more than ${MAX_LOOKS} looks; pass --look\n${USAGE}`);
+  if (metric === null && DIAGNOSTIC_ARMS.includes(arms[0])) {
+    if (!diagnostic) throw new Error(`${arms[0]} selects with the task's labels: a diagnostic ceiling, never the treatment of the pre-registered primary family. Pass --diagnostic to analyse it as a diagnostic anyway\n${USAGE}`);
+    console.log(`DIAGNOSTIC analysis: ${arms[0]} selects with the task's labels; this is not the pre-registered comparison and decides nothing.\n`);
+  }
   analyzeReports(paths, arms, metric, look ?? paths.length, seed);
 }
 

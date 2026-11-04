@@ -38,10 +38,13 @@ export type GuardSource = (typeof GUARDS)[number];
 
 /**
  * What `hybrid` orientation offers: conflict pairs on a file's first touch; every decision of an area's first touch
- * (`area`); conflict pairs plus the session-focus ranker's picks that cover the area (`focus`); or conflict pairs plus
- * the picks of a ranking call over the area's own decisions, started at its first touch (`area-focus`).
+ * (`area`); conflict pairs plus the session-focus ranker's picks that cover the area (`focus`); conflict pairs plus the
+ * picks of a ranking call over the area's own decisions, started at its first touch (`area-focus`); conflict pairs
+ * plus every decision covering the area, unranked and uncapped (`area-all`); or conflict pairs plus the task's target
+ * decisions that cover the area (`targets`: a diagnostic ceiling that selects with the grader's labels, never a
+ * product protocol).
  */
-export const ORIENTS = ["conflicts", "area", "focus", "area-focus"] as const;
+export const ORIENTS = ["conflicts", "area", "focus", "area-focus", "area-all", "targets"] as const;
 /**
  * How area orientation ranks an area's decisions before the cap. `index`: by source, then index order. `specificity`:
  * the narrowest scope first. `prompt-lexical`: BM25 of the task prompt against the decision text. `prompt-embed`: the
@@ -76,7 +79,9 @@ export interface VariantParameters {
   /**
    * `hybrid` orientation. `conflicts`: the conflict pairs on a file first read or patched, `cap` per file. `area`: on
    * the first touch of an area (`areaOf`), every undelivered decision whose scope covers the touched file or any
-   * project file in that area, conflict pairs first, at most `cap` decisions per injection.
+   * project file in that area, conflict pairs first, at most `cap` decisions per injection. `area-all` and `targets`:
+   * on an area's first touch as `focus` sees it, its conflict pairs, then every undelivered decision covering it
+   * (`area-all`, index order) or the task's targets among them (`targets`), no cap.
    */
   readonly orient: (typeof ORIENTS)[number] | null;
   /** `orient: area`: how an area's decisions are ranked before the cap. */
@@ -127,6 +132,8 @@ export interface HookConfig {
   readonly modelPath: string;
   /** The project's files when the run starts: what an area holds (`orient: area`). */
   readonly files: readonly string[];
+  /** `orient: targets` only: the task's target decision ids, the grader's labels (a diagnostic ceiling). */
+  readonly targets?: readonly string[];
   readonly root: string;
   /** The run's folder: where the session-focus ranker writes `focus.json` and keeps its judge database. */
   readonly folder: string;
@@ -151,7 +158,7 @@ export interface HookLogEntry {
   /** `shell` for a command, `edit` for an apply_patch text, `other` for anything else. */
   readonly kind: ToolKind;
   readonly paths: readonly string[];
-  readonly injected: ReadonlyArray<{ readonly decisionId: string; readonly reason: string; readonly channel?: Channel }>;
+  readonly injected: ReadonlyArray<{ readonly decisionId: string; readonly reason: string; readonly channel?: Channel; readonly area?: string }>;
   readonly chars: number;
   /** The injected text, so the harness can find it again in Codex's transcript. */
   readonly text?: string;
@@ -169,6 +176,8 @@ export interface HookLogEntry {
   readonly promptEmbedding?: { readonly loadMs: number; readonly embedMs: number };
   /** `orient: focus`: the ranker's state at this call and what the call did with it. */
   readonly focus?: FocusLog;
+  /** `orient: area-all` or `targets`: decisions chosen at or before this call that wait for the next one, to keep this one under {@link HOOK_CONTEXT_CHARS}. */
+  readonly deferred?: readonly string[];
   readonly error?: string;
 }
 
@@ -190,9 +199,11 @@ export interface HookState {
   focusStarted: boolean;
   /** `orient: focus` or `area-focus`: files whose area got its conflict pairs before its ranker answered; its picks follow when it does. */
   pendingPaths: string[];
+  /** `orient: area-all` or `targets`: chosen items held back to keep a call under {@link HOOK_CONTEXT_CHARS}; the next call sends them first. */
+  queued: Candidate[];
 }
 
-export const INITIAL_STATE: HookState = { calls: 0, delivered: [], injected: 0, seenFiles: [], seenAreas: [], promptVector: null, focusStarted: false, pendingPaths: [] };
+export const INITIAL_STATE: HookState = { calls: 0, delivered: [], injected: 0, seenFiles: [], seenAreas: [], promptVector: null, focusStarted: false, pendingPaths: [], queued: [] };
 
 /** What a focus ranker writes when it is done: the session's to `focus.json`, an area's to `focus-<area>.json` (`areaFocusPath`). */
 export interface FocusFile {
@@ -914,6 +925,30 @@ async function areaFocusTurn(config: HookConfig, configPath: string, variant: Va
   return { ...turn, state: { ...turn.state, pendingPaths: pending }, log };
 }
 
+/**
+ * The most characters one call injects under `orient: area-all` or `targets`: Codex keeps about 2,500 tokens of one
+ * hook's `additionalContext` and shows the model only a preview of more; at characters / 4 this stays under it.
+ */
+export const HOOK_CONTEXT_CHARS = 9_000;
+
+/**
+ * One call under `orient: area-all` or `targets`, whose picks need no ranker. An area's first touch (as `focus` counts
+ * it) sends its conflict pairs, then every undelivered decision covering the touched file or a project file in the
+ * area, in index order (`area-all`), or only the task's targets among them (`targets`), with no cap. What would take
+ * the call past {@link HOOK_CONTEXT_CHARS} is not cut: it waits, in order, for the next call, which sends it first.
+ */
+async function fixedPicksTurn(config: HookConfig, variant: VariantParameters, initial: HookState, trigger: string, triggering: readonly Touched[]): Promise<Omit<FocusTurn, "log"> & { deferred: Candidate[] }> {
+  const fresh = freshPaths(initial, trigger, triggering);
+  const picks = variant.orient === "targets" ? config.targets ?? [] : config.index.map(entry => entry.id);
+  const turn = await focusChoice(config, variant, initial, fresh, fresh.map(path => ({ path, picks })));
+  const ready = [...initial.queued, ...turn.chosen];
+  // Whole items only, at least one a call: a single decision or conflict pair is far below the limit.
+  let sent = ready.length === 0 ? 0 : 1;
+  while (sent < ready.length && render(ready.slice(0, sent + 1), config.index, variant, false).length <= HOOK_CONTEXT_CHARS) sent += 1;
+  const deferred = ready.slice(sent);
+  return { ...turn, chosen: ready.slice(0, sent), deferred, state: { ...turn.state, queued: deferred } };
+}
+
 /** Every eligible item's scope match on each triggering path (one pathless match each for `upfront`), scored against `context`. */
 function candidatesFor(config: HookConfig, variant: VariantParameters, triggering: readonly Touched[] | null, context: string): Candidate[] {
   const weights = decisionWeights(config.index);
@@ -1127,12 +1162,15 @@ async function main(): Promise<void> {
     const { scores, embedding } = patched.length === 0 ? { scores: [], embedding: undefined } : await guardScores(config, patched);
     let promptEmbedding: HookLogEntry["promptEmbedding"] | undefined;
     let focusLog: FocusLog | undefined;
+    let deferred: Candidate[] = [];
     let candidates: Candidate[];
     let chosen: Candidate[];
     let next: HookState;
     if (variant?.orient === "focus" || variant?.orient === "area-focus") {
       const turn = focusing ? await focusTurn(config, variant, state, trigger, triggering) : await areaFocusTurn(config, configPath, variant, state, trigger, triggering);
       ({ candidates, chosen, state: next, log: focusLog, promptEmbedding } = turn);
+    } else if (variant?.orient === "area-all" || variant?.orient === "targets") {
+      ({ candidates, chosen, state: next, deferred } = await fixedPicksTurn(config, variant, state, trigger, triggering));
     } else {
       // `prompt-embed` embeds the task prompt at the first call that can inject, and keeps it for the rest of the run.
       if (variant?.areaRank === "prompt-embed" && trigger !== "") ({ state, promptEmbedding } = await withPromptVector(config, state));
@@ -1153,6 +1191,7 @@ async function main(): Promise<void> {
         const via = focusLog?.areas?.find(served => served.area === areaOf(candidate.path!))?.via;
         return `${candidate.conflict ? "conflict" : via === "ranker" ? "focus" : `fallback ${via}`} ${area}`;
       }
+      if (variant!.orient === "area-all" || variant!.orient === "targets") return `${candidate.conflict ? "conflict" : variant!.orient} ${area}`;
       return "conflict";
     };
     const injected = chosen.flatMap(candidate => candidate.ids.map((decisionId, position) => ({
@@ -1161,6 +1200,7 @@ async function main(): Promise<void> {
         ? `${candidate.channel ?? trigger}${candidate.path === null ? "" : ` ${candidate.path}`} (${candidate.channel === "guard" ? `hits ${candidate.hits!.join(" ") || "none"}, similarity ${candidate.similarity ?? "none"}` : candidate.channel === "orientation" ? orientation(candidate) : `score ${candidate.score}`})`
         : `conflicts with ${candidate.ids[0]!}`,
       ...(candidate.channel === undefined ? {} : { channel: candidate.channel }),
+      ...(candidate.path === null ? {} : { area: areaOf(candidate.path) }),
     })));
     if (text !== "") process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } })}\n`);
     writeFileSync(config.state, JSON.stringify(next));
@@ -1178,6 +1218,7 @@ async function main(): Promise<void> {
       ...(embedding === undefined ? {} : { embedding }),
       ...(promptEmbedding === undefined ? {} : { promptEmbedding }),
       ...(focusLog === undefined ? {} : { focus: focusLog }),
+      ...(deferred.length === 0 ? {} : { deferred: deferred.flatMap(candidate => candidate.ids) }),
     };
     appendFileSync(config.log, `${JSON.stringify(entry)}\n`);
   } catch (error) {
