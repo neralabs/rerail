@@ -42,7 +42,7 @@ npx @neralabs/rerail setup
 - Rerail is off in every repository until you start it there.
 - A steer is one line and a link for you, and a block for the agent, which may decline it by telling you why.
 - Claude Code, OMP and Pi show a status line with how many rules are on and how often Rerail steered.
-- A stopped daemon never stalls a tool call, and a busy one holds it for 25 seconds at most.
+- A daemon that is down never stalls a tool call, and in OMP and Pi a tool call never waits on Rerail longer than 25 seconds.
 
 ### Dashboard
 
