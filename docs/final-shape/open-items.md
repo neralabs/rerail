@@ -24,7 +24,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | closed (2026-10-29): jemalloc stays the global allocator (user decision); `mimalloc` remains a dependency only |
 | O22 | Phase 9 | P's text prefilter on three-valued clauses against W's consumers' pass | closed (2026-10-29): option (a), user decision |
 | O23 | Phase 4 / 9 | Lowered matchers' node labels on Metal (06 S1, decision 0011) | open |
-| O24 | Phase 4 / 10 | Semantic predicates as labels from fact producers (06 S1, decision 0011) | open |
+| O24 | Phase 4 / 10 | Semantic predicates as labels from fact producers (06 S1, decision 0011) | closed (2026-11-03, decision 0030): facts as labels, S1 158 of 286 lowered (from 77), all exact; the rest is O36 |
 | O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | closed (2026-10-30): sweeps in node order, 77 launches |
 | O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | closed (2026-10-30): labels only where a clause has candidates; sweeps on the CPU between GPU levels; 18.8 → 6.4 s on 8 fixtures |
 | O27 | Phase 4 / 10 | The findings layer's Unknown domains: syntax errors, capture anchors, `noqa` parents, report ceilings (06 S5, decision 0013) | closed (2026-10-30): all four decided in SQL; Unknown only where W's clause fails |
@@ -34,6 +34,8 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O31 | Phase 2–9 | Per-node structures beside the tape (decision 0026) | closed (2026-11-02): none is stored (S7's store: at most 0.12 rows/node, `derivation_inputs`); the in-memory ones are readers' working state, which 0026 allows (user ruling) |
 | O32 | Phase 3 / 11 | The SQL fallback's relations cost 7.7× P's VM steps (correlated `EXISTS` per scope row) | closed (2026-11-02): uncorrelated set operations, 2.21 G → 0.091 G (0.32× P), same rows |
 | O33 | Phase 4 | G's grid executor (`ExecutionBackend::Metal`, not on the production path) exceeds the 99-launch bound on five parity tests | closed 2026-11-02: superseded by 0024 (decision 0028); kept as a copy until step 31 |
+| O35 | Phase 4 / 9 | The Metal label run's interpreter workspace against the 256 MB buffer budget: S7's real files (results arena) | open |
+| O36 | Phase 4 / 10 | Semantic leaves still refused as fact labels: shared bindings, binding predicates, multi-target sub-rules, `parse`, under-`not` unknowns (decision 0030) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -684,6 +686,11 @@ The rest are refused for `count` (25; since S2, 10 lower and 15 are refused for 
 Its sub-rules are lowered as labels of their own. Shared bindings are joins on capture columns
 between labels, in the wave's SQL.
 
+**Closed (2026-11-03)** by decision 0030 (list step 26). A semantic leaf is a fact label: W's
+predicate, with its single-target sub-rules as slots, makes (node, targets) rows before any pass,
+and the slots are labels of their own. S1 lowers 158 of 286 clauses, all exact on the 60 fixtures;
+S2 finds the same roots on Metal for all 158. What is still refused is O36.
+
 ## O25. A wave's recursive label rounds on Metal
 
 **Closed (2026-10-30)** by candidate 2, recursion in node order, on the GPU (`label_sweep`,
@@ -973,3 +980,50 @@ waves stay as O33 describes them. Widened or non-flat lattices run on the CPU.
 **Closure:** such groups' members lowered to micro walks (then they fuse), or run inside a queue
 kernel; or measured as rare enough on the full corpus that host rounds are the shape. G's executor
 goes with O33.
+
+## O35. The Metal label run's workspace and the buffer budget
+
+**Requirement.** A wave's label run on Metal fits Metal's 256 MB buffer budget on real files.
+
+**Status (2026-11-03, list step 26).** The clauses that fact labels unlocked run interpreter tasks.
+- **Fixed in step 26.** At NARROW (1,024 lanes × 4,096 states), pending, captures and cursors
+  alone are about 284 MB before any input (`ruff-b006`, `ruff-f633`). A lease over the budget now
+  runs again with half the states per lane, down to 512 (`Error::BackendBudget`). Fewer lanes do
+  not help: the summed arenas grow.
+- **Still open.** On S7's sample, the results arena is up to `state_cap` results per task, summed
+  per level. That is 250–510 MB at any state count, so the label run fails (`BackendCapacity`)
+  even after the wave's document split. `the_backends_find_the_same_keys_on_real_files` is
+  ignored with this item.
+- **No CPU fallback** (user decision, 2026-11-03).
+
+**Closure.** Either:
+- a label pass's results are sized by what its sink reads: a roots-mode label needs one bit per
+  task, not a result page, though the quota is per evaluation today; or
+- the budget is raised (user decision, inside the 500 MB total).
+
+## O36. Semantic leaves still refused as fact labels
+
+S1's refusals after decision 0030, by reason:
+
+| Reason | Clauses |
+|---|---|
+| shared binding | 32 |
+| arguments binds | 22 |
+| parse | 17 |
+| resolves.binding | 14 |
+| constraints | 13 |
+| unknown fact under not | 12 |
+| compare | 6 |
+| formatArgs | 6 |
+| utility call | 3 |
+| binds | 2 |
+| binds occurrence or redefines | 1 |
+
+The fact-shaped ones are:
+- predicates that bind (`arguments`, `formatArgs`, `binds`);
+- sub-rules tested on many targets (occurrence, `redefines`, formatArgs' unused or missing);
+- `parse`, `host`, `embedded`, `calls`;
+- facts that may be unknown under `not` in three-valued clauses.
+
+Shared bindings are joins on capture columns between labels (O24's direction).
+

@@ -55,7 +55,16 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
         roots: Vec<u32>,
         constraints: Vec<(String, u32)>,
     },
+    /// The global roots a semantic predicate's producer reported (O24, decision 0030) whose slots'
+    /// targets each have their label: per root, its (target node, label) pairs. The pattern kernel's
+    /// fact case (`patterns::FACT`) tests them, so a fact settles from scratch as a pattern does.
+    Fact { target: u32, rows: Vec<(u32, Vec<(u32, u32)>)> },
     Empty { target: u32 },
+}
+
+/// Whether a pass runs in the pattern kernel: a pattern's or a fact's.
+fn kernel_pass(pass: &Pass<'_>) -> bool {
+    matches!(pass, Pass::Pattern { .. } | Pass::Fact { .. })
 }
 
 pub(in crate::code_rule_dsl) struct Plan<'a> {
@@ -372,6 +381,8 @@ const SWEEPS: usize = 4;
 const NARROW: (usize, Option<u32>) = (1024, Some(4096));
 /// The program backend's lanes and states: every task's worst case.
 const WIDE: (usize, Option<u32>) = (EXECUTION_LANES, None);
+/// The fewest states per lane a run over the buffer budget takes (`Error::BackendBudget`).
+const MIN_STATES: u32 = 512;
 
 #[derive(Debug, Default)]
 pub(in crate::code_rule_dsl) struct Outcome {
@@ -464,6 +475,12 @@ fn label_rows(plan: &Plan<'_>, micro: bool) -> Option<(Vec<u32>, Vec<u32>)> {
                     mark(*label)?;
                 }
             }
+            Pass::Fact { target, rows } => {
+                mark(*target)?;
+                for (_, label) in rows.iter().flat_map(|(_, targets)| targets) {
+                    mark(*label)?;
+                }
+            }
             Pass::Empty { target } => mark(*target)?,
         }
     }
@@ -522,7 +539,7 @@ fn settle(pass: &Pass<'_>, row: u32, tally: u32, place: impl Fn(&u32) -> u32) ->
                     row,
                     ..Op::default()
                 },
-        Pass::Pattern { .. } => return None,
+        Pass::Pattern { .. } | Pass::Fact { .. } => return None,
     })
 }
 
@@ -642,9 +659,9 @@ fn pipelines() -> Result<Vec<ComputePipelineState>, Error> {
 }
 
 /// The clause's pattern kernel, compiled once per distinct source.
-fn pattern_pipeline(patterns: &[&PackedPattern]) -> Result<Option<(ComputePipelineState, Vec<Vec<String>>)>, Error> {
+fn pattern_pipeline(patterns: &[&PackedPattern], facts: bool) -> Result<Option<(ComputePipelineState, Vec<Vec<String>>)>, Error> {
     static PIPELINES: LazyLock<Mutex<HashMap<String, ComputePipelineState>>> = LazyLock::new(Default::default);
-    if patterns.is_empty() {
+    if patterns.is_empty() && !facts {
         return Ok(None);
     }
     let (source, names) = patterns::source(patterns);
@@ -782,7 +799,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     // A level's launches: the programs' dispatch and sink, the derived labels, the settle.
     let launches = |level: &Vec<Pass<'_>>| {
         let programs = level.iter().any(|pass| matches!(pass, Pass::Program { .. } | Pass::Count { .. }));
-        let patterns = level.iter().any(|pass| matches!(pass, Pass::Pattern { .. }));
+        let patterns = level.iter().any(kernel_pass);
         2 * usize::from(programs) + usize::from(patterns) + 1
     };
     let fixed = plan
@@ -795,7 +812,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     // A group of micro walks runs to its fixpoint in one dispatch (`Runner::group`), which needs
     // no pattern pass; whether its walks fuse is known only once sized, so a plan counts it as
     // fused, and the evaluation's ledger refuses the submission of one that did not.
-    let fused = |levels: &Vec<Vec<Pass<'_>>>| !levels.iter().flatten().any(|pass| matches!(pass, Pass::Pattern { .. }));
+    let fused = |levels: &Vec<Vec<Pass<'_>>>| !levels.iter().flatten().any(kernel_pass);
     // A group of rounds ends with `label_round`; a group of sweeps is checked by the host; a fused
     // group is its dispatch.
     let groups = plan.steps.iter().filter(|(recursive, levels)| *recursive && !sweeps(levels)).count();
@@ -888,6 +905,14 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
                 lanes = WIDE;
                 continue;
             }
+            // The workspace is over the buffer budget: each lane holds half the states (a task that
+            // needs more fails its batch, which then runs `WIDE`).
+            Err(Error::BackendBudget) if lanes.1.is_some_and(|states| states > MIN_STATES) => {
+                crate::code_rule_dsl::prof::count("run.fewer_states", 1);
+                lanes.1 = lanes.1.map(|states| states / 2);
+                continue;
+            }
+            Err(Error::BackendBudget) => return Err(Error::BackendCapacity),
             // A loop walk outgrew the pool's 64 frames (or a walk its captures or steps): the
             // pool's 128-frame stacks first.
             Err(Error::BackendCapacity) if micro && !deep => {
@@ -996,7 +1021,7 @@ fn encode(
             None
         },
         orders: HashMap::new(),
-        patterns: pattern_pipeline(&plan.patterns)?,
+        patterns: pattern_pipeline(&plan.patterns, plan.steps.iter().flat_map(|(_, levels)| levels).flatten().any(|pass| matches!(pass, Pass::Fact { .. })))?,
         command,
         queue,
         files,
@@ -1653,7 +1678,9 @@ impl Runner<'_> {
             self.prepared.insert(key, Some(prepared));
         }
         if let Some((totals, scheduler_bytes, output_bytes, tasks)) = widest_seen {
-            let mut lease = crate::code_rule_dsl::prof::time("size.lease", || MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks))?;
+            // Lanes times states is the arena: one over the buffer budget runs again with fewer states.
+            let mut lease = crate::code_rule_dsl::prof::time("size.lease", || MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks))
+                .map_err(|error| if error == Error::BackendCapacity { Error::BackendBudget } else { error })?;
             crate::code_rule_dsl::prof::count("size.lease_mb", lease.bytes() >> 20);
             // Each encoded level advances the generation itself.
             lease.generation_span = 0;
@@ -1721,6 +1748,20 @@ impl Runner<'_> {
                     let count = (constraints.len() / 2) as u32 - start;
                     for root in roots {
                         matches.extend([*pattern as u32, row, *root, start, count]);
+                    }
+                    Op {
+                        target: place(target),
+                        row,
+                        ..Op::default()
+                    }
+                }
+                Pass::Fact { target, rows: reported } => {
+                    for (root, targets) in reported {
+                        let start = (constraints.len() / 2) as u32;
+                        for (node, label) in targets {
+                            constraints.extend([*node, place(label)]);
+                        }
+                        matches.extend([patterns::FACT, row, *root, start, targets.len() as u32]);
                     }
                     Op {
                         target: place(target),
@@ -1915,7 +1956,7 @@ impl Runner<'_> {
             if self.prepared.get(&key).is_some_and(Option::is_some) {
                 return unfused("tasks");
             }
-            if level.iter().any(|pass| matches!(pass, Pass::Pattern { .. })) {
+            if level.iter().any(kernel_pass) {
                 return unfused("patterns");
             }
             let walked = programs_of(level, true).len();

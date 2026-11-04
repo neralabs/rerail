@@ -18,7 +18,7 @@
 
 use super::*;
 use crate::code_rule_dsl::matcher::{Axis, MatchTree, Stop};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as LABEL_BASE;
 
@@ -71,6 +71,7 @@ impl Label {
                 max: *max,
             },
             Label::Complement(of) => Label::Complement(map(*of)),
+            Label::Fact(fact, slots) => Label::Fact(Arc::clone(fact), slots.iter().map(|slot| map(*slot)).collect()),
             Label::Empty => Label::Empty,
         }
     }
@@ -83,7 +84,7 @@ impl Label {
             | Label::Roots(program, _)
             | Label::Targets(program, _)
             | Label::Count { program, .. } => Some(program),
-            Label::Complement(_) | Label::Empty => None,
+            Label::Complement(_) | Label::Fact(..) | Label::Empty => None,
         }
     }
 
@@ -103,6 +104,7 @@ impl Label {
                 format!("count|{}|{domain:?}|{}|{min}|{max:?}", program.plain_digest(), tally(by))
             }
             Label::Complement(of) => format!("complement|{of}"),
+            Label::Fact(fact, slots) => format!("fact|{}|{slots:?}", fact.key),
             Label::Empty => "empty".to_owned(),
         }
     }
@@ -160,11 +162,59 @@ enum Label {
     },
     /// The nodes without another label.
     Complement(u16),
+    /// The nodes a semantic predicate's producer reports whose slots' targets have the slots' labels
+    /// (O24, decision 0030). The rows read no label; the slots are labels of their own.
+    Fact(Arc<crate::code_rule_dsl::matcher::Fact>, Vec<u16>),
     /// No node (`Never`).
     Empty,
 }
 
+/// Each fact's rows on each tape, by (fact, tape source) addresses: made before any pass.
+type FactRows = HashMap<(usize, usize), Vec<crate::code_rule_dsl::matcher::FactRow>>;
+
+/// The rows of `facts` on each of `tapes`, before any label pass (decision 0030): the producers read
+/// no label. Each tape is one file evaluation, so its scope table is built once and shared by every
+/// fact on it, as W's run shares it across clauses; the tapes run in parallel.
+fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::matcher::Fact>>, tapes: &[TapeDoc]) -> FactRows {
+    use rayon::prelude::*;
+    let mut distinct: Vec<&Arc<crate::code_rule_dsl::matcher::Fact>> = Vec::new();
+    for fact in facts {
+        if !distinct.iter().any(|known| Arc::ptr_eq(known, fact)) {
+            distinct.push(fact);
+        }
+    }
+    if distinct.is_empty() {
+        return FactRows::new();
+    }
+    crate::code_rule_dsl::prof::time("labels.facts", || {
+        tapes
+            .par_iter()
+            .flat_map_iter(|tape| {
+                let file = ast_grep_core::AstGrep::doc(tape.clone());
+                let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+                let source = Arc::as_ptr(tape.document_source()) as usize;
+                distinct
+                    .iter()
+                    .map(|fact| {
+                        let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
+                        let rows = fact.rows(&file, domain(&starts, tape, &[]));
+                        ((Arc::as_ptr(fact) as usize, source), rows)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    })
+}
+
 impl Labels {
+    /// The facts its labels read.
+    fn facts(&self) -> impl Iterator<Item = &Arc<crate::code_rule_dsl::matcher::Fact>> {
+        self.defs.iter().filter_map(|label| match label {
+            Label::Fact(fact, _) => Some(fact),
+            _ => None,
+        })
+    }
+
     fn add(&mut self, label: Label) -> u16 {
         let id = self.reserve(label);
         self.steps.push(vec![id]);
@@ -198,7 +248,7 @@ impl Labels {
                     Label::Pattern(_, starts) | Label::Constrained(_, starts, _) | Label::Roots(_, starts) => self.bound(starts, seen),
                     Label::Count { domain, by: Tally::Start, .. } => self.bound(domain, seen),
                     Label::Empty => Some(BTreeSet::new()),
-                    Label::Targets(..) | Label::Count { .. } | Label::Complement(_) => None,
+                    Label::Targets(..) | Label::Count { .. } | Label::Complement(_) | Label::Fact(..) => None,
                 };
                 seen.pop();
                 bound
@@ -238,6 +288,7 @@ impl Labels {
                     max: *max,
                 },
                 Label::Complement(of) => Label::Complement(up(*of)),
+                Label::Fact(fact, slots) => Label::Fact(Arc::clone(fact), slots.iter().map(|slot| up(*slot)).collect()),
                 Label::Empty => Label::Empty,
             })
             .collect();
@@ -275,6 +326,7 @@ impl Labels {
                 tests(program).into_iter().chain(starts(domain)).collect()
             }
             Label::Complement(of) => vec![*of],
+            Label::Fact(_, slots) => slots.clone(),
         }
     }
 }
@@ -334,6 +386,7 @@ impl LoweredMatcher {
     /// wave the clause is part of (its own from `labels.ids()`), each step to its fixpoint.
     fn label(&self, tapes: &[TapeDoc], sets: &mut [Arc<Vec<Vec<u64>>>]) -> Result<(), Error> {
         let most = tapes.iter().map(TapeDoc::transducer_len).max().unwrap_or(0);
+        let facts = fact_rows(self.labels.facts(), tapes);
         for step in &self.labels.steps {
             let recursive = self.labels.recursive.values().any(|id| step.contains(id));
             // A group without complements of its own labels only grows; one with them reads only
@@ -348,7 +401,7 @@ impl LoweredMatcher {
                         .zip(sets.iter())
                         .map(|(tape, sets)| tape.with_labels(Arc::clone(sets)))
                         .collect::<Vec<_>>();
-                    let found = self.evaluate(self.labels.def(id), &views, sets)?;
+                    let found = self.evaluate(self.labels.def(id), &views, sets, &facts)?;
                     for (sets, set) in sets.iter_mut().zip(found) {
                         let slot = &mut Arc::make_mut(sets)[usize::from(id - LABEL_BASE)];
                         if *slot != set {
@@ -438,6 +491,7 @@ impl LoweredMatcher {
         label: &Label,
         views: &[TapeDoc],
         sets: &[Arc<Vec<Vec<u64>>>],
+        facts: &FactRows,
     ) -> Result<Vec<Vec<u64>>, Error> {
         let empty = |view: &TapeDoc| vec![0_u64; view.transducer_len().div_ceil(64)];
         let set = |bits: &mut Vec<u64>, node: u32| bits[node as usize / 64] |= 1 << (node % 64);
@@ -507,6 +561,21 @@ impl LoweredMatcher {
                         && let Some(last) = bits.last_mut()
                     {
                         *last &= (1 << (nodes % 64)) - 1;
+                    }
+                    bits
+                })
+                .collect()),
+            // The producer's rows read no label; each slot's target must have its slot's label.
+            Label::Fact(fact, slots) => Ok(views
+                .iter()
+                .zip(sets)
+                .map(|(view, sets)| {
+                    let mut bits = empty(view);
+                    let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(view.document_source()) as usize);
+                    for (node, targets) in facts.get(&key).map_or(&[][..], |rows| &rows[..]) {
+                        if targets.iter().zip(slots).all(|(&target, &label)| has(sets, label, target)) {
+                            set(&mut bits, *node);
+                        }
                     }
                     bits
                 })
@@ -769,6 +838,10 @@ impl LoweredWave {
                     writeln!(out, "  label L{id} count {} domain={} by={by} min={min} max={max}", program(of), domain(starts))
                 }
                 Label::Complement(of) => writeln!(out, "  label L{id} complement L{of}"),
+                Label::Fact(fact, slots) => {
+                    let slots = slots.iter().map(|slot| format!("L{slot}")).collect::<Vec<_>>();
+                    writeln!(out, "  label L{id} fact {} slots=[{}]", fact.name, slots.join(" "))
+                }
                 Label::Empty => writeln!(out, "  label L{id} empty"),
             };
         };
@@ -916,10 +989,11 @@ impl LoweredWave {
         let active: &dyn Fn(&LoweredMatcher, usize) -> bool = &active;
         let mut sets = empty_sets(tapes, self.labels);
         let most = tapes.iter().map(TapeDoc::transducer_len).max().unwrap_or(0);
+        let facts = fact_rows(self.clauses.iter().flat_map(|clause| clause.labels.facts()), tapes);
         for (recursive, levels) in &steps {
             if !recursive {
                 for level in levels {
-                    label_level(level, tapes, &mut sets, active, &self.packs)?;
+                    label_level(level, tapes, &mut sets, active, &self.packs, &facts)?;
                 }
                 continue;
             }
@@ -939,7 +1013,7 @@ impl LoweredWave {
             for _round in 0..=most + 1 {
                 let mut changed = false;
                 for level in levels {
-                    changed |= label_level(level, tapes, &mut sets, active, &self.packs)?;
+                    changed |= label_level(level, tapes, &mut sets, active, &self.packs, &facts)?;
                 }
                 if !changed {
                     settled = true;
@@ -1200,11 +1274,27 @@ fn metal<'a>(
         placeholder
     };
     let index = |label: u16| u32::from(label - LABEL_BASE);
+    // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`).
+    let facts = fact_rows(clauses.iter().flat_map(|clause| clause.labels.facts()), tapes);
     let mut slots = 0_u32;
     let mut patterns = Vec::new();
     let mut pass = |clause: &'a LoweredMatcher, id: u16| -> Result<Pass<'a>, Error> {
         let target = index(id);
         Ok(match clause.labels.def(id) {
+            Label::Fact(fact, labels) => {
+                let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
+                let mut rows = Vec::new();
+                for (file, (tape, base)) in tapes.iter().zip(&bases).enumerate() {
+                    if !active.is_none_or(|active| active[at][file]) {
+                        continue;
+                    }
+                    let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
+                    for (node, targets) in facts.get(&key).map_or(&[][..], |rows| &rows[..]) {
+                        rows.push((base + node, targets.iter().zip(labels).map(|(target, label)| (base + target, index(*label))).collect()));
+                    }
+                }
+                Pass::Fact { target, rows }
+            }
             Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
                 let constraints = match clause.labels.def(id) {
                     Label::Constrained(_, _, constraints) => {
@@ -1836,6 +1926,7 @@ fn label_level(
     sets: &mut [Arc<Vec<Vec<u64>>>],
     active: &dyn Fn(&LoweredMatcher, usize) -> bool,
     packs: &Packs,
+    facts: &FactRows,
 ) -> Result<bool, Error> {
     let views = tapes.iter().zip(sets.iter()).map(|(tape, sets)| tape.with_labels(Arc::clone(sets))).collect::<Vec<_>>();
     // Passes walked from the same starts, as one walk (multi-target packing, `Packs`).
@@ -1849,7 +1940,7 @@ fn label_level(
             }
             let on = (0..tapes.len()).filter(|&at| active(clause, at)).collect::<Vec<_>>();
             let (views, read) = (on.iter().map(|&at| views[at].clone()).collect::<Vec<_>>(), on.iter().map(|&at| Arc::clone(&sets[at])).collect::<Vec<_>>());
-            Ok::<_, Error>(on.into_iter().zip(clause.evaluate(clause.labels.def(id), &views, &read)?).collect::<Vec<_>>())
+            Ok::<_, Error>(on.into_iter().zip(clause.evaluate(clause.labels.def(id), &views, &read, facts)?).collect::<Vec<_>>())
         })
         .collect::<Result<Vec<_>, _>>()?;
     drop(views);
@@ -2264,6 +2355,10 @@ impl<'a> Builder<'a> {
             MatchTree::Recur(id) => {
                 return self.labels.recursive.get(id).copied().ok_or(Error::InvalidOperand(0));
             }
+            MatchTree::Fact(fact) => {
+                let slots = fact.slots.iter().map(|slot| self.label_of(slot)).collect::<Result<Vec<_>, Error>>()?;
+                return Ok(self.label(Label::Fact(Arc::clone(fact), slots)));
+            }
             _ => {}
         }
         // A roots label is the starts that emit: set mode.
@@ -2328,6 +2423,7 @@ impl<'a> Builder<'a> {
             | MatchTree::Constrained(..)
             | MatchTree::Recursive(..)
             | MatchTree::Recur(_)
+            | MatchTree::Fact(_)
             | MatchTree::Not(_)
             | MatchTree::Never => {
                 let label = match tree {
@@ -2606,7 +2702,7 @@ impl LoweredMatcher {
                 Label::Roots(program, _) => programs.push(("roots", program)),
                 Label::Targets(program, _) => programs.push(("targets", program)),
                 Label::Count { program, .. } => programs.push(("count", program)),
-                Label::Complement(_) | Label::Empty => {}
+                Label::Complement(_) | Label::Fact(..) | Label::Empty => {}
             }
         }
         programs

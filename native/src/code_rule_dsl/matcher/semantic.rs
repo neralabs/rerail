@@ -189,7 +189,7 @@ impl Semantic {
 
 /// Whether `language`'s family reads the file's flow, which may leave a read unknown
 /// (`ScopeRules::FLOW`).
-fn flow(language: crate::code_rule_dsl::language::GrammarDialect) -> bool {
+pub(super) fn flow(language: crate::code_rule_dsl::language::GrammarDialect) -> bool {
     use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
     with_adapter!(crate::code_rule_dsl::language::Family::of(language), A => <<A as Adapter>::Scope as ScopeRules>::FLOW)
 }

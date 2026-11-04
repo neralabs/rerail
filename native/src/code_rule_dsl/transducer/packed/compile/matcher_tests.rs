@@ -197,6 +197,7 @@ fn lowered_python_clauses_match_where_ws_matcher_does() {
     for mismatch in &mismatched {
         eprintln!("  mismatch {mismatch}");
     }
+    crate::code_rule_dsl::prof::report("S1");
     assert!(mismatched.is_empty(), "{} lowered clauses differ from W's matcher", mismatched.len());
 }
 
@@ -217,7 +218,8 @@ fn widen_first_neighbor(tree: &mut MatchTree) -> bool {
         MatchTree::Constrained(_, constraints) => {
             constraints.iter_mut().any(|(_, tree)| widen_first_neighbor(tree))
         }
-        MatchTree::Kind(_) | MatchTree::Supertype(..) | MatchTree::Pattern(_) | MatchTree::Regex(_) | MatchTree::Recur(_) | MatchTree::Never => false,
+        // A fact's slots are shared with its producer (`Arc`): not widened here.
+        MatchTree::Kind(_) | MatchTree::Supertype(..) | MatchTree::Pattern(_) | MatchTree::Regex(_) | MatchTree::Recur(_) | MatchTree::Fact(_) | MatchTree::Never => false,
     }
 }
 
@@ -324,6 +326,7 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
     for differ in &differ {
         eprintln!("  {differ}");
     }
+    crate::code_rule_dsl::prof::report("S2");
     assert!(differ.is_empty(), "{} lowered clauses differ between CPU and Metal", differ.len());
 }
 

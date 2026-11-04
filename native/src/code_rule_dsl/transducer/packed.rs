@@ -946,6 +946,9 @@ pub(in crate::code_rule_dsl) enum Error {
     InvalidAnchor,
     UnsupportedBackend,
     BackendCapacity,
+    /// A label run's workspace is over Metal's buffer budget (`label_passes::run` halves its lanes'
+    /// states; past the fewest it is `BackendCapacity`).
+    BackendBudget,
     BackendLaunchLimit,
     BackendFailure,
 }

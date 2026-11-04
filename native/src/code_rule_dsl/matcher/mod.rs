@@ -48,7 +48,7 @@ use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 pub(super) use analysis::RequiredText;
 #[cfg_attr(not(test), allow(unused_imports))]
-pub(super) use lower::{Axis, MatchTree, Stop, match_tree};
+pub(super) use lower::{Axis, Fact, FactRow, MatchTree, Stop, match_tree};
 pub(crate) use analysis::calls_positive_only;
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 // The prefilter lowers a plan's structure to SQL (`prefilter/lower.rs`).
@@ -160,6 +160,9 @@ pub(super) struct GrammarMatcher {
     pub(super) three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
     pub(super) transform: Option<Arc<Transform>>,
+    /// The query's content digest and this matcher's dialect: what its lowered fact labels are
+    /// keyed by (`lower::Fact::key`).
+    pub(super) source: ([u8; 32], GrammarDialect),
 }
 
 impl GrammarMatcher {

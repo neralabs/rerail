@@ -48,7 +48,70 @@ pub(in crate::code_rule_dsl) enum MatchTree {
         min: usize,
         max: Option<usize>,
     },
+    /// A semantic predicate (O24, decision 0030): the nodes its producer reports, before any pass,
+    /// with each of its sub-rules lowered as a tree of its own whose label the reported target must have.
+    Fact(Arc<Fact>),
     Never,
+}
+
+/// A semantic leaf as a fact (O24, decision 0030). The producer is W's predicate with each sub-rule
+/// replaced by a capture of the node it would be tested on (`FACT_SLOT{i}`): it reads the file's scopes
+/// and values and never runs a user rule. A node holds where the producer matches it and each slot's
+/// target is in the label of `slots[i]`.
+pub(in crate::code_rule_dsl) struct Fact {
+    producer: AstMatcher,
+    /// The sub-rules, by slot.
+    pub(in crate::code_rule_dsl) slots: Vec<MatchTree>,
+    /// The predicate's name (`resolves`, `resolves.binding`, …), for listings.
+    pub(in crate::code_rule_dsl) name: &'static str,
+    /// Its identity in a plan: the query's content digest, its dialect and the leaf's place in the
+    /// lowering. Equal keys are equal producers, however often the query is compiled.
+    pub(in crate::code_rule_dsl) key: String,
+    /// The kinds a node it reports can have, where the predicate names them: its producer starts
+    /// only there (`None`: any node).
+    pub(in crate::code_rule_dsl) kinds: Option<BTreeSet<u16>>,
+}
+
+/// One node a fact's producer reports: the node, and each slot's target.
+pub(in crate::code_rule_dsl) type FactRow = (u32, Vec<u32>);
+
+impl Fact {
+    /// The rows of `file`: every node the producer matches, with its slots' targets. The predicate's
+    /// verdicts are read as W's matcher reads them (`match_root`'s settings): an unknown one is no row.
+    pub(in crate::code_rule_dsl) fn rows(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        starts: impl Iterator<Item = u32>,
+    ) -> Vec<FactRow> {
+        use super::util::{THREE_VALUED, UNKNOWN, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STEPS_LEFT};
+        use ast_grep_core::matcher::Matcher;
+        let mut rows = Vec::new();
+        super::resolve::CURRENT_CLAUSE.set(self as *const Self as usize);
+        THREE_VALUED.set(true);
+        for ordinal in starts {
+            let node = super::node_at(file, ordinal);
+            UTIL_DEPTH.set(0);
+            UTIL_EXCEEDED.set(None);
+            UTIL_STEPS_LEFT.set(usize::MAX);
+            UNKNOWN.set(false);
+            let mut env = std::borrow::Cow::Owned(ast_grep_core::meta_var::MetaVarEnv::new());
+            if self.producer.match_node_with_env(node, &mut env).is_none() || UNKNOWN.get() {
+                continue;
+            }
+            let targets = (0..self.slots.len())
+                .map(|i| env.get_match(&slot_name(i)).map(|target| target.node_id() as u32))
+                .collect::<Option<Vec<u32>>>();
+            if let Some(targets) = targets {
+                rows.push((ordinal, targets));
+            }
+        }
+        UNKNOWN.set(false);
+        rows
+    }
+}
+
+fn slot_name(i: usize) -> String {
+    format!("FACT_SLOT{i}")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,6 +141,7 @@ impl MatchTree {
             | Self::Recursive(..)
             | Self::Recur(_)
             | Self::Count { .. }
+            | Self::Fact(_)
             | Self::Never => false,
             Self::All(trees) | Self::Any(trees) => trees.iter().any(Self::walks),
             Self::Not(tree) => tree.walks(),
@@ -106,6 +170,7 @@ impl MatchTree {
                 .unwrap_or_else(|| Some(BTreeSet::new())),
             Self::Recursive(_, tree) => tree.kinds(),
             Self::Never => Some(BTreeSet::new()),
+            Self::Fact(fact) => fact.kinds.clone(),
             Self::Regex(_) | Self::Not(_) | Self::Walk { .. } | Self::Recur(_) | Self::Count { .. } => {
                 None
             }
@@ -122,7 +187,7 @@ pub(in crate::code_rule_dsl) fn match_tree(grammar: &GrammarMatcher) -> Result<M
     if grammar.transform.is_some() {
         return Err(Unsupported("transform"));
     }
-    let mut lowering = Lowering::default();
+    let mut lowering = Lowering { three_valued: grammar.three_valued, source: (grammar.source.0, Some(grammar.source.1)), ..Lowering::default() };
     let tree = lowering.tree(&grammar.matcher, true)?;
     if lowering.binds.values().any(|&uses| uses > 1) {
         return Err(Unsupported("shared binding"));
@@ -141,6 +206,13 @@ struct Lowering {
     recursive: Vec<(usize, usize)>,
     /// What the tree being lowered sits under, outermost first.
     path: Vec<Step>,
+    /// Whether the clause reads unknown verdicts (`GrammarMatcher::three_valued`): a fact that may be
+    /// unknown is then exact only outside `not`.
+    three_valued: bool,
+    /// The query's content digest and dialect (`GrammarMatcher::source`), and the facts lowered so
+    /// far: a fact's key.
+    source: ([u8; 32], Option<crate::code_rule_dsl::language::GrammarDialect>),
+    facts: usize,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -226,30 +298,110 @@ impl Lowering {
             AstMatcher::Constrained(constrained) => self.constrained(constrained, shares)?,
             AstMatcher::Compare(_) => return Err(Unsupported("compare")),
             AstMatcher::Count(count) => self.count(count, shares)?,
-            AstMatcher::Semantic(semantic) => {
-                use super::Semantic;
-                return Err(Unsupported(match semantic {
-                    Semantic::Resolves(_) => "resolves",
-                    Semantic::Binding(_) => "resolves.binding",
-                    Semantic::Binds(_) => "binds",
-                    Semantic::Value(_) => "value",
-                    Semantic::Arguments(_) => "arguments",
-                    Semantic::Parse(_) => "parse",
-                    Semantic::Host(_) => "host",
-                    Semantic::Embedded(_) => "embedded",
-                    Semantic::Capture(_) => "capture",
-                    Semantic::FormatArgs(_) => "formatArgs",
-                    Semantic::Layout(_) => "layout",
-                    Semantic::FilePath(_) => "file path",
-                    Semantic::Calls(_) => "calls",
-                }));
-            }
+            AstMatcher::Semantic(semantic) => return self.fact(semantic, shares),
             AstMatcher::Never => MatchTree::Never,
             #[cfg(test)]
             AstMatcher::TestUnknown(_) => return Err(Unsupported("three-valued")),
         })
     }
 
+    /// A semantic predicate as a fact (O24): its sub-rules that are tested on one node each (a
+    /// binding's site, value and annotation) become slots; one tested on many (an occurrence,
+    /// `redefines`, `formatArgs`' fields) is refused, as are predicates over other trees (`parse`,
+    /// `host`, `embedded`), the workspace (`calls`), and those that bind.
+    fn fact(&mut self, semantic: &super::Semantic, shares: bool) -> Result<MatchTree, Unsupported> {
+        use super::Semantic;
+        let name = semantic_name(semantic);
+        if !semantic.binds_nothing() {
+            return Err(Unsupported(match semantic {
+                Semantic::Arguments(_) => "arguments binds",
+                Semantic::FormatArgs(_) => "formatArgs binds",
+                _ => name,
+            }));
+        }
+        let mut producer = semantic.clone();
+        let mut rules: Vec<AstMatcher> = Vec::new();
+        let slot = |rule: &mut Option<AstMatcher>, rules: &mut Vec<AstMatcher>| {
+            if let Some(taken) = rule.take() {
+                *rule = Some(AstMatcher::Semantic(Semantic::Capture(slot_name(rules.len()))));
+                rules.push(taken);
+            }
+        };
+        let two_valued = match &mut producer {
+            Semantic::Resolves(resolves) => !super::semantic::flow(resolves.language),
+            // A label's view has no host path to read.
+            Semantic::FilePath(_) => return Err(Unsupported(name)),
+            Semantic::Value(_) | Semantic::Layout(_) | Semantic::Arguments(_) => false,
+            Semantic::Binding(test) => {
+                if test.occurrence.is_some() {
+                    return Err(Unsupported("resolves.binding occurrence"));
+                }
+                slot(&mut test.site, &mut rules);
+                slot(&mut test.value, &mut rules);
+                slot(&mut test.annotation, &mut rules);
+                false
+            }
+            Semantic::Binds(test) => {
+                if test.occurrence.is_some() || test.redefines.is_some() {
+                    return Err(Unsupported("binds occurrence or redefines"));
+                }
+                slot(&mut test.site, &mut rules);
+                slot(&mut test.value, &mut rules);
+                slot(&mut test.annotation, &mut rules);
+                false
+            }
+            _ => return Err(Unsupported(name)),
+        };
+        if !two_valued && self.three_valued && self.path.contains(&Step::Not) {
+            return Err(Unsupported("unknown fact under not"));
+        }
+        let slots = rules.iter().map(|rule| self.tree(rule, shares)).collect::<Result<Vec<_>, _>>()?;
+        let kinds = candidate_kinds(&producer);
+        let (digest, dialect) = &self.source;
+        let key = format!("{}|{dialect:?}|{}", digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>(), self.facts);
+        self.facts += 1;
+        Ok(MatchTree::Fact(Arc::new(Fact { producer: AstMatcher::Semantic(producer), slots, name, key, kinds })))
+    }
+}
+
+/// The kinds a node a predicate holds at can have, read off the predicate's own kind sets (each
+/// unwraps parentheses first, so their kinds are included); `None` where it may hold at any node.
+fn candidate_kinds(semantic: &super::Semantic) -> Option<BTreeSet<u16>> {
+    use super::Semantic;
+    let union = |sets: &[&BTreeSet<u16>]| sets.iter().flat_map(|set| set.iter().copied()).collect::<BTreeSet<u16>>();
+    match semantic {
+        Semantic::Resolves(r) if !r.item && !r.seen_before => {
+            Some(union(&[&r.reference_kinds, &r.attribute_kinds, &r.paren_kinds, &r.this_kinds, &r.dotted_kinds, &r.string_kinds]))
+        }
+        Semantic::Binding(test) if test.write_last => Some(union(&[&test.reference_kinds, &test.paren_kinds, &test.name_kinds])),
+        Semantic::Binding(test) => Some(union(&[&test.reference_kinds, &test.paren_kinds])),
+        Semantic::Binds(test) => Some(test.name_kinds.clone()),
+        Semantic::Arguments(arguments) => Some(arguments.call_kinds.clone()),
+        _ => None,
+    }
+}
+
+/// A semantic predicate's name, as refusals count it.
+fn semantic_name(semantic: &super::Semantic) -> &'static str {
+    use super::Semantic;
+    match semantic {
+        Semantic::Resolves(_) => "resolves",
+        Semantic::Binding(_) => "resolves.binding",
+        Semantic::Binds(_) => "binds",
+        Semantic::Value(_) => "value",
+        Semantic::Arguments(_) => "arguments",
+        Semantic::Parse(_) => "parse",
+        Semantic::Host(_) => "host",
+        Semantic::Embedded(_) => "embedded",
+        Semantic::Capture(_) => "capture",
+        Semantic::FormatArgs(_) => "formatArgs",
+        Semantic::Layout(_) => "layout",
+        Semantic::FilePath(_) => "file path",
+        Semantic::Calls(_) => "calls",
+    }
+}
+
+impl Lowering {
     /// A recursive reference: through `not` (or a stop rule's bound), only where every walk since
     /// the utility was entered moves forward in preorder (`has`, `precedes`), so that each node's
     /// verdict reads only later nodes' and the recursion has one answer (structural descent as

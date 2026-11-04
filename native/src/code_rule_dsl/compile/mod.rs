@@ -1014,6 +1014,16 @@ fn compile_query_as(
                 ast.get("languageOptions"),
             ))
             .map_err(|error| invalid(error.to_string()))?;
+            // The query's content (its `ast` with options substituted, and the shared utilities it
+            // reaches): what a lowered fact label is keyed by (`MatchTree::Fact`), so equal queries
+            // lower to equal plans.
+            let source: [u8; 32] = {
+                use sha2::{Digest as _, Sha256};
+                let mut digest = Sha256::new();
+                digest.update(salt.as_bytes());
+                digest.update(serde_json::to_string(ast).map_err(|error| invalid(error.to_string()))?.as_bytes());
+                digest.finalize().into()
+            };
             let calls = crate::code_rule_dsl::calls::CallsCollector::new(
                 salt,
                 seed,
@@ -1217,6 +1227,7 @@ fn compile_query_as(
                         applies,
                         source_types: source_types.clone(),
                         transform: transform.clone(),
+                        source: (source, *language),
                     });
                 }
             }

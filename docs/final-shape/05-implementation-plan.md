@@ -516,6 +516,21 @@ What was left, and how each was closed (2026-11-03, the user's choice for the fi
   - Python's standard library: a program over the families finds 775 calls by name in async functions and 103 keyword arguments. The `local` phase, including the families, took 0.06 s user.
   - T's programs derive T's outputs unchanged: Python 7 of 7, Rust 4 of 4, and the fixture 7 of 7.
 
+**List step 26 (2026-11-03): semantic predicates as labels (O24, decision 0030).**
+- **Fact labels:** W's predicate is the producer, with single-target sub-rules as slot captures.
+  Rows (node, targets) are made per tape before the passes, under one file scope table. The slots
+  are labels. On the CPU a fact label is a bit per row; on Metal it is `Pass::Fact` in the pattern
+  kernel.
+- **S1:** 158 of 286 lowered, up from 77, and all exact. **S2:** 158 of 158 equal on Metal.
+- **Keys:** facts are keyed by the query's content digest (`GrammarMatcher::source`), so the
+  wave's identity is stable across runs.
+- **Metal:**
+  - A workspace over the buffer budget runs again with half the states per lane.
+  - The launch bound is 200 (user decision).
+  - There is no CPU fallback.
+  - S7's real files are still over the budget (O35).
+- **Still refused:** O36.
+
 ### Phase 9: residency and the pinned GPU cache (§5; F3–F8, K1)
 
 | Copy | From | To | Adaptations |

@@ -8,6 +8,8 @@ use super::super::super::PackedPattern;
 use std::fmt::Write as _;
 
 pub(super) const KERNEL: &str = "clause_patterns";
+/// The item pattern of a fact's root (`Pass::Fact`): its constraints are (target node, label) pairs.
+pub(super) const FACT: u32 = u32::MAX;
 
 const COMMON: &str = r#"#include <metal_stdlib>
 using namespace metal;
@@ -66,6 +68,10 @@ pub(super) fn source(patterns: &[&PackedPattern]) -> (String, Vec<Vec<String>>) 
             vars.len().max(1)
         );
     }
+    let _ = writeln!(
+        out,
+        "  case {FACT}u:{{for(uint at=0u;at<item.constraintCount;at++){{uint2 constraint=constraints[item.constraintStart+at];uint node=constraint.x;if(((labels[constraint.y*shape.words+node/32u]>>(node%32u))&1u)==0u)return;}}break;}}"
+    );
     out.push_str("  default:return;\n  }\n  atomic_fetch_or_explicit(&scratch[item.target*shape.words+item.root/32u],1u<<(item.root%32u),memory_order_relaxed);\n}\n");
     (out, names)
 }

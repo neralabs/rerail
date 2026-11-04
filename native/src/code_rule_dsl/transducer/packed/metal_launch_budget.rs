@@ -2,7 +2,8 @@
 //! guard replaced by a plan-time bound). A plan counts its launches before it encodes one
 //! (`metal_label_passes::run`), and one over this bound is refused there as `BackendLaunchLimit`;
 //! this ledger is the backstop that refuses submission after an uncounted launch.
-pub(crate) const KERNEL_LAUNCH_LIMIT: usize = 99;
+/// 200 since list step 26 (user decision, 2026-11-03): the wave doubled to 158 clauses with fact labels.
+pub(crate) const KERNEL_LAUNCH_LIMIT: usize = 200;
 
 #[derive(Default)]
 pub(super) struct LaunchBudget {

@@ -369,7 +369,7 @@ fn the_wave_is_one_evaluation_on_metal() {
     }
     assert!(differ.is_empty());
     assert_eq!(outcome.command_buffers, 1, "one evaluation");
-    assert!(outcome.dispatches < 100, "the launch budget's target");
+    assert!(outcome.dispatches <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT, "the launch budget's target");
 }
 
 /// The Python pack's compiled policies, by file stem (the clauses' `policy` prefix).
