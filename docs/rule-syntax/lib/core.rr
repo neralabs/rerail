@@ -4,6 +4,8 @@
 // ---- the tape ----------------------------------------------------------------------------------------------------
 .native doc(d: int, path: sym, module: sym)          // one row per document; module is the dotted module name, or ""
 .native pkg(d: int, p: sym)                          // the package a document belongs to (Python)
+.native path_part(d: int, s: sym)                    // each directory of the document's path, and its file name
+.native file_name(d: int, s: sym)                    // the last component of the document's path
 .native node(d: int, n: node, kind: sym, start: int, end: int)
 .native kind(n: node, k: sym)                        // a node's grammar kind
 .native field(p: node, f: sym, c: node)              // c is p's child in field f
@@ -39,6 +41,7 @@
 // @len(s)          length in characters
 // @dir(p), @join(dir, rel)    path parent; join and normalise (".." resolved)
 // @concat(a, b)    raw concatenation
+// @re(s, pat)      the first capture group of pat's leftmost match in s; no value when it does not match
 // @glob_sub(pat, to, s)   tsconfig `paths`: s matched against pat ("@/*"), its * substituted into to; "" if no match
 // @package_of(spec)        "react-router-dom/server" -> "react-router-dom/server" (subpath kept), "@a/b/c" -> "@a/b/c"
 // $s =~ "re"       regex test (on a node: its text); runs on the vocabulary, so it is cheap to filter by

@@ -1,0 +1,110 @@
+.policy "data-layer:post-op-no-internal-dispatch" revision 1
+.description "No hidden post-op dispatch: deleted runtime-builder surfaces stay deleted, materializers do not branch on enum cases or payload keys."
+.language python
+.mode block
+.scope dirs "l2070_batching", "impl/common", "l2060_query_builder", "l5200_vector_index", "l5100_fts", "l6500_evidence"
+.scope tests false
+// Oracle: scripts/lint_post_op_no_internal_dispatch.py, per innermost function. `E.CASE ==`/`is` comparisons on the
+// enums ResultMaterializationKind, RuntimeBuilderKind, RuntimeBuilderName:  001 one case compared twice or more;
+// 002 a materializer compares RuntimeBuilderName.*;  004 materialize_*builder has more than one.  Probes by literal key
+// in materializers: 003 `"k" in kwargs`/`in ….keys()`;  007 also `p.get("k")`, `p["k"]` on literal_payload.
+// 005 a deleted surface name;  006 an unlisted `_materialize_*` in l2070_batching/post_op.py;
+// 008 a class based on ResultRowMaterializer;  009 a `row_materializer=` keyword.
+// Improves on the oracle:
+//   payload aliases follow bindings (ref_site): `p = x.literal_payload` then `p = {}` no longer taints p, and
+//   `self.literal_payload["k"]` is caught (the oracle wants a bare name before `.get`/`[…]`);
+//   enum cases are also matched through imports by resolved name, and deleted names inside import statements are 005.
+
+.use python/names
+.use python/calls
+
+.kindset fdef = "function_definition"
+.set enum_name   = "ResultMaterializationKind" | "RuntimeBuilderKind" | "RuntimeBuilderName"
+.set deleted     = "ResultMaterializationKind" | "RuntimeBuilderKind" | "RuntimeBuilderName" | "RuntimeBuilderSpec"
+                 | "runtime_builder_post_op" | "materialize_runtime_builder" | "_RUNTIME_BUILDER_NAMES_BY_KIND"
+.set helper_ok   = "_materialize_hydrate_dict_one" | "_materialize_hydrate_dict_many" | "_materialize_assertion_from_row"
+                 | "_materialize_scalar_row_value" | "_materialize_scalar_tuple" | "_materialize_scalar_column"
+                 | "_materialize_scalar_column_list" | "_materialize_terminal_scalar" | "_materialize_terminal_object"
+                 | "_materialize_terminal_array" | "_materialize_by_post_op_behavior"
+.set kwarg_alias = "kwargs" | "literal_kwargs"
+.set eq_op       = "==" | "is"
+.set assign_form = "assign" | "annassign"
+
+// in_fn(n, f, x): f, named x, is the innermost function around n.
+.decl in_fn(n: node, f: node, x: sym)
+in_fn($n, $f, $x) :- nearest($n, $f, fdef), def_name($f, $x).
+.decl post_op_file(n: node)
+post_op_file($n) :- docof($n, $d), doc($d, "l2070_batching/post_op.py", _).
+.decl materializer(f: node)          // materialize_result, materialize_runtime_builder, materialize_*builder
+materializer($f) :- def_name($f, $n), $n =~ "^(materialize_result|materialize_runtime_builder|materialize_.*builder)$".
+.decl mat_body(f: node)              // … or a _materialize_* function in post_op.py
+mat_body($f) :- materializer($f).
+mat_body($f) :- def_name($f, $n), $n =~ "^_materialize_", post_op_file($f).
+
+// enum_cmp(c, s): comparison c tests enum case s ("RuntimeBuilderName.FOO") with a single == or is.
+.decl enum_ref(n: node, s: sym)
+enum_ref($n, $s) :- kind($n, "attribute"), field($n, "object", $o), kind($o, "identifier"), text($o, $e), $e in enum_name,
+    field($n, "attribute", $a), text($a, $x), $s = @cat($e, $x).
+enum_ref($n, $s) :- kind($n, "attribute"), sym_of($n, $q),
+    $s = @re($q, "((?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)\.[^.]+)$").
+.decl enum_cmp(c: node, s: sym)
+enum_cmp($c, $s) :- cmp($c, $o, $l, _), $o in eq_op, enum_ref($l, $s).
+enum_cmp($c, $s) :- cmp($c, $o, $l, $r), $o in eq_op, !enum_ref($l, _), enum_ref($r, $s).
+
+.violation POSTOPDISPATCH001(at: node, fn: sym, case: sym, n: int) "{fn}: {case} is checked {n} times in one function"
+POSTOPDISPATCH001($c, $x, $s, $k) :- enum_cmp($c, $s), in_fn($c, $f, $x), !some { enum_cmp($p, $s), in_fn($p, $f, _), precedes($p, $c) },
+    $k = count { enum_cmp($d, $s), in_fn($d, $f, _) }, $k > 1.
+.violation POSTOPDISPATCH002(at: node, fn: sym, case: sym) "{fn}: materializers must not dispatch on {case}"
+POSTOPDISPATCH002($c, $x, $s) :- enum_cmp($c, $s), $s =~ "^RuntimeBuilderName\.", in_fn($c, $f, $x), materializer($f).
+.violation POSTOPDISPATCH004(at: node, fn: sym)
+    "{fn}: materialize_*builder functions may not contain multiple post-op enum comparisons"
+POSTOPDISPATCH004($f, $x) :- def_name($f, $x), $x =~ "^materialize_.*builder$",
+    $k = count { enum_cmp($c, _), in_fn($c, $f, _) }, $k > 1.
+
+// Literal-key probes. key_probe(c, r): `"k" in r`.  kw_probe(c): r is kwargs / literal_kwargs, or `….keys()`.
+.decl key_probe(c: node, r: node)
+key_probe($c, $r) :- cmp($c, "in", $l, $r), kind($l, "string"), value($l, _).
+.decl kw_probe(c: node)
+kw_probe($c) :- key_probe($c, $r), kind($r, "identifier"), text($r, $x), $x in kwarg_alias.
+kw_probe($c) :- key_probe($c, $r), callee($r, $n), kind($n, "attribute"), field($n, "attribute", $a), text($a, "keys").
+.violation POSTOPDISPATCH003(at: node, fn: sym) "{fn}: materializers must not dispatch by probing literal kwarg keys"
+POSTOPDISPATCH003($c, $x) :- kw_probe($c), in_fn($c, $f, $x), mat_body($f).
+
+// payload(n): n evaluates to the literal payload: the name literal_payload, `….literal_payload`, or a name whose
+// binding takes a value mentioning `.literal_payload` or another payload name.
+.decl payload(n: node)
+payload($n) :- kind($n, "identifier"), text($n, "literal_payload").
+payload($n) :- kind($n, "attribute"), field($n, "attribute", $a), text($a, "literal_payload").
+payload($n) :- ref_site($n, $s), binding(_, _, $s, $k), $k in assign_form, binding_value($s, $v), tainted($v).
+.decl tainted(v: node)
+tainted($v) :- payload($v).
+tainted($v) :- within($a, $v), kind($a, "attribute"), field($a, "attribute", $t), text($t, "literal_payload").
+.decl payload_probe(p: node)
+payload_probe($c) :- cname_get($c, $o), payload($o), call_arg($c, 0, "", $k), kind($k, "string"), value($k, _).
+payload_probe($s) :- kind($s, "subscript"), field($s, "value", $o), payload($o),
+    field($s, "subscript", $k), kind($k, "string"), value($k, _).
+payload_probe($c) :- key_probe($c, $r), payload($r).
+payload_probe($c) :- kw_probe($c).
+.decl cname_get(c: node, o: node)    // `o.get(…)`
+cname_get($c, $o) :- callee($c, $n), kind($n, "attribute"), field($n, "attribute", $a), text($a, "get"), field($n, "object", $o).
+.violation POSTOPDISPATCH007(at: node, fn: sym) "{fn}: materializers must not dispatch by probing literal_payload keys"
+POSTOPDISPATCH007($p, $x) :- payload_probe($p), in_fn($p, $f, $x), mat_body($f).
+
+// Deleted surfaces. Identifiers in a `name` field are def, class and keyword names, which the oracle never sees.
+.violation POSTOPDISPATCH005(at: node, name: sym) "<module>: deleted post-op dispatch surface {name} must not be referenced"
+POSTOPDISPATCH005($n, $x) :- kind($n, "identifier"), text($n, $x), $x in deleted, !field(_, "name", $n).
+
+.violation POSTOPDISPATCH006(at: node, fn: sym)
+    "{fn}: domain-shaped post-op materializer helpers must move into SQL/IR/ServerPlan steps"
+POSTOPDISPATCH006($f, $x) :- def_name($f, $x), $x =~ "^_materialize_", !($x in helper_ok), post_op_file($f).
+
+.violation POSTOPDISPATCH008(at: node) "{at.name}: deleted ResultRowMaterializer extension surface must not be referenced"
+POSTOPDISPATCH008($c) :- kind($c, "class_definition"), field($c, "superclasses", $bs), child($bs, $b, _),
+    last_name($b, "ResultRowMaterializer").
+.decl last_name(n: node, x: sym)     // `X` or `….X`
+last_name($n, $x) :- kind($n, "identifier"), text($n, $x).
+last_name($n, $x) :- kind($n, "attribute"), field($n, "attribute", $a), text($a, $x).
+
+.violation POSTOPDISPATCH009(at: node, fn: sym) "{fn}: deleted row_materializer keyword escape hatch must not be used"
+POSTOPDISPATCH009($c, $x) :- call_arg($c, _, "row_materializer", _), in_fn($c, _, $x).
+POSTOPDISPATCH009($c, "<module>") :- call_arg($c, _, "row_materializer", _), !nearest($c, _, fdef).

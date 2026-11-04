@@ -116,6 +116,12 @@ attr_of($n, $o, $a) :- kind($n, "attribute"), field($n, "object", $o), field($n,
 qn($n, $q) :- look($n, $x, $s), ibind($s, $x, $q).
 qn($n, @cat($q, $a)) :- attr_of($n, $o, $a), qn($o, $q).
 
+// ---- comparisons ---------------------------------------------------------------------------------------------------
+// cmp(c, op, l, r): c is a comparison with exactly one operator. op is the operator's text, two-token operators
+// ("not in", "is not") joined by op/2. Chained comparisons (a < b < c) have no row.
+.decl cmp(c: node, op: sym, l: node, r: node)
+cmp($c, $o, $l, $r) :- kind($c, "comparison_operator"), child($c, $l, 0), child($c, $r, 1), !child($c, _, 2), op($c, $o).
+
 // ==== interface ===================================================================================================
 .decl scope_node(n: node, s: node)
 scope_node($n, $s) :- nearest($n, $s, scope).

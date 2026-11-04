@@ -47,6 +47,9 @@ B102($c) :- kind($c, "call"), field($c, "function", $f), kind($f, "parenthesized
       <tr><td><code>.possible log</code></td><td>Mode for findings that rest on unknown facts.</td></tr>
       <tr><td><code>.scope include "glob", …</code><br><code>.scope exclude …</code></td><td>Files the rule reads.</td></tr>
       <tr><td><code>.budget REL by code { "a": 12, "total": 40 }</code></td><td>Ratchet: block only past these counts.</td></tr>
+      <tr><td><code>.budget * { "total": N }</code></td><td>One budget across every violation the policy declares.</td></tr>
+      <tr><td><code>.mode log CODE</code></td><td>After <code>.mode block</code>: one code that only logs.</td></tr>
+      <tr><td><code>.output rel</code></td><td>Publish a derived relation as metrics, not findings.</td></tr>
       <tr><td><code>.use python/names</code></td><td>Import a library's relations.</td></tr>
       <tr><td><code>.decl r(a: node, b: sym)</code></td><td>Declare a relation. Types: <code>node</code>, <code>sym</code>, <code>int</code>.</td></tr>
       <tr><td><code>.set name = "a" | "b"</code><br><code>.kindset name = …</code></td><td>Named constant sets, for <code>$x in name</code> and tree builtins.</td></tr>

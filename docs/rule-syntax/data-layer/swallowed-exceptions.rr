@@ -1,0 +1,74 @@
+.policy "data-layer:swallowed-exceptions" revision 1
+.description "Exceptions caught and not re-raised, and contextlib.suppress."
+.language python
+.mode block
+.scope dirs "api", "impl", "services", "data_layer_testing"
+.scope exclude "**/test/**", "**/conform/**", "**/benchmarks/**", "**/examples/**", "**/browser_build/**"
+.scope tests false
+.budget * by code { "CRITICAL": 474, "WARNING": 604 }   // .swallowed-exceptions-baseline.json (signed, Ed25519)
+// Oracle: scripts/lint_swallowed_exceptions.py. An `except` with no `raise` of its own (nested defs, classes, lambdas
+// and inner handlers aside) that does not catch KeyError / StopIteration / StopAsyncIteration / queue.Empty:
+//   WARNING the handler reads its exception variable;  CRITICAL it does not; also every `with contextlib.suppress(…)`
+//   that suppresses more than KeyError. Logging changes nothing. Keys in the ignores file do not count. The plugin's
+//   codes missing_baseline, unsigned_baseline, invalid_baseline_signature, baseline_increase are the .budget's outcomes.
+// Improves on the oracle:
+//   caught types are resolved (catches): aliases, `builtins.KeyError` and all-protocol tuples are protocol catches;
+//   suppress is found by what it resolves to, wherever the import is (the oracle tracks only the last contextlib import);
+//   a raise in a handler nested in a def inside another handler now counts (the oracle's depth counter loses it);
+//   the variable is followed by binding: a rebound `e = …` does not count, a closure over e does.
+
+.use python/names
+.use python/calls
+
+.input ignored(path: sym, line: int)    // .swallowed-exceptions-ignores.json: each "path:line" key
+.kindset own_scope = "function_definition" | "class_definition" | "lambda" | "except_clause"
+.kindset handler_k = "except_clause"
+.set protocol = "builtins.KeyError" | "builtins.StopIteration" | "builtins.StopAsyncIteration" | "queue.Empty"
+
+.decl handler(x: node, b: node)          // except clause x, body block b
+handler($x, $b) :- kind($x, "except_clause"), child($x, $b, _), kind($b, "block").
+.decl reraises(x: node)
+reraises($x) :- handler($x, _), kind($r, "raise_statement"), within($r, $x, own_scope).
+.decl protocol_only(x: node)
+protocol_only($x) :- handler($x, _), catches($x, _), !some { catches($x, $q), !($q in protocol) }.
+.decl reads_exc(x: node)
+reads_exc($x) :- binding(_, _, $s, "except"), nearest($s, $x, handler_k), ref_site($r, $s), within($r, $x).
+.decl ignored_at(n: node)
+ignored_at($n) :- docof($n, $d), doc($d, $p, _), line($n, $l), ignored($p, $l).
+
+// summary(b, s): what block b amounts to, as the oracle's message reports it.
+.decl trivial(s: node)
+trivial($s) :- kind($s, "pass_statement").
+trivial($s) :- kind($s, "comment").
+trivial($s) :- kind($s, "expression_statement"), child($s, $e, 0), kind($e, "ellipsis").
+.decl quiet_exit(s: node)                // continue, `return`, `return None`
+quiet_exit($s) :- kind($s, "continue_statement").
+quiet_exit($s) :- kind($s, "return_statement"), !child($s, _, _).
+quiet_exit($s) :- kind($s, "return_statement"), child($s, $v, 0), kind($v, "none").
+.decl summary(b: node, s: sym)
+summary($b, $s) :- kind($b, "block"), $n = count { child($b, $t, _), !trivial($t) },
+    $s = first {
+      "pass/ellipsis only"        if $n = 0;
+      "continue/return None only" if $n = 1, some { child($b, $t, _), !trivial($t), quiet_exit($t) };
+      "other statements"
+    }.
+
+.decl swallowed(x: node, b: node)
+swallowed($x, $b) :- handler($x, $b), !reraises($x), !protocol_only($x), !ignored_at($x).
+
+.violation WARNING(at: node, body: sym)
+    "Swallowed exception: the handler communicates the error but does not re-raise (body: {body})"
+WARNING($x, $s) :- swallowed($x, $b), reads_exc($x), summary($b, $s).
+
+.violation CRITICAL(at: node, form: sym, body: sym)
+    "Swallowed exception: {form} discards the error without re-raising (body: {body})"
+CRITICAL($x, "except", $s) :- swallowed($x, $b), !reads_exc($x), summary($b, $s).
+CRITICAL($w, "contextlib.suppress", $s) :- suppress_with($w, $c), !keyerror_only($c), !ignored_at($w),
+    field($w, "body", $b), summary($b, $s).
+
+// suppress_with(w, c): an item of with-statement w is the call c = contextlib.suppress(…), however imported.
+.decl suppress_with(w: node, c: node)
+suppress_with($w, $c) :- kind($w, "with_statement"), child($w, $cl, _), kind($cl, "with_clause"), child($cl, $it, _),
+    field($it, "value", $c), callee($c, $f), sym_of($f, "contextlib.suppress").
+.decl keyerror_only(c: node)
+keyerror_only($c) :- call_arg($c, 0, "", $e), sym_of($e, "builtins.KeyError"), !call_arg($c, 1, _, _).

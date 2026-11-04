@@ -1,0 +1,88 @@
+.policy "data-layer:plan-scope-side-effects" revision 1
+.description "Plan scopes hold declarative planning only: no eager resolution, raw SQL, legacy callbacks or Python side effects."
+.language python
+.mode block
+.mode log PSE_AUDIT_010          // severity "audit": the CLI prints it, the suite plugin drops it, it never blocks
+.possible log                    // side-effect calls whose receiver does not resolve
+.scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
+.scope tests false
+// Oracle: scripts/lint_plan_scope_side_effects.py (codes spelled PSE-010 … PSE-AUDIT-010 there). A plan scope is a
+// `with` (or `async with`) an item of which calls open_*_plan; the innermost one governs every node below it.
+//   PSE_010 `.resolved_value`   PSE_020 resolve() / resolve_async()   PSE_030 raw SQL execution calls
+//   PSE_040 `.read()` / `.write()` legacy callbacks   PSE_050 open(), or open/sleep/run/get/… on asyncio, os, requests, …
+//   PSE_AUDIT_010 in a write plan, an `if`/`elif` whose test is a typed eager read or reads a name bound to one
+// Improves on the oracle:
+//   side-effect calls match on resolved names: `from time import sleep; sleep(1)` and `import requests as r` are caught;
+//   a call on a receiver that does not resolve but whose text names one of the modules is reported `possible`;
+//   PSE_AUDIT_010 follows each name in the test to its binding (ref_site), not to any earlier same-named assignment.
+
+.use python/names
+.use python/calls
+
+.set opener       = "open_read_plan" | "open_write_plan" | "open_provider_read_plan" | "open_provider_write_plan"
+                  | "open_provider_versioned_read_plan" | "open_provider_versioned_write_plan"
+.set write_opener = "open_write_plan" | "open_provider_write_plan" | "open_provider_versioned_write_plan"
+.set eager_call   = "resolve" | "resolve_async"
+.set raw_call     = "execute_raw" | "fetchone_raw" | "fetchall_raw" | "nonportably_execute_sql"
+.set legacy_cb    = "read" | "write" | "read_async" | "write_async"
+.set eager_read   = "count" | "count_async" | "execute" | "execute_async" | "execute_one" | "execute_one_async"
+                  | "first" | "first_async" | "select_one" | "select_one_async"
+.set fx_name      = "open" | "sleep" | "run" | "Popen" | "request" | "get" | "post" | "put" | "patch" | "delete"
+.set fx_module    = "asyncio" | "subprocess" | "requests" | "httpx" | "socket" | "shutil" | "os" | "time"
+.set assign_form  = "assign" | "annassign"
+.set branch       = "if_statement" | "elif_clause"
+
+// cname(c, x): the name call c is made by, `f(…)` or `….f(…)`; method_call(c) for the second form.
+.decl cname(c: node, x: sym)
+cname($c, $x) :- callee($c, $n), kind($n, "identifier"), text($n, $x).
+cname($c, $x) :- callee($c, $n), kind($n, "attribute"), field($n, "attribute", $a), text($a, $x).
+.decl method_call(c: node)
+method_call($c) :- callee($c, $n), kind($n, "attribute").
+
+// item_call(w, c): c is the call in one of with-statement w's items (`with c as p` or `with c`).
+.decl item_call(w: node, c: node)
+.decl item_value(w: node, v: node)
+item_value($w, $v) :- kind($w, "with_statement"), child($w, $cl, _), kind($cl, "with_clause"), child($cl, $it, _),
+    field($it, "value", $v).
+item_call($w, $c) :- item_value($w, $c), call($c).
+item_call($w, $c) :- item_value($w, $v), kind($v, "as_pattern"), child($v, $c, 0), call($c).
+.decl plan(w: node)
+plan($w) :- item_call($w, $c), cname($c, $x), $x in opener.
+.decl write_plan(w: node)
+write_plan($w) :- item_call($w, $c), cname($c, $x), $x in write_opener.
+
+.violation PSE_010(at: node) "resolved_value is forbidden inside plan-scope construction."
+PSE_010($a) :- kind($a, "attribute"), field($a, "attribute", $t), text($t, "resolved_value"), nearest($a, _, plan).
+
+.violation PSE_020(at: node, name: sym) "{name}() is eager resolution inside plan-scope construction."
+PSE_020($c, $x) :- cname($c, $x), $x in eager_call, nearest($c, _, plan).
+
+.violation PSE_030(at: node, name: sym) "{name}() is raw database execution inside plan-scope construction."
+PSE_030($c, $x) :- cname($c, $x), $x in raw_call, nearest($c, _, plan).
+
+.violation PSE_040(at: node, name: sym) "Nested legacy callback API {name}() is forbidden inside plan scopes."
+PSE_040($c, $x) :- method_call($c), cname($c, $x), $x in legacy_cb, nearest($c, _, plan).
+
+// fx(c, x): call c is a Python side effect named x.
+.decl fx(c: node, x: sym)  must, may
+must fx($c, "open") :- callee($c, $n), global_ref($n, "open").
+must fx($c, $x) :- callee($c, $n), sym_of($n, $q), $m = @re($q, "^([^.]+)\."), $m in fx_module,
+    $x = @re($q, "([^.]+)$"), $x in fx_name.
+may  fx($c, $x) :- method_call($c), cname($c, $x), $x in fx_name, callee($c, $n), !sym_of($n, _),
+    field($n, "object", $o), text($o, $t), $t =~ "(?i)\b(asyncio|subprocess|requests|httpx|socket|shutil|os|time)\b".
+
+.violation PSE_050(at: node, name: sym) "Python side-effect call {name}() is forbidden inside plan scopes."
+PSE_050($c, $x) :- fx($c, $x), nearest($c, _, plan).
+
+// eager_site(s, w): binding site s, whose innermost plan scope is write plan w, takes a typed eager read (`n = q.count()`).
+.decl eager_site(s: node, w: node)
+eager_site($s, $w) :- binding(_, _, $s, $k), $k in assign_form, binding_value($s, $v), cname($v, $x), $x in eager_read,
+    nearest($s, $w, plan), write_plan($w).
+.decl if_test(i: node, w: node, t: node)
+if_test($i, $w, $t) :- kind($i, $k), $k in branch, field($i, "condition", $t), nearest($i, $w, plan), write_plan($w).
+
+.violation PSE_AUDIT_010(at: node)
+    "Read-then-Python-branch write orchestration inside a write plan. Prefer SQL-visible ConditionalStep, GuardedInsert, or upsert forms."
+PSE_AUDIT_010($i) :- if_test($i, _, $t), cname($t, $x), $x in eager_read.
+PSE_AUDIT_010($i) :- if_test($i, $w, $t), ref_site($t, $s), eager_site($s, $w).
+PSE_AUDIT_010($i) :- if_test($i, $w, $t), within($r, $t), ref_site($r, $s), eager_site($s, $w).

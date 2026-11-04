@@ -1,0 +1,173 @@
+.policy "data-layer:public-api-triples" revision 1
+.description "Exported execution callables come as sync, async and lazy members, each carrying its decorator."
+.language python
+.mode block
+.scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
+.scope tests false
+.budget * { "total": 0 }    // .ratchet-baselines/lint_public_api_triples.json (signed): violations 0
+// Oracle: scripts/lint_public_api_triples.py, default execution scope, over lint_lib/symbol_graph.py. Roots are what
+// data_layer/*.py exports: functions group under (export module, base name); public methods of exported classes,
+// own or inherited, under (class, base name). foo / foo_async / foo_lazy fill the sync / async / lazy slots.
+//   missing_sync, missing_async, missing_lazy, missing_legacy_sync, missing_legacy_async, missing_lazy_decorator,
+//   direct_wrapper_bypasses_lazy_owner, invalid_mixed_lazy_execution_name
+// Improves on the oracle:
+//   decorators match on the name they resolve to, so `@ls` imported as `legacy_sync as ls` counts;
+//   signature hints read resolved annotation names, string annotations included (the oracle sees neither);
+//   classes group by qualified name (the oracle keys by bare class name, merging same-named classes).
+
+.use python/names
+.use python/imports
+.use python/calls
+
+.kindset cdef   = "class_definition"
+.kindset nonmod = "function_definition" | "class_definition"
+.set slot_name    = "sync" | "async" | "lazy"
+.set method_skip  = "__aenter__" | "__aexit__" | "__enter__" | "__exit__" | "__init__" | "__repr__" | "__str__"
+    | "authorize_internal_access" | "disable_thread_affinity_checks" | "get_thread_checks_disabled"
+    | "set_disable_thread_checks" | "validate_legacy_delegates" | "versioned_read" | "versioned_write"
+.set exec_base = "aggregate" | "commit" | "commit_branch" | "count" | "create_branch" | "cursor_paginate"
+    | "cursor_paginate_with_total" | "delete_by_id" | "delete_by_key" | "delete_by_key_many" | "delete_many" | "execute"
+    | "execute_one" | "exists" | "find_object_branches" | "find_object_revisions" | "first" | "fts_search" | "get_history"
+    | "graph" | "graph_query" | "insert" | "insert_many" | "insert_many_raw" | "keyset_paginate"
+    | "keyset_paginate_with_total" | "query" | "query_unfiltered" | "read" | "read_version" | "rollback" | "search"
+    | "select_at_revision" | "select_many" | "select_one" | "table_exists" | "traverse" | "update" | "update_by_key"
+    | "update_by_key_many" | "update_many" | "upsert" | "upsert_many" | "vector_search" | "write" | "write_version"
+.set facade = "LazyVersionedReadTransaction" | "LazyVersionedWriteTransaction" | "SyncSessionHandle"
+    | "AsyncSessionHandle" | "SyncVersionHandle" | "AsyncVersionHandle"
+.set primitive_path = "l2055_lazy_result/lazy_reads.py" | "l2055_lazy_result/lazy_writes.py" | "l2055_lazy_result/transform.py"
+.set ctx_path  = "l2055_lazy_result/execution_context.py" | "l2055_lazy_result/lazy_result.py"
+    | "l2055_lazy_result/lazy_seq.py" | "l2055_lazy_result/transform.py"
+.set ctx_class = "BatchContext" | "EagerContext" | "LazyResult" | "LazySeq" | "OnAccessContext"
+.set factory_path = "l2050_transaction/transaction.py" | "l7200_versioned_transactions/versioned_transactions.py"
+
+// deco(f, q): f carries decorator q, the qualified name it resolves to (else its text), with any call stripped.
+.decl dexpr(d: node, e: node)
+dexpr($d, $e) :- decorator(_, $d), kind($d, "call"), field($d, "function", $e).
+dexpr($d, $d) :- decorator(_, $d), !kind($d, "call").
+.decl deco(f: node, q: sym)
+deco($f, $q) :- decorator($f, $d), dexpr($d, $e), sym_of($e, $q).
+deco($f, $t) :- decorator($f, $d), dexpr($d, $e), !sym_of($e, _), text($e, $t).
+.decl legacy(f: node, k: sym)
+legacy($f, "sync")  :- deco($f, $q), $q =~ "(legacy_sync|legacy_module_sync)$".
+legacy($f, "async") :- deco($f, $q), $q =~ "(legacy_async|legacy_module_async)$".
+.decl own_private(f: node)
+own_private($f) :- deco($f, $q), $q =~ "(^|\.)(internal_api|private_api|private_public_api)$".
+.decl private(f: node)                       // the def's decorators, or its class's
+private($f) :- own_private($f).
+private($f) :- nearest($f, $c, cdef), own_private($c).
+.decl lazy_pipe(f: node)
+lazy_pipe($f) :- deco($f, $q), $q =~ "pure_lazy|apply_lazy_to_public_lazy_methods|(^|\.)lazy$".
+.decl lazy_decorated(f: node)
+lazy_decorated($f) :- lazy_pipe($f).
+lazy_decorated($f) :- def_name($f, $n), $n =~ "^[^_].*_lazy$", nearest($f, $c, cdef), lazy_pipe($c).
+
+// sig_type(f, x): an annotation in f's signature (not its body) names x, the last segment of what it resolves to.
+.decl sig_type(f: node, x: sym)
+sig_type($f, $x) :- annotation($n), within($n, $f), field($f, "body", $b), !within($n, $b), sym_of($n, $q), $x = @re($q, "([^.]+)$").
+sig_type($f, $x) :- annotation($n), within($n, $f), field($f, "body", $b), !within($n, $b), !sym_of($n, _), kind($n, "identifier"), text($n, $x).
+
+// The roots, and their slots.
+.decl data_layer_module(m: sym)
+data_layer_module($m) :- module_path($m, $p), $p =~ "^data_layer/[^/]+\.py$".
+.decl root(o: sym, f: node)
+root($m, $f) :- data_layer_module($m), exports($m, _, $q), qualname($f, $q), !nearest($f, _, nonmod),
+    def_name($f, $n), !($n =~ "^_"), !( docof($f, $d), doc($d, $p, _), $p =~ "^_internal/" ).
+root($cq, $f) :- data_layer_module($m), exports($m, _, $cq), class_def($c, $cq), def_name($c, $x), !private($c),
+    !($x =~ "Protocol$|^Async"), !some { class_base($c, $b), $b =~ "Protocol" },
+    mro_method($cq, $n, $f), !($n =~ "^_"), !($n in method_skip), !private($f),
+    !some { deco($f, $q), $q =~ "(property|\.setter|\.deleter)$" }.
+.decl mixed(f: node)
+mixed($f) :- def_name($f, $n), $n =~ "(?i)lazy", $n =~ "(?i)sync".
+.decl member(o: sym, b: sym, slot: sym, f: node)
+member($o, $b, $s, $f) :- root($o, $f), !mixed($f), def_name($f, $n), $b = @re($n, "^(.*?)(?:_lazy|_async|_sync)?$"),
+    $s = first { "lazy" if $n =~ "_lazy$"; "async" if $n =~ "_async$"; "async" if legacy($f, "async"); "sync" }.
+.decl path_of(f: node, p: sym)
+path_of($f, $p) :- member(_, _, _, $f), docof($f, $d), doc($d, $p, _).
+.decl exemplar(o: sym, b: sym, f: node)      // the member with the least name: the oracle's first slot filled
+exemplar($o, $b, $f) :- member($o, $b, _, $f), def_name($f, $n), !some { member($o, $b, _, $g), def_name($g, $m), $m < $n }.
+.decl lazy_only(o: sym, b: sym)
+lazy_only($o, $b) :- member($o, $b, "lazy", _), !some { member($o, $b, $s, _), $s != "lazy" }.
+
+// Groups the oracle never checks.
+.decl lifecycle(owner: sym, b: sym)
+lifecycle("CacheTransaction", "commit").  lifecycle("CacheTransaction", "rollback").  lifecycle("BaseMigration", "rollback").
+lifecycle("SchemaTransaction", "execute_ddl").  lifecycle("AsyncSchemaTransaction", "execute_ddl").
+.set factory_owner  = "ReadTransaction" | "WriteTransaction" | "LazyVersionedReadTransaction" | "LazyVersionedWriteTransaction"
+.set factory_base   = "plan" | "query" | "query_unfiltered"
+.set bootstrap_base = "check_ddl_lockdown" | "column_exists" | "physical_table_exists_many" | "seal_table_exists_cache"
+.decl owner_name(o: sym, b: sym, x: sym)     // x: the owner's last dotted segment
+owner_name($o, $b, $x) :- member($o, $b, _, _), $x = @re($o, "([^.]+)$").
+.decl exempt(o: sym, b: sym)
+exempt($o, $b) :- owner_name($o, $b, $x), lifecycle($x, $b).
+exempt($o, $b) :- owner_name($o, $b, $x), $x =~ "Connection$", $b = "table_exists".
+exempt($o, $b) :- owner_name($o, $b, $x), $x in facade.
+exempt($o, $b) :- owner_name($o, $b, $x), $x =~ "^(Sync|Async|Lazy).*(Transaction|SessionHandle|VersionHandle)$".
+exempt($o, $b) :- owner_name($o, $b, $x), $x in factory_owner, $b in factory_base,
+    exemplar($o, $b, $e), path_of($e, $p), $p in factory_path.
+exempt($o, $b) :- exemplar($o, $b, $e), $b = "execute_ddl", path_of($e, "l2000_connection/schema_transaction.py").
+exempt($o, $b) :- lazy_only($o, $b), $b =~ "bootstrap".
+exempt($o, $b) :- lazy_only($o, $b), $b in bootstrap_base.
+exempt($o, $b) :- lazy_only($o, $b), owner_name($o, $b, $x), $x =~ "(?i)bootstrap".
+
+// surface(f): f looks like an execution surface.
+.decl true_lazy(f: node)
+true_lazy($f) :- member(_, _, "lazy", $f).
+true_lazy($f) :- sig_type($f, $x), $x =~ "(?i)^(lazyresult|lazyseq|serverplan)$".
+.decl hint(f: node)
+hint($f) :- path_of($f, $p), $p =~ "/(graph_query|schema_transaction|transaction|versioned_transactions)".
+hint($f) :- nearest($f, $c, cdef), def_name($c, $x), $x =~ "(?i)connection|query|schematransaction|transaction|versioned".
+hint($f) :- sig_type($f, $x), $x =~ "(?i)^(versioned)?(databaseconnection|readtransaction|writetransaction)$|^(lazyresult|lazyseq|serverplan)$".
+.decl not_surface(f: node)
+not_surface($f) :- deco($f, $q), $q =~ "abstractmethod$".
+not_surface($f) :- private($f).
+not_surface($f) :- path_of($f, $p), $p in primitive_path, !nearest($f, _, cdef), def_name($f, $n), $n =~ "^lazy_", true_lazy($f).
+not_surface($f) :- path_of($f, $p), $p in ctx_path, nearest($f, $c, cdef), def_name($c, $x), $x in ctx_class.
+not_surface($f) :- field($f, "return_type", $r), text($r, $t), nearest($f, $c, cdef), def_name($c, $x),   // chainable builder
+    $x = @re($t, "^['\"]?([A-Za-z_][A-Za-z0-9_]*)(?:\[.*\])?['\"]?$").
+.decl surface(f: node)
+surface($f) :- member(_, $b, _, $f), !not_surface($f), $b in exec_base, hint($f).
+surface($f) :- member(_, _, _, $f), !not_surface($f), true_lazy($f).
+surface($f) :- member(_, _, _, $f), !not_surface($f), legacy($f, _).
+
+.decl cname(c: node, x: sym)                 // the name a call is made by: `f(…)` or `….f(…)`
+cname($c, $x) :- callee($c, $n), kind($n, "identifier"), text($n, $x).
+cname($c, $x) :- callee($c, $n), kind($n, "attribute"), field($n, "attribute", $a), text($a, $x).
+
+// checked(o, b): the group is reported; an identical slot set already seen under a lesser owner is not.
+.decl live(o: sym, b: sym)
+live($o, $b) :- member($o, $b, _, $f), surface($f), !exempt($o, $b).
+.decl checked(o: sym, b: sym)
+checked($o, $b) :- live($o, $b), !some { live($p, $b), $p < $o,
+    !some { member($o, $b, $s, $f), !member($p, $b, $s, $f) }, !some { member($p, $b, $s, $f), !member($o, $b, $s, $f) } }.
+.decl same_params(f: node, g: node)
+same_params($f, $g) :- member($o, $b, _, $f), member($o, $b, "lazy", $g),
+    !some { params($f, $x, $i), $x != "self", $x != "cls", !params($g, $x, $i) },
+    !some { params($g, $x, $i), $x != "self", $x != "cls", !params($f, $x, $i) }.
+
+.decl missing(o: sym, b: sym, s: sym, at: node)
+missing($o, $b, $s, $e) :- checked($o, $b), !lazy_only($o, $b), $s in slot_name, !member($o, $b, $s, _), exemplar($o, $b, $e).
+.violation missing_sync(at: node, owner: sym, base: sym)  "{owner}.{base} is missing the sync member of the triple"
+missing_sync($e, $o, $b) :- missing($o, $b, "sync", $e).
+.violation missing_async(at: node, owner: sym, base: sym) "{owner}.{base} is missing the async member of the triple"
+missing_async($e, $o, $b) :- missing($o, $b, "async", $e).
+.violation missing_lazy(at: node, owner: sym, base: sym)  "{owner}.{base} is missing the lazy member of the triple"
+missing_lazy($e, $o, $b) :- missing($o, $b, "lazy", $e).
+
+.violation missing_legacy_sync(at: node) "{qualname(at)} is public but not decorated with @legacy_sync"
+missing_legacy_sync($f) :- checked($o, $b), member($o, $b, "sync", $f), member($o, $b, "lazy", $l), same_params($f, $l), !legacy($f, "sync").
+.violation missing_legacy_async(at: node) "{qualname(at)} is public but not decorated with @legacy_async"
+missing_legacy_async($f) :- checked($o, $b), member($o, $b, "async", $f), member($o, $b, "lazy", $l), same_params($f, $l), !legacy($f, "async").
+.violation missing_lazy_decorator(at: node)
+    "{qualname(at)} is public but not decorated with @lazy (or mixin apply_lazy_to_public_lazy_methods)"
+missing_lazy_decorator($l) :- checked($o, $b), member($o, $b, "lazy", $l), !lazy_decorated($l).
+
+.violation direct_wrapper_bypasses_lazy_owner(at: node)
+    "{qualname(at)} uses a direct legacy wrapper despite an available lazy owner; delegate through the lazy member"
+direct_wrapper_bypasses_lazy_owner($f) :- checked($o, $b), member($o, $b, "lazy", _), member($o, $b, $s, $f), $s != "lazy",
+    deco($f, $q), $q =~ "(^|\.)direct_legacy[^.]*$",
+    some { within($c, $f), cname($c, $x),
+           $x =~ "^(grammar_effect_lazy|grammar_rows_lazy|grammar_row_lazy|(execute_grammar|grammar_fetch).*_lazy)$" }.
+
+.violation invalid_mixed_lazy_execution_name(at: node, owner: sym)
+    "{qualname(at)} mixes 'lazy' with 'sync' or 'async' in its name. Lazy surfaces must stay execution-mode neutral."
+invalid_mixed_lazy_execution_name($f, $o) :- root($o, $f), mixed($f).

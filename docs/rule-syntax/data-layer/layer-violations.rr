@@ -1,0 +1,118 @@
+.policy "data-layer:layer-violations" revision 1
+.description "Imports that cross the layer architecture: upward layers, api/ into impl/, conform/ into impl/, undeclared groups."
+.language python
+.mode block                      // `--check`; the suite plugin reports the same findings at info
+.scope dirs "api", "impl", "conform"
+.scope tests true
+.budget * by code { "conform_impl": 124, "api_impl": 164, "layer_dependency": 429, "group_dependency": 0 }
+// .ratchet-baselines/check_layer_violations.json (signed). Hierarchical: conform_impl and api_impl never grow;
+// layer_dependency grows only by what they shrink; group_dependency only if the 8/4/2/1 weighted sum does not grow.
+// Oracle: scripts/check_layer_violations.py. Each import outside TYPE_CHECKING, per module imported:
+//   layer_dependency   an api/ or impl/ file in layer lNNNN imports a module with a higher `.lMMMM_` segment
+//   api_impl           an api/ file other than __init__.py imports impl.*
+//   conform_impl       a conform/ file other than conftest.py imports impl.*
+//   group_dependency   (--check-groups) a layer imports from a group its LAYER_GROUPS.yaml entry does not allow
+// Improves on the oracle:
+//   relative imports are resolved before the checks (the oracle drops the dots, so `from ..l9600_x import y` passed);
+//   TYPE_CHECKING is resolved, not matched by name, and only its body is exempt (the oracle also exempts `else:`).
+
+.use python/imports
+//   import_alias(i, a, module, name, local)   module absolute, relative imports resolved
+.use python/names
+//   type_checking_block(b)
+
+.kindset fdef = "function_definition"
+.set app            = "api" | "impl"
+.set layer_free_dir = "tests" | "l0500_ts_models" | "l2070_server_plan" | "l3000_schema_builder"
+.set vt_file        = "versioned_lazy_mixin.py" | "versioned_transactions.py" | "plan_revision_history_query.py"
+.set group_skip     = "tests" | "__pycache__" | ".venv" | "conform"
+
+// edge(i, d, m): import statement i in document d imports module m, outside TYPE_CHECKING.
+.decl tc(i: node)
+tc($i) :- import_alias($i, _, _, _, _), within($i, $b), type_checking_block($b).
+.decl edge(i: node, d: int, m: sym)
+edge($i, $d, $m) :- import_alias($i, _, $m, _, _), $m != "", !tc($i), docof($i, $d).
+
+// Ratchet metrics internal_module_level / internal_deferred / internal_type_checking: api.* and impl.* imports
+// by style, TYPE_CHECKING ones included. Counted, never reported.
+.decl internal_import(i: node, m: sym, style: sym)
+.output internal_import
+internal_import($i, $m, $s) :- import_alias($i, _, $m, _, _), $m =~ "^(api|impl)\.",
+    $s = first { "type_checking" if tc($i); "deferred" if nearest($i, _, fdef); "module_level" }.
+
+.violation layer_dependency(at: node, src: sym, dst: sym, module: sym)
+    "Layer {src} importing from higher layer {dst}: {module}"
+layer_dependency($i, $s, $t, $m) :- edge($i, $d, $m), some { path_part($d, $p), $p in app },
+    !some { path_part($d, $p), $p in layer_free_dir },
+    !( path_part($d, "l7200_versioned_transactions"), file_name($d, $f), $f in vt_file ),
+    doc($d, _, $q), $s = @re($q, "(?:^|\.)l(\d{4})_"), $t = @re($m, "\.l(\d{4})_"), $t > $s,   // 4 digits: text order
+    !( path_part($d, "l2100_sql_grammar"), $t = "2200" ).
+
+// api/ files allowed to reach impl/: (file name, a directory on its path; "" for any).
+.decl bridge(file: sym, dir: sym)     // hard-coded in check_layer_violations.py:736-829
+bridge("validation.py", "l4000_permissions").  bridge("validation.py", "l4100_queue").  bridge("logged_table.py", "").
+bridge("fts_search_manager.py", "l5100_fts").  bridge("versioned_operations.py", "l7250_versioned_operations").
+bridge("versioned_transactions.py", "l7200_versioned_transactions").  bridge("diff_types.py", "l7250_versioned_operations").
+bridge("transaction.py", "l2050_transaction").  bridge("factory.py", "l1450_keys").  bridge("cli.py", "l1450_keys").
+bridge("cache_integration.py", "l8100_ops_analytics").  bridge("connection.py", "l8100_ops_analytics").
+bridge("connection.py", "l2000_connection").  bridge("subscription.py", "l5000_subscriptions").
+bridge("dispatcher.py", "l5000_subscriptions").  bridge("sparse_change.py", "l6000_log_table").
+bridge("log_table.py", "l6000_log_table").  bridge("processor.py", "l9800_rippling").  bridge("enqueue.py", "l9800_rippling").
+bridge("bootstrap.py", "l1400_config").  bridge("index_manager.py", "l5200_vector_index").
+bridge("embedding_worker.py", "l5200_vector_index").  bridge("embedding_metadata.py", "l5200_vector_index").
+bridge("embedding_auto_queue.py", "l5200_vector_index").  bridge("pgvector.py", "index_implementations").
+bridge("service.py", "l4400_scheduler").  bridge("triggers.py", "l4100_queue").  bridge("trigger_builder.py", "l9800_rippling").
+bridge("export_cursor.py", "l3500_bulk_ops").  bridge("ownership_scheme.py", "l4000_permissions").
+bridge("rbac_models.py", "l4000_permissions").  bridge("schema_def.py", "l1000_schema").  bridge("__init__.py", "l1500_llm").
+bridge("testing.py", "").  bridge("plan_revision_history_query.py", "l7200_versioned_transactions").
+bridge("merge.py", "l7800_versioned_merge").  bridge("rebase.py", "l7900_versioned_rebase").
+bridge("plan_query_builder.py", "l2060_query_builder").  bridge("sql_query_spec.py", "l2060_query_builder").
+bridge("query_spec.py", "l2060_query_builder").  bridge("cursor_pagination.py", "l2090_response").
+bridge("sql_graph_runtime.py", "l9700_graph_query").  bridge("queue_definition.py", "l4100_queue").
+bridge("versioned_connection.py", "l7000_versioned_schema").  bridge("dynamic_import.py", "_internal").
+.set batching_facade = "executor.py" | "intent_diff_bytes.py" | "intent_embedding.py" | "intent_fts_search.py"
+    | "intent_infrastructure.py" | "intent_query_extended.py" | "permission_filter.py" | "plan_helpers.py"
+    | "plan_runtime.py" | "lazy_runtime.py" | "resolve_branch_steps.py" | "server_query_builder.py" | "versioned_select_steps.py"
+bridge($f, "l2070_batching") :- $f in batching_facade.
+
+.decl api_exempt(d: int)
+api_exempt($d) :- path_part($d, "l9900_ts_models").
+api_exempt($d) :- path_part($d, "l3200_metadata").
+api_exempt($d) :- path_part($d, "tests"), path_part($d, "api").
+api_exempt($d) :- path_part($d, "l8000_admin"), path_part($d, "tools").
+api_exempt($d) :- path_part($d, "l4200_event_pipeline"), path_part($d, "bridges").
+api_exempt($d) :- file_name($d, "connection_factory.py"), path_part($d, "l2000_connection").
+api_exempt($d) :- file_name($d, $f), bridge($f, "").
+api_exempt($d) :- file_name($d, $f), bridge($f, $p), path_part($d, $p).
+
+.violation api_impl(at: node, module: sym) "api/ modules cannot import from impl/ (except api/__init__.py): {module}"
+api_impl($i, $m) :- edge($i, $d, $m), $m =~ "^impl\.", path_part($d, "api"), !file_name($d, "__init__.py"), !api_exempt($d).
+
+.set whitebox = "test_migration_ddl_bugs_round2.py" | "test_permission_evolution.py" | "test_schema_drift_e2e.py"
+    | "test_permission_introspection.py" | "test_uuid_introspection.py" | "test_uuid_validation.py" | "test_fts_validation.py"
+    | "test_neo4j_validation.py" | "test_permission_validation.py" | "test_log_table_export_import.py" | "test_bulk_loader.py"
+    | "test_export_import.py" | "test_incremental_export_import.py" | "test_cross_backend_import.py" | "test_rbac_integration.py"
+    | "test_rbac_provider.py" | "test_rbac_schema.py" | "test_rbac_polymorphic.py" | "test_rbac_foreign_keys.py"
+    | "test_rbac_audit_integration.py" | "test_permission_row_filter.py" | "test_permission_cache.py" | "test_permission_events.py"
+    | "test_permission_share.py" | "test_permission_ownership.py" | "test_permission_pagination.py"
+    | "test_permission_column_filter.py" | "test_permission_audit.py" | "test_permission_noop.py"
+    | "test_polymorphic_inheritance.py" | "test_config.py" | "test_bugbot_regressions.py" | "test_fts_basic.py"
+    | "test_fts_pagination.py" | "test_object_history.py" | "test_log_model_registry.py" | "test_versioned_operations.py"
+    | "test_materialization_jobs.py" | "test_sparse_backend_incremental.py" | "test_sql_roundtrip_efficiency.py"
+    | "test_materialization.py" | "test_security_regression.py" | "test_vector_query_analysis.py" | "bench_all_backends.py"
+    | "test_pgvector_e2e.py" | "test_pgvector_low_level.py" | "test_pgvector_migrations.py" | "test_pgvector_stress.py"
+    | "test_pgvector_vs_hnsw_comparison.py"
+
+.violation conform_impl(at: node, module: sym) "conform/ tests must be backend-agnostic, cannot import from impl/: {module}"
+conform_impl($i, $m) :- edge($i, $d, $m), $m =~ "^impl\.", path_part($d, "conform"),
+    file_name($d, $f), $f != "conftest.py", !($f in whitebox).
+
+.input layer_group(layer: sym, group: sym)     // api/LAYER_GROUPS.yaml: groups.<g>.layers
+.input group_allows(group: sym, dep: sym)      // api/LAYER_GROUPS.yaml: groups.<g>.depends_on and cross_group_deps
+
+.violation group_dependency(at: node, src: sym, dst: sym, module: sym)
+    "Group violation: {src} imports from {dst}, which is not in its declared dependencies: {module}"
+group_dependency($i, $g, $h, $m) :- edge($i, $d, $m), !some { path_part($d, $p), $p in group_skip },
+    doc($d, $path, _), $a = @re($path, "(?:^|/)(l\d{4}[^/]*_[^/]*|types|row_id)(?:/|$)"),
+    $b = @re($m, "(?:^|\.)(l\d{4}[^.]*_[^.]*)"),
+    layer_group($a, $g), layer_group($b, $h), $g != $h, !group_allows($g, $h).

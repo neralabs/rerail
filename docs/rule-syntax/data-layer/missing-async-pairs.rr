@@ -1,0 +1,87 @@
+.policy "data-layer:missing-async-pairs" revision 1
+.description "Transaction-class methods that do I/O come in sync/async pairs with the same parameters."
+.language python
+.mode block
+.scope include "l2050_transaction/**", "l7200_versioned_transactions/**",            // api/… before the move
+               "impl/common/l7300_sql_versioned_transactions/**", "impl/common/l7248_sparse_versioned_transactions/**"
+.scope exclude "**/*test_*", "**/tests/**"
+.scope tests false
+.budget * { "total": 0 }    // .ratchet-baselines/lint_missing_async_pairs.json (signed): issues 0
+// Oracle: scripts/lint_missing_async_pairs.py. Methods defined directly in a class body (not inside a function),
+// public or `_…_async`, minus the exempt names and `…_lazy`; def foo and async def foo_async pair up per class.
+//   missing_pair        one side exists and does I/O (an I/O method call, or a conn/session/txn… parameter);
+//                       the other side does not exist
+//   signature_mismatch  both sides exist and their parameters, self aside, differ
+// Improves on the oracle:
+//   a counterpart inherited from a base class counts, across files (the oracle looks only in the same class body);
+//   classes are told apart by definition, not by name (same-named classes in one file no longer merge);
+//   the whole parameter list is compared, keyword-only parameters included (the oracle compares positional ones).
+
+.use python/names
+.use python/calls
+
+.kindset fdef = "function_definition"
+.kindset cdef = "class_definition"
+.set io_param  = "conn" | "connection" | "db" | "session" | "txn" | "transaction" | "session_id"
+.set io_method = "read" | "write" | "read_version" | "write_version" | "read_async" | "write_async"
+    | "read_version_async" | "write_version_async" | "insert" | "insert_async" | "insert_many" | "insert_many_async"
+    | "update" | "update_async" | "update_many" | "update_many_async" | "delete_by_id" | "delete_by_id_async"
+    | "delete_many" | "delete_many_async" | "select_one" | "select_one_async" | "select_many" | "select_many_async"
+    | "upsert" | "upsert_async" | "commit" | "commit_async" | "execute" | "execute_async" | "first" | "first_async"
+    | "count" | "count_async"
+.set exempt = "query" | "query_unfiltered" | "filter" | "order_by" | "limit" | "offset" | "for_object" | "for_objects"
+    | "filter_revision" | "between_revisions" | "since" | "by_session" | "filter_eq" | "filter_ne" | "filter_gt"
+    | "filter_gte" | "filter_lt" | "filter_lte" | "filter_in" | "where" | "group_by" | "aggregate" | "window" | "having"
+    | "keyset_paginate" | "replacing" | "excluding" | "insert_into" | "include_deleted" | "distinct" | "select_tuple"
+    | "cursor_paginate" | "cached_mapping" | "for_update" | "sort_key" | "final_sort_key" | "_sort_key" | "add_param"
+    | "reorder_for_update" | "get_sparse_column" | "__enter__" | "__exit__" | "__aenter__" | "__aexit__" | "__init__"
+    | "__repr__" | "__str__" | "session_id" | "original_session_id" | "revision_id" | "branch_id" | "is_active"
+    | "is_committed" | "is_rolled_back" | "is_cancelled" | "mode" | "is_determined" | "violation_count"
+    | "base_read_transaction" | "base_write_transaction" | "cache" | "domain" | "branch_anchor" | "connection_id"
+    | "base_revision_id" | "quote_col" | "get_cached" | "extract_fields_from_expression" | "set_disable_thread_checks"
+    | "get_thread_checks_disabled" | "disable_thread_affinity_checks" | "record_sync_operation"
+    | "record_async_operation" | "reset" | "set_session_id" | "cancel" | "authorize_internal_access"
+    | "ensure_internal_raw_access" | "wrapper" | "get_strict_mode_setting" | "set_strict_mode_setting" | "deferred"
+    | "plan" | "cross_branch" | "revision_history_query" | "branch" | "branches" | "revisions" | "graph_query_builder"
+    | "graph" | "read_blob_range" | "iter_blob_chunks" | "table_exists" | "execute_fire_and_forget" | "execute_later"
+    | "diff_bytes" | "execute_raw" | "fetchone_raw" | "fetchall_raw" | "versioned_read" | "versioned_write" | "search"
+    | "get_session_id_sql" | "build_versioning_where_conditions" | "execute_runtime"
+    | "speculative_publish_table_names_hint" | "execute_returning"
+.set exempt_class = "_CachedQuery"                 // operates on an in-memory dict
+
+// side(f, b, k): def f is the k side ("sync" | "async") of base name b. An async def's base drops `_async`.
+// Every base starting with `_` is skipped: the oracle's private-name filter keeps none of them in the end.
+.decl named(f: node, n: sym, b0: sym)
+named($f, $n, $b0) :- def_name($f, $n), !($n in exempt), !($n =~ "_lazy$"),
+    $b0 = @re($n, "^(.*?)(?:_async)?$"), !($b0 in exempt).
+.decl side(f: node, b: sym, k: sym)
+side($f, $n, "sync")   :- named($f, $n, _), !is_async($f), !($n =~ "^_").
+side($f, $b, "async")  :- named($f, _, $b), is_async($f), !($b =~ "^_").
+
+// own(c, b, k, f): f sits directly in class c's body. sees(c, b, k, f): c has f as that side, own or inherited.
+.decl own(c: node, b: sym, k: sym, f: node)
+own($c, $b, $k, $f) :- side($f, $b, $k), nearest($f, $c, cdef), !nearest($f, _, fdef), def_name($c, $x), !($x in exempt_class).
+.decl sees(c: node, b: sym, k: sym, f: node)
+sees($c, $b, $k, $f) :- own($c, $b, $k, $f).
+sees($c, $b, $k, $f) :- own($c, _, _, _), class_def($c, $cq), mro_method($cq, _, $f), side($f, $b, $k).
+
+// io(f): f takes a connection-like parameter, or calls an I/O method anywhere in its body.
+.decl io(f: node)
+io($f) :- own(_, _, _, $f), params($f, $x, _), $x in io_param.
+io($f) :- own(_, _, _, $f), within($c, $f), callee($c, $n), kind($n, "attribute"), field($n, "attribute", $a),
+    text($a, $x), $x in io_method.
+
+.violation missing_pair(at: node, cls: sym, direction: sym) "{cls}.{at.name} missing {direction} counterpart"
+missing_pair($f, $x, "async") :- own($c, $b, "sync", $f), io($f), !sees($c, $b, "async", _), def_name($c, $x).
+missing_pair($f, $x, "sync")  :- own($c, $b, "async", $f), io($f), !sees($c, $b, "sync", _), def_name($c, $x).
+
+// pair(c, s, a): c pairs sync s with async a, at least one of them its own.
+.decl pair(c: node, s: node, a: node)
+pair($c, $s, $a) :- own($c, $b, "sync", $s), sees($c, $b, "async", $a).
+pair($c, $s, $a) :- own($c, $b, "async", $a), sees($c, $b, "sync", $s).
+.decl differ(s: node, a: node)
+differ($s, $a) :- pair(_, $s, $a), params($s, $x, $i), $x != "self", !params($a, $x, $i).
+differ($s, $a) :- pair(_, $s, $a), params($a, $x, $i), $x != "self", !params($s, $x, $i).
+
+.violation signature_mismatch(at: node, cls: sym, other: node) "{cls}.{at.name}/{other.name}: Argument mismatch"
+signature_mismatch($s, $x, $a) :- pair($c, $s, $a), differ($s, $a), def_name($c, $x).
