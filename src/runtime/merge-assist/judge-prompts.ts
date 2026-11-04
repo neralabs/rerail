@@ -352,6 +352,51 @@ export function signalsPrompt(input: SignalsInput, nonce: string): string {
   return parts.join("\n");
 }
 
+/** The most decisions one ranking answer names. */
+export const MAX_RANKED = 5;
+/** The most decisions one ranking prompt carries; the rest are left out. */
+const MAX_RANK_DECISIONS = 400;
+
+/** A coding task and the decisions that could apply to it, each under an id the caller chose. */
+export interface RankInput {
+  task: string;
+  decisions: Array<{ id: string; decision: string }>;
+}
+
+export interface RankVerdict {
+  /** The decisions the task most likely needs, most relevant first; at most {@link MAX_RANKED}. */
+  ids: string[];
+}
+
+export const rankVerdictSchema: z.ZodType<RankVerdict> = z.object({ ids: z.array(z.string().min(1)).max(MAX_RANKED) }).strict();
+
+/** The ranking answer as a JSON schema for the agent CLI: only the given ids, at most {@link MAX_RANKED}, closed. */
+export function rankJsonSchemaFor(ids: readonly string[]): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["ids"],
+    properties: { ids: { type: "array", maxItems: MAX_RANKED, items: { type: "string", enum: [...ids] } } },
+  };
+}
+
+const RANK_INSTRUCTIONS = `A coding agent is about to do the task below in this repository. The repository's decisions follow, one per line, each after its id. Pick the decisions the agent will most likely need for this task: ones its natural implementation could break, or that govern code it will write. Ignore decisions about unrelated topics, even when they cover the same folders.
+
+ids: the chosen decisions' ids, the most relevant first, at most ${MAX_RANKED}. Fewer is better than padding; answer an empty list when none applies.`;
+
+/** The ranking prompt for one task, with the task and the decisions fenced as data. */
+export function rankPrompt(input: RankInput, nonce: string): string {
+  const decisions = input.decisions.slice(0, MAX_RANK_DECISIONS).map(entry => `${entry.id}: ${cleanDecision(entry.decision)}`);
+  return [
+    framing(nonce, "When unsure, leave a decision out."),
+    "",
+    RANK_INSTRUCTIONS,
+    "",
+    fenceData("the task", cut(input.task, MAX_CORRECTION_CHARS), nonce),
+    fenceData("the decisions", decisions.length > 0 ? decisions.join("\n") : "(none)", nonce),
+  ].join("\n");
+}
+
 export interface CompareInput {
   mine: Array<{ id: string; decision: string; scope: string[] }>;
   theirs: Array<{ id: string; decision: string; scope: string[]; author: string }>;

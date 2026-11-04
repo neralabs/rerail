@@ -201,18 +201,21 @@ wrap requests in retry loops." It is in .rerail/rules/retries-in-transport.json;
 Decisions reach the agent as context, injected into its loop; code rules are optional on top. The protocol, chosen by
 the context-injection eval ([§6.3.1](#631-what-the-eval-showed)):
 
+- **Session focus.** When a session starts, Rerail asks the person's agent CLI once, in the background, which decisions
+  in force this task will most likely need: the person's prompt and the decisions whose scope covers the repository,
+  under opaque ids, answered as at most 5 ids, most relevant first (`rankPrompt`). The session's *focus* is the top 3.
+  The session never waits for it; the answer usually arrives within the agent's first few tool calls (about 4 s).
 - **Area orientation.** The first time the agent reads or edits a file in an *area* (the file's folder cut to two
-  segments, such as `src/ui`), Rerail gives it, once, the decisions in force whose scope covers that file or any file
-  in the area: team decisions, this branch's, and absorbed peer decisions. One line each, at most 12 per injection,
-  **ranked by how close each decision is to the session's task**: the cosine between the bundled embedding model's
-  vectors for the person's prompt and for the decision's text. Directory listings and searches do not count as
-  touching.
-- **Conflicts first, the ask last.** A decision this branch contradicts comes first, with this branch's own; the last
-  line asks the agent to end its final message with one line naming who decided differently and where.
-- **Signals as a backup.** At an edit, a decision not yet given whose signals (code fragments capture produced,
-  [§6.2](#62-capturing-a-decision)) appear in the patch's added lines is given then. It arrives after the edit, so the
-  agent fixes rather than avoids; it is a backup, not the main channel.
-- A decision without a scope covers the repository and is given once at session start.
+  segments, such as `src/ui`), Rerail gives it, once, the focus decisions whose scope covers that file or that area.
+  An area touched before the focus arrived is served at the next tool call after it does. One line each. Directory
+  listings and searches do not count as touching.
+- **Fallback.** If the focus is not there when the agent is about to edit, Rerail waits up to 15 s, then ranks that
+  area's decisions by the bundled embedding model's similarity to the prompt and gives the top 3. If the agent CLI is
+  unavailable, the fallback serves the whole session.
+- **Conflicts first, the ask last.** A decision this branch contradicts is given at the first touch of its scope,
+  whether or not it is in the focus, with this branch's own; the last line asks the agent to end its final message with
+  one line naming who decided differently and where.
+- A decision without a scope covers the repository and is a focus candidate like any other.
 
 #### 6.3.1 What the eval showed
 
@@ -230,27 +233,31 @@ With 40 decisions in the index:
 | Area orientation, index order | 2/27 | 485 | 6/6 |
 | Signals at the edit only | 9/27 | 61 | 5/6 |
 
-With 224 decisions in the index (about 40 in `src/ui` alone, more than the cap):
+With 224 decisions in the index (about 40 in `src/ui` alone):
 
-| Protocol | Violations | Target delivered before the edit | Injected tokens (median) | Total tokens vs none |
+| Protocol | Violations | Target delivered before the edit | Irrelevant decisions per run (median) | Injected tokens (median) |
 | --- | --- | --- | --- | --- |
-| None | 13/27 | — | 0 | — |
-| Area orientation, index order | 8/27 | 15/33 | 734 | +17k |
-| Area orientation, ranked by prompt words (BM25) | 7/27 | 21/33 | 747 | +20k |
-| Area orientation, ranked by prompt embedding | 2/27 | 31/33 | 757 | +8k |
+| None | 13/27 | — | 0 | 0 |
+| Area orientation, index order, cap 12 | 8/27 | 15/33 | ~24 | 734 |
+| Area orientation, ranked by prompt words (BM25) | 7/27 | 21/33 | ~24 | 747 |
+| Area orientation, ranked by prompt embedding | 2/27 | 31/33 | ~24 | 757 |
+| **Session focus, top 3** | **1/27** | **32/33** | **2** | **102** |
+| Session focus, top 3, another distractor draw and order (180 distractors, seed 2) | 1/27 | 30/33 | 2 | 105 |
+
+For session focus, the conflict was kept 6/6 and named in the final message 6/6 (5/6 on the second draw); done rate
+was 36/39 against the control's 35/39. Each session costs one agent-CLI call of about 3,800 prompt tokens, outside the
+agent's own context.
 
 - A decision that reached the agent before it wrote the code was followed almost every time; delivery, not
   compliance, is the problem.
 - Every decision at session start stops working at scale: at 224 decisions it is about 6,700 tokens, past Codex's
   per-hook limit of about 2,500 tokens, so Codex saves it to disk and shows the model a preview. On dev it did worse
   than no injection. An injection must stay under the host's limit.
-- Ranking by prompt words won on dev (0/27) and lost on held-out (7/27): it fitted the dev prompts' wording. The
-  embedding ranking held up (dev 0/27, held-out 2/27).
+- Relevance needs a model that reasons about the task. Offline, over each dev task's 46–126 candidate decisions, the
+  bundled embedding model put the target in the top 8 for 4 of 9 tasks; one agent-CLI ranking call put it first for 8
+  of 9 and fourth for the ninth. Ranking by prompt words fitted the dev prompts' wording (dev 0/27, held-out 7/27).
 - Signals at the edit deliver late and fix after the fact: fewest injected tokens, most total tokens.
-- An embedding match between the decision and *code* (the patch) found nothing within the noise budget; between the
-  decision and the person's *prompt* it is what makes ranking work.
-- Open: about 24 of the ~25 decisions injected per run are not the target. Precision (a similarity floor, a smaller
-  cap once ranking is good) is the next thing to tune.
+- An embedding match between the decision and *code* (the patch) found nothing within the noise budget.
 
 The same lookup drives comparison: a peer decision is compared with this branch's only when an agent here works in
 its scope. A branch nobody's work touches costs nothing.

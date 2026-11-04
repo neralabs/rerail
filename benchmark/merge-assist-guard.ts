@@ -184,6 +184,7 @@ async function hookCost(built: BuiltIndex, index: readonly IndexEntry[], dataset
       modelPath: MODEL_PATH,
       files: Object.keys(dataset.project),
       root: folder,
+      folder,
       log,
       state: join(folder, "hook-state.json"),
     };

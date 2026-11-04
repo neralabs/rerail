@@ -3,19 +3,22 @@
  *
  *   node --import <absolute tsx loader> <absolute path of this file>
  *
- * Codex runs it for PreToolUse and PostToolUse (matcher ""), the hook input as JSON on stdin. `MA_CONTEXT_CONFIG` names
- * the run's configuration (`HookConfig`): the variant, the decision index built by `--build-index` (with each
- * decision's signals and embedding), the workspace, the log and the state file. The hook works out which workspace
- * paths the call touches, picks the decisions the variant injects for them, and prints
+ * Codex runs it for SessionStart, PreToolUse and PostToolUse (matcher ""), the hook input as JSON on stdin.
+ * `MA_CONTEXT_CONFIG` names the run's configuration (`HookConfig`): the variant, the decision index built by
+ * `--build-index` (with each decision's signals and embedding), the workspace, the log and the state file. The hook
+ * works out which workspace paths the call touches, picks the decisions the variant injects for them, and prints
  * `{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}`, which Codex adds to the model's context as a
  * developer message. Every call appends one `HookLogEntry` line to the log, injected or not. At every `apply_patch`,
  * whatever the variant (the control included), the entry holds each scope-matching decision's signal hits and
- * embedding similarity, so guard thresholds can be swept offline. A failure is logged and never reaches Codex: the hook
- * then prints nothing.
+ * embedding similarity, so guard thresholds can be swept offline. `orient: focus` starts the session-focus ranker
+ * (merge-assist-context-rank.ts) in the background at SessionStart. A failure is logged and never reaches Codex: the
+ * hook then prints nothing.
  */
+import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { cosineSimilarity, type GlobMatcher, globPattern, NativeSemanticEmbedder, signalHits } from "../src/engine/index.js";
 
@@ -33,8 +36,11 @@ export const CHANNELS = ["single", "hybrid"] as const;
 export const GUARDS = ["signals", "embed", "both"] as const;
 export type GuardSource = (typeof GUARDS)[number];
 
-/** What `hybrid` orientation offers: conflict pairs on a file's first touch, or every decision of an area's first touch. */
-export const ORIENTS = ["conflicts", "area"] as const;
+/**
+ * What `hybrid` orientation offers: conflict pairs on a file's first touch; every decision of an area's first touch
+ * (`area`); or conflict pairs plus the session-focus ranker's picks that cover the area (`focus`).
+ */
+export const ORIENTS = ["conflicts", "area", "focus"] as const;
 /**
  * How area orientation ranks an area's decisions before the cap. `index`: by source, then index order. `specificity`:
  * the narrowest scope first. `prompt-lexical`: BM25 of the task prompt against the decision text. `prompt-embed`: the
@@ -80,6 +86,8 @@ export interface VariantParameters {
   readonly embedThreshold: number | null;
   /** `hybrid`: the most decisions the guard injects per patch. */
   readonly guardCap: number | null;
+  /** `orient: focus`: how many of the ranker's picks (most relevant first) are in play. */
+  readonly focusK: number | null;
 }
 
 export type DecisionSource = "team" | "peer" | "own";
@@ -112,6 +120,8 @@ export interface HookConfig {
   /** The project's files when the run starts: what an area holds (`orient: area`). */
   readonly files: readonly string[];
   readonly root: string;
+  /** The run's folder: where the session-focus ranker writes `focus.json` and keeps its judge database. */
+  readonly folder: string;
   readonly log: string;
   readonly state: string;
 }
@@ -149,6 +159,8 @@ export interface HookLogEntry {
   readonly embedding?: { readonly loadMs: number; readonly embedMs: number; readonly blocks: number };
   /** At the call that embedded the task prompt (`prompt-embed`): the model load and the prompt's embedding, in milliseconds. */
   readonly promptEmbedding?: { readonly loadMs: number; readonly embedMs: number };
+  /** `orient: focus`: the ranker's state at this call and what the call did with it. */
+  readonly focus?: FocusLog;
   readonly error?: string;
 }
 
@@ -166,9 +178,43 @@ export interface HookState {
   seenAreas: string[];
   /** `prompt-embed`: the task prompt's embedding, computed once per run. */
   promptVector: number[] | null;
+  /** `orient: focus`: whether the ranker was started. */
+  focusStarted: boolean;
+  /** `orient: focus`: files whose area got its conflict pairs before the ranker answered; its picks follow when it does. */
+  pendingPaths: string[];
 }
 
-export const INITIAL_STATE: HookState = { calls: 0, delivered: [], injected: 0, seenFiles: [], seenAreas: [], promptVector: null };
+export const INITIAL_STATE: HookState = { calls: 0, delivered: [], injected: 0, seenFiles: [], seenAreas: [], promptVector: null, focusStarted: false, pendingPaths: [] };
+
+/** What the session-focus ranker writes to the run folder's `focus.json` when it is done. */
+export interface FocusFile {
+  readonly ok: boolean;
+  /** Index entry ids, most relevant first. */
+  readonly ids: readonly string[];
+  readonly ms: number;
+  readonly error: string | null;
+  readonly runner: string | null;
+  /** The ranking prompt's length: judge tokens are estimated as a quarter of it. */
+  readonly promptChars: number;
+  readonly candidates: number;
+}
+
+export interface FocusLog {
+  /** Whether `focus.json` was there at this call (after any wait). */
+  readonly ready: boolean;
+  readonly ok: boolean | null;
+  readonly ids: readonly string[] | null;
+  readonly rankerMs: number | null;
+  readonly promptChars: number | null;
+  /** At a pre-edit whose area the ranker had not answered for: how long the hook waited. */
+  readonly waitedMs: number | null;
+  /** `timeout`: the wait ran out, so the area was ranked by prompt embedding; `failed`: the ranker failed, the same for the run. */
+  readonly fallback: "timeout" | "failed" | null;
+  /** Areas touched for the first time at this call, areas whose picks went out, and files still waiting for picks. */
+  readonly fresh: readonly string[];
+  readonly served: readonly string[];
+  readonly pending: readonly string[];
+}
 
 /** A file's area: its folder, cut to the first two segments (`src/ui` for `src/ui/forms/X.tsx`, `src` for `src/config.ts`, `` at the root). */
 export function areaOf(path: string): string {
@@ -628,6 +674,125 @@ function chooseHybrid(candidates: readonly Candidate[], triggerPaths: readonly s
   return [...chosen, ...(variant.guardCap === null ? ranked : ranked.slice(0, variant.guardCap))];
 }
 
+// ---------------------------------------------------------------------------------------------------------- focus
+
+const RANKER = fileURLToPath(new URL("./merge-assist-context-rank.ts", import.meta.url));
+/** How long a pre-edit in an area the ranker has not answered for waits before ranking the area by prompt embedding. */
+const FOCUS_WAIT_MS = 15_000;
+const FOCUS_POLL_MS = 250;
+
+/**
+ * The session-focus ranker's input: the task prompt, and every index entry whose scope covers a project file, in index
+ * order. Entries go under opaque ids (`d1`, `d2`, …) so no id hints at what an entry is; `entries` maps them back.
+ */
+export function rankerInput(config: Pick<HookConfig, "index" | "files" | "prompt">): { task: string; decisions: Array<{ id: string; decision: string }>; entries: string[] } {
+  const entries = config.index.filter(entry => {
+    const matcher = scopeMatcher(entry.scope);
+    return config.files.some(file => matcher.specificity(file, false) >= 0);
+  });
+  return { task: config.prompt, decisions: entries.map((entry, position) => ({ id: `d${position + 1}`, decision: entry.decision })), entries: entries.map(entry => entry.id) };
+}
+
+export function focusPath(folder: string): string {
+  return join(folder, "focus.json");
+}
+
+function readFocus(folder: string): FocusFile | undefined {
+  const path = focusPath(folder);
+  return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as FocusFile : undefined;
+}
+
+/** The ranker in the background, detached and run as this hook is (same node and loader); this call returns at once. */
+function startRanker(configPath: string): void {
+  spawn(process.execPath, [...process.execArgv, RANKER, configPath], { detached: true, stdio: "ignore", env: process.env }).unref();
+}
+
+/** The state with the task prompt's embedding, computed once per run, and the cost of computing it when this call did. */
+async function withPromptVector(config: HookConfig, state: HookState): Promise<{ state: HookState; promptEmbedding?: HookLogEntry["promptEmbedding"] }> {
+  if (state.promptVector !== null) return { state };
+  const { embedder, loadMs } = sharedEmbedder(config.modelPath);
+  const started = performance.now();
+  const [vector] = await embedder.embed([config.prompt]);
+  return {
+    state: { ...state, promptVector: [...vector!].map(value => Math.round(value * 1e6) / 1e6) },
+    promptEmbedding: { loadMs: round4(loadMs), embedMs: round4(performance.now() - started) },
+  };
+}
+
+/**
+ * One call under `orient: focus`. At an area's first touch its conflict pairs go out at once; its share of the ranker's
+ * top `focusK` picks (those whose scope covers the file or the area, not yet delivered, in the ranker's order) goes out
+ * as soon as the ranker has answered, at this call or the first one after. A pre-edit in an area the ranker has not
+ * answered for waits up to {@link FOCUS_WAIT_MS}, then ranks that area by prompt embedding, `focusK` at most; a failed
+ * ranker means the same for the whole run.
+ */
+async function focusTurn(config: HookConfig, variant: VariantParameters, initial: HookState, trigger: string, triggering: readonly Touched[]): Promise<{ state: HookState; chosen: Candidate[]; candidates: Candidate[]; log: FocusLog; promptEmbedding?: HookLogEntry["promptEmbedding"] }> {
+  let state = initial;
+  const seen = new Set(state.seenAreas);
+  const fresh: string[] = [];
+  for (const touched of trigger === "" ? [] : triggering) {
+    if (touched.edit === "delete" || seen.has(areaOf(touched.path))) continue;
+    seen.add(areaOf(touched.path));
+    fresh.push(touched.path);
+  }
+  let focus = readFocus(config.folder);
+  let waitedMs: number | null = null;
+  if (focus === undefined && trigger === "pre-edit" && fresh.length > 0) {
+    const started = performance.now();
+    while (focus === undefined && performance.now() - started < FOCUS_WAIT_MS) {
+      await sleep(FOCUS_POLL_MS);
+      focus = readFocus(config.folder);
+    }
+    waitedMs = Math.round(performance.now() - started);
+  }
+  const fallback = focus !== undefined && !focus.ok ? "failed" : focus === undefined && waitedMs !== null ? "timeout" : null;
+  const served = focus !== undefined ? [...state.pendingPaths, ...fresh] : fallback === "timeout" ? fresh : [];
+  const pending = focus !== undefined ? [] : fallback === "timeout" ? state.pendingPaths : [...state.pendingPaths, ...fresh];
+  let promptEmbedding: HookLogEntry["promptEmbedding"] | undefined;
+  if (fallback !== null && served.length > 0) ({ state, promptEmbedding } = await withPromptVector(config, state));
+  const paths = [...new Set([...fresh, ...served])];
+  const touched = paths.map(path => ({ path, directory: false, created: false, edit: null, added: "" }));
+  const candidates = paths.length === 0 ? [] : hybridCandidates(config, { ...variant, orient: "area", areaRank: fallback === null ? "index" : "prompt-embed" }, touched, "post-read", [], state.promptVector);
+  const delivered = new Set(state.delivered);
+  const chosen: Candidate[] = [];
+  const open = (candidate: Candidate) => candidate.ids.every(id => !delivered.has(id));
+  const take = (candidate: Candidate) => {
+    for (const id of candidate.ids) delivered.add(id);
+    chosen.push(candidate);
+  };
+  for (const path of fresh) for (const candidate of candidates) if (candidate.path === path && candidate.conflict && open(candidate)) take(candidate);
+  const picks = focus?.ok === true ? focus.ids.slice(0, variant.focusK ?? focus.ids.length) : [];
+  for (const path of served) {
+    const area = candidates.filter(candidate => candidate.path === path && !candidate.conflict);
+    const ranked = fallback === null
+      ? picks.flatMap(id => area.filter(candidate => candidate.ids.includes(id)))
+      : area.filter(open).sort(areaOrder("prompt-embed")).slice(0, variant.focusK ?? area.length);
+    for (const candidate of ranked) if (open(candidate)) take(candidate);
+  }
+  const ids = chosen.flatMap(candidate => candidate.ids);
+  state = {
+    ...state,
+    calls: state.calls + 1,
+    delivered: [...new Set([...state.delivered, ...ids])],
+    injected: state.injected + ids.length,
+    seenAreas: [...new Set([...state.seenAreas, ...fresh.map(areaOf)])],
+    pendingPaths: pending,
+  };
+  const log: FocusLog = {
+    ready: focus !== undefined,
+    ok: focus?.ok ?? null,
+    ids: focus?.ids ?? null,
+    rankerMs: focus?.ms ?? null,
+    promptChars: focus?.promptChars ?? null,
+    waitedMs,
+    fallback,
+    fresh: fresh.map(areaOf),
+    served: served.map(areaOf),
+    pending: pending.map(areaOf),
+  };
+  return { state, chosen, candidates, log, ...(promptEmbedding === undefined ? {} : { promptEmbedding }) };
+}
+
 /** Every eligible item's scope match on each triggering path (one pathless match each for `upfront`), scored against `context`. */
 function candidatesFor(config: HookConfig, variant: VariantParameters, triggering: readonly Touched[] | null, context: string): Candidate[] {
   const weights = decisionWeights(config.index);
@@ -708,12 +873,12 @@ export function advance(state: HookState, candidates: readonly Candidate[], chos
   const served = new Set(chosen.filter(orientation).map(candidate => areaOf(candidate.path!)));
   const starved = new Set(candidates.filter(candidate => orientation(candidate) && candidate.ids.every(id => !delivered.has(id))).map(candidate => areaOf(candidate.path!)).filter(area => !served.has(area)));
   return {
+    ...state,
     calls: state.calls + 1,
     delivered: [...new Set([...state.delivered, ...ids])],
     injected: state.injected + ids.length,
     seenFiles: [...new Set([...state.seenFiles, ...triggerPaths])],
     seenAreas: [...new Set([...state.seenAreas, ...triggerPaths.map(areaOf).filter(area => !starved.has(area))])],
-    promptVector: state.promptVector,
   };
 }
 
@@ -817,6 +982,19 @@ async function main(): Promise<void> {
     const { kind, touched, context } = touchedPaths(input, config.root);
     let state = readState(config.state);
     const variant = config.variant;
+    const focusing = variant?.orient === "focus";
+    // The ranker starts at SessionStart, or at the first call when no SessionStart came.
+    if (focusing && !state.focusStarted) {
+      startRanker(configPath);
+      state = { ...state, focusStarted: true };
+    }
+    if (event === "SessionStart") {
+      // A session's start never counts as a call: `upfront` still waits for the first tool call.
+      writeFileSync(config.state, JSON.stringify(state));
+      const entry: HookLogEntry = { at: Date.now(), event, tool, kind, paths: [], injected: [], chars: 0 };
+      appendFileSync(config.log, `${JSON.stringify(entry)}\n`);
+      return;
+    }
     let trigger = variant === null ? "" : triggerOf(variant, state, event, kind);
     // Without `dirs`, only files a command reads (or a patch edits) trigger: no listed directories, no files about to be created.
     const triggering = variant === null || trigger === "upfront" ? [] : variant.dirs ? touched : touched.filter(item => !item.directory && !item.created);
@@ -826,31 +1004,41 @@ async function main(): Promise<void> {
     // Every patch is scored for the guard, whatever the variant, so control runs can tune its thresholds offline.
     const patched = event === "PreToolUse" && kind === "edit" ? touched.filter(item => item.edit !== "delete" && item.added !== "").map(({ path, added }) => ({ path, added })) : [];
     const { scores, embedding } = patched.length === 0 ? { scores: [], embedding: undefined } : await guardScores(config, patched);
-    // `prompt-embed` embeds the task prompt at the first call that can inject, and keeps it for the rest of the run.
     let promptEmbedding: HookLogEntry["promptEmbedding"] | undefined;
-    if (variant?.areaRank === "prompt-embed" && trigger !== "" && state.promptVector === null) {
-      const { embedder, loadMs } = sharedEmbedder(config.modelPath);
-      const started = performance.now();
-      const [vector] = await embedder.embed([config.prompt]);
-      promptEmbedding = { loadMs: round4(loadMs), embedMs: round4(performance.now() - started) };
-      state = { ...state, promptVector: [...vector!].map(value => Math.round(value * 1e6) / 1e6) };
+    let focusLog: FocusLog | undefined;
+    let candidates: Candidate[];
+    let chosen: Candidate[];
+    let next: HookState;
+    if (focusing) {
+      const turn = await focusTurn(config, variant!, state, trigger, triggering);
+      ({ candidates, chosen, state: next, log: focusLog, promptEmbedding } = turn);
+    } else {
+      // `prompt-embed` embeds the task prompt at the first call that can inject, and keeps it for the rest of the run.
+      if (variant?.areaRank === "prompt-embed" && trigger !== "") ({ state, promptEmbedding } = await withPromptVector(config, state));
+      candidates = variant === null || trigger === ""
+        ? []
+        : variant.channels === "hybrid"
+          ? hybridCandidates(config, variant, triggering, trigger, scores, state.promptVector)
+          : candidatesFor(config, variant, trigger === "upfront" ? null : triggering, `${config.prompt}\n${context}`);
+      chosen = variant === null || trigger === "" ? [] : choose(candidates, triggerPaths, state, variant, trigger);
+      next = trigger === "" ? { ...state, calls: state.calls + 1 } : advance(state, candidates, chosen, triggerPaths);
     }
-    const candidates = variant === null || trigger === ""
-      ? []
-      : variant.channels === "hybrid"
-        ? hybridCandidates(config, variant, triggering, trigger, scores, state.promptVector)
-        : candidatesFor(config, variant, trigger === "upfront" ? null : triggering, `${config.prompt}\n${context}`);
-    const chosen = variant === null || trigger === "" ? [] : choose(candidates, triggerPaths, state, variant, trigger);
     const text = chosen.length === 0 ? "" : render(chosen, config.index, variant!, trigger === "upfront");
+    const orientation = (candidate: Candidate): string => {
+      const area = areaOf(candidate.path!) || ".";
+      if (variant!.orient === "area") return `area ${area}`;
+      if (variant!.orient === "focus") return `${candidate.conflict ? "conflict" : focusLog?.fallback === null ? "focus" : `fallback ${focusLog?.fallback}`} ${area}`;
+      return "conflict";
+    };
     const injected = chosen.flatMap(candidate => candidate.ids.map((decisionId, position) => ({
       decisionId,
       reason: position === 0
-        ? `${candidate.channel ?? trigger}${candidate.path === null ? "" : ` ${candidate.path}`} (${candidate.channel === "guard" ? `hits ${candidate.hits!.join(" ") || "none"}, similarity ${candidate.similarity ?? "none"}` : candidate.channel === "orientation" ? (variant!.orient === "area" ? `area ${areaOf(candidate.path!) || "."}` : "conflict") : `score ${candidate.score}`})`
+        ? `${candidate.channel ?? trigger}${candidate.path === null ? "" : ` ${candidate.path}`} (${candidate.channel === "guard" ? `hits ${candidate.hits!.join(" ") || "none"}, similarity ${candidate.similarity ?? "none"}` : candidate.channel === "orientation" ? orientation(candidate) : `score ${candidate.score}`})`
         : `conflicts with ${candidate.ids[0]!}`,
       ...(candidate.channel === undefined ? {} : { channel: candidate.channel }),
     })));
     if (text !== "") process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } })}\n`);
-    writeFileSync(config.state, JSON.stringify(trigger === "" ? { ...state, calls: state.calls + 1 } : advance(state, candidates, chosen, triggerPaths)));
+    writeFileSync(config.state, JSON.stringify(next));
     const entry: HookLogEntry = {
       at: Date.now(),
       event,
@@ -860,10 +1048,11 @@ async function main(): Promise<void> {
       injected,
       chars: text.length,
       ...(text === "" ? {} : { text }),
-      ...(trigger === "" ? {} : { trigger, triggerPaths, candidates }),
+      ...(trigger === "" && candidates.length === 0 ? {} : { trigger, triggerPaths, candidates }),
       ...(patched.length === 0 ? {} : { guard: scores, added: Object.fromEntries(patched.map(({ path, added }) => [path, added])) }),
       ...(embedding === undefined ? {} : { embedding }),
       ...(promptEmbedding === undefined ? {} : { promptEmbedding }),
+      ...(focusLog === undefined ? {} : { focus: focusLog }),
     };
     appendFileSync(config.log, `${JSON.stringify(entry)}\n`);
   } catch (error) {

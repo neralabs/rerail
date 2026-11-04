@@ -40,6 +40,7 @@ import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
@@ -51,7 +52,7 @@ import {
   recordCheckout,
   setUpRepository,
 } from "../src/engine/index.js";
-import { type AgentJudge, createAgentJudge, deriveSignals, draftDecision, type DraftOutcome, setRepositoryStarted } from "../src/runtime/index.js";
+import { type AgentJudge, createAgentJudge, deriveSignals, draftDecision, type DraftOutcome, rankPrompt, setRepositoryStarted } from "../src/runtime/index.js";
 import { fixturesPath } from "../test/support/oracles.js";
 import {
   advance,
@@ -64,6 +65,8 @@ import {
   EMBED_MAX_TOKENS,
   fires,
   FORMATS,
+  type FocusFile,
+  focusPath,
   type GuardScore,
   GUARDS,
   type GuardSource,
@@ -76,6 +79,7 @@ import {
   ORIENTS,
   AREA_RANKS,
   RANKS,
+  rankerInput,
   render,
   scopeMatcher,
   type VariantParameters,
@@ -95,7 +99,7 @@ const KINDS = ["tempt", "neutral", "conflict"] as const;
 // ---------------------------------------------------------------------------------------------------------- variants
 
 /** One selection channel: everything but `hybrid`. */
-const SINGLE = { channels: "single", orient: null, areaRank: null, guard: null, embedThreshold: null, guardCap: null } as const;
+const SINGLE = { channels: "single", orient: null, areaRank: null, guard: null, embedThreshold: null, guardCap: null, focusK: null } as const;
 /** Round one's protocol defaults: directories trigger, no budget per run, the agent is asked to tell the user. */
 const LISTINGS = { ...SINGLE, dirs: true, sessionCap: null, conflict: "tell", budget: "session", threshold: null } as const;
 /** Only files read or edited trigger, each new file at most two items, the conflict as a line to end with. */
@@ -139,13 +143,18 @@ const VARIANTS: Readonly<Record<string, VariantParameters | null>> = {
   "area-embed": { ...AREA, areaRank: "prompt-embed" },
   /** `area-index`, plus the signals guard at a patch for what orientation did not deliver. */
   "area-guard": { ...AREA, guard: "signals" },
+  /** Session focus: at an area's first touch, its conflict pairs and its share of the ranker's top 3 picks for the task. */
+  "focus-k3": { ...AREA, orient: "focus", areaRank: null, cap: null, guardCap: null, focusK: 3 },
+  /** Session focus with the ranker's top 5 picks in play. */
+  "focus-k5": { ...AREA, orient: "focus", areaRank: null, cap: null, guardCap: null, focusK: 5 },
 };
 const CONTROL = "none";
 
 function describeVariant(parameters: VariantParameters | null): string {
   if (parameters === null) return "control: no injection (the hook only logs)";
   const embed = parameters.guard === "embed" || parameters.guard === "both" ? ` embedThreshold=${parameters.embedThreshold ?? "NOT FROZEN"}` : "";
-  const channels = parameters.channels === "hybrid" ? ` channels=hybrid orient=${parameters.orient}${parameters.orient === "area" ? ` areaRank=${parameters.areaRank}` : ""} guard=${parameters.guard ?? "none"} guardCap=${parameters.guardCap}${embed}` : "";
+  const orient = `orient=${parameters.orient}${parameters.orient === "area" ? ` areaRank=${parameters.areaRank}` : ""}${parameters.orient === "focus" ? ` focusK=${parameters.focusK}` : ""}`;
+  const channels = parameters.channels === "hybrid" ? ` channels=hybrid ${orient} guard=${parameters.guard ?? "none"} guardCap=${parameters.guardCap ?? "none"}${embed}` : "";
   return `when=${parameters.when} budget=${parameters.budget} cap=${parameters.cap ?? "all"} sessionCap=${parameters.sessionCap ?? "all"} dirs=${parameters.dirs} dedupe=${parameters.dedupe} format=${parameters.format} rank=${parameters.rank} threshold=${parameters.threshold ?? "none"} only=${parameters.only} conflict=${parameters.conflict}${channels}`;
 }
 
@@ -248,6 +257,10 @@ function seeded(seed: number): () => number {
 }
 
 const DISTRACTOR_SEED = 2224;
+/** How far apart the distractor draws of two `--seed` values start. */
+const SEED_STRIDE = 7919;
+/** The seed of the whole-index shuffle for `--seed` above 1. */
+const SHUFFLE_SEED = 4242;
 const DISTRACTOR_AUTHORS = ["Jeremy Barnes", "Priya Natarajan", "Sam Okafor", "Lena Fischer", "Ana Costa", "Wei Zhang", "Tomás Ruiz"];
 
 /**
@@ -255,9 +268,9 @@ const DISTRACTOR_AUTHORS = ["Jeremy Barnes", "Priya Natarajan", "Sam Okafor", "L
  * decisions (with a pull request) and teammates' branch decisions, each by one of the team. Their text and scope are
  * hand-written noise; their signals come from `deriveSignals` when the index is built.
  */
-function distractorPlaces(dataset: Dataset, count: number): Array<Omit<BuiltEntry, "signals" | "provenance">> {
+function distractorPlaces(dataset: Dataset, count: number, seed = 1): Array<Omit<BuiltEntry, "signals" | "provenance">> {
   if (count > dataset.distractors.length) throw new Error(`--distractors takes at most ${dataset.distractors.length}, the dataset's pool`);
-  const random = seeded(DISTRACTOR_SEED);
+  const random = seeded(DISTRACTOR_SEED + (seed - 1) * SEED_STRIDE);
   const pool = [...dataset.distractors];
   for (let index = pool.length - 1; index > 0; index--) {
     const other = Math.floor(random() * (index + 1));
@@ -461,6 +474,28 @@ export function teammateLeaks(dataset: Dataset, calls: readonly JudgeCall[]): st
   return leaks;
 }
 
+/**
+ * What the session-focus ranker's prompt for `task` would hold that it must not: anything but the task prompt as the
+ * person wrote it and the decision texts of the run's index under opaque ids. An index id (`x-…` names a distractor,
+ * a real id names its oracle's topic), an oracle's regex, or the task's labels (kind, split, targets) fails it.
+ */
+function rankerLeaks(dataset: Dataset, built: BuiltIndex, task: Task, distractors: number, seed: number): string[] {
+  const index = runIndex(dataset, built, task, distractors, seed);
+  const input = rankerInput({ index, files: Object.keys(dataset.project), prompt: task.prompt });
+  const prompt = rankPrompt({ task: input.task, decisions: input.decisions }, "0".repeat(32));
+  const texts = new Set(index.map(entry => entry.decision));
+  const failures: string[] = [];
+  if (input.task !== task.prompt) failures.push(`${task.id}: the ranker's task is not the task prompt`);
+  for (const decision of input.decisions) {
+    if (!/^d\d+$/u.test(decision.id)) failures.push(`${task.id}: decision id ${decision.id} is not opaque`);
+    if (!texts.has(decision.decision)) failures.push(`${task.id}: ${decision.id}'s text is not an index decision`);
+  }
+  for (const entry of index) if (prompt.includes(entry.id)) failures.push(`${task.id}: the prompt names index id ${entry.id}`);
+  for (const [id, oracle] of Object.entries(ORACLES)) for (const pattern of oracle.patterns) if (prompt.includes(pattern.source)) failures.push(`${task.id}: the prompt holds oracle ${id}'s regex`);
+  for (const label of [`kind: ${task.kind}`, `split: ${task.split}`, task.id]) if (prompt.includes(label)) failures.push(`${task.id}: the prompt holds the task label ${label}`);
+  return failures;
+}
+
 function printIntegrity(report: IntegrityReport): void {
   console.log(`\nIndex integrity: ${report.failures.length === 0 ? "PASS" : `FAIL (${report.failures.length})`}`);
   for (const failure of report.failures) console.log(`  FAIL ${failure}`);
@@ -490,9 +525,10 @@ export function loadIndex(path: string): BuiltIndex {
  * A run's decision index, from the built index: the real decisions the product produced, as team or peer decisions. A
  * conflict task makes its own decision this branch's own (not merged yet) and adds the teammate's branch decision that
  * contradicts it. Distractors, when asked for, go in at seeded places among them, so ties in ranking do not always
- * favour the real decisions. A decision absent from the index stays absent.
+ * favour the real decisions. A decision absent from the index stays absent. `--seed` 1 is this layout; another seed
+ * draws other distractors, places them elsewhere and then shuffles the whole index, so ties and prompt order change.
  */
-function runIndex(dataset: Dataset, built: BuiltIndex, task: Task, distractors: number): IndexEntry[] {
+function runIndex(dataset: Dataset, built: BuiltIndex, task: Task, distractors: number, seed: number): IndexEntry[] {
   if (distractors > built.distractors) throw new Error(`--distractors takes at most ${built.distractors}, what ${built.path} holds`);
   const find = (id: string) => built.entries.find(entry => entry.id === id);
   const ownPresent = task.conflict !== undefined && find(task.conflict.own) !== undefined;
@@ -508,10 +544,16 @@ function runIndex(dataset: Dataset, built: BuiltIndex, task: Task, distractors: 
     const { conflictsWith: _conflictsWith, ...rest } = hookEntry(peer);
     index.push(ownPresent ? { ...rest, conflictsWith: task.conflict!.own } : rest);
   }
-  const random = seeded(DISTRACTOR_SEED + 1);
-  for (const place of distractorPlaces(dataset, distractors)) {
+  const random = seeded(DISTRACTOR_SEED + 1 + (seed - 1) * SEED_STRIDE);
+  for (const place of distractorPlaces(dataset, distractors, seed)) {
     const entry = find(place.id);
     if (entry !== undefined) index.splice(Math.floor(random() * (index.length + 1)), 0, hookEntry(entry));
+  }
+  if (seed === 1) return index;
+  const shuffle = seeded(SHUFFLE_SEED + seed);
+  for (let position = index.length - 1; position > 0; position--) {
+    const other = Math.floor(shuffle() * (position + 1));
+    [index[position], index[other]] = [index[other]!, index[position]!];
   }
   return index;
 }
@@ -533,6 +575,8 @@ interface Options {
   validateOnly: boolean;
   /** Null until resolved: a run without `--distractors` uses every distractor the index holds, never silently none. */
   distractors: number | null;
+  /** Seeds the distractor draw and, above 1, shuffles the run index (`runIndex`); recorded in the report. */
+  seed: number;
   /** Whether the control runs too; `--no-control` drops it, for smoke runs of new presets only. */
   control: boolean;
   /** A `--json` report to re-score offline instead of running anything. */
@@ -546,7 +590,7 @@ interface Options {
   buildIndex: string | undefined;
 }
 
-const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
+const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
 
 function positive(flag: string, value: string | undefined): number {
   const number = Number(value);
@@ -575,6 +619,7 @@ function parseOptions(argv: readonly string[]): Options {
     listVariants: false,
     validateOnly: false,
     distractors: null,
+    seed: 1,
     control: true,
     replay: undefined,
     sweep: undefined,
@@ -614,6 +659,7 @@ function parseOptions(argv: readonly string[]): Options {
       }
       case "--list-variants": options.listVariants = true; break;
       case "--validate-oracles": options.validateOnly = true; break;
+      case "--seed": options.seed = positive(flag, value()); break;
       case "--distractors": {
         options.distractors = Number(value());
         if (!Number.isInteger(options.distractors) || options.distractors < 0) throw new Error(`--distractors takes a whole number\n${USAGE}`);
@@ -1032,7 +1078,19 @@ interface RunResult {
   readonly model: string | null;
   /** The hook's log, without the injected texts: every trigger's scored candidates, for `--replay`. */
   readonly hookLog: readonly HookLogEntry[];
+  /** `orient: focus`: what the session-focus ranker did in the run; null for other variants. */
+  readonly focus: FocusRun | null;
   readonly folder: string | null;
+}
+
+interface FocusRun {
+  /** The ranker's answer, read after the run (waiting for it if it landed after Codex finished); null if it never came. */
+  readonly file: FocusFile | null;
+  /** Whether the ranker had answered at the first call that touched an area; null when no area was touched. */
+  readonly readyAtFirstArea: boolean | null;
+  /** How long each pre-edit waited for the ranker, in milliseconds. */
+  readonly waits: readonly number[];
+  readonly fallback: "timeout" | "failed" | null;
 }
 
 interface Job {
@@ -1046,7 +1104,7 @@ function shellSafe(path: string): string {
   return path;
 }
 
-/** A temporary CODEX_HOME: the person's sign-in through a symlink, no configuration, and the eval hook. */
+/** A temporary CODEX_HOME: the person's sign-in through a symlink, no configuration, and the eval hook on SessionStart and every tool call. */
 function createCodexHome(home: string, configPath: string): void {
   mkdirSync(home, { recursive: true });
   symlinkSync(AUTH, join(home, "auth.json"));
@@ -1062,7 +1120,7 @@ function createCodexHome(home: string, configPath: string): void {
     shellSafe(HOOK),
   ].join(" ");
   const group = [{ matcher: "", hooks: [{ type: "command", command }] }];
-  writeFileSync(join(home, "hooks.json"), `${JSON.stringify({ hooks: { PreToolUse: group, PostToolUse: group } }, null, 2)}\n`);
+  writeFileSync(join(home, "hooks.json"), `${JSON.stringify({ hooks: { SessionStart: group, PreToolUse: group, PostToolUse: group } }, null, 2)}\n`);
 }
 
 interface CodexOutcome {
@@ -1153,6 +1211,25 @@ function readLog(path: string): HookLogEntry[] {
   return readFileSync(path, "utf8").split("\n").filter(line => line.trim() !== "").map(line => JSON.parse(line) as HookLogEntry);
 }
 
+/** How long a finished run waits for a ranker still at work: the judge's own timeout and a margin. */
+const FOCUS_SETTLE_MS = 150_000;
+
+/** The ranker's part in a run, from the hook log and `focus.json`; waits for a ranker still at work so none outlives the run. */
+async function focusRun(folder: string, log: readonly HookLogEntry[]): Promise<FocusRun> {
+  const started = performance.now();
+  while (!existsSync(focusPath(folder)) && performance.now() - started < FOCUS_SETTLE_MS) await sleep(1_000);
+  const file = existsSync(focusPath(folder)) ? JSON.parse(readFileSync(focusPath(folder), "utf8")) as FocusFile : null;
+  const calls = log.flatMap(entry => (entry.focus === undefined ? [] : [entry.focus]));
+  const first = calls.find(call => call.fresh.length > 0);
+  const fallbacks = calls.map(call => call.fallback);
+  return {
+    file,
+    readyAtFirstArea: first === undefined ? null : first.ready,
+    waits: calls.flatMap(call => (call.waitedMs === null ? [] : [call.waitedMs])),
+    fallback: fallbacks.includes("failed") ? "failed" : fallbacks.includes("timeout") ? "timeout" : null,
+  };
+}
+
 /** Codex's own transcripts of the run, under the temporary CODEX_HOME, as raw text; null when it wrote none. */
 function transcriptText(codexHome: string): string | null {
   const sessions = join(codexHome, "sessions");
@@ -1209,7 +1286,7 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
   const codexHome = join(folder, "codex-home");
   const configPath = join(folder, "hook-config.json");
   const logPath = join(folder, "hook.log");
-  const index = runIndex(dataset, built, task, options.distractors ?? built.distractors);
+  const index = runIndex(dataset, built, task, options.distractors ?? built.distractors, options.seed);
   const base = { variant: job.variant, taskId: task.id, split: task.split, kind: task.kind, trial: job.trial, targets: task.targets };
   try {
     createRepository(repo, dataset.project, WORK_BRANCH);
@@ -1221,6 +1298,7 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
       modelPath: MODEL_PATH,
       files: Object.keys(dataset.project),
       root: repo,
+      folder,
       log: logPath,
       state: join(folder, "hook-state.json"),
     };
@@ -1230,6 +1308,7 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
     const outcome = await runCodex(repo, codexHome, configPath, task.prompt, options, join(folder, "rerail-home"));
     const events = readEvents(outcome.stdout);
     const log = readLog(logPath);
+    const focus = config.variant?.orient === "focus" ? await focusRun(folder, log) : null;
     const changes = diffAgainstMain(repo);
     const hits = grade(changes, dataset.decisions);
     const graded = task.kind === "neutral" ? Object.keys(hits) : task.targets;
@@ -1279,6 +1358,7 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
       mentions: task.conflict === undefined ? null : mentionPattern(task.conflict.peer).test(message),
       model: transcript === null ? null : /"model":"([^"]+)"/u.exec(transcript)?.[1] ?? null,
       hookLog: log.map(({ text: _text, ...entry }) => entry),
+      focus,
       folder: options.keep ? folder : null,
     };
   } catch (error) {
@@ -1311,6 +1391,7 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
       mentions: null,
       model: null,
       hookLog: [],
+      focus: null,
       folder: options.keep ? folder : null,
     };
   } finally {
@@ -1386,6 +1467,13 @@ interface VariantSummary {
   readonly decisionsMax: number;
   /** Injected tokens per run: the 90th percentile. */
   readonly tokensP90: number;
+  /** `orient: focus` runs: the ranker had answered at the first area touch; pre-edit waits; runs that fell back; ranker time; judge prompt tokens (estimated as characters / 4). */
+  readonly focusReady: Ratio;
+  readonly focusWaitMedian: number;
+  readonly focusWaitMax: number;
+  readonly focusFallback: Ratio;
+  readonly rankerMsMedian: number;
+  readonly rankerTokensMedian: number;
   readonly landed: Ratio;
   readonly meanInput: number;
   readonly meanCached: number;
@@ -1426,6 +1514,9 @@ function summarize(variant: string, runs: readonly RunResult[], control: Variant
   const targetViaGuard = ratio(targeted.filter(({ delivery }) => delivery.via === "guard").length, targeted.length);
   const targetFirstArea = ratio(targeted.filter(({ delivery }) => delivery.firstArea).length, targeted.length);
   const targetCut = ratio(targeted.filter(({ delivery }) => delivery.cut).length, targeted.length);
+  const focused = ran.flatMap(run => (run.focus === null ? [] : [run.focus]));
+  const waits = focused.flatMap(focus => focus.waits);
+  const rankers = focused.flatMap(focus => (focus.file === null ? [] : [focus.file]));
   const landedRuns = ran.filter(run => run.landed !== null);
   const landed = ratio(landedRuns.reduce((sum, run) => sum + run.landed!, 0), landedRuns.reduce((sum, run) => sum + run.injections, 0));
   const at = (value: number, bound: number, op: ">=" | "<="): boolean | null => (Number.isNaN(value) || Number.isNaN(bound) ? null : op === ">=" ? value >= bound - 1e-9 : value <= bound + 1e-9);
@@ -1469,6 +1560,12 @@ function summarize(variant: string, runs: readonly RunResult[], control: Variant
     decisionsMedian: median(ran.map(run => run.injectedDecisions.length)),
     decisionsMax: ran.length === 0 ? Number.NaN : Math.max(...ran.map(run => run.injectedDecisions.length)),
     tokensP90: percentile(ran.map(run => run.injectedTokens), 0.9),
+    focusReady: ratio(focused.filter(focus => focus.readyAtFirstArea === true).length, focused.filter(focus => focus.readyAtFirstArea !== null).length),
+    focusWaitMedian: median(waits),
+    focusWaitMax: waits.length === 0 ? Number.NaN : Math.max(...waits),
+    focusFallback: ratio(focused.filter(focus => focus.fallback !== null).length, focused.length),
+    rankerMsMedian: median(rankers.map(file => file.ms)),
+    rankerTokensMedian: median(rankers.map(file => Math.ceil(file.promptChars / 4))),
     landed,
     meanInput: mean(ran.flatMap(run => (run.usage === null ? [] : [run.usage.input]))),
     meanCached: mean(ran.flatMap(run => (run.usage === null ? [] : [run.usage.cached]))),
@@ -1525,6 +1622,11 @@ function printSummary(summaries: readonly VariantSummary[]): void {
     ["irrelevant injections per run", summary => fixed(summary.irrelevantPerRun)],
     ["decisions injected per run (median / max)", summary => `${fixed(summary.decisionsMedian, 1)} / ${fixed(summary.decisionsMax, 0)}`],
     ["injected tokens per run (median / p90)", summary => `${fixed(summary.medianTokens, 0)} / ${fixed(summary.tokensP90, 0)}`],
+    ["focus ready before first area touch", summary => rate(summary.focusReady)],
+    ["pre-edit wait ms (median / max)", summary => `${fixed(summary.focusWaitMedian, 0)} / ${fixed(summary.focusWaitMax, 0)}`],
+    ["fallback used", summary => rate(summary.focusFallback)],
+    ["ranker ms (median)", summary => fixed(summary.rankerMsMedian, 0)],
+    ["ranker judge prompt tokens (median, chars/4)", summary => fixed(summary.rankerTokensMedian, 0)],
     ["injections found in transcript", summary => rate(summary.landed)],
     ["mean input tokens (Δ control)", summary => `${fixed(summary.meanInput, 0)} (${delta(summary.meanInput, control?.meanInput ?? Number.NaN)})`],
     ["mean cached input (Δ control)", summary => `${fixed(summary.meanCached, 0)} (${delta(summary.meanCached, control?.meanCached ?? Number.NaN)})`],
@@ -1586,9 +1688,9 @@ interface ReplayOutcome {
  * One run's hook log replayed under `variant`: the same tool calls and the same scored candidates, chosen again. It
  * assumes the agent would have made the same calls, which other injections may well have changed.
  */
-function replayRun(dataset: Dataset, built: BuiltIndex, distractors: number, run: RunResult, variant: VariantParameters): ReplayOutcome {
+function replayRun(dataset: Dataset, built: BuiltIndex, distractors: number, seed: number, run: RunResult, variant: VariantParameters): ReplayOutcome {
   const task = dataset.tasks.find(entry => entry.id === run.taskId)!;
-  const index = runIndex(dataset, built, task, distractors);
+  const index = runIndex(dataset, built, task, distractors, seed);
   let state = INITIAL_STATE;
   let chars = 0;
   const log = run.hookLog.map(entry => {
@@ -1615,11 +1717,16 @@ function replayRun(dataset: Dataset, built: BuiltIndex, distractors: number, run
 
 /** `--replay`: every variant of a `--json` report re-chosen at each threshold from its logged candidates, no model runs. */
 function replay(dataset: Dataset, built: BuiltIndex, path: string, thresholds: readonly number[]): void {
-  const report = JSON.parse(readFileSync(path, "utf8")) as { options: { distractors?: number }; variants: Record<string, VariantParameters | null>; runs: RunResult[] };
+  const report = JSON.parse(readFileSync(path, "utf8")) as { options: { distractors?: number; seed?: number }; variants: Record<string, VariantParameters | null>; runs: RunResult[] };
   const distractors = report.options.distractors ?? 0;
+  const seed = report.options.seed ?? 1;
   const rows: string[][] = [];
   for (const [name, parameters] of Object.entries(report.variants)) {
     if (parameters === null) continue;
+    if (parameters.orient === "focus") {
+      console.log(`skip ${name}: session focus depends on when the ranker answered, which a replay cannot reproduce`);
+      continue;
+    }
     const runs = report.runs.filter(run => run.variant === name && run.error === null && (run.hookLog ?? []).some(entry => entry.candidates !== undefined));
     if (runs.length === 0) {
       console.log(`skip ${name}: its runs logged no scored candidates (a report from before relevance scoring?)`);
@@ -1627,7 +1734,7 @@ function replay(dataset: Dataset, built: BuiltIndex, path: string, thresholds: r
     }
     // `hybrid` has no threshold to sweep: its replay is the run's own selection, re-chosen.
     for (const threshold of [...new Set([parameters.threshold, ...(parameters.channels === "hybrid" ? [] : thresholds)])]) {
-      const outcomes = runs.map(run => replayRun(dataset, built, distractors, run, { ...parameters, threshold }));
+      const outcomes = runs.map(run => replayRun(dataset, built, distractors, seed, run, { ...parameters, threshold }));
       const delivery = outcomes.flatMap(outcome => outcome.delivery);
       const asRun = threshold === parameters.threshold;
       rows.push([
@@ -1967,7 +2074,7 @@ async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   if (options.listVariants) {
     console.log(table(["variant", "parameters"], Object.entries(VARIANTS).map(([name, parameters]) => [name, describeVariant(parameters)])));
-    console.log(`\nParameters: when ${WHEN.join("|")}; budget ${BUDGETS.join("|")}; cap N|all; sessionCap N|all; dirs true|false; dedupe ${DEDUPE.join("|")}; format ${FORMATS.join("|")}; rank ${RANKS.join("|")}; threshold 0–1|none; only ${ONLY.join("|")}; conflict ${CONFLICT.join("|")}; channels ${CHANNELS.join("|")}; orient ${ORIENTS.join("|")}; areaRank ${AREA_RANKS.join("|")}; guard ${GUARDS.join("|")}; embedThreshold 0–1; guardCap N`);
+    console.log(`\nParameters: when ${WHEN.join("|")}; budget ${BUDGETS.join("|")}; cap N|all; sessionCap N|all; dirs true|false; dedupe ${DEDUPE.join("|")}; format ${FORMATS.join("|")}; rank ${RANKS.join("|")}; threshold 0–1|none; only ${ONLY.join("|")}; conflict ${CONFLICT.join("|")}; channels ${CHANNELS.join("|")}; orient ${ORIENTS.join("|")}; areaRank ${AREA_RANKS.join("|")}; focusK N; guard ${GUARDS.join("|")}; embedThreshold 0–1; guardCap N`);
     return;
   }
   const dataset = loadDataset();
@@ -1997,6 +2104,12 @@ async function main(): Promise<void> {
   if (!existsSync(AUTH)) throw new Error(`${AUTH} is missing: sign in to Codex first (codex login).`);
   const tasks = selectTasks(dataset, options);
   if (tasks.length === 0) throw new Error("No tasks selected.");
+  if (options.variants.some(name => VARIANTS[name]?.orient === "focus")) {
+    const failures = tasks.flatMap(task => rankerLeaks(dataset, built, task, options.distractors ?? built.distractors, options.seed));
+    console.log(`\nRanker input integrity (the task prompt and decision texts under opaque ids, for ${tasks.length} tasks): ${failures.length === 0 ? "PASS" : `FAIL (${failures.length})`}`);
+    for (const failure of failures) console.log(`  FAIL ${failure}`);
+    if (failures.length > 0) throw new Error("The session-focus ranker would see grader knowledge; no run starts.");
+  }
   const jobs = tasks.flatMap(task => Array.from({ length: options.trials }, (_, trial) => options.variants.map(variant => ({ variant, task, trial: trial + 1 }))).flat());
   const startedAt = new Date().toISOString();
   const codexVersion = execFileSync("codex", ["--version"], { encoding: "utf8" }).trim();

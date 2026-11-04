@@ -25,7 +25,7 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   results are never committed.
 - `merge-assist-context.ts` (`node --import tsx benchmark/merge-assist-context.ts --build-index out.json
   [--distractors N]`, then `--index index.json --variants none,guard-signals,... --split dev|heldout|all
-  [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--no-control] [--json out.json] [--keep]
+  [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--no-control] [--json out.json] [--keep]
   [--verbose] [--model m] [-c key=value]`, `--sweep control.json`, `--list-variants`, `--validate-oracles`) asks
   whether injecting teammates' decisions into
   a real Codex loop, when it touches files they cover, makes its code follow them, and which protocol does so with the
@@ -59,7 +59,15 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   before the cap: `area-index` by source, then index order; `area-specific` narrowest scope first; `area-lex` by BM25
   between the task prompt and the decision; `area-embed` by the cosine between their embeddings (the prompt embedded
   once per run). `area-guard` is `area-index` plus the signals guard for what orientation did not deliver. The funnel
-  reports how often the target was in the first area injection and how often the cap cut it. `--replay run.json`
+  reports how often the target was in the first area injection and how often the cap cut it. The `focus-k3` and
+  `focus-k5` presets run a session-focus ranker (`merge-assist-context-rank.ts`), started detached at SessionStart:
+  one product judge call (`rankPrompt`) over the task prompt and every decision covering a project file, under opaque
+  ids, writes its picks to the run folder. An area's first touch injects its conflict pairs and its share of the top
+  3 or 5 picks, once the ranker has answered; a pre-edit waits up to 15 s for it, then ranks that area by prompt
+  embedding, and a failed ranker means the same for the run. Before any focus run the ranker's input is checked to hold
+  no index id, oracle regex or task label; the report adds whether focus was ready at the first area touch, pre-edit
+  waits, fallbacks, ranker time and its prompt tokens (characters / 4). `--seed N` draws other distractors and, above
+  1, shuffles the run index, so ties and prompt order change; 1 is the default layout. `--replay run.json`
   re-chooses a report's injections from its logs. Deterministic oracles grade `git diff main`, and every oracle is
   first checked against the labelled files in cases.json (`--validate-oracles` alone needs no model). It prints, per
   variant: the tempt-task violation rate with a Wilson interval and its reduction against the control, the guardrails
