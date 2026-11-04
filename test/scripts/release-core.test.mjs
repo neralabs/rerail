@@ -22,7 +22,7 @@ describe("shipsWithCore", () => {
     for (const path of ["src/cli/cli.ts", "native/src/lib.rs", "languages/python.json", "ui/src/App.tsx", "package.json", "Cargo.lock", "scripts/build/copy-ui.mjs", "skills/rerail/SKILL.md", "README.md"]) {
       expect(shipsWithCore(path), path).toBe(true);
     }
-    for (const path of ["packs/python/rules/x.json", "docs/pack-format.md", ".github/workflows/ci.yml", ".changeset/a.md", ".changelog/a.md", "test/scripts/x.test.mjs", "integration/x.test.ts", "e2e/smoke.spec.ts", "scripts/release/core.mjs", "scripts/dev/rerail-dev.mjs", "scripts/pack-data/derive.ts", "CHANGELOG.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", ".cursor-plugin/marketplace.json"]) {
+    for (const path of ["packs/python/rules/x.json", "docs/pack-format.md", "scripts/build/docs-site.mjs", ".github/workflows/ci.yml", ".changeset/a.md", ".changelog/a.md", "test/scripts/x.test.mjs", "integration/x.test.ts", "e2e/smoke.spec.ts", "scripts/release/core.mjs", "scripts/dev/rerail-dev.mjs", "scripts/pack-data/derive.ts", "CHANGELOG.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", ".cursor-plugin/marketplace.json"]) {
       expect(shipsWithCore(path), path).toBe(false);
     }
   });
