@@ -11,42 +11,51 @@ A code rule doesn't have to parse code. Three queries work on any text file, in 
 For syntax queries (`ast`), see [Writing a code rule](../skills/rerail-create/references/code-rules.md). For the full
 grammar, see the [DSL reference](code-rule-dsl-reference.html#queries).
 
-- [Which files these rules read](#which-files-these-rules-read)
-- [Text in files](#text-in-files)
-- [Where files live](#where-files-live)
-- [Files that should not exist](#files-that-should-not-exist)
-- [Test it](#test-it)
-
 ## Which files these rules read
 
-A rule with a `regex` or `file` query reads every text file in its `scope`:
+A `regex` or `file` rule reads every text file in its `scope`; binary, skipped, ignored and secret-named files are left
+out.
 
-- source files of the languages Rerail parses (Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL, Vue);
-- files Rerail reads as text by suffix or name: `.json`, `.yaml`, `.yml`, `.toml`, `.md`, `.mdx`, `.rst`, `.txt`, `.sh`,
+Text files are source files, common text formats such as `.json` and `.md`, and any other file without a NUL byte. A
+rule made only of `ast` queries reads only its language's files, however wide its scope.
+
+<details>
+<summary>Which files count as text</summary>
+
+- source files of the languages Rerail parses: Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL, Vue;
+- files read as text by suffix or name: `.json`, `.yaml`, `.yml`, `.toml`, `.md`, `.mdx`, `.rst`, `.txt`, `.sh`,
   `.bash`, `.zsh`, `.html`, `.css`, `.scss`, `.gitignore`, `.npmignore`;
 - any other file without a NUL byte, such as `Justfile`, `LICENSE`, `NOTICE`, `.gitattributes` or `Cargo.lock`, unless
   it is named like one holding secrets.
 
-A file with a NUL byte is binary, and no rule reads it. `rerail rules test` counts the binary files in a rule's scope, so you
-can see what it passed over. No scan reads `.git`, `node_modules`, `dist`, `build`, `target`, `vendor` and the other
-folders listed in the [reference](code-rule-dsl-reference.html#files-read), or files Git ignores while the repository
-follows `.gitignore`.
+</details>
 
-A file of the third kind that is named like one holding secrets (`.env`, `.npmrc`, `id_rsa`, `*.pem`, `*.key`,
-`*.tfstate`, anything under `.ssh/` or `.aws/`, and the rest of `SENSITIVE_FILE_NAMES` in `src/engine/path-boundary.ts`)
-is never read, so no rule sees it, by its text or its path. A file Rerail lists, such as `secrets.yaml`, is read; a steer
-about it names the rule and the place, never the message or fix.
+<details>
+<summary>Files no rule reads</summary>
 
-A file too large to read is reported as not checked rather than passed over: one over 32 MB in an audit, and one over
-1 MB in a session, which reads files as the agent edits them. A large `yarn.lock` or `.csv` under a rule on `**/*` is
-the usual case; exclude it from the rule's scope if the rule is not about it.
+- **Binary files**, with a NUL byte. `rerail rules test` counts those in a rule's scope, so you can see what it passed
+  over.
+- **Skipped folders**: `.git`, `node_modules`, `dist`, `build`, `target`, `vendor` and the rest in the
+  [reference](code-rule-dsl-reference.html#files-read).
+- **Files Git ignores**, while the repository follows `.gitignore`.
+- **Other files named like secrets**: `.env`, `.npmrc`, `id_rsa`, `*.pem`, `*.key`, `*.tfstate`, anything under
+  `.ssh/` or `.aws/`, and the rest of `SENSITIVE_FILE_NAMES` in `src/engine/path-boundary.ts`. No rule sees their text
+  or path.
 
-A rule made only of `ast` queries reads only its language's files, however wide its scope.
+A listed file such as `secrets.yaml` is read, but a steer about it names only the rule and the place, never the message
+or fix.
+
+</details>
+
+A file too large to read is reported as not checked, not passed over. A large `yarn.lock` or `.csv` under a `**/*` rule
+is the usual case; exclude it if the rule is not about it. The limit is 32 MB in an audit and 1 MB in a session, which
+reads files as the agent edits them.
 
 ## Text in files
 
-A `file.content` regex reports each match at its line and column. This one catches an old folder name anywhere it is
-still written down, `Justfile` and lock files included:
+A `file.content` regex reports each match at its line and column.
+
+This one catches an old folder name anywhere it is still written, `Justfile` and lock files included:
 
 ```json draft
 {
@@ -77,14 +86,15 @@ still written down, `Justfile` and lock files included:
 }
 ```
 
-The regex dialect is Rust's: no look-around and no backreferences. `(?m)` makes `^` and `$` match at each line. In JSON,
-write every backslash twice. Exceptions that a pattern cannot express go in `scope.exclude`.
+The dialect is Rust's: no look-around, no backreferences. `(?m)` makes `^` and `$` match at each line. In JSON, write
+every backslash twice. Put exceptions a pattern cannot express in `scope.exclude`.
 
 ## Where files live
 
-A `file.path` regex reads the file's repository-relative path, with `/` between folders. A match is about the file, not a
-place in it, so the violation names the path with no line, once per file however often the pattern matches. Named
-groups (`(?<NAME>…)`) still fill in `$NAME` in the message.
+A `file.path` regex reads the file's repository-relative path, with `/` between folders.
+
+A match is about the file, so the violation names the path with no line, once per file however often the pattern
+matches. Named groups (`(?<NAME>…)`) still fill in `$NAME` in the message.
 
 ```json draft
 {
@@ -119,8 +129,7 @@ reports such files at line 1.
 
 ## Files that should not exist
 
-When the rule is "these files should not be here", the scope says which files, and the clause needs no pattern: a
-`file` query matches every file in scope. Exceptions go in `exclude`.
+A `file` query matches every file in scope, so the scope names the unwanted files and `exclude` the exceptions.
 
 ```json draft
 {
@@ -150,19 +159,24 @@ When the rule is "these files should not be here", the scope says which files, a
 }
 ```
 
-A `file` query reads no text, so a case's `content` can be anything.
+To silence one file, exclude it from the rule's scope: `// rerail-ignore` cannot silence a path or `file` match.
 
-A session's default audit scope (`ai-output`) tells the agent only about what its own edit wrote. A match on a path, or
-of a `file` query, is about the whole file, so the edit that creates the file (a write, a copy or a move) is told; an
-edit to a file that was already there is not. The `touched-files` and `repository` scopes report every such file.
+<details>
+<summary>Cases, sessions and suppression</summary>
 
-A `// rerail-ignore` comment cannot silence a match on a path or of a `file` query: it covers code, and such a match is
-in no line of the file. Exclude the file from the rule's scope instead.
+- **Cases:** a `file` query reads no text, so `content` can be anything.
+- **Sessions:** the default audit scope (`ai-output`) tells the agent only about what its own edit wrote. A path or
+  `file` match covers the whole file, so only the edit that creates it (write, copy or move) is told, not an edit to
+  an existing file. The `touched-files` and `repository` scopes report every such file.
+- **Suppression:** `// rerail-ignore` covers code, and a path or `file` match sits on no line.
+
+</details>
 
 ## Test it
 
-Each example above is a complete draft: the rule, plus the cases it must catch and let pass. Save one to a file outside
-the repository and run:
+Each example above is a complete draft: the rule plus the cases it must catch and let pass.
+
+Save one to a file outside the repository and run:
 
 ```sh
 rerail rules test draft.json          # validate, run the cases, list the matches in this repository
@@ -171,10 +185,15 @@ rerail rules add draft.json           # store it in your library and add it to t
 rerail rules test --help              # the draft format
 ```
 
-The text report shows the first five matches. `--json` lists every one, so you can compare the rule with another tool's
-results in one run. A path or `file` match has no `line` or `column`.
+The text report shows the first five matches; `--json` lists every one, for comparing with another tool's results. A
+path or `file` match has no `line` or `column`.
 
-The repository pass of `rules test` shows the coding agent lines of your files, so it leaves out hidden files such as
-`.gitattributes` and `.editorconfig`, files named like secrets, and files Git ignores, and counts them without names
+<details>
+<summary>Files the repository pass skips</summary>
+
+The repository pass of `rules test` shows the coding agent lines of your files. So it skips hidden files (such as
+`.gitattributes`, `.editorconfig`), secret-named files and Git-ignored files, and counts them without names
 ([Reference](reference.md#scan-and-settings-controls)). Sessions and audits do read hidden files, so a rule about one
-can still catch it there: show that it works with its cases.
+can still catch it there: prove it works with its cases.
+
+</details>

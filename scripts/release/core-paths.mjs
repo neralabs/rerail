@@ -4,41 +4,51 @@
 
 /**
  * Paths whose change never changes what core ships, so they alone never release it: the packs (released on their
- * own), documentation, CI, changesets and core's pending changelog entries, tests, fixtures, corpora and benchmarks,
- * development and release scripts, and repository files npm does not pack (a generator's output is committed where it
- * ships, so it counts there). Everything else is a core change, `package-lock.json` included unless only its pack
- * workspace entries moved (`lockChangesCore`).
+ * own), documentation and its site's build, CI, changesets and core's pending changelog entries, tests, fixtures,
+ * corpora and benchmarks, development and release scripts, and repository files npm does not pack (a generator's
+ * output is committed where it ships, so it counts there). Everything else is a core change, `package-lock.json`
+ * included unless only its pack workspace entries moved (`lockChangesCore`).
  * A directory ends in `/`.
  */
 export const NOT_SHIPPED = [
   ".changelog/",
   ".changeset/",
+  ".cursor-plugin/marketplace.json",
   ".github/",
   ".rerail/",
   "benchmark/",
   "conformance/",
   "docs/",
+  "e2e/",
   "fixtures/",
   "integration/",
   "LICENSES/",
   "packs/",
   "plugins/",
   "playground/",
+  "scripts/build/docs-site.mjs",
   "scripts/check/",
+  "scripts/deps/",
   "scripts/dev/",
   "scripts/dsl/",
   "scripts/feedback/",
   "scripts/generate/",
   "scripts/host/",
+  "scripts/pack-data/",
   "scripts/release/",
   "scripts/review/",
+  "scripts/s3/",
+  "scripts/samples/",
+  "scripts/upstream/",
   "scripts/README.md",
   "test/",
   ".gitattributes",
   ".gitignore",
   "CHANGELOG.md",
+  "CODE_OF_CONDUCT.md",
   "CONTEXT.md",
   "CONTRIBUTING.md",
+  "context7.json",
   "Justfile",
   "REUSE.toml",
   "REVIEW.md",

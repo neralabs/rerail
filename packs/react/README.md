@@ -35,12 +35,12 @@ The pack follows the [pack structure and validation contract](../../docs/pack-fo
 | Path | What |
 |---|---|
 | `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and the 40 rules it ships, with an example each rule catches and one it lets pass |
-| `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare and the capabilities it exercises; the pinned tools. Written by `candidates/build.mjs` |
+| `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare and the capabilities it exercises; the pinned tools. Written by `scripts/generate/packs/react-policies.mjs` |
 | `upstream/<tool>/` | The plugin's copied tests (`tests/`), the cases extracted from them (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), the generator (`generate.mjs`, sharing `upstream/common.mjs` and `scripts/pack-data/eslint-expected.mjs`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); `UPSTREAM.md` lists the fixtures Rerail wrote beside them (`common.mjs` `AUTHORED`): files of other JSX libraries, which the plugins report and the ports skip, and React files whose JSX goes through Emotion, which both report |
 | `divergences.json` | Where the ports and the expected findings disagree by design: the plugins' findings on the authored files of other JSX libraries, and sample lines under an `oxlint-disable` comment (or an `eslint-disable` naming another plugin's same-named rule), which silence the port as they silence Oxlint and not ESLint |
 | `licenses/<project>/` | The upstream licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
-| `rules/` | The shipped ports' code-rule documents: written by `candidates/build.mjs` from `candidates/specs.mjs`, or by hand for the ports `specs.mjs` lists in `HAND_WRITTEN` |
-| `candidates/` | Ports still being evaluated, scored but never shipped (`rules/`, none today); `specs.mjs` and `build.mjs`, which write them and the shipped documents; `probes/` holds the hand-labelled React fact probes |
+| `rules/` | The shipped ports' code-rule documents: written by `scripts/generate/packs/react-policies.mjs` from `react-specs.mjs` beside it, or by hand for the ports `react-specs.mjs` lists in `HAND_WRITTEN` |
+| `candidates/` | Ports still being evaluated, scored but never shipped (`rules/`, none today), which `react-policies.mjs` also writes; `probes/` holds the hand-labelled React fact probes, whose rules `scripts/generate/packs/react-probes.mjs` writes |
 
 Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
 ([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
@@ -55,11 +55,11 @@ npm run fixtures:derive -- --pack react --tool eslint-plugin-react-hooks    # on
 npm run fixtures:stage -- --pack react --tool eslint-plugin-react-hooks     # copy what changed into upstream/eslint-plugin-react-hooks/publish/
 ```
 
-Rewriting the rule documents and `conformance.json` after editing `candidates/specs.mjs`, then scoring one rule with
-every false positive and false negative printed:
+Rewriting the rule documents and `conformance.json` after editing `scripts/generate/packs/react-specs.mjs`, then
+scoring one rule with every false positive and false negative printed (from the repository root):
 
 ```sh
-node candidates/build.mjs
+node scripts/generate/packs/react-policies.mjs
 node --import tsx conformance/languages/cli.ts --pack react --rule react-jsx-key --fixtures
 ```
 

@@ -267,7 +267,7 @@ async function piToSwap(root: string, home: string, agents: readonly Harness[]):
  * the agents found since, so it never undoes `rerail install --remove --agents <id>` or an earlier `--agents` that
  * left one out, and does retry an agent whose config it could not read.
  */
-const SEEN_AGENTS_FILE = "coding-agents.json";
+export const SEEN_AGENTS_FILE = "coding-agents.json";
 
 /**
  * The coding agents recorded as seen, or undefined when there is no record to go by: none written yet (an install from

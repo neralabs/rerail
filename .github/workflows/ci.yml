@@ -63,7 +63,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       # Every file carries licence information and every licence it names has its text in LICENSES/.
       - name: REUSE lint
@@ -95,10 +95,10 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      # Core's release notes, on a pull request: each entry it adds or changes in .changelog/ stays at a sentence or two
-      # and names no ticket, pull request or commit, none is written into CHANGELOG.md by hand, and on the Release pull
-      # request the dated section leads with a paragraph for the people who upgrade
-      # (scripts/release/core-changelog-check.mjs). The base branch's tip is fetched alone, so the entries the pull
+      # Core's release notes, on a pull request: every entry pending in .changelog/ names its change type, each it adds
+      # or changes stays at a sentence or two and names no ticket, pull request or commit, none is written into
+      # CHANGELOG.md by hand, and on the Release pull request the dated section leads with a paragraph for the people
+      # who upgrade (scripts/release/core-changelog-check.mjs). The base branch's tip is fetched alone, so the entries the pull
       # request adds can be told from the ones main has; the event's base.sha is the base as it was when the pull
       # request was last updated, which would count main's newer entries as the pull request's.
       - name: Fetch the base branch's tip
@@ -147,7 +147,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=moderate
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
         with:
           tool: cargo-audit
 
@@ -244,8 +244,9 @@ jobs:
               - 'tsconfig.json'
               - 'tsconfig.build.json'
             # The conformance shards, the tools job's conformance steps and the comment: the runner's import closure
-            # (conformance/, the engine's TypeScript side, the test data and samples readers), the packs with their
-            # rules, gates and the locks naming their test data, and the native engine. tsx reads tsconfig.json.
+            # (conformance/, the engine's TypeScript side, the test data and samples readers, the release scripts'
+            # private-pack predicate), the packs with their rules, gates and the locks naming their test data, and the
+            # native engine. tsx reads tsconfig.json.
             conformance:
               - *common
               - *engine
@@ -254,6 +255,10 @@ jobs:
               - 'src/engine/**'
               - 'scripts/s3/**'
               - 'scripts/samples/**'
+              - 'scripts/release/packs.mjs'
+              - 'scripts/release/dist-tags.mjs'
+              - 'scripts/release/release-notes.mjs'
+              - 'scripts/check/check-internal-refs.mjs'
               - 'tsconfig.json'
             # The dashboard browser tests: the specs and their scenario seeding, the daemon from source, and the packs
             # the scenarios install from this checkout (INSTALLED_PACKS in e2e/support/scenarios.ts).

@@ -1,0 +1,1 @@
+Set-up's "Not now" screen writes the start command as each coding agent types it: `$rerail-start` where Codex is the only one, and an "In Codex, type $rerail-start." line beside `/rerail-start` where Codex is one of several. The confirm question's "Adds /rerail commands" line follows the same rule.

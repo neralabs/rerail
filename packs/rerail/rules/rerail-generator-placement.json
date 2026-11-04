@@ -1,0 +1,178 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-generator-placement",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep scripts in packs or the engine sources that write committed files under scripts/generate, not beside their output; fixtures, upstream oracles and tests are exempt.",
+  "scope": {
+    "include": [
+      "packs/**/*.mjs",
+      "packs/**/*.cjs",
+      "packs/**/*.js",
+      "packs/**/*.ts",
+      "packs/**/*.mts",
+      "packs/**/*.cts",
+      "packs/**/*.py",
+      "packs/**/*.php",
+      "packs/**/*.sh",
+      "native/src/**/*.mjs",
+      "native/src/**/*.cjs",
+      "native/src/**/*.js",
+      "native/src/**/*.ts",
+      "native/src/**/*.mts",
+      "native/src/**/*.cts",
+      "native/src/**/*.py",
+      "native/src/**/*.php",
+      "native/src/**/*.sh"
+    ],
+    "exclude": [
+      "packs/*/upstream/**",
+      "**/fixtures/**",
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/test_*.py",
+      "**/*_test.py",
+      "**/*Test.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "script-write-call",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "regex": "^(?:(?:fs|fsp|fse|fsPromises|fsExtra|promises)(?:\\.promises)?\\.)?(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|copyFileSync|copyFile|cpSync|cp|outputFileSync|outputFile|outputJsonSync|outputJson|writeJsonSync|writeJson)$|^Deno\\.(?:writeTextFile|writeFile)$|^Bun\\.write$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "GENERATOR_BESIDE_OUTPUT",
+        "anchor": "witness.span",
+        "message": "If what it writes is committed, move this script to scripts/generate/<area>/, re-root its paths and imports, and add its row to scripts/generate/README.md. Leave temporary output."
+      }
+    },
+    {
+      "id": "python-write-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "any": [
+              {
+                "has": {
+                  "field": "function",
+                  "regex": "\\.write_(?:text|bytes)$|^shutil\\.(?:copy|copy2|copyfile|copytree|move)$"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "^(?:(?:io|codecs)\\.)?open$|\\.open$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "any": [
+                        {
+                          "has": {
+                            "kind": "string",
+                            "regex": "^[rRbB]?['\\\"][rbt+]*[wax][rbt+]*['\\\"]$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "kind": "keyword_argument",
+                            "regex": "^mode\\s*=\\s*[rRbB]?['\\\"][rbt+]*[wax]"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "GENERATOR_BESIDE_OUTPUT",
+        "anchor": "witness.span",
+        "message": "If what it writes is committed, move this script to scripts/generate/<area>/, re-root its paths and imports, and add its row to scripts/generate/README.md. Leave temporary output."
+      }
+    },
+    {
+      "id": "php-write-call",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "function_call_expression",
+            "any": [
+              {
+                "has": {
+                  "field": "function",
+                  "regex": "^\\\\?(?:file_put_contents|copy)$"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "^\\\\?fopen$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "kind": "argument",
+                        "regex": "^['\\\"][rbt+]*[waxc][bt+]*['\\\"]$"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "field": "arguments",
+                        "regex": "['\\\"]php://"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "GENERATOR_BESIDE_OUTPUT",
+        "anchor": "witness.span",
+        "message": "If what it writes is committed, move this script to scripts/generate/<area>/, re-root its paths and imports, and add its row to scripts/generate/README.md. Leave temporary output."
+      }
+    },
+    {
+      "id": "shell-write-command",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?s)\\A#![^\\n]*\\b(?:ba|z|da|k)?sh\\b.*?(?P<W>(?m:^)[ \\t]*(?:[^#\\n]*?(?:&&|\\|\\||;|\\bthen\\b|\\bdo\\b)[ \\t]*)?(?:cp|mv|rsync)[ \\t]+[^\\n]+|(?m:^)[^#\\n]*?\\btee[ \\t]+(?:-a[ \\t]+)?[^\\s/-][^\\n]*|(?m:^)[^#\\n]*?>>?[ \\t]*\\\"?\\$\\{?[A-Za-z_]\\w*\\}?\\\"?/[^\\s;&|)]*[A-Za-z_.])"
+        }
+      },
+      "violation": {
+        "code": "GENERATOR_BESIDE_OUTPUT",
+        "anchor": "capture.W",
+        "message": "If what it writes is committed, move this script to scripts/generate/<area>/, re-root its paths and imports, and add its row to scripts/generate/README.md. Leave temporary output."
+      }
+    }
+  ]
+}

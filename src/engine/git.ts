@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { posix, win32 } from "node:path";
@@ -205,15 +205,25 @@ const SAFE_CONFIG: readonly string[] = ["-c", "core.fsmonitor=false", "-c", `cor
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * `git -C <cwd> <args>` with fsmonitor and hooks disabled, no optional locks, and a 10 s default timeout; throws
- * {@link GitUnavailableError} when Git is missing, never on a non-zero exit.
+ * The environment of every Git process Rerail starts: no optional locks, and no lazy fetch of a partial clone's missing
+ * objects. Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security releases 2.39.4, 2.40.2, 2.41.1,
+ * 2.42.2, 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
+ */
+function gitEnvironment(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+}
+
+/**
+ * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
+ * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
+ * missing, never on a non-zero exit.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
   const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, ...args], {
     encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    env: gitEnvironment(),
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
@@ -222,6 +232,47 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
 export function gitText(cwd: string, args: readonly string[]): string | undefined {
   const result = runGit(cwd, args);
   return result.status === 0 ? result.stdout.trim() : undefined;
+}
+
+/** Trimmed stdout of a successful Git command run under `runGit`'s safe configuration without blocking; else undefined. */
+async function gitOutput(cwd: string, args: readonly string[]): Promise<string | undefined> {
+  let executable: string;
+  try {
+    executable = gitExecutable();
+  } catch {
+    return undefined;
+  }
+  const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
+  execFile(
+    executable,
+    [...SAFE_CONFIG, "-C", cwd, ...args],
+    { encoding: "utf8", timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
+    (error, stdout) => settle(error === null ? stdout.trim() : undefined),
+  );
+  return await promise;
+}
+
+/** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
+export async function gitHead(cwd: string): Promise<string | undefined> {
+  return await gitOutput(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+}
+
+/** How far back {@link headMovedOnlyByCommits} looks: a window longer than this is no agent's one command. */
+const MAX_REFLOG_ENTRIES = 256;
+/** The reflog subject of `git commit` in all its forms (`commit (amend): …`, `commit (merge): …`). */
+const COMMIT_SUBJECT = /^commit(?: \([^)]*\))?: /u;
+
+/**
+ * Whether everything that moved `HEAD` in `cwd` since it named `from` was a commit, which leaves the working tree as it
+ * found it, by `HEAD`'s reflog. Anything else there (a checkout, pull, merge, rebase, reset, cherry-pick) wrote files, and
+ * so did a move the reflog cannot show (`from` is not in it). With no `from`, `HEAD`'s newest move is all there is to go by.
+ */
+export async function headMovedOnlyByCommits(cwd: string, from: string | undefined): Promise<boolean> {
+  const reflog = await gitOutput(cwd, ["reflog", "show", "-n", String(MAX_REFLOG_ENTRIES), "--format=%H %gs", "HEAD"]);
+  if (reflog === undefined) return false;
+  const entries = reflog.split("\n");
+  const moves = from === undefined ? 1 : entries.findIndex(entry => entry.startsWith(`${from} `));
+  return moves > 0 && entries.slice(0, moves).every(entry => COMMIT_SUBJECT.test(entry.slice(entry.indexOf(" ") + 1)));
 }
 
 /** One object body of `git cat-file --batch` output being read: kept, or skipped as it streams past. */
@@ -257,7 +308,7 @@ export async function readGitBlobs(
   }
   const { promise, resolve: settle } = Promise.withResolvers<void>();
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch"], {
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
     stdio: ["pipe", "pipe", "ignore"],
     timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
   });

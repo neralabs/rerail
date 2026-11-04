@@ -25,7 +25,7 @@ export { SqliteAuditControlStore } from "./audit/audit-control.js";
 export { SqliteAuditReader, SqliteAuditStore } from "./audit/audit-store.js";
 export { type AuditInput, type AuditRecorder, type AuditResult, isUnreadFailure, UNREAD_FAILURE_HEAD } from "./audit/audit.js";
 export { loadPackRuleDocuments } from "./catalog/rule-documents.js";
-export { installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "./catalog/rule-catalog.js";
+export { INSTALLED_PACKS_DIR, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "./catalog/rule-catalog.js";
 export { WORKTREE_PACK_ID, WORKTREE_PUBLISHER, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "./catalog/worktree-pack.js";
 export { approve, currentSubject, isApproved, packSubject, ruleSubject } from "./catalog/rule-approval.js";
 export { RULE_PACK_LIST } from "./catalog/pack-list.generated.js";
@@ -42,7 +42,7 @@ export {
   type RepositoryStatus,
 } from "./catalog/repository-model.js";
 export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
-export { exportRulesDump, importRulesDump, type RulesDump } from "./catalog/rule-bootstrap.js";
+export { exportRulesDump, importRulesDump, RULES_DUMP_FILE, type RulesDump } from "./catalog/rule-bootstrap.js";
 export { offerSetupReview } from "./catalog/setup-review.js";
 export {
   addAttachment,
@@ -65,6 +65,7 @@ export {
   rulePackPackageSchema,
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
+export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
 export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
 export {
@@ -109,6 +110,7 @@ export {
   defaultRerailDatabasePath,
   openRerailDatabase,
   openSqliteDatabase,
+  RERAIL_DATABASE_FILE,
   type RerailDatabase,
   resetRepositoryHistory,
   resetRepositoryHistoryIn,
@@ -146,6 +148,6 @@ export {
   steerFeedback,
   workLinks,
 } from "./storage/schema.js";
-export { ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
+export { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";

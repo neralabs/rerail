@@ -1,0 +1,984 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-no-message-classification",
+  "revision": 1,
+  "mode": "log",
+  "description": "Classify a failure by its code or a shared constant, not by another Rerail component's message wording, in TypeScript and Rust; build steer notices from structured rule data.",
+  "scope": {
+    "include": [
+      "src/**/*.ts",
+      "native/src/**/*.rs"
+    ],
+    "exclude": [
+      "**/*.test.ts",
+      "src/**/*.generated.ts",
+      "native/src/**/tests/**",
+      "native/src/**/*tests.rs",
+      "native/src/**/test_support.rs",
+      "src/runtime/npm.ts",
+      "src/setup/rule-pack-store.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "message-text-test",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "message-text": {
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "regex": "\\??\\.message$"
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:message|errorMessage|msg)$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^(?:errorText|errorMessage|messageOf)\\("
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^String\\((?:error|err|e|cause|reason)\\)$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^(?:error|err|e|cause)\\??\\.toString\\(\\)$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "(?:\\.message|^message|^msg)\\??\\.(?:toLowerCase|toUpperCase|toLocaleLowerCase|trim|trimStart|trimEnd)\\(\\)$"
+                }
+              ]
+            },
+            "wording": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^.[^\\n]*[A-Za-z]{3}[^\\n]*.$"
+                },
+                {
+                  "kind": "template_string",
+                  "regex": "[A-Za-z]{3}",
+                  "not": {
+                    "regex": "^`\\$\\{"
+                  }
+                },
+                {
+                  "kind": "regex",
+                  "regex": "[A-Za-z]{3}"
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "any": [
+                          {
+                            "kind": "string",
+                            "regex": "^.[^\\n]*[A-Za-z]{3}[^\\n]*.$"
+                          },
+                          {
+                            "kind": "template_string",
+                            "regex": "[A-Za-z]{3}",
+                            "not": {
+                              "regex": "^`\\$\\{"
+                            }
+                          },
+                          {
+                            "kind": "regex",
+                            "regex": "[A-Za-z]{3}"
+                          }
+                        ]
+                      },
+                      "exported": false
+                    }
+                  },
+                  "not": {
+                    "resolves": {
+                      "binding": {
+                        "occurrence": {
+                          "inside": {
+                            "stopBy": "end",
+                            "any": [
+                              {
+                                "kind": "new_expression"
+                              },
+                              {
+                                "kind": "throw_statement"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "pattern": "$M.$F($A)"
+              },
+              {
+                "pattern": "$M?.$F($A)"
+              }
+            ]
+          },
+          "constraints": {
+            "M": {
+              "matches": "message-text"
+            },
+            "F": {
+              "regex": "^(?:startsWith|endsWith|includes|indexOf|lastIndexOf|match|matchAll|search)$"
+            },
+            "A": {
+              "matches": "wording"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "MESSAGE_TEXT_TEST",
+        "anchor": "witness.span",
+        "message": "Branch on the failure's code, adding one where the failure is written, not on this wording; a constant counts only when the writer uses it too. A person's or another program's text may be matched."
+      }
+    },
+    {
+      "id": "message-regex-test",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "message-text": {
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "regex": "\\??\\.message$"
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:message|errorMessage|msg)$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^(?:errorText|errorMessage|messageOf)\\("
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^String\\((?:error|err|e|cause|reason)\\)$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^(?:error|err|e|cause)\\??\\.toString\\(\\)$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "(?:\\.message|^message|^msg)\\??\\.(?:toLowerCase|toUpperCase|toLocaleLowerCase|trim|trimStart|trimEnd)\\(\\)$"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "pattern": "$R.test($M)"
+              },
+              {
+                "pattern": "$R.exec($M)"
+              }
+            ]
+          },
+          "constraints": {
+            "M": {
+              "matches": "message-text"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "MESSAGE_REGEX_TEST",
+        "anchor": "witness.span",
+        "message": "Branch on the failure's code, adding one where the failure is written, not on this wording; a constant counts only when the writer uses it too. A person's or another program's text may be matched."
+      }
+    },
+    {
+      "id": "message-equals-text",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "message-text": {
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "regex": "\\??\\.message$"
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:message|errorMessage|msg)$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^(?:errorText|errorMessage|messageOf)\\("
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^String\\((?:error|err|e|cause|reason)\\)$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "^(?:error|err|e|cause)\\??\\.toString\\(\\)$"
+                },
+                {
+                  "kind": "call_expression",
+                  "regex": "(?:\\.message|^message|^msg)\\??\\.(?:toLowerCase|toUpperCase|toLocaleLowerCase|trim|trimStart|trimEnd)\\(\\)$"
+                }
+              ]
+            },
+            "literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^.[^\\n]*[A-Za-z]{3}[^\\n]*.$"
+                },
+                {
+                  "kind": "template_string",
+                  "regex": "[A-Za-z]{3}",
+                  "not": {
+                    "regex": "^`\\$\\{"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "any": [
+                          {
+                            "kind": "string",
+                            "regex": "^.[^\\n]*[A-Za-z]{3}[^\\n]*.$"
+                          },
+                          {
+                            "kind": "template_string",
+                            "regex": "[A-Za-z]{3}",
+                            "not": {
+                              "regex": "^`\\$\\{"
+                            }
+                          }
+                        ]
+                      },
+                      "exported": false
+                    }
+                  },
+                  "not": {
+                    "resolves": {
+                      "binding": {
+                        "occurrence": {
+                          "inside": {
+                            "stopBy": "end",
+                            "any": [
+                              {
+                                "kind": "new_expression"
+                              },
+                              {
+                                "kind": "throw_statement"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "pattern": "$A === $B"
+                      },
+                      {
+                        "pattern": "$A !== $B"
+                      },
+                      {
+                        "pattern": "$A == $B"
+                      },
+                      {
+                        "pattern": "$A != $B"
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "nthChild": 1,
+                              "matches": "message-text"
+                            }
+                          },
+                          {
+                            "has": {
+                              "nthChild": 2,
+                              "matches": "literal"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "nthChild": 1,
+                              "matches": "literal"
+                            }
+                          },
+                          {
+                            "has": {
+                              "nthChild": 2,
+                              "matches": "message-text"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "string",
+                "regex": "^.[^\\n]*[A-Za-z]{3}[^\\n]*.$",
+                "inside": {
+                  "kind": "switch_case",
+                  "inside": {
+                    "kind": "switch_body",
+                    "inside": {
+                      "kind": "switch_statement",
+                      "has": {
+                        "kind": "parenthesized_expression",
+                        "has": {
+                          "matches": "message-text"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "nthChild": 1,
+                            "kind": "array",
+                            "has": {
+                              "kind": "string"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "kind": "property_identifier",
+                            "regex": "^includes$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "arguments",
+                      "has": {
+                        "nthChild": 1,
+                        "matches": "message-text"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "MESSAGE_EQUALS_TEXT",
+        "anchor": "witness.span",
+        "message": "Branch on the failure's code, adding one where the failure is written, not on this wording; a constant counts only when the writer uses it too. A person's or another program's text may be matched."
+      }
+    },
+    {
+      "id": "steer-text-parsed",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "steer-regex": {
+              "any": [
+                {
+                  "kind": "regex",
+                  "regex": "Rerail (?:·|found|re-checked|finished)|Why\\\\\\?|\\[○◆■\\]"
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "any": [
+                          {
+                            "kind": "regex",
+                            "regex": "Rerail (?:·|found|re-checked|finished)|Why\\\\\\?|\\[○◆■\\]"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "steer-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "Rerail (?:found|re-checked|finished)|Why\\? →|in your last edit:"
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "any": [
+                          {
+                            "kind": "string",
+                            "regex": "Rerail (?:found|re-checked|finished)|Why\\? →|in your last edit:"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "pattern": "$R.test($X)"
+                      },
+                      {
+                        "pattern": "$R.exec($X)"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "kind": "member_expression",
+                      "has": {
+                        "nthChild": 1,
+                        "matches": "steer-regex"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "kind": "member_expression",
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^(?:match|matchAll|split|search)$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "arguments",
+                      "has": {
+                        "nthChild": 1,
+                        "matches": "steer-regex"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "kind": "member_expression",
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^(?:startsWith|endsWith|includes|indexOf|lastIndexOf|match|split|search)$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "arguments",
+                      "has": {
+                        "nthChild": 1,
+                        "matches": "steer-string"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "pattern": "$A === $B"
+                      },
+                      {
+                        "pattern": "$A !== $B"
+                      },
+                      {
+                        "pattern": "$A == $B"
+                      },
+                      {
+                        "pattern": "$A != $B"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "steer-string"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "STEER_TEXT_PARSED",
+        "anchor": "witness.span",
+        "message": "Read this from the delivery's rules and links, adding any other fact the code needs to the delivery, instead of matching the text written for the agent. Showing that text as a whole is fine."
+      }
+    },
+    {
+      "id": "native-message-test",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "utils": {
+            "worded": {
+              "any": [
+                {
+                  "kind": "string_literal",
+                  "regex": "[A-Za-z]{3}"
+                },
+                {
+                  "kind": "raw_string_literal",
+                  "regex": "[A-Za-z]{3}"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "pattern": "$M.$F($S)"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "mod_item"
+                      },
+                      {
+                        "kind": "function_item"
+                      },
+                      {
+                        "kind": "impl_item"
+                      }
+                    ],
+                    "follows": {
+                      "kind": "attribute_item",
+                      "regex": "^#\\[\\s*(?:test\\s*\\]|cfg\\s*\\(\\s*(?:test\\s*\\)|all\\s*\\([^\\]]*\\btest\\b))",
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "attribute_item"
+                            },
+                            {
+                              "kind": "line_comment"
+                            },
+                            {
+                              "kind": "block_comment"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "M": {
+              "regex": "^\\*?&?(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?$|^(?:error|err|e|cause|source)\\.to_string\\(\\)$"
+            },
+            "F": {
+              "regex": "^(?:contains|starts_with|ends_with|strip_prefix|strip_suffix|find|rfind|matches)$"
+            },
+            "S": {
+              "matches": "worded"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "NATIVE_MESSAGE_TEST",
+        "anchor": "witness.span",
+        "message": "Branch on the failure's code, adding one where this message is written, or on a constant that place uses, not on its wording. SQLite's or another program's own errors may be matched."
+      }
+    },
+    {
+      "id": "native-message-equals",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "utils": {
+            "phrase": {
+              "any": [
+                {
+                  "kind": "string_literal",
+                  "regex": "[A-Za-z]{3}.*\\s\\S|\\S\\s.*[A-Za-z]{3}"
+                },
+                {
+                  "kind": "raw_string_literal",
+                  "regex": "[A-Za-z]{3}.*\\s\\S|\\S\\s.*[A-Za-z]{3}"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "pattern": "$A == $B"
+                      },
+                      {
+                        "pattern": "$A != $B"
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "nthChild": 1,
+                              "regex": "^\\*?&?(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?$|^(?:error|err|e|cause|source)\\.to_string\\(\\)$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "nthChild": 2,
+                              "matches": "phrase"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "nthChild": 1,
+                              "matches": "phrase"
+                            }
+                          },
+                          {
+                            "has": {
+                              "nthChild": 2,
+                              "regex": "^\\*?&?(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?$|^(?:error|err|e|cause|source)\\.to_string\\(\\)$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "mod_item"
+                      },
+                      {
+                        "kind": "function_item"
+                      },
+                      {
+                        "kind": "impl_item"
+                      }
+                    ],
+                    "follows": {
+                      "kind": "attribute_item",
+                      "regex": "^#\\[\\s*(?:test\\s*\\]|cfg\\s*\\(\\s*(?:test\\s*\\)|all\\s*\\([^\\]]*\\btest\\b))",
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "attribute_item"
+                            },
+                            {
+                              "kind": "line_comment"
+                            },
+                            {
+                              "kind": "block_comment"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "NATIVE_MESSAGE_EQUALS",
+        "anchor": "witness.span",
+        "message": "Branch on the failure's code, adding one where this message is written, or on a constant that place uses, not on its wording. SQLite's or another program's own errors may be matched."
+      }
+    },
+    {
+      "id": "native-message-match",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "utils": {
+            "phrase": {
+              "any": [
+                {
+                  "kind": "string_literal",
+                  "regex": "[A-Za-z]{3}.*\\s\\S|\\S\\s.*[A-Za-z]{3}"
+                },
+                {
+                  "kind": "raw_string_literal",
+                  "regex": "[A-Za-z]{3}.*\\s\\S|\\S\\s.*[A-Za-z]{3}"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "phrase"
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "match_pattern",
+                      "inside": {
+                        "kind": "match_arm",
+                        "inside": {
+                          "kind": "match_block",
+                          "inside": {
+                            "kind": "match_expression",
+                            "has": {
+                              "regex": "^[*&]*(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?$",
+                              "not": {
+                                "kind": "match_block"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "nthChild": 2,
+                        "inside": {
+                          "kind": "tuple_pattern",
+                          "inside": {
+                            "kind": "match_pattern",
+                            "inside": {
+                              "kind": "match_arm",
+                              "inside": {
+                                "kind": "match_block",
+                                "inside": {
+                                  "kind": "match_expression",
+                                  "has": {
+                                    "kind": "tuple_expression",
+                                    "regex": "^\\(\\s*[*&]*[\\w.]+(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*,\\s*[*&]*(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*\\)$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "nthChild": 2,
+                          "inside": {
+                            "kind": "tuple_pattern",
+                            "inside": {
+                              "kind": "match_pattern",
+                              "inside": {
+                                "kind": "match_arm",
+                                "inside": {
+                                  "kind": "match_block",
+                                  "inside": {
+                                    "kind": "match_expression",
+                                    "has": {
+                                      "kind": "tuple_expression",
+                                      "regex": "^\\(\\s*[*&]*[\\w.]+(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*,\\s*[*&]*(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*\\)$"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "nthChild": 1,
+                        "inside": {
+                          "kind": "tuple_pattern",
+                          "inside": {
+                            "kind": "match_pattern",
+                            "inside": {
+                              "kind": "match_arm",
+                              "inside": {
+                                "kind": "match_block",
+                                "inside": {
+                                  "kind": "match_expression",
+                                  "has": {
+                                    "kind": "tuple_expression",
+                                    "regex": "^\\(\\s*[*&]*(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*,\\s*[*&]*[\\w.]+(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*\\)$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "nthChild": 1,
+                          "inside": {
+                            "kind": "tuple_pattern",
+                            "inside": {
+                              "kind": "match_pattern",
+                              "inside": {
+                                "kind": "match_arm",
+                                "inside": {
+                                  "kind": "match_block",
+                                  "inside": {
+                                    "kind": "match_expression",
+                                    "has": {
+                                      "kind": "tuple_expression",
+                                      "regex": "^\\(\\s*[*&]*(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*,\\s*[*&]*[\\w.]+(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*\\)$"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "mod_item"
+                      },
+                      {
+                        "kind": "function_item"
+                      },
+                      {
+                        "kind": "impl_item"
+                      }
+                    ],
+                    "follows": {
+                      "kind": "attribute_item",
+                      "regex": "^#\\[\\s*(?:test\\s*\\]|cfg\\s*\\(\\s*(?:test\\s*\\)|all\\s*\\([^\\]]*\\btest\\b))",
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "attribute_item"
+                            },
+                            {
+                              "kind": "line_comment"
+                            },
+                            {
+                              "kind": "block_comment"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "NATIVE_MESSAGE_MATCH",
+        "anchor": "witness.span",
+        "message": "Branch on the failure's code, adding one where this message is written, or on a constant that place uses, not on its wording. SQLite's or another program's own errors may be matched."
+      }
+    }
+  ]
+}

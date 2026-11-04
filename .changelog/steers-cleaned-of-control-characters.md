@@ -1,1 +1,0 @@
-Steers no longer carry control, bidi or invisible characters or line breaks from repository text, and each finding is capped. `token.txt`, `*secret*.json`, `serviceAccountKey.json`, `*-key.json`, `kubeconfig`, `*.tfvars.json`, `*.sops.*` and shell histories are now secret-like, and a file that links to a secret is judged as one.

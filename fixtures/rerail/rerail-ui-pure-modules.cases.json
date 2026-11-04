@@ -1,0 +1,54 @@
+{
+  "caught": [
+    {
+      "path": "ui/repo-rules.js",
+      "content": "/**\n * How many rules each repository Rerail knows has, and how many of them run, read from that repository's own rules\n * (`GET /api/repository/rules?repository=<key>`): Settings' Repos rows and the repository choices. A repository set\n * up with nothing added has none, so the count, not `setUp`, says whether rules were added. Each read is conditional\n * on the ETag of the counts it holds, so a round where nothing changed costs one 304 per repository.\n */\nimport { get } from \"./api.js\";\nimport { toStoredRules } from \"./poll.js\";\nimport { isRunning } from \"./derive.js\";\nimport { fmt, plural } from \"./format.js\";\n\n/** repositoryKey → `{ etag, counts: { total, on } }`. */\nconst known = new Map();\n/** The last round queued; rounds run one after another so a later one never lands under an earlier one's answers. */\nlet lastRound = Promise.resolve(false);\n\n/** `{ total, on }` of a repository's rule entries: one rule per id however many folders add it; on when it runs. */\nexport function ruleCountsOf(entries) {\n  const rules = [...toStoredRules(entries).values()];\n  return { total: rules.length, on: rules.filter(isRunning).length };\n}\n\n/** \"12 rules on\", \"0 rules on\" when every rule is off, \"No rules added\" when there are none; `null` while unknown. */\nexport function repoTag(counts) {\n  if (counts === null) return null;\n  return counts.total === 0 ? \"No rules added\" : `${fmt(counts.on)} ${plural(counts.on, \"rule\")} on`;\n}\n\n/** The counts last read for repository `key`, or `null` before they are. */\nexport const repoRuleCounts = key => known.get(key)?.counts ?? null;\n\nasync function loadOne(key) {\n  const held = known.get(key);\n  try {\n    const { status, etag, body } = await get(`/api/repository/rules?repository=${encodeURIComponent(key)}`, { etag: held?.etag });\n    if (status === 304) return false;\n    known.set(key, { etag, counts: ruleCountsOf(body.rules) });\n    return true;\n  } catch {\n    // A repository that went away (404) or a failed read: no count rather than a stale one; the next round retries.\n"
+    },
+    {
+      "path": "ui/pack-model.js",
+      "content": "import { el, reconcile } from \"./dom.js\";\nimport { categoryLabel, isRunning } from \"./derive.js\";\n\nexport const packRow = pack => el(\"li\", { text: categoryLabel(pack) });\n"
+    },
+    {
+      "path": "ui/history-model.js",
+      "content": "import { data, ui } from \"./state.js\";\n\nexport async function historyView(name) {\n  const view = await import(`./views/${name ?? \"history\"}.js`);\n  return view.render(data, ui);\n}\n"
+    },
+    {
+      "path": "ui/derive.js",
+      "content": "import \"./shell.js\";\nexport { send } from \"./api.js\";\nexport * from \"../ui/attachments.js\";\nimport { openSheet } from \"./render/panel.js\";\nimport { topbar } from \"/ui/frame/topbar.js\";\n"
+    },
+    {
+      "path": "ui/settings-model.js",
+      "content": "export async function hostStates() {\n  const response = await fetch(\"/api/hosts\");\n  return response.json();\n}\n"
+    },
+    {
+      "path": "ui/first-open.js",
+      "content": "export const isLive = session => session.endedAt === null && !document.hidden;\n"
+    },
+    {
+      "path": "ui/sessions-model.js",
+      "content": "import { data } from \"./state.js\";\nexport function openTurn(id) {\n  document.querySelector(`[data-turn=\"${id}\"]`)?.scrollIntoView();\n  window.location.hash = `#sessions?session=${id}`;\n  history.replaceState(null, \"\", location.href);\n  sessionStorage.setItem(\"turn\", id);\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "ui/pack-model.js",
+      "content": "/**\n * What the pack pages (`#pack/<id>`, `#created`), the catalog (`#packs`) and the pack sheet derive from the rules and\n * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, and the catalog's kinds\n * and order. Nothing here touches the DOM.\n */\nimport { categoryLabel, isRunning } from \"./derive.js\";\nimport { activityOf, fires, matches, ruleSections, titleOf, ui } from \"./state.js\";\n\n/** The Filter select of a pack page: `ui.filter` values `matches()` reads. */\nexport const PAGE_FILTERS = [[\"all\", \"All rules\"], [\"on\", \"On\"], [\"off\", \"Off\"], [\"fired\", \"Has violations\"]];\n/** The Sort select of a pack page: `ui.sort` values `sortPageRules` reads. */\nexport const PAGE_SORTS = [[\"violations\", \"Most violations logged\"], [\"recent\", \"Most recent violations logged\"], [\"newest\", \"Newest first\"], [\"az\", \"A to Z\"]];\n\n/** The rule list section a pack page shows: Created by you, or the pack's. */\nexport const pageKey = (view, packId) => (view === \"created\" ? \"mine\" : `pack:${packId}`);\n\n/** Every rule of a page's section (`pageKey`); `null` when the section is not here (the pack is not added). */\nexport function pageRules(key) {\n  const section = ruleSections().find(s => s.key === key);\n  return section === undefined ? null : section.groups.flatMap(g => g.all);\n}\n\nconst byTitle = (a, b) => titleOf(a).localeCompare(titleOf(b));\n\n/**\n * `rules` in the order `sort` names: most violations logged in range, the most recent violation first, the rule added\n * here most recently first (rules without a date last), or A to Z. Ties go A to Z.\n */\nexport function sortPageRules(rules, sort) {\n  const c = [...rules];\n  switch (sort) {\n    case \"az\": return c.sort(byTitle);\n    case \"recent\": return c.sort((a, b) => (activityOf(b.rule.id).lastSeenAt ?? 0) - (activityOf(a.rule.id).lastSeenAt ?? 0) || byTitle(a, b));\n    case \"newest\": return c.sort((a, b) => (b.addedAt ?? -Infinity) - (a.addedAt ?? -Infinity) || byTitle(a, b));\n    default: return c.sort((a, b) => fires(b.rule.id) - fires(a.rule.id) || byTitle(a, b));\n  }\n}\n\n/** The rows a page shows: its rules the search and Filter let through, in the Sort's order. */\nexport const shownRules = rules => sortPageRules(rules.filter(matches), ui.sort);\n\n/** How many of `rules` run (switched on, with options that apply): the page's \"x of y on\", as the sidebar counts. */\nexport const runningOf = rules => rules.filter(isRunning).length;\n\n/**\n * The whole-pack switch over `rules`: how many are switched on, of how many, and its `aria-checked`. Binary: \"true\"\n * only when every one is on (and there is one), else \"false\"; the on-count chip says how many are on.\n */\nexport function packSwitch(rules) {\n  const on = rules.filter(r => r.enabled).length, total = rules.length;\n  return { on, total, state: total > 0 && on === total ? \"true\" : \"false\" };\n}\n\n/** What a click on the whole-pack switch sets: off turns the rest on; on turns them all off. */\nexport const switchTurnsOn = state => state !== \"true\";\n\n/* ---------- the catalog ---------- */\n\n/** The catalog's kind chips: All, then each category the packs have, languages first, then frameworks. */\nconst KIND_ORDER = [\"language\", \"framework\", \"repository\"];\nexport function catalogKinds(packs) {\n  const present = [...new Set(packs.map(p => p.category))]\n    .sort((a, b) => (KIND_ORDER.indexOf(a) + 1 || 99) - (KIND_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));\n  return [[\"all\", \"All\"], ...present.map(c => [c, categoryLabel(c) || c])];\n}\n\n/** The packs of kind `kind` (\"all\": every one), alphabetical by name. */\nexport function catalogPacks(packs, kind) {\n  return packs.filter(p => kind === \"all\" || p.category === kind)\n    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: \"base\" }));\n}\n\n/** A pack sheet gets a filter box once its pack has more rules than this. */\nexport const SHEET_FILTER_AT = 30;\n\n/** A pack sheet's rows: the pack's rules whose title or id holds `query`, A to Z. */\nexport function sheetRules(pack, query) {\n  const q = query.trim().toLowerCase();\n  return pack.rules.filter(r => q === \"\" || `${r.title} ${r.id}`.toLowerCase().includes(q))\n    .sort((a, b) => a.title.localeCompare(b.title));\n}\n"
+    },
+    {
+      "path": "ui/repo-rules.js",
+      "content": "import { isRunning } from \"./derive.js\";\nimport { fmt, plural } from \"./format.js\";\n\n/** `{ total, on }` of a repository's rules, from the entries poll.js read. */\nexport function ruleCountsOf(rules) {\n  return { total: rules.length, on: rules.filter(isRunning).length };\n}\n"
+    },
+    {
+      "path": "ui/sessions-model.js",
+      "content": "import { HOST_NAME } from \"./format.js\";\nimport { ASK } from \"./render/rule-sheet-model.js\";\n\nconst TOOL_KIND = { webfetch: \"web\", fetch: \"web\", web: \"web\" };\nexport const API_MODULE = \"./api.js\";\nexport function kindOf(tool, document, history) {\n  const window = { kind: document.kind, turns: history.length };\n  return TOOL_KIND[tool] ?? window.kind ?? HOST_NAME;\n}\nexport const ids = document => document.rules.map(r => r.id);\n"
+    },
+    {
+      "path": "ui/derive.js",
+      "content": "// Read the rule's document; poll.js fetches it with get() from \"./api.js\".\nimport { collapse } from \"./format.js\";\nexport function titleOf(id, documents) {\n  const document = documents.get(id);\n  return collapse(document.title ?? document.id);\n}\n"
+    },
+    {
+      "path": "ui/poll.js",
+      "content": "import { get } from \"./api.js\";\nimport { data } from \"./state.js\";\nexport async function refresh() { data.rules = (await get(\"/api/rules\")).body; }\n"
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "caught": [
+    {
+      "path": "src/engine/audit/audit-store.ts",
+      "content": "import type { RerailDatabase } from \"../storage/database.js\";\n\n/**\n * Databases known to hold `audit_unlisted_failures`. A read-only open applies no DDL, so a file only an earlier build\n * wrote lacks the table: its audits list every failure they kept, and none is counted beyond them.\n */\nconst HOLDS_UNLISTED_TABLE = new WeakSet<RerailDatabase>();\nfunction holdsUnlistedTable(database: RerailDatabase): boolean {\n  if (HOLDS_UNLISTED_TABLE.has(database)) return true;\n  const holds = database.$client\n    .prepare(\"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_unlisted_failures'\")\n    .get() !== undefined;\n  if (holds) HOLDS_UNLISTED_TABLE.add(database);\n  return holds;\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/setup-review.ts",
+      "content": "import { eq, sql } from \"drizzle-orm\";\nimport { setupReviews } from \"../storage/schema.js\";\n\nexport function setupReviewOffered(db: Reader, repositoryKey: RepositoryKey): boolean {\n  const kept = db.get<{ name: string } | undefined>(sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'setup_reviews'`);\n  if (kept === undefined) return false;\n  return db.select({ key: setupReviews.repositoryKey }).from(setupReviews)\n    .where(eq(setupReviews.repositoryKey, repositoryKey)).get() !== undefined;\n}\n"
+    },
+    {
+      "path": "src/runtime/repository-start.ts",
+      "content": "import { getTableName, sql } from \"drizzle-orm\";\nimport { checkouts, repositories } from \"../engine/storage/schema.js\";\n\nconst START_TABLES = [getTableName(repositories), getTableName(checkouts)];\n\nfunction hasStartTables(database: Pick<RerailDatabase, \"all\">): boolean {\n  const names = sql.join(START_TABLES.map(name => sql`${name}`), sql`, `);\n  return database.all(sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${names})`).length === START_TABLES.length;\n}\n"
+    },
+    {
+      "path": "src/engine/audit/audit-history-reader.ts",
+      "content": "import { sql } from \"drizzle-orm\";\n\nexport function hasSessionsTable(database: RerailDatabase): boolean {\n  return database.all(sql`SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'sessions'`).length > 0;\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-settings-reader.ts",
+      "content": "export function holdsRuleSettings(database: RerailDatabase): boolean {\n  return database.$client.prepare(\"PRAGMA main.table_list('rule_settings')\").all().length > 0;\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/library-rules-reader.ts",
+      "content": "import { sql } from \"drizzle-orm\";\n\nexport function holdsLibraryRules(db: Reader): boolean {\n  return db.all(sql`SELECT name FROM pragma_table_list WHERE name = 'library_rules'`).length > 0;\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-settings-pragma.ts",
+      "content": "export function holdsRuleSettings(database: RerailDatabase): boolean {\n  return database.$client.pragma(\"table_list(rule_settings)\").length > 0;\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/setup-review-columns.ts",
+      "content": "import { sql } from \"drizzle-orm\";\n\nexport function keepsSetupReviews(db: Reader): boolean {\n  return db.all(sql`SELECT name FROM pragma_table_info(${\"setup_reviews\"})`).length > 0;\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-settings-quoted.ts",
+      "content": "export function holdsRuleSettings(database: RerailDatabase): boolean {\n  return database.$client.prepare('PRAGMA \"main\".table_list(rule_settings)').all().length > 0;\n}\n"
+    },
+    {
+      "path": "src/runtime/workspace-started.ts",
+      "content": "export function workspaceStarted(database: RerailDatabase, workspace: string): boolean {\n  try {\n    return checkoutStatus(database, lookupCheckout(database, workspace)).started;\n  } catch (error) {\n    if (error instanceof Error && error.message.includes(\"no such table\")) return false;\n    throw error;\n  }\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/engine/catalog/setup-review-fixed.ts",
+      "content": "import { eq } from \"drizzle-orm\";\nimport { tableExists } from \"../storage/database.js\";\nimport { setupReviews } from \"../storage/schema.js\";\n\nexport function setupReviewOffered(db: Reader, repositoryKey: RepositoryKey): boolean {\n  if (!tableExists(db, setupReviews)) return false;\n  return db.select({ key: setupReviews.repositoryKey }).from(setupReviews)\n    .where(eq(setupReviews.repositoryKey, repositoryKey)).get() !== undefined;\n}\n"
+    },
+    {
+      "path": "src/engine/audit/audit-count.ts",
+      "content": "import { auditRows } from \"./audit-rows.js\";\n\n/**\n * A file only older builds wrote has no audit_unlisted_failures table; sqlite_master would not list it, and storage\n * reports that before this runs.\n */\nexport function auditCount(db: Reader): number {\n  return auditRows(db).length;\n}\n"
+    },
+    {
+      "path": "src/runtime/unreadable-database.ts",
+      "content": "export function unreadable(path: string): Error {\n  return new Error(`${path} lists no checkouts table in sqlite_master; run a rerail command to finish creating it.`);\n}\n"
+    },
+    {
+      "path": "src/api/audit-message.ts",
+      "content": "const MESSAGE = \"Rerail could not read the audits table\";\nconst sqliteMasterRows = 0;\nexport function describe(): string { return `${MESSAGE} (${sqliteMasterRows})`; }\n"
+    },
+    {
+      "path": "src/engine/storage/database.ts",
+      "content": "function missingSchemaObjects(database: RerailDatabase): string[] {\n  const present = new Set(database.all<{ name: string }>(sql`SELECT name FROM sqlite_master`).map(row => row.name));\n  return SCHEMA_OBJECTS.filter(name => !present.has(name));\n}\n"
+    },
+    {
+      "path": "src/setup/claude-status-store.ts",
+      "content": "  if (database.prepare(\"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'harness_status_lines'\").get() === undefined) return undefined;\n"
+    }
+  ]
+}
