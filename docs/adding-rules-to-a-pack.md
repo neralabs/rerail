@@ -326,7 +326,7 @@ Promote from the judged commit's promotable list, after confirming `main` has no
   documents, so any move between `rules/` and `candidates/` changes it. The cargo command prints the new value.
 - **Add the suppression case** where the tool's generator demands one.
 - **Changeset = release note**: its file name opens with its change type (`fixed-…`), and its summary says what changed
-  for the upgrader, at most 60 words, no ticket id, pull request
+  for the upgrader, opening with the rule's id under `added-`, `removed-` and `fixed-`, at most 60 words, no ticket id, pull request
   number or commit hash. The **Changesets** job enforces this. Which rules ship and how each starts is written by the
   Release pull request from `pack.json`, so a promotion with nothing else to say leaves the summary empty
   ([versioning](pack-format.md#versioning-and-release)).
@@ -345,7 +345,8 @@ A shipped rule that fails a blocking check the same pull request does not fix go
 - Move its README section to `candidates/README.md`, in sorted place, with one sentence (file and line) on why.
 - Tests loading the rule by id read `rules/` only; also pass the pack's `candidates/` directory, as
   `test/engine/code-rule/pack-rules/python-harmful-steers.test.ts` does.
-- Re-pin the anchors test. The changeset (`removed-…`) says why the rule no longer ships; the Release pull request lists it.
+- Re-pin the anchors test. The changeset (`removed-…`) opens with the rule's id and says why it no longer ships; the
+  Release pull request lists it with that reason.
 - No re-derive: the generator's authored output does not depend on which rules ship.
 
 </details>

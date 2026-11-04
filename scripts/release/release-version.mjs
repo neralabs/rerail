@@ -78,15 +78,13 @@ function rulesAt(pack, commit) {
   const [manifest] = read([`${directory}/pack.json`]);
   if (manifest === null) return [];
   const parsed = JSON.parse(manifest);
-  // A rule's document gives its mode only where pack.json starts it on and names none.
-  const unmoded = (parsed.rules ?? []).filter((rule) => rule.on !== false && rule.mode === undefined);
-  const documents = read(unmoded.map((rule) => posix.join(directory, rule.document)));
-  const modes = new Map(unmoded.map((rule, index) => [rule.id, documents[index] === null ? undefined : JSON.parse(documents[index]).mode]));
-  return packRules(parsed, (rule) => {
-    const mode = modes.get(rule.id);
-    if (mode === undefined) throw new Error(`${directory}/${rule.document} gives ${rule.id} no mode${commit === null ? "" : ` at ${commit}`}`);
-    return mode;
-  });
+  const entries = parsed.rules ?? [];
+  const documents = read(entries.map((rule) => posix.join(directory, rule.document)));
+  const byId = new Map(entries.map((rule, index) => [rule.id, documents[index] === null ? undefined : JSON.parse(documents[index])]));
+  const rules = packRules(parsed, (rule) => byId.get(rule.id));
+  const unmoded = rules.find((rule) => rule.start === undefined);
+  if (unmoded !== undefined) throw new Error(`${directory}: its document gives ${unmoded.id} no mode${commit === null ? "" : ` at ${commit}`}`);
+  return rules;
 }
 
 const [bodyPath] = process.argv.slice(2);

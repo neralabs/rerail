@@ -114,6 +114,33 @@ export function changesetEntries(text) {
 /** Why the changeset `file` can't go under a heading of a pack's release notes, or null: its name gives no type. */
 export const changesetTypeRefusal = (file) => changeTypeRefusal(file, ".changeset/README.md");
 
+/** The change types whose notes are about one rule, which a summary opens with (changesetRuleRefusal). */
+const RULE_LED_TYPES = ["Added", "Removed", "Fixed"];
+
+/** Why a note of `type` about rule `id` doesn't fit what `names`' packs ship (changesetRuleRefusal), or null. */
+function ruleShippedRefusal(type, id, names, ruleIds) {
+  if (type === "Removed") {
+    const still = names.filter((name) => ruleIds(name).has(id));
+    return still.length === 0 ? null : `says \`${id}\` was removed, but ${still.join(" and ")} still ships it`;
+  }
+  const without = names.filter((name) => !ruleIds(name).has(id));
+  return without.length === 0 ? null : `opens with \`${id}\`, which ${without.join(" and ")} does not ship`;
+}
+
+/**
+ * Why the changeset `{ file, text }` is not grounded in a rule, or null. A non-empty summary under Added, Removed or Fixed
+ * opens with one rule's id in backticks: `ruleIds(name)` is what pack `name` ships now, which names the rule for Added
+ * and Fixed and must not for Removed. An empty summary has no note to ground, and other types need no rule.
+ */
+export function changesetRuleRefusal({ file, text }, ruleIds) {
+  const type = changeType(file);
+  const summary = changesetSummary(text);
+  if (!RULE_LED_TYPES.includes(type) || summary === "") return null;
+  const id = /^`([^`\s]+)`/u.exec(summary)?.[1];
+  if (id === undefined) return `opens with no rule id: a note under ${type} starts with the one rule it is about, in backticks; a change to no one rule is \`changed-\``;
+  return ruleShippedRefusal(type, id, changesetEntries(text).map(({ name }) => name), ruleIds);
+}
+
 /**
  * What the `changesets` (readChangesets) say to the people who upgrade `name`, in order, for its release notes:
  * `{ type, entry }` each, leaving out those that do not name it and those with an empty summary.

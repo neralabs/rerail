@@ -5,10 +5,11 @@
 // a released pack's changelog section opens with (pack-changelog.mjs).
 
 import { describe, expect, it } from "vitest";
-import { NAMED_RULES, PACK_CHANGELOG_INTRO, packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "../../scripts/release/pack-changelog.mjs";
+import { PACK_CHANGELOG_INTRO, packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "../../scripts/release/pack-changelog.mjs";
 import {
   changesetBumpFailures,
   changesetNotes,
+  changesetRuleRefusal,
   changesetSummary,
   changesetTypeRefusal,
   gateFailures,
@@ -39,10 +40,10 @@ describe("changesetSummary and changesetNotes", () => {
 
   it("writes each summary naming the pack as one entry of the type its file name opens with, its later paragraphs under the bullet", () => {
     const changesets = [
-      { file: "added-blade-directive.md", text },
+      { file: "changed-blade-directive.md", text },
       { file: "fixed-other-pack.md", text: text.replace(BLADE, "@neralabs/rerail-pack-vue") },
     ];
-    expect(changesetNotes(changesets, BLADE)).toEqual([{ type: "Added", entry: "- Blade pack: reports at the directive.\n\n  Not after it." }]);
+    expect(changesetNotes(changesets, BLADE)).toEqual([{ type: "Changed", entry: "- Blade pack: reports at the directive.\n\n  Not after it." }]);
   });
 
   it("writes no entry for an empty summary, which bumps the pack with nothing to say", () => {
@@ -56,37 +57,73 @@ describe("changesetSummary and changesetNotes", () => {
     expect(changesetTypeRefusal("fixed-blade-directive.md")).toBeNull();
   });
 
+  describe("changesetRuleRefusal", () => {
+    const ruleIds = (name) => new Set(name === BLADE ? ["blade-a"] : []);
+    const changeset = (file, summary, names = [BLADE]) => ({ file, text: `---\n${names.map((name) => `"${name}": patch`).join("\n")}\n---\n\n${summary}\n` });
+
+    it("takes a summary opening with a rule the pack ships under Added and Fixed, and one it no longer ships under Removed", () => {
+      expect(changesetRuleRefusal(changeset("fixed-a.md", "`blade-a` reads comments."), ruleIds)).toBeNull();
+      expect(changesetRuleRefusal(changeset("added-a.md", "`blade-a` gains an option."), ruleIds)).toBeNull();
+      expect(changesetRuleRefusal(changeset("removed-b.md", "`blade-b`: it reported every template."), ruleIds)).toBeNull();
+    });
+
+    it("refuses a summary under Added, Removed or Fixed opening with no rule", () => {
+      for (const file of ["added-a.md", "removed-a.md", "fixed-a.md"]) expect(changesetRuleRefusal(changeset(file, "Reads comments."), ruleIds), file).toContain("opens with no rule id");
+    });
+
+    it("refuses a rule the pack does not ship, or under Removed one it still does", () => {
+      expect(changesetRuleRefusal(changeset("fixed-b.md", "`blade-b` reads comments."), ruleIds)).toBe(`opens with \`blade-b\`, which ${BLADE} does not ship`);
+      expect(changesetRuleRefusal(changeset("fixed-a.md", "`blade-a` reads comments.", [BLADE, "@neralabs/rerail-pack-vue"]), ruleIds)).toBe("opens with `blade-a`, which @neralabs/rerail-pack-vue does not ship");
+      expect(changesetRuleRefusal(changeset("removed-a.md", "`blade-a`: gone."), ruleIds)).toBe(`says \`blade-a\` was removed, but ${BLADE} still ships it`);
+    });
+
+    it("leaves an empty summary, and the types that need no rule, alone", () => {
+      expect(changesetRuleRefusal({ file: "added-a.md", text: `---\n"${BLADE}": patch\n---\n` }, ruleIds)).toBeNull();
+      for (const file of ["changed-readme.md", "security-a.md", "deprecated-a.md", "untyped.md"]) expect(changesetRuleRefusal(changeset(file, "Reads comments."), ruleIds), file).toBeNull();
+    });
+  });
+
   it("every pending changeset names its change type", () => {
     expect(readChangesets().filter(({ file }) => changesetTypeRefusal(file) !== null)).toEqual([]);
   });
 });
 
 describe("the rule summary of a released pack version", () => {
-  const rule = (id, start, group = "Ruff") => ({ id, group, start });
+  const rule = (id, start, description = `${id} wants this.`) => ({ id, start, description });
 
-  it("reads how each rule starts: off, else pack.json's mode, else its document's", () => {
-    const pack = { rules: [{ id: "a", group: "Ruff", on: false, mode: "log" }, { id: "b", group: "Ruff", mode: "log" }, { id: "c", group: "Ruff" }] };
-    expect(packRules(pack, () => "steer")).toEqual([rule("a", "off"), rule("b", "log"), rule("c", "steer")]);
+  it("reads how each rule starts, off, else pack.json's mode, else its document's, and its description from its document", () => {
+    const pack = { rules: [{ id: "a", on: false, mode: "log" }, { id: "b", mode: "log" }, { id: "c" }] };
+    expect(packRules(pack, (entry) => ({ mode: "steer", description: `${entry.id} wants this.` }))).toEqual([rule("a", "off"), rule("b", "log"), rule("c", "steer")]);
+    expect(packRules({ rules: [{ id: "a", on: false }] }, () => undefined)).toEqual([{ id: "a", start: "off", description: undefined }]);
   });
 
-  it("names each new, dropped and restarted rule against the last release, whatever changesets said on the way", () => {
+  it("gives each new, dropped and restarted rule an entry of its own against the last release, whatever changesets said on the way", () => {
     // Shipped, dropped and shipped again between releases: only the net change shows.
     const before = [rule("kept", "steer"), rule("dropped", "steer"), rule("quieted", "steer"), rule("woken", "off")];
     const after = [rule("kept", "steer"), rule("quieted", "log"), rule("woken", "steer"), rule("new-on", "steer"), rule("new-log", "log"), rule("new-off", "off")];
     expect(packRuleNotes(packRuleChanges(before, after))).toEqual({
       lead: "6 rules, 5 of them on by default.",
       entries: [
-        { type: "Added", entry: "- 3 new rules: `new-on` starts in Steer; `new-log` starts in Log; `new-off` starts off." },
-        { type: "Removed", entry: "- No longer shipped: `dropped`." },
-        { type: "Changed", entry: "- Now starts in Steer: `woken`." },
-        { type: "Changed", entry: "- Now starts in Log: `quieted`." },
+        { type: "Added", entry: "- `new-on` (starts in Steer): new-on wants this." },
+        { type: "Added", entry: "- `new-log` (starts in Log): new-log wants this." },
+        { type: "Added", entry: "- `new-off` (starts off): new-off wants this." },
+        { type: "Removed", entry: "- `dropped`: no longer shipped." },
+        { type: "Changed", entry: "- `woken` now starts in Steer (was off)." },
+        { type: "Changed", entry: "- `quieted` now starts in Log (was in Steer)." },
       ],
     });
   });
 
-  it("counts many new rules by how they start and where they come from instead of naming each", () => {
-    const added = Array.from({ length: NAMED_RULES + 1 }, (_, index) => rule(`r${index}`, index < 3 ? "off" : "steer", index < 10 ? "Ruff" : "Bandit"));
-    expect(packRuleNotes(packRuleChanges([], added)).entries).toEqual([{ type: "Added", entry: "- 13 new rules (10 from Ruff and 3 from Bandit): 10 start in Steer and 3 off." }]);
+  it("lists new rules that start on before those that start off, by id within each, however many there are", () => {
+    const added = Array.from({ length: 30 }, (_, index) => rule(`r${String(index).padStart(2, "0")}`, index % 2 === 0 ? "off" : "steer"));
+    const entries = packRuleNotes(packRuleChanges([], added)).entries;
+    expect(entries).toHaveLength(30);
+    expect(entries[0].entry).toBe("- `r01` (starts in Steer): r01 wants this.");
+    expect(entries[15].entry).toBe("- `r00` (starts off): r00 wants this.");
+  });
+
+  it("refuses a new rule with no description, which pack validation requires", () => {
+    expect(() => packRuleNotes(packRuleChanges([], [{ id: "a", start: "off" }]))).toThrow("a's document gives it no description");
   });
 
   it("leads with the rule count, all on, all off or none", () => {
@@ -105,7 +142,7 @@ describe("the rule summary of a released pack version", () => {
   const released = (changelog, notes, written) => releasedPackChangelog(changelog, NAME, "0.1.6", "2026-11-04", notes, written);
 
   it("writes a dated section: the lead, then each change type's entries in the spec's order, the rule entries first within a type", () => {
-    const notes = { lead, entries: [{ type: "Added", entry: "- New rule: `x` starts in Steer." }, { type: "Changed", entry: "- Now starts in Log: `y`." }] };
+    const notes = { lead, entries: [{ type: "Added", entry: "- `x` (starts in Steer): Do x." }, { type: "Changed", entry: "- `y` now starts in Log (was in Steer)." }] };
     const written = [
       { type: "Fixed", entry: "- Reports at the directive.\n\n  Not after it." },
       { type: "Added", entry: "- `z` reads Blade components." },
@@ -120,12 +157,12 @@ describe("the rule summary of a released pack version", () => {
         "",
         "### Added",
         "",
-        "- New rule: `x` starts in Steer.",
+        "- `x` (starts in Steer): Do x.",
         "- `z` reads Blade components.",
         "",
         "### Changed",
         "",
-        "- Now starts in Log: `y`.",
+        "- `y` now starts in Log (was in Steer).",
         "",
         "### Fixed",
         "",
@@ -152,6 +189,13 @@ describe("the rule summary of a released pack version", () => {
     const twice = releasedPackChangelog(once, NAME, "0.1.7", "2026-11-05", { lead, entries: [] }, []);
     expect(twice.split(PACK_CHANGELOG_INTRO)).toHaveLength(2);
     expect(twice.indexOf("## 0.1.7 (")).toBeLessThan(twice.indexOf("## 0.1.6 ("));
+  });
+
+  it("takes a removed rule's reason from the changeset that opens with it, in place of the generated entry", () => {
+    const notes = { lead, entries: [{ type: "Removed", entry: "- `gone`: no longer shipped." }, { type: "Removed", entry: "- `left`: no longer shipped." }] };
+    const text = released("", notes, [{ type: "Removed", entry: "- `gone`: it reported every template." }, { type: "Fixed", entry: "- `left` reads comments." }]);
+    expect(text).not.toContain("- `gone`: no longer shipped.");
+    expect(text).toContain("### Removed\n\n- `left`: no longer shipped.\n- `gone`: it reported every template.\n\n### Fixed");
   });
 
   it("refuses a changeset entry with no type, which no heading could hold", () => {

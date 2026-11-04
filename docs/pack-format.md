@@ -781,8 +781,9 @@ changeset still bumps the pack.
 
 The summary says what changed plainly, in a sentence or two, without commit hashes, ticket ids, pull request numbers or
 repository-internal maintenance. The **Changesets** job fails a changeset that breaks this
-([release notes](release.md#release)), and one whose file name gives no change type. The Release pull request writes each
-summary as one entry, as written, under its type, and an empty summary as no entry; changesets itself writes no changelog
+([release notes](release.md#release)), one whose file name gives no change type, and one under Added, Removed or Fixed
+that doesn't open with the id of the rule it is about (`changesetRuleRefusal` in `scripts/release/packs.mjs`). The
+Release pull request writes each summary as one entry, as written, under its type, and an empty summary as no entry; changesets itself writes no changelog
 (`"changelog": false` in `.changeset/config.json`). Rule counts are left to the Release pull request
 because changesets pile up between releases and each counts against the `main` it was written on.
 
@@ -811,9 +812,10 @@ Core's `v*` release (`release.yml`) is separate.
   of core's: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), with the two differences the changelog's
   header states. The lead says how many rules it ships and how many start on. Under Added, Changed, Deprecated, Removed,
   Fixed and Security, in that order and leaving out types with no entry, come what changed in its rules since the commit
-  that released its previous version (its new rules, by id or counted by group past 12, and how each starts, under
-  Added; those it no longer ships under Removed; those that start differently under Changed), then the changesets'
-  entries in file-name order. Sections already released keep the format they went out in. A pending changeset with no
+  that released its previous version, one entry per rule (each new rule's id, how it starts and its description under
+  Added, those that start on first; those it no longer ships under Removed; those that start differently under
+  Changed), then the changesets' entries in file-name order. A `removed-` changeset opening with a rule replaces that
+  rule's generated entry, so the notes say why it left. Sections already released keep the format they went out in. A pending changeset with no
   type fails the run, naming the file: one `changeset version` bumps every pack, so no pack can wait for its rename.
 - Its description lists every package and version it releases, with changelog entries. Review it like any pull
   request.
@@ -873,6 +875,8 @@ summaries.
 
 - Sections from before the Release pull request wrote them lose their one `### Patch Changes` heading and the commit
   hash their entries carry.
+- Notes past GitHub's 125,000 characters go out as the section's lead and a link to the changelog at the tag
+  (`fittedNotes`).
 - After **Published dist-tags** passes, the **GitHub Releases** job makes one per published version
   (`scripts/release/github-release.mjs`). Rerun, it rewrites an existing Release's notes and flags.
 - A pack's Release is never the repository's latest release, which is core's. It is a pre-release only for a held pack

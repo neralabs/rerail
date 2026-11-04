@@ -25,7 +25,7 @@ import { readFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
-import { changelogSection, CORE_NAME, coreTag, NO_CHANGELOG_ENTRIES } from "./core.mjs";
+import { changelogLead, changelogSection, CORE_NAME, coreTag, NO_CHANGELOG_ENTRIES } from "./core.mjs";
 import { parseExpectation } from "./dist-tags.mjs";
 import { releaseTag, ROOT } from "./packs.mjs";
 import { COMMIT_HASH } from "./release-notes.mjs";
@@ -40,6 +40,8 @@ const REMOTE = "origin";
 /** Where docs/ is published (`SITE` in scripts/build/docs-site.mjs), and the repository other links point into. */
 const DOCS_SITE = "https://neralabs.github.io/rerail";
 const REPOSITORY = "https://github.com/neralabs/rerail";
+/** The most characters GitHub takes as a Release's text; past it the call fails. */
+export const RELEASE_NOTES_LIMIT = 125_000;
 
 /** The changelog holding `name`'s release notes: core's root CHANGELOG.md, or a pack's packs/<id>/CHANGELOG.md. */
 export function changelogPath(name) {
@@ -81,15 +83,27 @@ export function absoluteLinks(notes, base, tag) {
 }
 
 /**
+ * `notes` as a Release can hold them. Past RELEASE_NOTES_LIMIT, which a pack's first release can reach with one entry
+ * per rule, they are the section's lead and a link to the changelog at `tag`: this job runs after the publish, so failing it would
+ * only leave the version without a Release.
+ */
+export function fittedNotes(notes, section, path, tag) {
+  if (notes.length <= RELEASE_NOTES_LIMIT) return notes;
+  return [changelogLead(section), `These notes are too long for a GitHub Release: [read them in ${path}](${REPOSITORY}/blob/${tag}/${path}).`].filter((part) => part !== "").join("\n\n");
+}
+
+/**
  * The GitHub Release of `name`'s `version`, published under npm dist-tag `distTag`, given the text of its changelog:
  * `{ tag, title, notes, prerelease, latest }`, its notes the version's changelog section (a pack's as
- * packReleaseNotes reads it) with its links made absolute (absoluteLinks), or that none was written.
+ * packReleaseNotes reads it) with its links made absolute (absoluteLinks) and fitted to a Release (fittedNotes), or that
+ * none was written.
  */
 export function githubRelease({ name, version, distTag }, changelog) {
   const core = name === CORE_NAME;
   const tag = core ? coreTag(version) : releaseTag(name, version);
   const section = changelogSection(changelog, version);
-  const notes = section === "" ? NO_CHANGELOG_ENTRIES : absoluteLinks(core ? section : packReleaseNotes(section), posix.dirname(changelogPath(name)), tag);
+  const path = changelogPath(name);
+  const notes = section === "" ? NO_CHANGELOG_ENTRIES : fittedNotes(absoluteLinks(core ? section : packReleaseNotes(section), posix.dirname(path), tag), section, path, tag);
   return { tag, title: tag, notes, prerelease: distTag !== "latest", latest: core && distTag === "latest" };
 }
 

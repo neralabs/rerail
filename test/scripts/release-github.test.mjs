@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { NO_CHANGELOG_ENTRIES } from "../../scripts/release/core.mjs";
-import { backfillPlan, backfillTags, changelogPath, ghReleaseArgs, githubRelease, packReleaseNotes, parseRemoteTags, releasedByTag } from "../../scripts/release/github-release.mjs";
+import { backfillPlan, backfillTags, changelogPath, ghReleaseArgs, githubRelease, packReleaseNotes, parseRemoteTags, RELEASE_NOTES_LIMIT, releasedByTag } from "../../scripts/release/github-release.mjs";
 
 const CORE = "@neralabs/rerail";
 const PYTHON = "@neralabs/rerail-pack-python";
@@ -62,6 +62,21 @@ describe("githubRelease", () => {
     expect(githubRelease({ name: PYTHON, version: "0.1.6", distTag: "latest" }, pack).notes).toBe(
       `- See [the README](https://github.com/neralabs/rerail/blob/${PYTHON}@0.1.6/packs/python/README.md) and [packs](https://neralabs.github.io/rerail/rule-packs.html).`,
     );
+  });
+});
+
+describe("notes past what a GitHub Release holds", () => {
+  const section = (entries) => [`# ${PYTHON}`, "", "## 0.1.6 (2026-11-05)", "", "537 rules, 318 of them on by default.", "", "### Added", "", "- `a` (starts off): ".concat("x".repeat(entries)), ""].join("\n");
+
+  it("go out as the lead and a link to the changelog at the tag", () => {
+    const { notes } = githubRelease({ name: PYTHON, version: "0.1.6", distTag: "latest" }, section(RELEASE_NOTES_LIMIT));
+    expect(notes).toBe(`537 rules, 318 of them on by default.\n\nThese notes are too long for a GitHub Release: [read them in packs/python/CHANGELOG.md](https://github.com/neralabs/rerail/blob/${PYTHON}@0.1.6/packs/python/CHANGELOG.md).`);
+  });
+
+  it("are left as they are up to the limit", () => {
+    const { notes } = githubRelease({ name: PYTHON, version: "0.1.6", distTag: "latest" }, section(1000));
+    expect(notes).toContain("### Added");
+    expect(notes.length).toBeLessThan(RELEASE_NOTES_LIMIT);
   });
 });
 
