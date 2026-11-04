@@ -45,7 +45,7 @@ import yaml from "highlight.js/lib/languages/yaml";
 import { Marked } from "marked";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { z } from "zod";
-import { codeRuleSchema } from "../../src/engine/code-rule/code-rule-schema.ts";
+import { codeRuleSchema } from "../../src/engine/index.ts";
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const DOCS = join(ROOT, "docs");
