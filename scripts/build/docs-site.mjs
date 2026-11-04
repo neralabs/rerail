@@ -16,6 +16,10 @@
 // ```mermaid blocks render in the browser: a page that has one loads mermaid from jsDelivr, pinned to an exact version,
 // and themes it from the tokens. No network at build time, and the output depends on the checkout alone.
 //
+// Every page, the DSL reference too, has the same top bar with a search box over `search-index.json` (each page's h2
+// and h3 sections, the reference's cards and grammar productions); a page with three or more sections has an outline
+// beside it on wide screens.
+//
 // For agents (llmstxt.org), every page also gets a Markdown twin at the same path with `.md` (a doc's own Markdown with
 // its links pointed at twins; the DSL reference converted from its HTML), named in its <head> and in a line at the top
 // of the page; `llms.txt` lists the twins in docs/README.md's sections and `llms-full.txt` holds them all. The code
@@ -305,6 +309,21 @@ const HEADER_CSS = `
 .site-header .brand::before { content: ""; width: 0.8rem; height: 0.8rem; border-radius: var(--radius-sm); background: var(--brand); box-shadow: 0.25rem 0.25rem 0 var(--brand-subtle-hover); }
 .site-header nav a:not(.brand) { color: var(--muted-foreground); font-size: 0.92rem; font-weight: 500; }
 .site-header nav a:not(.brand):hover, .site-header nav a[aria-current="page"] { color: var(--brand-foreground); text-decoration: none; }
+.site-search { position: relative; }
+.site-search input {
+  width: 13rem; padding: 0.3rem 0.7rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card);
+  color: var(--foreground); font: inherit; font-size: 0.88rem;
+}
+.site-search input:focus { outline: 2px solid var(--brand-border); outline-offset: 1px; }
+.site-search ol {
+  position: absolute; right: 0; top: calc(100% + 0.4rem); z-index: 20; width: min(28rem, 92vw); max-height: 70vh; overflow-y: auto;
+  list-style: none; margin: 0; padding: 0.35rem; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); box-shadow: var(--card-shadow);
+}
+.site-search li a { display: block; padding: 0.45rem 0.65rem; border-radius: var(--radius-lg); color: var(--foreground); font-size: 0.9rem; line-height: 1.4; }
+.site-search li a:hover, .site-search li[aria-selected] a { background: var(--brand-subtle); text-decoration: none; }
+.site-search li small { display: block; color: var(--muted-foreground); font-size: 0.78rem; }
+.site-search li.none { padding: 0.45rem 0.65rem; color: var(--muted-foreground); font-size: 0.9rem; }
+@media (max-width: 640px) { .site-search { flex-basis: 100%; } .site-search input { width: 100%; } }
 `;
 
 /** The outline beside a long page marks the section being read: the last one whose heading is above the fold's top. */
@@ -571,11 +590,107 @@ function undeclaredTokens(tokens, css) {
   return [...new Set(used.filter((name) => !declared.has(name)))].sort();
 }
 
-/** The bar across the top of every page, the DSL reference's too: the docs' name, its main pages, GitHub. */
+/**
+ * Search over every page's sections, the DSL reference's cards and grammar productions, from `search-index.json`
+ * (built with the site, fetched on first use). Every term must appear in an entry's section, page or text; a hit in
+ * the section's title counts most. `/` focuses the box; arrows move, Enter opens, Escape closes.
+ */
+const SEARCH_SCRIPT = `<script>
+(() => {
+  const box = document.querySelector(".site-search");
+  if (!box) return;
+  const input = box.querySelector("input");
+  const list = box.querySelector("ol");
+  const root = box.dataset.root;
+  let index = null;
+  let hits = [];
+  let active = -1;
+  const esc = (text) => text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const load = async () => { index = index || (await (await fetch(root + "/search-index.json")).json()); };
+  const draw = () => {
+    list.innerHTML = hits.length
+      ? hits.map((hit, i) => '<li' + (i === active ? ' aria-selected="true"' : '') + '><a href="' + root + '/' + hit.u + '"><span>' + esc(hit.s) + '</span><small>' + esc(hit.p) + '</small></a></li>').join("")
+      : '<li class="none">No results</li>';
+    list.hidden = false;
+  };
+  const search = async () => {
+    await load();
+    const terms = input.value.toLowerCase().split(/\\s+/).filter(Boolean);
+    if (terms.length === 0) { list.hidden = true; return; }
+    hits = index.map((entry) => {
+      const s = entry.s.toLowerCase(), p = entry.p.toLowerCase(), t = entry.t.toLowerCase();
+      let score = 0;
+      for (const term of terms) {
+        const inS = s.includes(term), inP = p.includes(term), inT = t.includes(term);
+        if (!inS && !inP && !inT) return null;
+        score += (inS ? 6 : 0) + (s.startsWith(term) ? 3 : 0) + (inP ? 2 : 0) + (inT ? 1 : 0);
+      }
+      return { ...entry, score };
+    }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 8);
+    active = hits.length ? 0 : -1;
+    draw();
+  };
+  input.addEventListener("focus", load, { once: true });
+  input.addEventListener("input", search);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!hits.length) return;
+      active = (active + (event.key === "ArrowDown" ? 1 : hits.length - 1)) % hits.length;
+      draw();
+    } else if (event.key === "Enter" && hits[active]) {
+      location.href = root + "/" + hits[active].u;
+    } else if (event.key === "Escape") {
+      list.hidden = true;
+      input.blur();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "/" && !/^(input|textarea|select)$/i.test(document.activeElement?.tagName ?? "")) {
+      event.preventDefault();
+      input.focus();
+    }
+  });
+  document.addEventListener("click", (event) => { if (!box.contains(event.target)) list.hidden = true; });
+})();
+</script>
+`;
+
+/** The bar across the top of every page, the DSL reference's too: the docs' name, its main pages, GitHub, search. */
 function siteHeader(root, current, pages) {
   const link = (target, label) => `<a href="${root}/${target}"${target === current ? ' aria-current="page"' : ""}>${label}</a>`;
   const nav = [link("index.html", "Docs"), ...NAV.filter(([target]) => pages.has(target)).map(([target, label]) => link(target, label)), `<a href="${REPO}">GitHub</a>`];
-  return `<header class="site-header"><nav><a class="brand" href="${root}/index.html">Rerail docs</a>${nav.join("")}</nav></header>`;
+  const search = `<div class="site-search" data-root="${root}" role="search"><input type="search" placeholder="Search docs" aria-label="Search the docs (press /)" autocomplete="off"><ol hidden></ol></div>`;
+  return `<header class="site-header"><nav><a class="brand" href="${root}/index.html">Rerail docs</a>${nav.join("")}${search}</nav></header>\n${SEARCH_SCRIPT}`;
+}
+
+/** Plain text of an HTML fragment, its whitespace collapsed. */
+const textOf = (html) => decodeHtml(html.replace(/<[^>]+>/gu, " ")).replace(/\s+/gu, " ").trim();
+
+/** A docs page's search entries: the page itself, then each h2 and h3 section with the start of its text. */
+function pageSearchEntries(body, page, title) {
+  const parts = body.split(/(<h[23] id="[^"]+">[\s\S]*?<\/h[23]>)/u);
+  const entries = [{ p: title, s: title, u: page, t: textOf(parts[0].replace(/<h1[\s\S]*?<\/h1>/u, "")).slice(0, 280) }];
+  for (let i = 1; i < parts.length; i += 2) {
+    const id = /id="([^"]+)"/u.exec(parts[i])[1];
+    entries.push({ p: title, s: textOf(parts[i].replace(/<a class="anchor"[^>]*>#<\/a>/u, "")), u: `${page}#${id}`, t: textOf(parts[i + 1] ?? "").slice(0, 280) });
+  }
+  return entries;
+}
+
+/** The DSL reference's search entries: its section headings, construct cards and grammar productions. */
+function referenceSearchEntries(html, title) {
+  const entries = [];
+  for (const [, id, inner] of html.matchAll(/<h[23] id="([^"]+)"[^>]*>([\s\S]*?)<\/h[23]>/gu)) {
+    entries.push({ p: title, s: textOf(inner.replace(/<a class="anchor"[^>]*>#<\/a>/u, "")), u: `${REFERENCE}#${id}`, t: "" });
+  }
+  for (const [, id, heading, lede] of html.matchAll(/<section class="card" id="([^"]+)"[^>]*>\s*<h3>([\s\S]*?)<\/h3>\s*<p>([\s\S]*?)<\/p>/gu)) {
+    entries.push({ p: title, s: textOf(heading.replace(/<a class="anchor"[^>]*>#<\/a>/u, "")), u: `${REFERENCE}#${id}`, t: textOf(lede).slice(0, 280) });
+  }
+  for (const [, id, name, about] of html.matchAll(/<(?:details|div) class="prod[^"]*" id="(g-[^"]+)"[^>]*>[\s\S]*?<span class="nt">([^<]+)<\/span>[\s\S]*?<span class="about">([\s\S]*?)<\/span>/gu)) {
+    entries.push({ p: `${title}: grammar`, s: name, u: `${REFERENCE}#${id}`, t: textOf(about) });
+  }
+  return entries;
 }
 
 /** A long page's outline (its h2 sections), shown beside the text on wide screens; none for a page with fewer than 3. */
@@ -803,21 +918,26 @@ const outputs = new Map([["tokens.css", tokens]]);
 const copies = [];
 const missing = [];
 const titles = new Map([[REFERENCE, "Rerail code-rule DSL reference"]]);
+const searchIndex = [];
 for (const path of files) {
   if (path === REFERENCE) {
     const html = readFileSync(join(DOCS, path), "utf8");
     outputs.set(path, themedReference(html, pages));
     outputs.set(twinPath(path), `${referenceMarkdown(html)}\n`);
+    searchIndex.push(...referenceSearchEntries(html, titles.get(REFERENCE)));
   } else if (!path.endsWith(".md")) copies.push(path);
   else {
     const markdown = readFileSync(join(DOCS, path), "utf8");
     const rendered = render(markdown, path);
     for (const url of rendered.missing) missing.push(`docs/${path}: ${url}`);
-    titles.set(pagePath(path), rendered.title ?? path);
-    outputs.set(pagePath(path), page({ ...rendered, title: rendered.title ?? path }, path, pages));
+    const title = rendered.title ?? path;
+    titles.set(pagePath(path), title);
+    outputs.set(pagePath(path), page({ ...rendered, title }, path, pages));
     outputs.set(twinPath(pagePath(path)), markdownTwin(markdown, path));
+    searchIndex.push(...pageSearchEntries(rendered.body, pagePath(path), title));
   }
 }
+outputs.set("search-index.json", JSON.stringify(searchIndex));
 outputs.set(SCHEMA, ruleSchema());
 outputs.set("llms.txt", llmsTxt(readFileSync(join(DOCS, "README.md"), "utf8"), titles));
 outputs.set(
