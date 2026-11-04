@@ -2,6 +2,7 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{parse, prune};
 use crate::code_rule_dsl::logic::magic::{Options, magic_adorn, magic_sets};
 use crate::content_store::ContentStore;
+use crate::code_rule_dsl::typing::cross_rounds;
 
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
@@ -453,6 +454,12 @@ fn own_ingestion_derives_what_t_facts_do() {
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
+        // The cross-file part runs in bounded rounds (`typing::cross_rounds`, k = 2). On this corpus workload's
+        // reach the fixpoint (round 2's digest is round 1's); calls' need a third crossing (8 of 5,112 hop rows,
+        // O41), so they stop unconverged after round 2. Both runs below are bounded alike.
+        println!("{name}: cross-file rounds {:?}", report.rounds);
+        assert_eq!(report.rounds.run, cross_rounds::K + 1, "{name}: {:?}", report.rounds);
+        assert_eq!(report.rounds.converged, name == "workload", "{name}: {:?}", report.rounds);
         for chunk in [1_usize << 18, 1 << 12] {
             let own = dir.join(format!("out-{name}-own-{chunk}"));
             let got = corpus::run(&src, &dir, None, &own, "program", Binding::Cpu, chunk).unwrap();

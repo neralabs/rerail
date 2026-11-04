@@ -925,6 +925,8 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
         Term::Call(f, args) => {
             let a = args.iter().map(|x| sql_term(x, env, atoms)).collect::<Result<Vec<_>>>()?;
             match (f.as_str(), a.as_slice()) {
+                // A node's document (`typing::cross_rounds`): nodes are `d << 32 | index`.
+                ("doc", [x]) => bin(Op::Divide, x.clone(), integer(1i64 << 32)),
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
                 ("cat", [x, y]) => bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone()),
                 ("flat_bin", [o, x, y]) => {
@@ -1359,7 +1361,7 @@ impl Fx<'_> {
     /// Per probe, its steps' (in, out) bindings since the last call.
     fn steps(&self, name: &str) -> Result<Vec<Vec<(i64, i64)>>> {
         if self.direct {
-            return Ok(super::native::component::step_counts(name)?);
+            return Ok(super::native::component::step_counts(self.db, name)?);
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_steps(?1)", [name], |r| r.get(0))?;
         Ok(text
@@ -1370,7 +1372,7 @@ impl Fx<'_> {
     /// Each relation's live statistics, in spec order.
     fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
         if self.direct {
-            return Ok(super::native::component::live(name)?
+            return Ok(super::native::component::live(self.db, name)?
                 .into_iter()
                 .map(|l| LiveRel { n: l.n, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
                 .collect());
@@ -1388,7 +1390,7 @@ impl Fx<'_> {
     }
     fn close(&self, name: &str) -> Result<()> {
         if self.direct {
-            super::native::component::close(name)?;
+            super::native::component::close(self.db, name)?;
         } else {
             self.db.query_row("SELECT set_fixpoint_close(?1)", [name], |_| Ok(()))?;
         }

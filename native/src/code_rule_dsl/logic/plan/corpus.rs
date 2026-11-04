@@ -23,6 +23,7 @@ use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
+use crate::code_rule_dsl::typing::cross_rounds;
 use crate::code_rule_dsl::typing::file_local::Binding;
 use crate::content_store::ContentStore;
 use rusqlite::Connection;
@@ -157,6 +158,8 @@ pub(crate) struct Report {
     pub(crate) native: usize,
     pub(crate) rows: BTreeMap<String, usize>,
     pub(crate) chunks: usize,
+    /// The cross-file part's bounded rounds (`typing::cross_rounds`).
+    pub(crate) rounds: cross_rounds::Rounds,
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -403,7 +406,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path
             if kept.contains(rel) {
                 let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
                 let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM set_derived WHERE rel = ?1"), [rel])?;
-                let rows = crate::code_rule_dsl::logic::native::component::derived(rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
+                let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
             } else {
                 let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT * FROM temp.{rel}"), [])?;
@@ -444,9 +447,17 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path
     }
     phase("stats", statements.count());
     statements.enter("cross");
+    let mut rounds = cross_rounds::Rounds::default();
     if !cross.program.rules.is_empty() {
-        let got = super::run_atoms_native_over(&cross, &db, "main", cross_stats, BTreeSet::new(), modes)?;
-        native.extend(gather(got, &mut outputs, &mut node_columns, &|_| true).into_iter().map(|k| format!("cross:{k}")));
+        let bounded = cross_rounds::bound(&cross.program)?;
+        let got = if bounded.hops.is_empty() {
+            rounds = cross_rounds::Rounds { run: 1, converged: true, rows: vec![] };
+            super::run_atoms_native_over(&cross, &db, "main", cross_stats, BTreeSet::new(), modes)?
+        } else {
+            run_rounds(&db, &modules, part(bounded.program), &bounded.hops, &cross_stats, modes, &mut rounds)?
+        };
+        let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
+        native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
     }
     phase("cross", statements.count());
     statements.enter("write");
@@ -480,9 +491,84 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path
     let rss = usage().2;
     phases.insert(1, ("parse (worker)", parse_cpu.0, parse_cpu.1, rss, 0));
     phases.insert(2, ("batch (worker)", batch_cpu.0, batch_cpu.1, rss, 0));
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds })
 }
 
+
+/// The cross-file part's bounded rounds (`typing::cross_rounds`): `round` is the part with its hops reading
+/// `<rel>__prev`, a table in `x` that holds the previous round's rows (none in round 0). Each round's rows of the
+/// hop relations are digested; an unchanged digest ends the rounds (the fixpoint), as does round `K`. The last
+/// round's outcome is the part's.
+fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &BTreeSet<String>, stats: &super::Stats, modes: &str, report: &mut cross_rounds::Rounds) -> Result<Outcome> {
+    use crate::code_rule_dsl::logic::native::component;
+    let types = |rel: &str| -> Vec<String> { round.program.decls[rel].iter().map(|(_, t)| t.clone()).collect() };
+    for rel in hops {
+        let cols: Vec<String> = (0..types(rel).len()).map(|i| format!("c{i}")).collect();
+        db.execute_batch(&format!(
+            "DROP TABLE IF EXISTS x.{rel}{p}; CREATE TABLE x.{rel}{p}({}, PRIMARY KEY ({})) WITHOUT ROWID",
+            cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "),
+            cols.join(", "),
+            p = cross_rounds::PREV
+        ))?;
+    }
+    // Round 0's previous rows: none, measured as such.
+    let mut prev_totals = Totals::default();
+    for rel in hops {
+        let (t, width) = (types(rel), types(rel).len());
+        let empty = Rows { columns: (0..width).map(|i| format!("c{i}")).collect(), values: vec![Vec::new(); width] };
+        prev_totals.add_rows(&format!("{rel}{}", cross_rounds::PREV), 0, &empty, &t.iter().map(String::as_str).collect::<Vec<_>>());
+    }
+    let mut last = None;
+    let k = cross_rounds::k();
+    for r in 0..=k {
+        for rel in hops {
+            let prev = format!("{rel}{}", cross_rounds::PREV);
+            let source = component::table_source(db, "x", &prev).ok_or_else(|| Error::Plan(format!("x.{prev} is not a table of integers")))?;
+            modules.bind(db, &prev, source)?;
+        }
+        let mut st = stats.clone();
+        prev_totals.apply(&mut st);
+        // A hop relation the program outputs is written to its table, to be decoded; the others are held.
+        let held: BTreeSet<String> = hops.iter().filter(|r| !round.program.outputs.contains(r)).cloned().collect();
+        let got = super::run_atoms_native_over(&round, db, "main", st, held, modes)?;
+        // This round's rows of the hop relations: from the engine, or their table.
+        let mut rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+        prev_totals = Totals::default();
+        for rel in hops {
+            let width = types(rel).len();
+            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
+                component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?
+            } else {
+                Arc::new(Rows::read(db, rel)?)
+            };
+            let t = types(rel);
+            let t: Vec<&str> = t.iter().map(String::as_str).collect();
+            prev_totals.add_rows(&format!("{rel}{}", cross_rounds::PREV), source.len(), source.as_ref(), &t);
+            rows.insert(rel.clone(), (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect());
+        }
+        let digest = cross_rounds::digest(&rows);
+        report.run = r + 1;
+        report.rows.push(rows.values().map(Vec::len).sum());
+        if last == Some(digest) || r == k {
+            report.converged = last == Some(digest);
+            return Ok(got);
+        }
+        last = Some(digest);
+        db.execute_batch("BEGIN")?;
+        for (rel, rows) in &rows {
+            let prev = format!("{rel}{}", cross_rounds::PREV);
+            db.execute(&format!("DELETE FROM x.{prev}"), [])?;
+            let width = types(rel).len();
+            let mut ins = db.prepare(&format!("INSERT OR IGNORE INTO x.{prev} VALUES ({})", vec!["?"; width].join(", ")))?;
+            for row in rows {
+                ins.execute(rusqlite::params_from_iter(row.iter()))?;
+            }
+        }
+        db.execute_batch("COMMIT")?;
+        crate::code_rule_dsl::logic::native::forget_inputs(db);
+    }
+    unreachable!("round K returns")
+}
 
 /// The statements SQLite runs on a connection (`SQLITE_TRACE_STMT`: each statement's first step, those inside
 /// `execute_batch` and those the native engine's SQL functions run on it included), counted until dropped.

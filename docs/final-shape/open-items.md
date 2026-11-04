@@ -39,6 +39,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O37 | Phase 4 / 8 | The lowered B006 clause reports 4 mutable defaults on S7's `f010.py` that W does not (`Optional[…]`, `Annotated[…]` annotations); `the_slice_finds_ws_findings_on_real_files` ignored | open |
 | O38 | Phase 9 | The interpreter's per-lane transient workspace (lanes × states, sized before any task runs) exceeds the buffer budget for 5 of 39 interpreted S2 clauses and for 70 of 158 under `RERAIL_HOST_SWEEPS`. 2026-11-04: tasks are implicit in segments and lanes are fitted to the free budget (decision 0033); 37 of 39 equal | closed |
 | O40 | Phase 9 | Two interpreted S2 clauses (ruff-async251, ruff-sim300) are recursive groups whose host rounds exceed the 200-launch limit (`BackendLaunchLimit`); their rounds belong on the device | open |
+| O41 | Phase 10 | Bounded cross-file rounds (k = 2) leave calls.rdl short of its fixpoint on the vtab corpus (a third file crossing adds 8 of 5,112 hop rows); the unconverged frontier is reported but not yet marked pending | open |
 | O39 | Phase 9 | S7's sample, cold on Metal: the footprint peaks at 871 MB (budget 500 MB) in the label runs (`3a.plan` and the roots' partition), after `WalkFrames` removed the 3,017 MB of interpreted retries (decision 0032). 2026-11-04: the roots are rules over the codes (decision 0033), with no node lists (70 M roots before) and no walk items; the peak (889 MB) now rises in the GPU run and the roots' partition. Roots that are walks no longer size each file for a backend that never runs (one packed batch per file, ~130 MB over the GPU run's): 752 MB, in the GPU run. The kernels keep no thread memory (the driver's scratch, decision 0034): 603 MB, 335 MB after the audit | open |
 
 ## O1. Stale-fact detection after a crash
@@ -1140,3 +1141,22 @@ clauses run as fused groups whose rounds stay on the device.
   queue of the walks), not one host launch per round. Raising the limit is not the fix.
 - **Test:** `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` prints both.
 
+## O41. Bounded rounds leave the unconverged frontier unmarked
+
+Found at list step 29 (2026-11-04). The cross-file part runs in bounded rounds
+(`typing::cross_rounds`, k = 2, I11). A recursive atom whose node may lie in another file reads
+the previous round's rows; within a file the fixpoint is exact. On the vtab golden corpus:
+
+| Program | Hop rows per round | Result |
+|---|---|---|
+| workload.rdl | 17,674 → 17,680 → 17,680 | converged after round 1 |
+| calls.rdl | 5,044 → 5,104 → 5,112 (→ 5,112 at round 3) | unconverged at k = 2 |
+
+calls.rdl's attribute chains (`found` through `base` across files) need a third crossing, so
+with k = 2 they stop 8 rows short. `RERAIL_CROSS_ROUNDS=<n>` overrides k as a diagnostic.
+- **Shape to take:** rows a further round would change are "pending" (03 §13: distinct from ⊤):
+  the hop relations' last-round delta marks its consumers open, so a rule reached only through it
+  reports unknown, not a missing finding. Today the run only reports `converged: false`.
+- **Also:** each round reruns the whole cross-file part. The digest cutoff should be per document
+  (rerun only the dependents of documents whose interface rows changed), as `typing::rounds` does.
+- **Test:** `own_ingestion_derives_what_t_facts_do` prints both and asserts them.

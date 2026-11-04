@@ -298,9 +298,17 @@ struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
-static COMPONENTS: Mutex<Vec<(String, Arc<Mutex<Component>>)>> = Mutex::new(Vec::new());
-fn component(name: &str) -> Result<Arc<Mutex<Component>>> {
-    COMPONENTS.lock().unwrap().iter().find(|(n, _)| n == name).map(|c| c.1.clone()).ok_or_else(|| err(format!("no set fixpoint named {name:?}")))
+/// The connection a component or a derived relation belongs to (its handle): two runs in one process (two corpora,
+/// or tests in parallel) name their components and relations alike, and must not see each other's.
+pub(crate) fn scope(conn: &Connection) -> usize {
+    unsafe { conn.handle() as usize }
+}
+static COMPONENTS: Mutex<Vec<((usize, String), Arc<Mutex<Component>>)>> = Mutex::new(Vec::new());
+fn component(conn: &Connection, name: &str) -> Result<Arc<Mutex<Component>>> {
+    component_in(scope(conn), name)
+}
+fn component_in(scope: usize, name: &str) -> Result<Arc<Mutex<Component>>> {
+    COMPONENTS.lock().unwrap().iter().find(|((s, n), _)| *s == scope && n == name).map(|c| c.1.clone()).ok_or_else(|| err(format!("no set fixpoint named {name:?}")))
 }
 
 fn unhex(s: &str) -> Result<String> {
@@ -410,16 +418,18 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     drop(syms);
     let store = Arc::new(RwLock::new(Store { rels, syms: symbols }));
     let mut reg = COMPONENTS.lock().unwrap();
-    reg.retain(|(n, _)| *n != name);
-    reg.push((name.clone(), Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write, done: false }))));
+    let key = (scope(conn), name.clone());
+    reg.retain(|(k, _)| *k != key);
+    reg.push((key, Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write, done: false }))));
     Ok(name)
 }
 
 /// At the fixpoint the component's relations move to `DERIVED`, the input of later strata (`r:` sources), with the
 /// hash indexes the waves kept (`InRel::chains`): nothing is copied or indexed again.
-pub fn close(name: &str) -> Result<()> {
+pub fn close(conn: &Connection, name: &str) -> Result<()> {
+    let at_scope = scope(conn);
     let mut reg = COMPONENTS.lock().unwrap();
-    let Some(at) = reg.iter().position(|(n, _)| n == name) else { return Ok(()) };
+    let Some(at) = reg.iter().position(|((s, n), _)| *s == at_scope && n == name) else { return Ok(()) };
     let (_, comp) = reg.remove(at);
     drop(reg);
     let comp = comp.lock().unwrap();
@@ -427,7 +437,7 @@ pub fn close(name: &str) -> Result<()> {
         let rels = std::mem::take(&mut comp.store.write().unwrap().rels);
         let mut derived = DERIVED.lock().unwrap();
         for rel in rels {
-            derived.insert(rel.table.clone(), Arc::new(InRel::moved(rel)));
+            derived.insert((at_scope, rel.table.clone()), Arc::new(InRel::moved(rel)));
         }
     }
     Ok(())
@@ -438,7 +448,7 @@ pub fn close(name: &str) -> Result<()> {
 /// `stats`.
 pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let t0 = Instant::now();
-    let comp = component(name)?;
+    let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
     let (nrels, symbols) = { let s = comp.store.read().unwrap(); (s.rels.len(), Arc::clone(&s.syms)) };
     symbols.write().unwrap().sync(conn)?;
@@ -608,8 +618,8 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
 /// Live statistics of a component's relations, one line per relation in spec order: its row count, then each
 /// column's distinct count (its hash index's key count), then each column's sum of squared posting lengths (the
 /// skew: sum/rows is the expected postings of a row's value, the planner's `fan`). What the planner lacks for a relation still being derived.
-pub fn stats(name: &str) -> Result<String> {
-    let comp = component(name)?;
+pub fn stats(conn: &Connection, name: &str) -> Result<String> {
+    let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
     let syms = store.syms.read().unwrap();
@@ -637,8 +647,8 @@ pub fn stats(name: &str) -> Result<String> {
 /// comma-separated (empty for a SQL probe); the counts restart.
 /// Per probe (spec order), its join steps' (in, out) binding counts since the last call (empty for a SQL probe); the
 /// counts restart.
-pub fn step_counts(name: &str) -> Result<Vec<Vec<(i64, i64)>>> {
-    let comp = component(name)?;
+pub fn step_counts(conn: &Connection, name: &str) -> Result<Vec<Vec<(i64, i64)>>> {
+    let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     Ok(comp.probes.iter().map(|p| match &p.body {
         Body::Join(j) => j.counts.iter().map(|[a, b]| (a.replace(0) as i64, b.replace(0) as i64)).collect(),
@@ -649,8 +659,8 @@ pub fn step_counts(name: &str) -> Result<Vec<Vec<(i64, i64)>>> {
 /// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,
 /// and for a column of at most `FREQ_NDV` values each value's postings.
 pub struct Live { pub n: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)> }
-pub fn live(name: &str) -> Result<Vec<Live>> {
-    let comp = component(name)?;
+pub fn live(conn: &Connection, name: &str) -> Result<Vec<Live>> {
+    let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
     Ok(store.rels.iter().map(|r| {
@@ -666,8 +676,8 @@ pub fn live(name: &str) -> Result<Vec<Live>> {
     }).collect())
 }
 
-pub fn steps(name: &str) -> Result<String> {
-    let comp = component(name)?;
+pub fn steps(conn: &Connection, name: &str) -> Result<String> {
+    let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     Ok(comp.probes.iter().map(|p| match &p.body {
         Body::Join(j) => j.counts.iter().map(|[a, b]| format!("{}:{}", a.replace(0), b.replace(0))).collect::<Vec<_>>().join(","),
@@ -678,7 +688,7 @@ pub fn steps(name: &str) -> Result<String> {
 /// Replaces probe `i`'s body, replanned from `stats`: `kind` is `sql` (hex SQL, prepared by the next `run`) or `join`
 /// (a hex join spec).
 pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) -> Result<()> {
-    let comp = component(name)?;
+    let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
     let n = comp.probes.len();
     let body = match kind {
@@ -707,9 +717,9 @@ pub struct RelTab { base: ffi::sqlite3_vtab, store: Arc<RwLock<Store>>, rel: usi
 unsafe impl<'vtab> VTab<'vtab> for RelTab {
     type Aux = ();
     type Cursor = RelCursor;
-    fn connect(_: &mut VTabConnection, _: Option<&()>, _: &[u8], _: &[u8], _: &[u8], args: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
+    fn connect(db: &mut VTabConnection, _: Option<&()>, _: &[u8], _: &[u8], _: &[u8], args: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
         let arg = |i: usize| std::str::from_utf8(args.get(i).copied().unwrap_or(b"")).unwrap_or("").trim().trim_matches('\'').to_string();
-        let comp = component(&arg(0)).map_err(|e| Error::ModuleError(e.to_string()))?;
+        let comp = component_in(unsafe { db.handle() } as usize, &arg(0)).map_err(|e| Error::ModuleError(e.to_string()))?;
         let store = comp.lock().unwrap().store.clone();
         let rel: usize = arg(1).parse().map_err(|_| Error::ModuleError("bad rel".into()))?;
         let types = store.read().unwrap().rels[rel].types.clone();
@@ -902,15 +912,15 @@ impl Csr {
     }
 }
 /// The relations of components run with `nowrite`, by table, until they are materialized.
-static DERIVED: LazyLock<Mutex<HashMap<String, Arc<InRel>>>> = LazyLock::new(Default::default);
+static DERIVED: LazyLock<Mutex<HashMap<(usize, String), Arc<InRel>>>> = LazyLock::new(Default::default);
 const SEED: usize = usize::MAX;
 /// Columns with at most this many values report each value's postings (`stats`).
 const FREQ_NDV: usize = 64;
 
 /// A native relation's rows, in place (for a caller that keeps an output in the engine): a source of columns
 /// `c0`, `c1`, ….
-pub fn derived(table: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
-    let rel = DERIVED.lock().unwrap().get(table).cloned()?;
+pub fn derived(conn: &Connection, table: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+    let rel = DERIVED.lock().unwrap().get(&(scope(conn), table.to_owned())).cloned()?;
     Some(Arc::new(Derived(rel)))
 }
 struct Derived(Arc<InRel>);
@@ -926,7 +936,7 @@ impl crate::code_rule_dsl::facts::vtab::Source for Derived {
 /// `set_fixpoint_materialize(table)`: inserts a native relation's rows (those not already in its table) into the
 /// table, for SQL that reads it. Returns the rows written.
 pub fn materialize(conn: &Connection, table: &str) -> Result<i64> {
-    let Some(rel) = DERIVED.lock().unwrap().get(table).cloned() else { return Err(err(format!("no native relation {table}"))) };
+    let Some(rel) = DERIVED.lock().unwrap().get(&(scope(conn), table.to_owned())).cloned() else { return Err(err(format!("no native relation {table}"))) };
     if rel.k > DERIVED_COLUMNS {
         return Err(err(format!("{table}: more than {DERIVED_COLUMNS} columns")));
     }
@@ -942,14 +952,15 @@ const DERIVED_COLUMNS: usize = 16;
 // ---- set_derived(rel): a native relation's rows not yet in its table, for one INSERT … SELECT ----------------------
 
 #[repr(C)]
-pub struct DerivedTab { base: ffi::sqlite3_vtab }
+pub struct DerivedTab { base: ffi::sqlite3_vtab, scope: usize }
 unsafe impl<'vtab> VTab<'vtab> for DerivedTab {
     type Aux = ();
     type Cursor = DerivedCursor;
-    fn connect(_: &mut VTabConnection, _: Option<&()>, _: &[u8], _: &[u8], _: &[u8], _: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
+    fn connect(db: &mut VTabConnection, _: Option<&()>, _: &[u8], _: &[u8], _: &[u8], _: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
+        let scope = unsafe { db.handle() } as usize;
         let cols: Vec<String> = (0..DERIVED_COLUMNS).map(|i| format!("c{i}")).collect();
         let schema = CString::new(format!("CREATE TABLE x({}, rel HIDDEN)", cols.join(", "))).map_err(|e| Error::ModuleError(e.to_string()))?;
-        Ok((Cow::Owned(schema), DerivedTab { base: ffi::sqlite3_vtab::default() }))
+        Ok((Cow::Owned(schema), DerivedTab { base: ffi::sqlite3_vtab::default(), scope }))
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         let rel = info.constraints().position(|c| c.is_usable() && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ && c.column() == DERIVED_COLUMNS as c_int);
@@ -961,16 +972,16 @@ unsafe impl<'vtab> VTab<'vtab> for DerivedTab {
         Ok(true)
     }
     fn open(&mut self) -> Result<DerivedCursor> {
-        Ok(DerivedCursor { base: ffi::sqlite3_vtab_cursor::default(), rel: None, id: 0 })
+        Ok(DerivedCursor { base: ffi::sqlite3_vtab_cursor::default(), scope: self.scope, rel: None, id: 0 })
     }
 }
 
 #[repr(C)]
-pub struct DerivedCursor { base: ffi::sqlite3_vtab_cursor, rel: Option<Arc<InRel>>, id: usize }
+pub struct DerivedCursor { base: ffi::sqlite3_vtab_cursor, scope: usize, rel: Option<Arc<InRel>>, id: usize }
 unsafe impl VTabCursor for DerivedCursor {
     fn filter(&mut self, _: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
         let table: String = args.get(0)?;
-        let rel = DERIVED.lock().unwrap().get(&table).cloned().ok_or_else(|| Error::ModuleError(format!("no native relation {table}")))?;
+        let rel = DERIVED.lock().unwrap().get(&(self.scope, table.clone())).cloned().ok_or_else(|| Error::ModuleError(format!("no native relation {table}")))?;
         self.id = rel.stored;
         self.rel = Some(rel);
         Ok(())
@@ -1271,7 +1282,7 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     t if t.starts_with("c") => Src::Full(num(&t[1..])?),
                     t if t.starts_with("r:") => {
                         let table = unhex(&t[2..])?;
-                        let rel = DERIVED.lock().unwrap().get(&table).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
+                        let rel = DERIVED.lock().unwrap().get(&(scope(conn), table.clone())).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
                         let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
                         let ix = rel.index(&cols);
                         Src::In(rel, ix)

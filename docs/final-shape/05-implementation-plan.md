@@ -588,6 +588,10 @@ What was left, and how each was closed (2026-11-03, the user's choice for the fi
 
 **Status (2026-10-27): copies done (programs with Phase 6's `091b65fb`, wavefront `59cb33bf`); adaptations and the write-new row outstanding. Placed: `typing::rounds` (`11d2d5ee`), every strategy equal to T's `workload` goldens on the planner fixture; the programs at `typing/programs/` (moved from `logic/front/rdl/`, read by the logic tests).**
 
+**Status (2026-11-04, list step 29):**
+- Programs split (`typing::file_local::programs`); calls.rdl's hand-written demand replaced by `.demand found` (magic sets); the corpus runner plans from its own ingestion.
+- Bounded rounds (`typing::cross_rounds`): hops read the previous round's rows, the same file's are exact, digest cutoff over the hop relations, k = 2. workload converges; calls needs a third crossing (O41).
+
 ### Phase 11: gate and tooling (throughout; M1–M4, L1, L2)
 
 | Copy | From | To | Adaptations |

@@ -395,12 +395,14 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
     })?;
     db.create_scalar_function(c"set_fixpoint_steps", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
         let name: String = ctx.get(0)?;
-        setfix::steps(&name)
+        let conn = unsafe { ctx.get_connection()? };
+        setfix::steps(&conn, &name)
     })?;
     db.create_scalar_function(c"set_fixpoint_loads", 0, FunctionFlags::SQLITE_UTF8, |_| Ok(setfix::loads()))?;
     db.create_scalar_function(c"set_fixpoint_stats", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
         let name: String = ctx.get(0)?;
-        setfix::stats(&name)
+        let conn = unsafe { ctx.get_connection()? };
+        setfix::stats(&conn, &name)
     })?;
     db.create_scalar_function(c"set_fixpoint_reprobe", 4, FunctionFlags::SQLITE_UTF8, |ctx| {
         let (name, i, kind, body): (String, i64, String, String) = (ctx.get(0)?, ctx.get(1)?, ctx.get(2)?, ctx.get(3)?);
@@ -409,7 +411,8 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
     })?;
     db.create_scalar_function(c"set_fixpoint_close", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
         let name: String = ctx.get(0)?;
-        setfix::close(&name).map(|_| 1i64)
+        let conn = unsafe { ctx.get_connection()? };
+        setfix::close(&conn, &name).map(|_| 1i64)
     })?;
     const SETREL: Module<setfix::RelTab> = Module::read_only_module();
     db.create_module(c"set_rel", &SETREL, None)?;

@@ -33,3 +33,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0032 | Tapes resident in 64 MiB slabs (one no-copy buffer each), keyed by tape digest, admitted from frames straight into slabs, dropped 2 min after a full execution; format 11 aligns columns; the device reads v9np columns in place through a batch document table (`metal_tape.metal`) | accepted |
 | 0033 | A label pass's roots are a rule over each document's codes, not a node list | accepted |
 | 0034 | The device keeps no per-thread memory (the driver's scratch, sized for every thread in flight and kept): walks run in pools with device stacks, pattern equality walks preorder runs, pattern kernels hold 8 patterns each | accepted |
+| 0035 | Cross-file rounds bound file crossings: a recursive atom whose node may be in another file reads the previous round (`@doc` split); digest cutoff; k = 2 | accepted |
