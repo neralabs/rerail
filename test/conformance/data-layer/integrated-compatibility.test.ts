@@ -93,11 +93,17 @@ it.each([false, true])("hydrates only admitted repository source (syntax: %s)", 
       expect(admitted.failures).toEqual([]);
       expect(admitted.violations).toMatchObject([{ path: "selected.py" }]);
     } else {
-      // This query actually demands more than 128 bytes from other files.
+      // maxSourceBytes is a per-file limit. Several admitted files can exceed it in total.
       await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 5,
         files: [{ path: "selected.py", language: "python", source: "selected = 1\n" }], removed: [], quiet: true }));
+      const admitted = JSON.parse(await workspace.resultPageAsync(0, RESULT_PAGE_BYTES));
+      expect(admitted.failures).toEqual([]);
+      expect(admitted.violations).toMatchObject([{ path: "selected.py" }]);
+      // A single oversized source must still fail instead of returning partial text.
+      await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 6,
+        files: [{ path: "other0.py", language: "python", source: `other = '${"x".repeat(150)}'\n` }], removed: [], quiet: true }));
       const oversized = JSON.parse(await workspace.resultPageAsync(0, RESULT_PAGE_BYTES));
-      expect(oversized.failures).toMatchObject([{ code: "source-incomplete", message: "relational source snapshot exceeds maxSourceBytes" }]);
+      expect(oversized.failures).toMatchObject([{ code: "source-incomplete", message: "A relational input is incomplete: gate: other0.py" }]);
     }
   } finally { workspace.close(); }
 });

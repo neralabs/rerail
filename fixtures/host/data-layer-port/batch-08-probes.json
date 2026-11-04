@@ -6802,7 +6802,7 @@
       "files": [
         {
           "path": "impl/cache.py",
-          "source": "CACHE = (LocalMetadataCache(name=\"reviewed\", max_entries=2))\n@pure_lazy\ndef derive():\n    return CACHE.get(\"value\")\n"
+          "source": "CACHE = (LocalMetadataCache(name=\"reviewed\", max_entries=2))\n@pure_lazy\ndef derive():\n    value = CACHE.get(\"value\")\n    CACHE.set(\"value\", value)\n    return value\n"
         }
       ],
       "findings": [],
@@ -6883,6 +6883,337 @@
         "options": {
           "oracleAnalyzer": true,
           "entryPoint": "scan_paths"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:lazy-overload-visible-target",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/overload.py",
+          "source": "@overload\ndef helper(value: int): ...\n@pure_lazy\ndef helper(value):\n    return value\n@pure_lazy\ndef derive():\n    return helper(1)\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:lazy-overload-declaration-diagnostics",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/overload.py",
+          "source": "@overload\ndef load_sync_lazy(value: int): ...\n@overload\ndef load_sync_lazy(value: str): ...\n@pure_lazy\ndef load_sync_lazy(value):\n    return value\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/overload.py",
+          "line": 2,
+          "column": null,
+          "code": "LA-010",
+          "message": "load_sync_lazy mixes 'lazy' with 'sync' or 'async' in its name"
+        },
+        {
+          "path": "impl/overload.py",
+          "line": 4,
+          "column": null,
+          "code": "LA-010",
+          "message": "load_sync_lazy mixes 'lazy' with 'sync' or 'async' in its name"
+        },
+        {
+          "path": "impl/overload.py",
+          "line": 6,
+          "column": null,
+          "code": "LA-010",
+          "message": "load_sync_lazy mixes 'lazy' with 'sync' or 'async' in its name"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:purity-inherited-method-admitted-file",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "class Parent:\n    def inspect_runtime(self, tx):\n        return tx._conn\nclass Child(Parent):\n    @pure_lazy\n    def derive(self, tx):\n        return self.inspect_runtime(tx)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/main.py",
+          "line": 3,
+          "column": null,
+          "code": "PLP-003",
+          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_paths"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:purity-inherited-method-admitted-import",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "from impl.helper import Parent\nclass Child(Parent):\n    @pure_lazy\n    def derive(self, tx):\n        return self.inspect_runtime(tx)\n"
+        },
+        {
+          "path": "impl/helper.py",
+          "source": "class Parent:\n    def inspect_runtime(self, tx):\n        return tx._conn\n@pure_lazy\ndef marker():\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/helper.py",
+          "line": 3,
+          "column": null,
+          "code": "PLP-003",
+          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_paths"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:lazy-exact-service-scope-unrelated-event",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/common/l2200_sql_dialect/sql_connection.py",
+          "source": "class Connection:\n    def register(self, value):\n        self._pending = value\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:lazy-local-module-import-remains-unresolved",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "@pure_lazy\ndef derive():\n    import impl.helper as local\n    return local.inspect()\n"
+        },
+        {
+          "path": "impl/helper.py",
+          "source": "def inspect():\n    return 1\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:lazy-store-target-is-not-a-read",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "def slot():\n    return 0\n@pure_lazy\ndef derive():\n    values[slot()] = 1\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:lazy-module-alias-visible-target",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "def phase():\n    return object()\n@pure_lazy\ndef phase_lazy():\n    return 1\nphase = phase_lazy\n@pure_lazy\ndef derive():\n    return phase()\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:lazy-native-cursor-does-not-imply-orchestration",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "import psycopg\ndef observe(cursor: psycopg.Cursor[int]):\n    return cursor.fetchone()\ndef connect(cursor):\n    observe(cursor)\n    commit()\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:lazy-native-cursor-remains-eager-in-pure-code",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "import psycopg\n@pure_lazy\ndef derive(cursor: psycopg.Cursor[int]):\n    return cursor.fetchone()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/main.py",
+          "line": 4,
+          "column": null,
+          "code": "LA-001",
+          "message": "derive is lazy but performs eager plan/grammar I/O"
+        },
+        {
+          "path": "impl/main.py",
+          "line": 4,
+          "column": null,
+          "code": "LA-009",
+          "message": "derive reaches eager downstream function impl.main.derive (direct eager sink native_cursor.fetchone)"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
         }
       }
     }
