@@ -37,3 +37,19 @@ it("expands a complete typed AST and forward annotations from a module demand", 
   expect(names.map((n: { name: string }) => n.name)).toEqual(["Sequence", "Widget", "int", "str"]);
   expect(response.parses).toBe(1); expect(response.module_walks).toBe(1);
 });
+
+it("anchors canonical variadic parameters whose spans differ from CST parameter spans", async () => {
+  const { readFileSync } = await import("node:fs");
+  const capabilities = readFileSync(new URL("../../../../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8");
+  const source = "def f(*args: int, **kwargs: str):\n    pass\n";
+  const authored = { format: "rerail.policy/v1", id: "canonical-parameter-spans", revision: 1, mode: "log", clauses: [{ id: "args", relational: {
+    inputs: { gate: { evidence: { as: "f", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } } },
+    syntax: { name: "nodes", gate: "gate", columns: ["__path", "id", "kind"] },
+    stages: [{ name: "canonical", pythonAst: { syntax: "nodes", roots: "SELECT __path,id FROM nodes WHERE kind='module'", fields: ["ast_kind", "ast_start", "ast_stop", "ast_name"], expand: "nodes" } }],
+    query: "SELECT __path path,CAST(ast_start AS INTEGER) start_byte,CAST(ast_stop AS INTEGER) end_byte,ast_name identity FROM canonical WHERE ast_kind='arg'", key: ["identity"],
+  }, violation: { code: "PARAM", message: "Canonical parameter", anchor: "witness.span" } }] };
+  const rule = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(authored), "json", capabilities);
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: [{ path: "a.py", source, language: "python" }] }), "report"));
+  expect(result.failures).toEqual([]);
+  expect(result.violations.map((v: { span: { startByte: number; endByte: number } }) => source.slice(v.span.startByte, v.span.endByte))).toEqual(["args: int", "kwargs: str"]);
+});
