@@ -1,0 +1,614 @@
+{
+  "format": "rerail.data-layer-batch-evidence/v1",
+  "batch": 8,
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "engine": {
+    "format": "rerail.data-layer-integrated-engine/v1",
+    "base_commit": "9bc955cc5",
+    "commit": "41cba695d9388ac8db05dd525c31c09d4fe0751a",
+    "branch": "jeremy/data-layer-integrated-compat-20261103",
+    "native_sha256": "27bd5226769985775484b6b3d739cbd4ed4b2108de254c586d55db0a13e26da2",
+    "build": {
+      "package": "rerail-engine",
+      "profile": "profiling",
+      "extra_features": [],
+      "allocator": "jemalloc"
+    },
+    "frontend_schema_sha256": "50d17f10ed163b536e201fb6cc692030600004b1a4c8d0c1c556d216d3e8ec20",
+    "frontend_capabilities_sha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01",
+    "python": "Python 3.13.12",
+    "boundary": "Production schema and native compiled-rule/workspace APIs; relational compatibility, with wave/GPU lowering separate.",
+    "runtime_dependency": "CPython 3.13; one isolated batch per nonempty canonical Python producer wave."
+  },
+  "upstream": {
+    "passed": 456,
+    "sourceMismatches": [],
+    "eligibleCalls": 308,
+    "positiveCalls": 195,
+    "cleanCalls": 113,
+    "retainedCalls": 12,
+    "uncapturedTests": 209
+  },
+  "native": {
+    "nativeCalls": 493,
+    "hostGuardCalls": 0,
+    "replayedCalls": 493,
+    "positiveCalls": 320,
+    "cleanCalls": 173,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "nativeCoverage": [
+      {
+        "check": "eager_resolve",
+        "positive": 52,
+        "clean": 16
+      },
+      {
+        "check": "lazy_architecture",
+        "positive": 87,
+        "clean": 94
+      },
+      {
+        "check": "pure_lazy_runtime_purity",
+        "positive": 28,
+        "clean": 18
+      },
+      {
+        "check": "cached_pure_lazy_allowlist",
+        "positive": 46,
+        "clean": 3
+      },
+      {
+        "check": "lazy_sql_surface",
+        "positive": 23,
+        "clean": 11
+      },
+      {
+        "check": "plan_helpers_allowlist",
+        "positive": 55,
+        "clean": 22
+      },
+      {
+        "check": "legacy_callback_quarantine",
+        "positive": 9,
+        "clean": 2
+      },
+      {
+        "check": "readthrough_authority_architecture",
+        "positive": 7,
+        "clean": 3
+      },
+      {
+        "check": "authentication_plan_purity",
+        "positive": 5,
+        "clean": 3
+      },
+      {
+        "check": "lazy_adapter_ownership",
+        "positive": 8,
+        "clean": 1
+      }
+    ]
+  },
+  "supplemental": {
+    "observations": 185,
+    "positive": 125,
+    "clean": 60
+  },
+  "incremental": {
+    "format": "rerail.data-layer-incremental-parity/v1",
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "nativeSha256": "27bd5226769985775484b6b3d739cbd4ed4b2108de254c586d55db0a13e26da2",
+    "checks": 10,
+    "transitions": 50,
+    "differences": 0,
+    "elapsedMs": 736.936333,
+    "rows": [
+      {
+        "check": "eager_resolve",
+        "cleanTest": "scripts/tests/test_lint_eager_resolve.py::test_does_not_flag_non_preprocess_helper",
+        "positiveTest": "scripts/tests/test_lint_eager_resolve.py::test_flags_resolve_server_value_in_preprocess",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "lazy_architecture",
+        "cleanTest": "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_dynamic_import_is_allowed",
+        "positiveTest": "scripts/tests/test_lint_lazy_architecture.py::test_lazy_calling_legacy_wrapper_triggers_la013",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "pure_lazy_runtime_purity",
+        "cleanTest": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_method_calls_without_protected_attr_access",
+        "positiveTest": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_protected_runtime_attr_access_inside_pure_lazy",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "cached_pure_lazy_allowlist",
+        "cleanTest": "probe:batch8:cached-policy-clean",
+        "positiveTest": "probe:batch8:cached-policy-body-drift",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "lazy_sql_surface",
+        "cleanTest": "probe:batch8:clean-0",
+        "positiveTest": "probe:batch8:call-_grammar_effect_lazy",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "plan_helpers_allowlist",
+        "cleanTest": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_does_not_flag_non_target_attribute",
+        "positiveTest": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_direct_bare_name_call_without_import",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "legacy_callback_quarantine",
+        "cleanTest": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_public_legacy_versioned_callback_definition_is_allowed",
+        "positiveTest": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_internal_versioned_write_callback_is_quarantined",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "readthrough_authority_architecture",
+        "cleanTest": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_accepts_closed_same_plan_overlay_and_inventory_contract",
+        "positiveTest": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_rejects_eager_overlay_restore_and_runtime_seed",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "authentication_plan_purity",
+        "cleanTest": "scripts/tests/test_lint_authentication_plan_purity.py::test_accepts_legacy_forwarders_to_pure_lazy_method",
+        "positiveTest": "scripts/tests/test_lint_authentication_plan_purity.py::test_rejects_transport_and_mutable_results_in_semantic_steps",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "lazy_adapter_ownership",
+        "cleanTest": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_accepts_sync_and_async_adapters_over_one_pure_lazy_module_surface",
+        "positiveTest": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_rejects_adapter_body_that_duplicates_planning",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      }
+    ]
+  },
+  "alwaysCleanControls": {
+    "checks": 10,
+    "rejected": 10,
+    "sqlSurfaceUsesSupplementalPositive": true
+  },
+  "nativeTests": {
+    "passed": 2522,
+    "ignored": 67,
+    "excludedInheritedFailure": "admission_spike::interpreter_snapshot_matches_the_current_independent_oracle"
+  },
+  "repositoryGate": "in-progress",
+  "policies": {
+    "eager_resolve": "edc970c17f2b058b779e8fc814820493836ec7bc531969c1a43c2f00713844af",
+    "lazy_architecture": "9db5ca888abf41145ee2e6acc41569be4429469b97eeaa62ed27e9271a78c22c",
+    "pure_lazy_runtime_purity": "438b2e6f17f4d25258a2f37ec31f77b58ea087b13839a9b744cedb2dbda578ad",
+    "cached_pure_lazy_allowlist": "c0dc0b0916fadb44bcf4d64bf86dbbf746b4f725d5ba938601c72420e9bc57ca",
+    "lazy_sql_surface": "d4997305f5ceb62f2a4db89a16cad581d148d020c57211f9b61b11598d6ae416",
+    "plan_helpers_allowlist": "7139fb7c592f7b71ac69c3db839a41553e2bb9d9e60a0656ebfcadf760d51d89",
+    "legacy_callback_quarantine": "5af9c913c444ca93e275727ad7ba128590dd7adecba2c257de20caff12b29bdb",
+    "readthrough_authority_architecture": "9d9fda77e29e5b7f90b2fa32e828385192778329b9c093b26d36deb2233e26ae",
+    "authentication_plan_purity": "b7ba996f58939e27cd8827dea1760cc99f6464d88a059389207b8366171e9403",
+    "lazy_adapter_ownership": "024b4247b7bb4f63fe3942e94ac2211b8e5a6ab9a3077111112943a00b58aa8e"
+  }
+}

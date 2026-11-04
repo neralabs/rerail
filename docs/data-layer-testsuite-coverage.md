@@ -1,7 +1,8 @@
 # Data-layer testsuite coverage
 
 Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
-The [coverage receipt](../fixtures/host/data-layer-port/testsuite-positive-coverage-20261103.json) records the complete 70-rule audit.
+The [coverage receipt](../fixtures/host/data-layer-port/testsuite-positive-coverage-20261103.json) records the earlier 70-rule audit.
+Batch eight adds ten candidates; its evidence is described separately below.
 
 The unchanged upstream tests collect 4,227 cases: **4,224 pass and three retain their upstream skips**.
 These Python results establish the oracle. They are separate from native parity results.
@@ -69,3 +70,23 @@ The broader native suite's inherited snapshot-hash failure remains documented in
 The production post-op policy resolves to exactly the same default program as before this audit.
 The receipt records matching resolved-program hashes.
 The earlier full-repository measurement remains historical; it was not rerun or relabeled for these test changes.
+
+## Batch eight
+
+The unchanged upstream suite passes all 456 tests.
+The original recording contains 308 eligible observations: 195 positive and 113 clean.
+Supplemental probes add 185 observations: 125 positive and 60 clean.
+All 493 observations match both native execution APIs, with zero finding differences or engine failures.
+Every candidate has native positive and native clean coverage.
+
+Ten always-clean controls fail on recorded oracle positives.
+The lazy SQL surface control uses a supplemental positive, because this pin has no dedicated test module.
+The other nine controls use original upstream positives.
+All 50 edit, restoration and removal transitions pass.
+
+The batch retains 12 calls and records 209 tests without a captured detector call.
+The LA probes include original function-fact test sources evaluated through the unchanged full analyzer.
+These observations do not count as mechanically translated pytest assertions.
+The prior 70-rule audit remains a separate receipt; its native observations were not relabeled as a fresh 80-rule run.
+The [batch-eight report](data-layer-batch-eight.md) records the integrated engine and CPython 3.13 runtime dependency.
+Repository acceptance is in progress; the pack remains inactive.

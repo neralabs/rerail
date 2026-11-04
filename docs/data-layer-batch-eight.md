@@ -22,6 +22,9 @@ It also records 12 retained calls and 209 tests without a captured detector call
 These counts are distinct from translated pytest cases.
 
 Supplemental expectations come from unchanged upstream analyzers.
+The 185 supplements contain 125 positive and 60 clean observations.
+All 493 original and supplemental observations match both native APIs, with zero finding or execution differences.
+All ten always-clean controls and all 50 edit/removal transitions pass.
 They include original lazy-architecture fact-test source inputs and positive probes for every LA diagnostic family.
 The source pin has no dedicated lazy-SQL-surface test module.
 Its positive and clean evidence comes from these supplemental oracle probes.

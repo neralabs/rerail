@@ -3,7 +3,7 @@
   "id": "data-layer",
   "name": "Data-layer architecture rules",
   "category": "repository",
-  "covers": "Seventy nera-data-layer candidate checks at the pinned revision. Recorded detection and full-repository parity pass; activation and integration certification remain pending.",
+  "covers": "Eighty nera-data-layer candidate checks at the pinned revision. Recorded source-detection gates pass for all eight batches. Repository parity is verified for the first 70; batch eight and activation remain under validation.",
   "reason": "Repository-specific candidate ports; activation waits for parity and integration checks.",
   "rules": []
 }

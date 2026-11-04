@@ -22,6 +22,7 @@ from data_layer_batch_four import BATCH_FOUR
 from data_layer_batch_five import BATCH_FIVE, MODULES as BATCH_FIVE_MODULES
 from data_layer_batch_six import BATCH_SIX
 from data_layer_batch_seven import BATCH_SEVEN, MODULES as BATCH_SEVEN_MODULES
+from data_layer_batch_eight import BATCH_EIGHT, MODULES as BATCH_EIGHT_MODULES
 
 
 def main() -> None:
@@ -31,7 +32,7 @@ def main() -> None:
     parser.add_argument("--revision", default="2b1504adc4291daaf080b2e932962b134da1a69a")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, currently 1 through 7.")
+    parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, currently 1 through 8.")
     parser.add_argument("--checks", help="Optional comma-separated subset of the selected batches")
     parser.add_argument("--selection", type=Path, help="Pinned profiling file/check selection; preserve project-fact metadata sentinels")
     parser.add_argument("--cpu-profile", type=Path, help="Optional cProfile output for oracle execution; adds measurement overhead")
@@ -45,9 +46,9 @@ def main() -> None:
 
     plugins, extractors = [], serverplan_fact_extractors(root)
     batch_ids = [int(value) for value in args.batches.split(",")]
-    if any(value not in (1, 2, 3, 4, 5, 6, 7) for value in batch_ids) or len(set(batch_ids)) != len(batch_ids):
-        parser.error("--batches requires distinct batch numbers from 1,2,3,4,5,6,7")
-    batches = {1: BATCH_ONE, 2: BATCH_TWO, 3: BATCH_THREE, 4: BATCH_FOUR, 5:BATCH_FIVE, 6:BATCH_SIX, 7:BATCH_SEVEN}
+    if any(value not in (1, 2, 3, 4, 5, 6, 7, 8) for value in batch_ids) or len(set(batch_ids)) != len(batch_ids):
+        parser.error("--batches requires distinct batch numbers from 1,2,3,4,5,6,7,8")
+    batches = {1: BATCH_ONE, 2: BATCH_TWO, 3: BATCH_THREE, 4: BATCH_FOUR, 5:BATCH_FIVE, 6:BATCH_SIX, 7:BATCH_SEVEN, 8:BATCH_EIGHT}
     names = [name for value in batch_ids for name in batches[value]]
     if args.checks:
         selected_checks = args.checks.split(',')
@@ -56,13 +57,14 @@ def main() -> None:
     graph_checks={'public_api_triples','internal_dead_code','imperative_private_functions'}
     graph_module=None
     for name in names:
+        if name=="cached_pure_lazy_allowlist":continue
         if name in graph_checks:
             if graph_module is None:
                 graph_module=importlib.import_module('scripts.lint_symbol_graph_plugins')
                 extractors.update(graph_module.symbol_graph_fact_extractors(root))
             plugins.append(next(plugin for plugin in graph_module.symbol_graph_linter_plugins(root) if plugin.name==name))
             continue
-        module = importlib.import_module(BATCH_SEVEN_MODULES.get(name, BATCH_FIVE_MODULES.get(name,"scripts.lint_" + name)))
+        module = importlib.import_module(BATCH_EIGHT_MODULES.get(name,BATCH_SEVEN_MODULES.get(name, BATCH_FIVE_MODULES.get(name,"scripts.lint_" + name))))
         if name == "rust_sql_grammar_boundary":
             continue
         plugin_name={"serverplan_target_architecture":"target_architecture","serverplan_dispatch_architecture":"dispatch_architecture"}.get(name,name)
@@ -140,6 +142,15 @@ def main() -> None:
     cpu_started = time.process_time()
     children_started = resource.getrusage(resource.RUSAGE_CHILDREN)
     results = engine.run_plugins(plugins, max_workers=args.workers)
+    cached_findings=[]
+    if 'cached_pure_lazy_allowlist' in names:
+        cached=importlib.import_module('scripts.verify_cached_pure_lazy_allowlist')
+        cached_findings=list(cached.policy_violations(cached.discover_cached_pure_lazy_functions(root),cached.cached_pure_lazy_policy_entries()))
+        cached_findings.extend(cached.memoized_policy_violations(cached.discover_memoized_pure_lazy_functions(root),cached.memoized_pure_lazy_policy_entries()))
+        runtime_hash=cached.cached_pure_lazy_runtime_source_hash(root/'l2055_lazy_result/purity.py',policy_path=root/'l2055_lazy_result/cached_pure_lazy_policy.py',optimizer_cache_path=root/'l2070_batching/optimizer_run_cache.py')
+        if runtime_hash!=cached.CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH:cached_findings.append(f'cached pure-lazy runtime source hash changed: actual={runtime_hash} policy={cached.CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH}')
+        if len(cached.CACHED_PURE_LAZY_RUNTIME_SYMBOL_NAMES)!=len(cached.CACHED_PURE_LAZY_RUNTIME_SYMBOLS) or set(cached.CACHED_PURE_LAZY_RUNTIME_SYMBOL_NAMES)!=cached.CACHED_PURE_LAZY_RUNTIME_SYMBOLS:cached_findings.append('cached pure-lazy runtime symbol metadata changed')
+        if not cached.verify_allowlist(cached.ALLOWLIST_NAME,cached.cached_pure_lazy_policy_signed_text(),cached.ALLOWLIST_SIGNATURE,version=cached.ALLOWLIST_VERSION):cached_findings.append('cached pure-lazy policy signature is invalid')
     oracle_ms = (time.perf_counter() - started) * 1000
     children_finished = resource.getrusage(resource.RUSAGE_CHILDREN)
     oracle_cpu_ms = (time.process_time() - cpu_started + children_finished.ru_utime + children_finished.ru_stime
@@ -149,7 +160,30 @@ def main() -> None:
         profiler.dump_stats(str(args.cpu_profile))
     events = []
     reporter_results = []
+    if 'cached_pure_lazy_allowlist' in names:
+        events.append({'test':'suite:cached_pure_lazy_allowlist','call':1,'check':'cached_pure_lazy_allowlist','entry':'all','upstream_passed':True,'input_mode':'suite','production_scope':True,'scope':{'include':['**/*.py'],'exclude':[]},'file_set':'suite','findings':[{'path':'l2055_lazy_result/cached_pure_lazy_policy.py','line':1,'column':None,'code':issue,'message':issue} for issue in cached_findings]})
     for result in results:
+        if result.name in {'eager_resolve','pure_lazy_runtime_purity','lazy_architecture'}:
+            module=importlib.import_module('scripts.lint_'+result.name)
+            reporter_results.append({'check':result.name,'contract':'signed inventory and aggregate ratchet retained upstream; native comparison uses source diagnostics','findings':[{'path':v.path.as_posix(),'line':v.line,'code':v.code,'message':v.message} for v in result.violations]})
+            if result.name=='lazy_architecture':
+                by_file,extra=module._fact_view_to_lazy_architecture_inputs(captured[0])
+                _,raw=module._scan_analyzed_files(by_file,extra)
+                raw=module._dedupe_violations(raw)
+            elif result.name=='eager_resolve':
+                raw=[item for bundle in captured[0].files.values() for fact in bundle.facts.get(module.EAGER_RESOLVE_EXTRACTOR.extractor_id,[]) if isinstance(fact,dict) and (item:=module._violation_from_fact(fact)) is not None]
+                raw=module._dedupe_by_allowlist_key(raw)
+            else:
+                raw=[]
+                for bundle in captured[0].files.values():
+                    fact=bundle.facts.get(module.PURE_LAZY_RUNTIME_PURITY_EXTRACTOR.extractor_id)
+                    if isinstance(fact,dict):raw.extend(module._violation_from_artifact(root,item) for item in module.PureLazyReportArtifact.model_validate(fact).violations)
+            from data_layer_batch_eight import normalize
+            def logical(path):
+                path=Path(path)
+                return path.relative_to(root).as_posix() if path.is_absolute() and path.is_relative_to(root) else path.as_posix()
+            events.append({'test':'suite:'+result.name,'call':1,'check':result.name,'entry':'source-diagnostics','upstream_passed':True,'input_mode':'suite','production_scope':True,'scope':{'include':['**/*.py'],'exclude':[]},'file_set':'suite','findings':normalize(result.name,raw,files,logical)})
+            continue
         if selection is not None and result.name == 'serverplan_state_tripwires':
             # Generated-file freshness is an upstream integration contract, as documented in
             # docs/data-layer-batch-six.md. A restricted view necessarily changes that digest.

@@ -159,7 +159,7 @@ try {
     expected: expected.length, actual: actual.length, falsePositives: difference(actual, expected), falseNegatives: difference(expected, actual), failures,
     peakRssBytes: process.resourceUsage().maxRSS * 1024,
     allocator: values.allocator, policies: values.policies, nativeSha256, nativeWorkers: 4,
-    batchFiles, applies, memoryCheckpoints, measurementNote: "Phase CPU includes explicit census overhead when --memory-census is supplied. Reference timings must omit this option." };
+    batchFiles, applies, memoryCheckpoints, measurementNote: "Phase CPU covers the current process and excludes child processes, including canonical CPython producers. Use an external process-family CPU receipt. Phase CPU includes explicit census overhead when --memory-census is supplied. Reference timings must omit this option." };
   writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, falsePositives: report.falsePositives.length, falseNegatives: report.falseNegatives.length, failures: failures.length, incrementalDifferences: incrementalDifferences.length }, null, 2));
   if (report.falsePositives.length + report.falseNegatives.length + failures.length + incrementalDifferences.length !== 0) process.exitCode = 1;

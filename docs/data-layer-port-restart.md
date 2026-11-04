@@ -1,13 +1,16 @@
 # Restart the data-layer rule ports
 
-Date: 2026-11-03. Status: restart in progress; ten batch-seven candidates are implemented.
+Date: 2026-11-03. Status: 80 candidates authored; batch-eight focused parity passes.
 
 The recovery survey below describes the original 60-rule restart point.
 Batch seven now passes 217 source observations and 50 edit/removal transitions.
 Integrated-engine compatibility is included, as requested.
 The first cumulative run failed with 22 engine errors; its results are not a parity pass.
 The admission and legacy-query regressions now pass. The corrected 70-rule repository gate matches all findings with zero engine failures.
-There are now 70 candidates and 72 checks left in the pinned scope. Memory remains an open concern.
+There are now 80 candidates and 62 checks left in the pinned scope.
+Batch eight matches 493 source observations and 50 edit/removal transitions.
+Its repository acceptance is in progress. See [the batch report](data-layer-batch-eight.md) for the CPython dependency.
+Memory remains an open concern.
 See the [journal](data-layer-performance-journal.md) for measurements and retained qualifications.
 
 ## Verified restart point
