@@ -206,13 +206,15 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     clean: rows.filter(row => row.check === check && !row.positive).length,
   }));
   const missingCoverage = coverage.filter(row => row.positive === 0 || row.clean === 0);
+  const nativeCoverage = recording.checks.map(check => ({ check,
+    positive: rows.filter(row => row.check === check && row.execution === "native" && row.positive).length,
+    clean: rows.filter(row => row.check === check && row.execution === "native" && !row.positive).length,
+  }));
+  const missingNativeCoverage = nativeCoverage.filter(row => row.positive === 0 || row.clean === 0);
   const report = { coverage, missingCoverage,
     nativeCalls: rows.filter(row => row.execution === "native").length,
     hostGuardCalls: rows.filter(row => row.execution === "host-signature-guard").length,
-    nativeCoverage: recording.checks.map(check => ({ check,
-      positive: rows.filter(row => row.check === check && row.execution === "native" && row.positive).length,
-      clean: rows.filter(row => row.check === check && row.execution === "native" && !row.positive).length,
-    })),
+    nativeCoverage, missingNativeCoverage,
     nativeSha256, dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
     format: "rerail.data-layer-parity/v1", commit: recording.commit, recordings: paths,
     collectedTests: recording.collected_tests, replayedCalls: rows.length,
@@ -226,7 +228,7 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     compilationMs, elapsedMs: performance.now() - started, rows };
   writeFileSync(outputPath, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, rows: undefined, retainedCalls: report.retainedCalls.length, uncapturedTests: report.uncapturedTests.length }, null, 2));
-  return report.falsePositives + report.falseNegatives + report.engineFailures + report.executionPathDifferences + missingCoverage.length === 0;
+  return report.falsePositives + report.falseNegatives + report.engineFailures + report.executionPathDifferences + missingCoverage.length + missingNativeCoverage.length === 0;
 }
 
 if (process.argv[1]?.endsWith("/replay.ts")) {
