@@ -981,3 +981,5 @@ fn the_statistics_loop_runs_on_the_slices_path() {
     assert_eq!(count("SELECT count(*) FROM compiled_plans"), plans);
     assert!(count("SELECT max(samples) FROM plan_feedback") >= 2);
 }
+
+mod data_layer;

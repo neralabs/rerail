@@ -93,7 +93,7 @@ fn shaped_from(policies: &[(String, crate::code_rule_dsl::CompiledCodeRuleDsl)])
                 }
                 let Ok(tree) = match_tree(grammar) else { continue };
                 let Ok(matcher) = LoweredMatcher::lower(&tree) else { continue };
-                clauses.push(Clause { name, key: (compiled.inner.id.clone(), clause.id.clone()), plan: Arc::clone(&grammar.anchors), matcher });
+                clauses.push(Clause { name, key: (compiled.inner.id.clone(), clause.id.clone()), plan: Arc::clone(&grammar.anchors), matcher, paths: Vec::new() });
                 grammars.push(grammar.clone());
                 shapes.push(Shape { rule: Arc::clone(&compiled.inner), clause: at, grammar: index });
             }

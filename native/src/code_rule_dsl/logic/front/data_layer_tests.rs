@@ -26,6 +26,7 @@ fn error_name(e: &Error) -> &'static str {
         Error::AggregationInRecursion { .. } => "AggregationInRecursion",
         Error::UnboundedLattice { .. } => "UnboundedLattice",
         Error::UnboundDemand { .. } => "UnboundDemand",
+        Error::UnboundedValueCycle { .. } => "UnboundedValueCycle",
     }
 }
 

@@ -184,11 +184,71 @@ pub(in crate::code_rule_dsl) struct Unsupported(pub(in crate::code_rule_dsl) &'s
 
 /// The match tree of a clause's matcher.
 pub(in crate::code_rule_dsl) fn match_tree(grammar: &GrammarMatcher) -> Result<MatchTree, Unsupported> {
+    tree_of(grammar, &grammar.matcher)
+}
+
+/// A condition on the whole document a matcher's rule holds as a conjunct of its root: one test per
+/// document, not per node. The wave tests it before its batch and runs the clause only on the
+/// documents where every one holds (03 §6, a file pre-filter).
+#[derive(Clone, Debug)]
+pub(in crate::code_rule_dsl) enum DocumentGate {
+    /// `filePath: {regex, notRegex}`: the document's path relative to its root.
+    Path(Arc<crate::code_rule_dsl::language::TextCondition>),
+    /// `inside: {all: [{kind: module}, {regex: R}], stopBy: end}`: the file's text matches `R` (the
+    /// rule tests the module node's text, which every node but the module is inside). The ported
+    /// checkers' quick "does the file mention X" test.
+    Text(Regex),
+}
+
+impl DocumentGate {
+    pub(in crate::code_rule_dsl) fn holds(&self, path: &str, text: &str) -> bool {
+        match self {
+            Self::Path(condition) => condition.holds(path),
+            Self::Text(regex) => regex.is_match(text),
+        }
+    }
+}
+
+/// The document gates among the conjuncts of a matcher's root (`DocumentGate`), and the tree of the
+/// rest. A `filePath` anywhere else is still refused. A module text test holds for every node but
+/// the module, so it is a gate only where the rest cannot match the module itself: the conjuncts
+/// include a `kind` other than `module`.
+pub(in crate::code_rule_dsl) fn gated_match_tree(grammar: &GrammarMatcher) -> Result<(MatchTree, Vec<DocumentGate>), Unsupported> {
+    use super::Semantic;
+    let AstMatcher::All(items) = &grammar.matcher else { return Ok((match_tree(grammar)?, Vec::new())) };
+    let module = grammar.language.kind_id("module");
+    let is_module = |matcher: &AstMatcher| match matcher {
+        AstMatcher::Kind(kind) => kind.potential_kinds().is_some_and(|kinds| kinds.iter().eq([usize::from(module)])),
+        _ => false,
+    };
+    let kind_other_than_module = items.iter().any(|item| matches!(item, AstMatcher::Kind(_)) && !is_module(item));
+    let (mut gates, mut rest) = (Vec::new(), Vec::new());
+    for item in items {
+        match item {
+            AstMatcher::Semantic(Semantic::FilePath(condition)) => gates.push(DocumentGate::Path(Arc::clone(condition))),
+            AstMatcher::Inside(related, super::relation::StopBy::End) if kind_other_than_module => match related.rule() {
+                AstMatcher::All(parts) => match parts.as_slice() {
+                    [kind, AstMatcher::Regex(regex)] if is_module(kind) => gates.push(DocumentGate::Text(regex.clone())),
+                    _ => rest.push(item.clone()),
+                },
+                _ => rest.push(item.clone()),
+            },
+            other => rest.push(other.clone()),
+        }
+    }
+    if gates.is_empty() {
+        return Ok((match_tree(grammar)?, gates));
+    }
+    let rest = if rest.len() == 1 { rest.pop().expect("one conjunct") } else { AstMatcher::All(rest) };
+    Ok((tree_of(grammar, &rest)?, gates))
+}
+
+fn tree_of(grammar: &GrammarMatcher, matcher: &AstMatcher) -> Result<MatchTree, Unsupported> {
     if grammar.transform.is_some() {
         return Err(Unsupported("transform"));
     }
     let mut lowering = Lowering { three_valued: grammar.three_valued, source: (grammar.source.0, Some(grammar.source.1)), ..Lowering::default() };
-    let tree = lowering.tree(&grammar.matcher, true)?;
+    let tree = lowering.tree(matcher, true)?;
     if lowering.binds.values().any(|&uses| uses > 1) {
         return Err(Unsupported("shared binding"));
     }

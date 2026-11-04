@@ -38,7 +38,7 @@ use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Program, Rule, Ter
 use crate::code_rule_dsl::logic::magic;
 use crate::code_rule_dsl::logic::plan::emit;
 use crate::code_rule_dsl::logic::sql::select::Source;
-use crate::code_rule_dsl::matcher::match_tree;
+use crate::code_rule_dsl::matcher::gated_match_tree;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::transducer::packed::LoweredMatcher;
 use crate::content_store::{ContentStore, StoreError, StoreResult};
@@ -319,8 +319,10 @@ pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]
             let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { return None };
             let mut python = matchers.iter().enumerate().filter(|(_, m)| m.language == GrammarDialect::Python);
             let (grammar_at, grammar) = python.next()?;
-            let lowered = LoweredMatcher::lower(&match_tree(grammar).ok()?).ok()?;
+            let (tree, paths) = gated_match_tree(grammar).ok()?;
+            let lowered = LoweredMatcher::lower(&tree).ok()?;
             clauses.push(Clause {
+                paths,
                 name: format!("{policy}/{}", clause.id),
                 key: (compiled.inner.id.clone(), clause.id.clone()),
                 plan: Arc::clone(&grammar.anchors),

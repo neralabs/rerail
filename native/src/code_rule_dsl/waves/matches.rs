@@ -69,6 +69,9 @@ pub(in crate::code_rule_dsl) struct Clause {
     pub key: (String, String),
     pub plan: Arc<AnchorPlan>,
     pub matcher: LoweredMatcher,
+    /// The conditions on the document's path its rule's root holds (`gated_match_tree`): the clause
+    /// runs only on documents whose path meets every one.
+    pub paths: Vec<crate::code_rule_dsl::matcher::DocumentGate>,
 }
 
 /// What `demand` did for one chunk, for the gates.
@@ -84,6 +87,8 @@ pub(in crate::code_rule_dsl) struct Wave {
     backend: ExecutionBackend,
     names: Vec<String>,
     plans: Vec<Arc<AnchorPlan>>,
+    /// Each clause's conditions on the document's path (`Clause::paths`).
+    paths: Vec<Vec<crate::code_rule_dsl::matcher::DocumentGate>>,
     lowered: LoweredWave,
     /// The lowered wave's plan identity (`LoweredWave::identity`): its roots' batches are its parts.
     plan: PlanId,
@@ -158,6 +163,7 @@ impl Wave {
             backend,
             names: clauses.iter().map(|clause| clause.name.clone()).collect(),
             plans: clauses.iter().map(|clause| Arc::clone(&clause.plan)).collect(),
+            paths: clauses.iter().map(|clause| clause.paths.clone()).collect(),
             plan: lowered.identity(),
             lowered,
             lang: u32::from(tape_tag(GrammarDialect::Python).expect("Python has a tape")),
@@ -280,6 +286,20 @@ impl Wave {
         Ok(Some(demanded))
     }
 
+    /// Each clause kept off the documents that fail one of its document gates (`Clause::paths`).
+    fn gate(&self, demanded: &mut Option<Vec<Vec<bool>>>, documents: &[Document], tapes: &[Arc<Tape>]) {
+        if self.paths.iter().all(Vec::is_empty) {
+            return;
+        }
+        let demanded = demanded.get_or_insert_with(|| vec![vec![true; documents.len()]; self.plans.len()]);
+        let sources = tapes.iter().map(|tape| ast_grep_core::Doc::get_source(&tape.doc)).collect::<Vec<_>>();
+        for (on, gates) in demanded.iter_mut().zip(&self.paths) {
+            for ((on, document), source) in on.iter_mut().zip(documents).zip(&sources) {
+                *on = *on && gates.iter().all(|gate| gate.holds(&document.path, source.as_str()));
+            }
+        }
+    }
+
     /// The planner's source and the batch inputs it reads, each with its source and estimate.
     fn inputs(&self, kept: bool) -> (String, HashMap<String, (Source, f64)>) {
         let mut batch = HashMap::from([
@@ -316,7 +336,7 @@ impl Wave {
         if documents.is_empty() {
             return Ok(None);
         }
-        let demanded = crate::code_rule_dsl::prof::time("demand.magic", || self.demanded(lease, graph.store(), documents))?;
+        let mut demanded = crate::code_rule_dsl::prof::time("demand.magic", || self.demanded(lease, graph.store(), documents))?;
         let tapes = crate::code_rule_dsl::prof::time("demand.tapes", || {
             documents
                 .iter()
@@ -326,6 +346,7 @@ impl Wave {
                 })
                 .collect::<StoreResult<Vec<Arc<Tape>>>>()
         })?;
+        crate::code_rule_dsl::prof::time("demand.gates", || self.gate(&mut demanded, documents, &tapes));
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("1.tapes");
         let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
