@@ -97,6 +97,11 @@ pub(in crate::code_rule_dsl) fn rows(
         let tape = tapes[at].1;
         let len = tape.transducer_len();
         for (slot, found) in slots.iter().zip(&found) {
+            // A test of any kind would be confirmed on every uncovered node, whole classes and
+            // functions among them; the walk tests the few it reaches on their text instead.
+            if slot.kind.is_none() && !missing[at].is_empty() && std::env::var_os("RERAIL_TEXTS_ANY").is_none() {
+                continue;
+            }
             let mut bits = vec![0_u64; len.div_ceil(64)];
             let of_kind = |node: u32| slot.kind.is_none_or(|kind| tape.transducer_kind(node) == kind);
             for &node in &found[at] {

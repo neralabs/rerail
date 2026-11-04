@@ -152,3 +152,102 @@ fn data_layer_bench() {
         }
     }
 }
+
+/// The data-layer fixtures on the final shape's path: each recorded pytest event of one check
+/// (`RERAIL_DL_RECORDING`, `RERAIL_DL_CHECK`, e.g. `gate/data-layer/fixtures/host/data-layer-port/
+/// batch-06-recording.json` and `serverplan_quality`) is a root of its files, audited cold with the
+/// policy compiled at the event's options; its keys (code, path, line) are compared with the
+/// recorded findings. Prints per entry point how many events agree.
+#[test]
+#[ignore = "the data-layer fixtures; RERAIL_DL_POLICY, RERAIL_DL_RECORDING, RERAIL_DL_CHECK, --ignored --nocapture"]
+fn data_layer_fixtures() {
+    let policy = PathBuf::from(std::env::var("RERAIL_DL_POLICY").expect("RERAIL_DL_POLICY"));
+    let recording: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(std::env::var("RERAIL_DL_RECORDING").expect("RERAIL_DL_RECORDING")).unwrap()).unwrap();
+    let check = std::env::var("RERAIL_DL_CHECK").expect("RERAIL_DL_CHECK");
+    let only = std::env::var("RERAIL_DL_ENTRY").ok();
+    let events = recording["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["check"] == check.as_str())
+        .filter(|e| only.as_ref().is_none_or(|only| e["oracle_config"]["options"]["entryPoint"].as_str() == Some(only)))
+        .collect::<Vec<_>>();
+    let document: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&policy).unwrap()).unwrap();
+    let mut by_options = BTreeMap::<String, Vec<&serde_json::Value>>::new();
+    for event in &events {
+        by_options.entry(event["oracle_config"]["options"].to_string()).or_default().push(event);
+    }
+    let backend = ExecutionBackend::CpuBackground;
+    let (mut agree, mut total, mut spent) = (0, 0, std::time::Duration::ZERO);
+    let verbose = std::env::var_os("RERAIL_DL_VERBOSE").is_some();
+    for (options, events) in &by_options {
+        let options: serde_json::Map<String, serde_json::Value> = serde_json::from_str(options).unwrap();
+        let mut document = document.clone();
+        for clause in document["clauses"].as_array_mut().unwrap() {
+            if let Some(defined) = clause.pointer_mut("/define/options").and_then(|o| o.as_object_mut()) {
+                for (name, value) in &options {
+                    if let Some(option) = defined.get_mut(name) {
+                        option["default"] = value.clone();
+                    }
+                }
+            }
+        }
+        let file = temp("dl-policy").with_extension("json");
+        std::fs::write(&file, document.to_string()).unwrap();
+        let (compiled, refused) = split(&file);
+        let entry = options.get("entryPoint").and_then(|e| e.as_str()).unwrap_or("?").to_owned();
+        let policies = vec![(policy.file_stem().unwrap().to_string_lossy().into_owned(), compiled.1)];
+        let mut rules = Rules::lower(&policies, backend).unwrap();
+        // W runs every clause of the policy (relational ones included, as test builds compile them).
+        let full = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|e| panic!("{}", e.reason));
+        let mut good = 0;
+        let mut w_agree = 0;
+        for event in events {
+            let dir = temp("dl-event");
+            std::fs::create_dir_all(&dir).unwrap();
+            for f in event["files"].as_array().unwrap() {
+                let path = dir.join(f["path"].as_str().unwrap());
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, f["source"].as_str().unwrap()).unwrap();
+            }
+            let expected = event["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| (f["code"].as_str().unwrap().to_owned(), f["path"].as_str().unwrap().to_owned(), f["line"].as_u64().unwrap() as usize))
+                .collect::<BTreeSet<_>>();
+            let store = ContentStore::open(&temp("dl-event-store").with_extension("sqlite")).unwrap();
+            let started = cpu();
+            let tree = directory_root(&store, &dir).unwrap();
+            let run = audit(&store, WS, tree, &mut rules);
+            spent += cpu() - started;
+            let found = match &run {
+                Ok(run) => keys(run).into_iter().map(|(_, code, path, line)| (code, path, line + 1)).collect::<BTreeSet<_>>(),
+                Err(error) => {
+                    eprintln!("DLF {entry} error: {error:?}");
+                    BTreeSet::new()
+                }
+            };
+            total += 1;
+            if std::env::var_os("RERAIL_DL_W").is_some() {
+                let names = full.inner.clauses.iter().map(|c| format!("{}/{}", policies[0].0, c.id)).collect::<BTreeSet<_>>();
+                let texts = event["files"].as_array().unwrap().iter().map(|f| (f["path"].as_str().unwrap().to_owned(), f["source"].as_str().unwrap().to_owned())).collect::<Vec<_>>();
+                let (ws, _) = ws_keys(&[(policies[0].0.clone(), CompiledCodeRuleDsl { inner: std::sync::Arc::clone(&full.inner) })], &names, &texts);
+                let ws = ws.into_iter().map(|(_, code, path, line)| (code, path, line + 1)).collect::<BTreeSet<_>>();
+                w_agree += usize::from(ws == expected);
+                if ws != expected && verbose {
+                    eprintln!("DLF W {entry} {}: only W {:?}, only recorded {:?}", event["test"].as_str().unwrap_or("?"), ws.difference(&expected).collect::<Vec<_>>(), expected.difference(&ws).collect::<Vec<_>>());
+                }
+            }
+            if found == expected {
+                good += 1;
+            } else if verbose {
+                eprintln!("DLF {entry} {}: only ours {:?}, only recorded {:?}", event["test"].as_str().unwrap_or("?"), found.difference(&expected).collect::<Vec<_>>(), expected.difference(&found).collect::<Vec<_>>());
+            }
+        }
+        agree += good;
+        eprintln!("DLF {entry}: {good}/{} events agree (W {w_agree}); {} clauses not run", events.len(), refused.len());
+    }
+    eprintln!("DLF total: {agree}/{total} events agree; audits cpu {spent:?}");
+}
