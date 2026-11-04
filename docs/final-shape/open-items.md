@@ -1102,6 +1102,32 @@ before it runs.
   pool is sized from three quarters of the free buffer budget. 37 of 39 equal; the other two are
   O40.
 
+## O39. The cold audit's footprint peak and the budget split
+
+Found at list step 28 (2026-11-04). S7's sample, cold on Metal, measured with
+`RERAIL_PROF_STAGES=1` (every stage's footprint, live heap and Metal buffers) and `footprint` on
+the process (`RERAIL_DIAG_PAUSE_AT`).
+- **Fixed on the way** (peak 3,017 → 603 MB):
+  - only a walk's overflow retries (decision 0032);
+  - roots as rules (decision 0033);
+  - roots that are walks are not sized for a backend that never runs;
+  - no thread memory on the device (decision 0034).
+- **What is left at the peak** (the second label run, 603 MB):
+  - the process at start: 63 MB;
+  - the driver's fixed cost of a process's first submission: ~113 MB (measured alone, whatever
+    the work);
+  - driver-private memory beyond that: ~90 MB;
+  - Metal buffers: up to ~240 MB during encode (the residency's slabs and the run's workspace);
+  - the heap: 230 MB live. That is the tapes (~62 MB at `1.tapes`), the candidate sets' leaves
+    (~36 MB) and the plan and encode state (~45 MB in the run).
+- **The arithmetic does not close:** 63 + 113 + 256 (the Metal buffer budget) = 432 MB, which
+  leaves ~70 MB of heap under a 500 MB total.
+- **What the shape needs** (not a tuning):
+  - The Metal buffer budget must be set from the total. It is the total less the process base,
+    the driver's fixed cost and a heap share, not a separate 256 MB.
+  - The heap must not hold what the slabs hold. A wave's tapes are resident in slabs and also
+    decoded in the heap, as `TapeDoc` (for the CPU's roots, rows and facts, decision 0032 §6).
+
 ## O40. Interpreted recursive groups run their rounds from the host
 
 Found at list step 28 (2026-11-04). ruff-async251 and ruff-sim300, interpreted, are recursive
