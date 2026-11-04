@@ -9,16 +9,16 @@ Set-up copies Rerail out of npm's ephemeral `npx` cache into a durable install i
 
 ```text
 ~/.rerail/
-├── versions/<version>/node_modules/@neralabs/rerail/   the installed package
+├── versions/<version>/node_modules/@neralabs/rerail/  the installed package
 ├── current  →  versions/<version>/node_modules/@neralabs/rerail
-├── bin/rerail                                          launcher shim → current/dist/cli/cli.js
+├── bin/rerail                                         launcher shim → current/dist/cli/cli.js
 ├── update-state.json                                  active + previous version, channel
 ├── daemon.json / daemon.log                           the running daemon
 ├── daemon-port.json                                   the port the daemon comes back on after a restart
-├── coding-agents.json                                 the coding agents set-up and `rerail install` have seen
-├── packs/node_modules/@neralabs/rerail-pack-<id>/     Rerail's rule packs you installed (`rerail packs`)
+├── coding-agents.json                                 the coding agents set-up and rerail install have seen
+├── packs/node_modules/@neralabs/rerail-pack-<id>/     Rerail's rule packs you installed (rerail packs)
 ├── packs/node_modules/[@<scope>/]rerail-pack-<id>/    third parties' rule packs you installed
-└── versions/<older>/…                                 the versions `rerail update` replaced
+└── versions/<older>/…                                 the versions rerail update replaced
 ```
 
 ## Set-up step by step

@@ -127,7 +127,7 @@ resource group:
 just rerail-env-matrix run --tarball neralabs-rerail-<version>.tgz                  # every environment
 just rerail-env-matrix run --tarball <file> --env windows-11-x64,debian-12-x64      # some
 just rerail-env-matrix run --npm next                                               # a published version from npmjs
-just rerail-env-matrix run --tarball <file> --env ubuntu-24.04-x64 --keep          # leave the VM for a look
+just rerail-env-matrix run --tarball <file> --env ubuntu-24.04-x64 --keep           # leave the VM for a look
 just rerail-env-matrix sweep --run-id <id>                                          # delete what a --keep run left
 ```
 
