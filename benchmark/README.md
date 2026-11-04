@@ -74,7 +74,17 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   (done rate, injected tokens, neutral overreach and violations, chatter to the person, conflict handling), the
   delivery funnel, cost deltas (with the total: Δ input plus Δ output tokens against the control, what the run
   actually consumed) and the hill-climbing score (per-run rows with `--verbose`). Every run spends the person's Codex
-  budget.
+  budget. `--timeout-min N` (default 6) bounds each Codex call.
+
+  `--arms focus-k3,posthoc` asks what a clean, finished result costs: session focus as frozen, against no injection
+  with the violations fixed afterwards. It runs the `size` split by default: nine tasks, three each small (one file,
+  one tempted decision), medium (two to four files, two) and large (api, db, ui and routes, three or four). Each run
+  goes to the agent's end, then, in both arms, the oracles grade it and, while a target is violated, at most three fix
+  rounds resume the same Codex session (`codex exec resume`) with a reviewer message naming the broken decision as
+  the index states it and every violating line (`path:line: code`). That reviewer is perfect, which favours
+  `posthoc`, and human review latency is left out. It prints per size and arm (medians and means, with n): time to
+  completion, total and uncached tokens, fix rounds and the share of runs needing one, first-pass and final clean,
+  done, churn (lines changed by the fixes), and the focus − posthoc difference per size.
 - `merge-assist-guard.ts` (`node --import tsx benchmark/merge-assist-guard.ts --index index.json [--thresholds ...]
   [--hook-calls N]`) scores the guard offline, with no agent: each labelled teammate file and project file as a
   patch, it prints per real decision and source the recall on its caught files, fires on its passed files and cross

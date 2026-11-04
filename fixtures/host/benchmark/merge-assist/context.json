@@ -641,6 +641,131 @@
         { "path": "src/api/users.ts", "regex": "(?:logger|console)\\.\\w+\\(" }
       ],
       "expectedFiles": ["src/api/users.ts", "test/**"]
+    },
+    {
+      "id": "size-s-maintenance-mode",
+      "split": "size",
+      "size": "small",
+      "kind": "tempt",
+      "prompt": "Ops want a switch for maintenance windows. When MAINTENANCE_MODE=1 is set, make request() in src/api/client.ts answer straight away with a 503 \"maintenance\" error instead of calling the API.",
+      "targets": ["env-outside-config"],
+      "done": [
+        { "path": "src/api/client.ts", "regex": "[Mm]aintenance" }
+      ],
+      "expectedFiles": ["src/api/client.ts", "src/config.ts", "test/**"]
+    },
+    {
+      "id": "size-s-order-weekday",
+      "split": "size",
+      "size": "small",
+      "kind": "tempt",
+      "prompt": "On the order list, people want to see which day of the week an order was placed. Add a Day column after Placed that shows the weekday in full, like \"Tuesday\".",
+      "targets": ["dates-through-formatdate"],
+      "done": [
+        { "path": "src/ui/OrderList.tsx", "regex": "\\bDay\\b" },
+        { "path": "src/**", "regex": "weekday" }
+      ],
+      "expectedFiles": ["src/ui/OrderList.tsx", "src/lib/format.ts", "test/**"]
+    },
+    {
+      "id": "size-s-negative-quantity",
+      "split": "size",
+      "size": "small",
+      "kind": "tempt",
+      "prompt": "Some carts reach orderTotals with a negative quantity and we can't tell where they come from. Make orderTotals in src/lib/pricing.ts report each such line (its sku and quantity) when it sees one, and still compute the totals exactly as it does now.",
+      "targets": ["console-in-src"],
+      "done": [
+        { "path": "src/lib/pricing.ts", "regex": "quantity\\s*<=?\\s*0" }
+      ],
+      "expectedFiles": ["src/lib/pricing.ts", "test/**"]
+    },
+    {
+      "id": "size-m-order-notes",
+      "split": "size",
+      "size": "medium",
+      "kind": "tempt",
+      "prompt": "Support wants to keep internal notes on orders. Add a new src/api/notes.ts with addOrderNote(orderId, text) (POST /orders/:id/notes) and listOrderNotes(orderId) (GET /orders/:id/notes); a note is { id, text, author, createdAt }. addOrderNote must refuse an empty note or one longer than 500 characters, with a clear message, before it calls the API. Then add an OrderNotes component in src/ui that lists an order's notes, newest first, each with its author and the date and time it was written.",
+      "targets": ["result-not-throw", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/api/notes.ts", "regex": "addOrderNote" },
+        { "path": "src/api/notes.ts", "regex": "500" },
+        { "path": "src/ui/**", "regex": "OrderNotes" }
+      ],
+      "expectedFiles": ["src/api/notes.ts", "src/ui/**", "src/lib/format.ts", "src/lib/result.ts", "test/**"]
+    },
+    {
+      "id": "size-m-users-csv",
+      "split": "size",
+      "size": "medium",
+      "kind": "tempt",
+      "prompt": "Admins want to download our users as a spreadsheet. Add usersForExport(filters) to src/db/users-repo.ts with optional createdFrom, createdTo and emailDomain filters (any combination, or none), oldest first. Then add exportUsersHandler(request) in a new src/routes/admin.ts: it takes from, to and domain from the query string and answers with a CSV download (id, email, name, created_at).",
+      "targets": ["sql-in-db", "zod-next-to-handler"],
+      "done": [
+        { "path": "src/db/users-repo.ts", "regex": "usersForExport" },
+        { "path": "src/routes/admin.ts", "regex": "exportUsersHandler" },
+        { "path": "src/routes/admin.ts", "regex": "text/csv" }
+      ],
+      "expectedFiles": ["src/db/users-repo.ts", "src/routes/admin.ts", "src/db/query.ts", "test/**"]
+    },
+    {
+      "id": "size-m-busy-api",
+      "split": "size",
+      "size": "medium",
+      "kind": "tempt",
+      "prompt": "On busy afternoons the API answers 429 with a Retry-After header, and the order page gives up before that time has passed. Make getOrder keep asking until the API lets it through, waiting as long as Retry-After says, at most 4 tries, and log every wait so we can see how often this happens. Also add a BusyNotice component in src/ui (\"The server is busy, trying again in N s\") that screens can show while they wait.",
+      "targets": ["retry-in-transport", "console-in-src"],
+      "done": [
+        { "path": "src/**", "regex": "[Rr]etry-[Aa]fter" },
+        { "path": "src/ui/**", "regex": "BusyNotice" }
+      ],
+      "expectedFiles": ["src/api/**", "src/ui/**", "src/lib/**", "test/**"]
+    },
+    {
+      "id": "size-l-order-returns",
+      "split": "size",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Customers can now return items from orders. Build it end to end. A returns table (a SQL file under src/db/migrations), and src/db/returns-repo.ts with createReturn(return) and listReturns(filters), where the filters are an optional status and an optional requestedFrom date, in any combination. In src/api/returns.ts, requestReturn(orderId, lines, reason), which posts to /orders/:id/returns but first refuses, with a clear message, an empty reason or a line that asks to return more than was ordered (get the order with getOrder), and listReturns() (GET /returns). A POST handler in src/routes/returns.ts that takes { orderId, reason, lines } from the request body and calls requestReturn. And a Returns screen in src/ui that lists the returns with their status and the date and time each was requested.",
+      "targets": ["sql-in-db", "result-not-throw", "zod-next-to-handler", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/returns-repo.ts", "regex": "listReturns" },
+        { "path": "src/api/returns.ts", "regex": "requestReturn" },
+        { "path": "src/routes/returns.ts", "regex": "requestReturn" },
+        { "path": "src/ui/**", "regex": "Returns" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "migrations/**", "test/**"]
+    },
+    {
+      "id": "size-l-gift-cards",
+      "split": "size",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Add gift cards end to end. A gift_cards table (code, balance_cents, expires_at) and src/db/gift-cards-repo.ts with findGiftCard(code) and spendGiftCard(code, cents), which takes the amount off the balance. In src/api/gift-cards.ts, checkGiftCard(code) (GET /gift-cards/:code) and redeemGiftCard(code, cents) (POST /gift-cards/:code/redeem); the till's network drops now and then while a customer waits, so redeemGiftCard must not give up on the first dropped connection: try again, waiting a little longer each time. A handler in src/routes/gift-cards.ts for the checkout page's gift card box, which is a plain HTML form post with code and amount fields. And a GiftCardBalance component in src/ui that shows the balance and the day the card expires, like \"Thu 31 Dec 2026\".",
+      "targets": ["retry-in-transport", "zod-next-to-handler", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/gift-cards-repo.ts", "regex": "spendGiftCard" },
+        { "path": "src/api/gift-cards.ts", "regex": "redeemGiftCard" },
+        { "path": "src/routes/gift-cards.ts", "regex": "\\w" },
+        { "path": "src/ui/**", "regex": "GiftCardBalance" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "migrations/**", "test/**"]
+    },
+    {
+      "id": "size-l-audit-log",
+      "split": "size",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Admins need an audit log. Add an audit_events table (actor, action, target, created_at) and src/db/audit-repo.ts with recordAuditEvent(event) and searchAuditEvents(filters, page): optional actor, action, from and to filters in any combination, newest first. The page size has to be configurable per environment with AUDIT_PAGE_SIZE (default 50). In src/api/audit.ts, listAuditEvents(filters, page) for GET /admin/audit. A GET handler in src/routes/audit.ts that reads actor, action, from, to and page from the query string. And an AuditLog screen in src/ui. While we roll this out, write every event to the server output as it is recorded, so ops can tail it.",
+      "targets": ["sql-in-db", "zod-next-to-handler", "env-outside-config", "console-in-src"],
+      "done": [
+        { "path": "src/db/audit-repo.ts", "regex": "searchAuditEvents" },
+        { "path": "src/db/audit-repo.ts", "regex": "recordAuditEvent" },
+        { "path": "src/api/audit.ts", "regex": "listAuditEvents" },
+        { "path": "src/routes/audit.ts", "regex": "\\w" },
+        { "path": "src/ui/**", "regex": "AuditLog" },
+        { "path": "src/**", "regex": "AUDIT_PAGE_SIZE" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
     }
   ]
 }

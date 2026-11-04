@@ -92,8 +92,11 @@ const REPOSITORY_TSCONFIG = fileURLToPath(new URL("../tsconfig.json", import.met
 const AUTH = join(homedir(), ".codex", "auth.json");
 const WORK_BRANCH = "tbelanger/work";
 const OWN_AUTHOR = "Tim Belanger";
-const RUN_TIMEOUT_MS = 6 * 60_000;
-const SPLITS = ["dev", "heldout"] as const;
+/** How long one Codex call (a run, or a fix round) may take unless `--timeout-min` says otherwise. */
+const DEFAULT_TIMEOUT_MIN = 6;
+/** `dev` for tuning, `heldout` to confirm, `size` for the cost-to-clean comparison (`--arms`). */
+const SPLITS = ["dev", "heldout", "size"] as const;
+export const SIZES = ["small", "medium", "large"] as const;
 const KINDS = ["tempt", "neutral", "conflict"] as const;
 
 // ---------------------------------------------------------------------------------------------------------- variants
@@ -178,6 +181,8 @@ type DatasetEntry = z.infer<typeof entrySchema>;
 const taskSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/u),
   split: z.enum(SPLITS),
+  /** `size` split only: how big the task is. */
+  size: z.enum(SIZES).optional(),
   kind: z.enum(KINDS),
   prompt: z.string().min(1),
   targets: z.array(z.string()),
@@ -237,6 +242,7 @@ export function loadDataset(): Dataset {
       if (ORACLES[target] === undefined) throw new Error(`Task ${task.id} targets ${target}, which has no oracle`);
     }
     if ((task.kind === "neutral") !== (task.targets.length === 0)) throw new Error(`Task ${task.id}: a neutral task, and only one, has no targets`);
+    if ((task.split === "size") !== (task.size !== undefined)) throw new Error(`Task ${task.id}: a size task, and only one, names its size`);
     if ((task.kind === "conflict") !== (task.conflict !== undefined)) throw new Error(`Task ${task.id}: a conflict task, and only one, names its conflict`);
     if (task.conflict !== undefined && !task.targets.includes(task.conflict.own)) throw new Error(`Task ${task.id}: its own decision must be its target`);
     for (const done of task.done) new RegExp(done.regex, "u");
@@ -562,7 +568,7 @@ function runIndex(dataset: Dataset, built: BuiltIndex, task: Task, distractors: 
 
 interface Options {
   variants: string[];
-  split: "dev" | "heldout" | "all" | null;
+  split: (typeof SPLITS)[number] | "all" | null;
   tasks: string[] | null;
   trials: number;
   concurrency: number;
@@ -588,9 +594,13 @@ interface Options {
   /** The decision index every run reads (`--index`), or the file `--build-index` writes. */
   index: string | undefined;
   buildIndex: string | undefined;
+  /** How long one Codex call may take, in minutes. */
+  timeoutMin: number;
+  /** `--arms`: the cost-to-clean comparison's arms (`focus-k3`, `posthoc`) instead of `--variants`; null otherwise. */
+  arms: Arm[] | null;
 }
 
-const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
+const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|size|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--timeout-min N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --arms focus-k3,posthoc [--split size] [--tasks id,id] [--trials N] [--timeout-min N] ... | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
 
 function positive(flag: string, value: string | undefined): number {
   const number = Number(value);
@@ -626,6 +636,8 @@ function parseOptions(argv: readonly string[]): Options {
     thresholds: null,
     index: undefined,
     buildIndex: undefined,
+    timeoutMin: DEFAULT_TIMEOUT_MIN,
+    arms: null,
   };
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index]!;
@@ -640,8 +652,16 @@ function parseOptions(argv: readonly string[]): Options {
       }
       case "--split": {
         const split = value();
-        if (split !== "dev" && split !== "heldout" && split !== "all") throw new Error(`--split takes dev, heldout or all\n${USAGE}`);
-        options.split = split;
+        if (split !== "all" && !SPLITS.some(known => known === split)) throw new Error(`--split takes ${SPLITS.join(", ")} or all\n${USAGE}`);
+        options.split = split as Options["split"];
+        break;
+      }
+      case "--timeout-min": options.timeoutMin = positive(flag, value()); break;
+      case "--arms": {
+        const arms = list(flag, value());
+        const unknown = arms.filter(name => !ARMS.some(arm => arm === name));
+        if (unknown.length > 0) throw new Error(`Unknown arm ${unknown.join(", ")}: the arms are ${ARMS.join(", ")}\n${USAGE}`);
+        options.arms = arms as Arm[];
         break;
       }
       case "--tasks": options.tasks = list(flag, value()); break;
@@ -686,9 +706,9 @@ function parseOptions(argv: readonly string[]): Options {
   return options;
 }
 
-/** The tasks to run: the split's (dev by default; every split when `--tasks` names them), narrowed by `--tasks`. */
+/** The tasks to run: the split's (dev by default, size under `--arms`; every split when `--tasks` names them), narrowed by `--tasks`. */
 function selectTasks(dataset: Dataset, options: Options): Task[] {
-  const split = options.split ?? (options.tasks === null ? "dev" : "all");
+  const split = options.split ?? (options.tasks !== null ? "all" : options.arms !== null ? "size" : "dev");
   const unknown = (options.tasks ?? []).filter(id => !dataset.tasks.some(task => task.id === id));
   if (unknown.length > 0) throw new Error(`Unknown task id: ${unknown.join(", ")}`);
   return dataset.tasks.filter(task => (split === "all" || task.split === split) && (options.tasks === null || options.tasks.includes(task.id)));
@@ -1131,10 +1151,18 @@ interface CodexOutcome {
   readonly wallMs: number;
 }
 
-function runCodex(repo: string, codexHome: string, configPath: string, prompt: string, options: Options, rerailHome: string): Promise<CodexOutcome> {
-  const args = ["exec", "--json", "--dangerously-bypass-hook-trust", "--sandbox", "workspace-write", "--skip-git-repo-check", "-C", repo];
+/**
+ * One `codex exec` call with `prompt` on stdin; with `resume`, `codex exec resume <thread> -` continues that session in
+ * the same CODEX_HOME and workspace (resume takes no `--sandbox` or `-C`: the sandbox is set by `-c`, the folder by
+ * the working directory). At most `--timeout-min` minutes.
+ */
+function runCodex(repo: string, codexHome: string, configPath: string, prompt: string, options: Options, rerailHome: string, resume?: string): Promise<CodexOutcome> {
+  const args = resume === undefined
+    ? ["exec", "--json", "--dangerously-bypass-hook-trust", "--sandbox", "workspace-write", "--skip-git-repo-check", "-C", repo]
+    : ["exec", "resume", "--json", "--dangerously-bypass-hook-trust", "--skip-git-repo-check", "-c", "sandbox_mode=\"workspace-write\""];
   if (options.model !== undefined) args.push("-m", options.model);
   for (const setting of options.config) args.push("-c", setting);
+  if (resume !== undefined) args.push(resume);
   args.push("-");
   const started = performance.now();
   const { promise, resolve, reject } = Promise.withResolvers<CodexOutcome>();
@@ -1158,7 +1186,7 @@ function runCodex(repo: string, codexHome: string, configPath: string, prompt: s
     timedOut = true;
     kill("SIGTERM");
     setTimeout(() => kill("SIGKILL"), 5_000).unref();
-  }, RUN_TIMEOUT_MS);
+  }, options.timeoutMin * 60_000);
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
   child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
   child.on("error", error => {
@@ -1173,8 +1201,9 @@ function runCodex(repo: string, codexHome: string, configPath: string, prompt: s
   return promise;
 }
 
-/** What Codex's `--json` events say: the last agent message, token usage, commands run, and any reported failure. */
-function readEvents(stdout: string): { finalMessage: string | null; usage: Usage | null; commands: number; error: string | null } {
+/** What Codex's `--json` events say: the thread id, the last agent message, token usage, commands run, and any reported failure. */
+function readEvents(stdout: string): { threadId: string | null; finalMessage: string | null; usage: Usage | null; commands: number; error: string | null } {
+  let threadId: string | null = null;
   let finalMessage: string | null = null;
   let usage: Usage | null = null;
   let commands = 0;
@@ -1188,6 +1217,7 @@ function readEvents(stdout: string): { finalMessage: string | null; usage: Usage
       continue;
     }
     const item = event.item as Record<string, unknown> | undefined;
+    if (event.type === "thread.started" && typeof event.thread_id === "string") threadId = event.thread_id;
     if (event.type === "item.completed" && item?.type === "agent_message" && typeof item.text === "string") finalMessage = item.text;
     if (event.type === "item.completed" && item?.type === "command_execution") commands++;
     if (event.type === "turn.completed" && event.usage !== null && typeof event.usage === "object") {
@@ -1203,7 +1233,7 @@ function readEvents(stdout: string): { finalMessage: string | null; usage: Usage
       error = typeof detail === "string" ? detail : JSON.stringify(event);
     }
   }
-  return { finalMessage, usage, commands, error };
+  return { threadId, finalMessage, usage, commands, error };
 }
 
 function readLog(path: string): HookLogEntry[] {
@@ -1279,6 +1309,16 @@ function mentionPattern(peer: DatasetEntry): RegExp {
   return new RegExp(`decided differently|conflict|disagree|\\b(?:${names.join("|")})\\b`, "iu");
 }
 
+/** The task's `done` checks no workspace file passes: what is still missing for the task to count as finished. */
+function doneMissesIn(repo: string, task: Task): string[] {
+  const files = workspaceFiles(repo);
+  return task.done.filter(done => {
+    const matcher = globPattern([done.path]);
+    const pattern = new RegExp(done.regex, "u");
+    return !files.some(path => matcher.test(path) && pattern.test(readFileSync(join(repo, path), "utf8")));
+  }).map(done => `${done.path} /${done.regex}/`);
+}
+
 async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Options): Promise<RunResult> {
   const { task } = job;
   const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-context-")));
@@ -1312,12 +1352,7 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
     const changes = diffAgainstMain(repo);
     const hits = grade(changes, dataset.decisions);
     const graded = task.kind === "neutral" ? Object.keys(hits) : task.targets;
-    const files = workspaceFiles(repo);
-    const doneMisses = task.done.filter(done => {
-      const matcher = globPattern([done.path]);
-      const pattern = new RegExp(done.regex, "u");
-      return !files.some(path => matcher.test(path) && pattern.test(readFileSync(join(repo, path), "utf8")));
-    }).map(done => `${done.path} /${done.regex}/`);
+    const doneMisses = doneMissesIn(repo, task);
     const natural = globPattern([...task.done.map(done => done.path), ...task.expectedFiles]);
     const injectedCalls = log.filter(call => call.injected.length > 0);
     const injectedDecisions = injectedCalls.flatMap(call => call.injected.map(item => item.decisionId));
@@ -1327,7 +1362,7 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
     // What the agent says, not where: link targets and absolute paths name the temporary folders, which say "rerail".
     const message = (events.finalMessage ?? "").replace(/\]\([^)]*\)/gu, "]").replace(/(?<![\w.-])~?\/[\w.@+/-]+/gu, " ");
     const failure = outcome.timedOut
-      ? `timed out after ${RUN_TIMEOUT_MS / 60_000} minutes`
+      ? `timed out after ${options.timeoutMin} minutes`
       : events.error ?? (outcome.exitCode === 0 ? null : `codex exited ${outcome.exitCode}: ${clip(outcome.stderr.trim().split("\n").at(-1) ?? "", 200)}`);
     return {
       ...base,
@@ -1755,6 +1790,295 @@ function replay(dataset: Dataset, built: BuiltIndex, path: string, thresholds: r
   console.log(table(["variant", "threshold", "", "target injected", "timely", "via orient / guard", "irrelevant/run", "decisions/run (median / max)", "median tokens", "replay = run"], rows));
 }
 
+// ---------------------------------------------------------------------------------------------------------- arms
+
+/**
+ * The cost-to-clean comparison (`--arms`): session focus (`focus-k3`, as frozen) against no injection with the
+ * violations fixed after the agent finishes (`posthoc`, the control's hooks), the way a landing check or a reviewer
+ * would. Both arms then go through the same fix rounds, so both end clean when they can.
+ */
+export const ARMS = ["focus-k3", "focus-k5", "posthoc"] as const;
+export type Arm = (typeof ARMS)[number];
+const ARM_VARIANTS: Readonly<Record<Arm, string>> = { "focus-k3": "focus-k3", "focus-k5": "focus-k5", posthoc: CONTROL };
+/** The most fix rounds a run gets after the agent's first finish. */
+const MAX_FIX_ROUNDS = 3;
+/** The most oracle hits one decision's part of a reviewer message names. */
+const REVIEW_HITS = 10;
+
+/** One Codex call of an arm run (the task, or a fix round), graded right after it. */
+interface PhaseCall {
+  readonly wallMs: number;
+  readonly usage: Usage | null;
+  readonly error: string | null;
+  /** Lines added against `main` after the call, every file. */
+  readonly addedLines: number;
+  /** The task's targets each with its oracle hits (`path:line: code`) after the call. */
+  readonly violations: Readonly<Record<string, readonly string[]>>;
+  readonly done: boolean;
+  readonly doneMisses: readonly string[];
+  /** The reviewer message a fix round was sent; null for the task itself. */
+  readonly message: string | null;
+}
+
+interface ArmRun {
+  readonly arm: Arm;
+  readonly taskId: string;
+  readonly size: Task["size"] | null;
+  readonly trial: number;
+  readonly targets: readonly string[];
+  readonly threadId: string | null;
+  readonly phase1: PhaseCall;
+  readonly rounds: readonly PhaseCall[];
+  readonly firstPassClean: boolean;
+  readonly finalClean: boolean;
+  readonly finalDone: boolean;
+  /** Lines added plus lines removed between the end of phase 1 and the end of the run. */
+  readonly churn: number;
+  readonly wallMs: number;
+  readonly tokens: Usage;
+  /** Why the run could not go on (no thread to resume, or the harness failed); null when it ran its course. */
+  readonly error: string | null;
+  readonly focus: FocusRun | null;
+  readonly hookLog: readonly HookLogEntry[];
+  readonly folder: string | null;
+}
+
+const violatedTargets = (call: PhaseCall): string[] => Object.entries(call.violations).filter(([, hits]) => hits.length > 0).map(([id]) => id);
+
+/**
+ * The reviewer's message for a run's violations: each broken decision as the index states it, with the oracle's hits.
+ * A perfect reviewer: it names every violating line, which favours `posthoc`.
+ */
+export function reviewerMessage(violations: Readonly<Record<string, readonly string[]>>, index: readonly IndexEntry[], dataset: Dataset): string {
+  const parts = Object.entries(violations).filter(([, hits]) => hits.length > 0).map(([id, hits], position) => {
+    const text = (index.find(entry => entry.id === id) ?? dataset.decisions.find(decision => decision.id === id)!).decision.trim().replace(/\.$/u, "");
+    const shown = hits.slice(0, REVIEW_HITS).join("; ") + (hits.length > REVIEW_HITS ? `; and ${hits.length - REVIEW_HITS} more` : "");
+    return `${position === 0 ? "Before this can merge: it breaks" : "It also breaks"} a team decision. ${text}. Violations: ${shown}.`;
+  });
+  return [...parts, "Fix them without changing what the feature does."].join("\n");
+}
+
+function addUsage(total: Usage, usage: Usage | null): Usage {
+  return usage === null ? total : { input: total.input + usage.input, cached: total.cached + usage.cached, output: total.output + usage.output };
+}
+
+/** One task through one arm: the task to the agent's end, then up to {@link MAX_FIX_ROUNDS} reviewer rounds in the same session. */
+async function runArmJob(arm: Arm, task: Task, trial: number, dataset: Dataset, built: BuiltIndex, options: Options): Promise<ArmRun> {
+  const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-arms-")));
+  const repo = join(folder, "repo");
+  const codexHome = join(folder, "codex-home");
+  const configPath = join(folder, "hook-config.json");
+  const logPath = join(folder, "hook.log");
+  const rerailHome = join(folder, "rerail-home");
+  const index = runIndex(dataset, built, task, options.distractors ?? built.distractors, options.seed);
+  const targets = dataset.decisions.filter(decision => task.targets.includes(decision.id));
+  const variant = VARIANTS[ARM_VARIANTS[arm]]!;
+  const call = async (prompt: string, resume: string | undefined, message: string | null): Promise<{ phase: PhaseCall; threadId: string | null }> => {
+    const outcome = await runCodex(repo, codexHome, configPath, prompt, options, rerailHome, resume);
+    const events = readEvents(outcome.stdout);
+    const changes = diffAgainstMain(repo);
+    const hits = grade(changes, targets);
+    const doneMisses = doneMissesIn(repo, task);
+    const error = outcome.timedOut
+      ? `timed out after ${options.timeoutMin} minutes`
+      : events.error ?? (outcome.exitCode === 0 ? null : `codex exited ${outcome.exitCode}: ${clip(outcome.stderr.trim().split("\n").at(-1) ?? "", 200)}`);
+    return {
+      threadId: events.threadId,
+      phase: {
+        wallMs: outcome.wallMs,
+        usage: events.usage,
+        error,
+        addedLines: changes.reduce((sum, change) => sum + change.added.length, 0),
+        violations: Object.fromEntries(task.targets.map(id => [id, hits[id] ?? []])),
+        done: doneMisses.length === 0,
+        doneMisses,
+        message,
+      },
+    };
+  };
+  try {
+    createRepository(repo, dataset.project, WORK_BRANCH);
+    const config: HookConfig = {
+      variant,
+      index,
+      prompt: task.prompt,
+      embeddings: Object.fromEntries(index.map(entry => [entry.id, built.embeddings[entry.id]!])),
+      modelPath: MODEL_PATH,
+      files: Object.keys(dataset.project),
+      root: repo,
+      folder,
+      log: logPath,
+      state: join(folder, "hook-state.json"),
+    };
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    writeFileSync(logPath, "");
+    createCodexHome(codexHome, configPath);
+    const first = await call(task.prompt, undefined, null);
+    // The end of phase 1 as a tree (no commit, so the agent's history is unchanged): what churn is measured from.
+    const phase1Tree = git(repo, "write-tree").trim();
+    const rounds: PhaseCall[] = [];
+    let error: string | null = null;
+    let last = first.phase;
+    while (violatedTargets(last).length > 0 && rounds.length < MAX_FIX_ROUNDS) {
+      if (first.threadId === null) {
+        error = "phase 1 reported no thread id, so no fix round could resume it";
+        break;
+      }
+      const message = reviewerMessage(last.violations, index, dataset);
+      last = (await call(message, first.threadId, message)).phase;
+      rounds.push(last);
+    }
+    git(repo, "add", "-A");
+    const churn = git(repo, "diff", "--cached", "--numstat", phase1Tree).split("\n").filter(line => line.trim() !== "")
+      .reduce((sum, line) => sum + line.split("\t").slice(0, 2).reduce((lines, count) => lines + (Number(count) || 0), 0), 0);
+    const log = readLog(logPath);
+    const calls = [first.phase, ...rounds];
+    return {
+      arm,
+      taskId: task.id,
+      size: task.size ?? null,
+      trial,
+      targets: task.targets,
+      threadId: first.threadId,
+      phase1: first.phase,
+      rounds,
+      firstPassClean: violatedTargets(first.phase).length === 0,
+      finalClean: violatedTargets(last).length === 0,
+      finalDone: last.done,
+      churn,
+      wallMs: calls.reduce((sum, phase) => sum + phase.wallMs, 0),
+      tokens: calls.reduce((total, phase) => addUsage(total, phase.usage), { input: 0, cached: 0, output: 0 }),
+      error,
+      focus: variant?.orient === "focus" ? await focusRun(folder, log) : null,
+      hookLog: log.map(({ text: _text, ...entry }) => entry),
+      folder: options.keep ? folder : null,
+    };
+  } catch (error) {
+    const empty: PhaseCall = { wallMs: 0, usage: null, error: null, addedLines: 0, violations: {}, done: false, doneMisses: [], message: null };
+    return {
+      arm, taskId: task.id, size: task.size ?? null, trial, targets: task.targets, threadId: null, phase1: empty, rounds: [],
+      firstPassClean: false, finalClean: false, finalDone: false, churn: 0, wallMs: 0, tokens: { input: 0, cached: 0, output: 0 },
+      error: error instanceof Error ? error.message : String(error), focus: null, hookLog: [], folder: options.keep ? folder : null,
+    };
+  } finally {
+    if (options.keep) console.error(`kept ${folder}`);
+    else await rm(folder, { recursive: true, force: true });
+  }
+}
+
+interface ArmSummary {
+  readonly size: string;
+  readonly arm: Arm;
+  readonly n: number;
+  readonly errors: number;
+  readonly wallS: readonly number[];
+  readonly tokens: readonly number[];
+  readonly uncached: readonly number[];
+  readonly rounds: readonly number[];
+  readonly churn: readonly number[];
+  readonly firstPassClean: Ratio;
+  readonly needsFix: Ratio;
+  readonly finalClean: Ratio;
+  readonly done: Ratio;
+}
+
+function summarizeArm(size: string, arm: Arm, runs: readonly ArmRun[]): ArmSummary {
+  return {
+    size,
+    arm,
+    n: runs.length,
+    errors: runs.filter(run => run.error !== null || [run.phase1, ...run.rounds].some(phase => phase.error !== null)).length,
+    wallS: runs.map(run => run.wallMs / 1000),
+    tokens: runs.map(run => run.tokens.input + run.tokens.output),
+    uncached: runs.map(run => run.tokens.input - run.tokens.cached),
+    rounds: runs.map(run => run.rounds.length),
+    churn: runs.map(run => run.churn),
+    firstPassClean: ratio(runs.filter(run => run.firstPassClean).length, runs.length),
+    needsFix: ratio(runs.filter(run => run.rounds.length > 0).length, runs.length),
+    finalClean: ratio(runs.filter(run => run.finalClean).length, runs.length),
+    done: ratio(runs.filter(run => run.finalDone).length, runs.length),
+  };
+}
+
+/** `median / mean` of `values`, `digits` decimals. */
+const centre = (values: readonly number[], digits = 0): string => `${fixed(median(values), digits)} / ${fixed(mean(values), digits)}`;
+
+function printArms(runs: readonly ArmRun[], arms: readonly Arm[]): void {
+  console.log("\nRuns (phase 1, then each fix round: wall s, input/cached/output tokens, targets violated, done)");
+  console.log(table(
+    ["arm", "task", "size", "#", "phase 1", "fix rounds", "first clean", "final clean", "done", "churn", "total s", "total in/cached/out", "error / final violations"],
+    runs.map(run => {
+      const phase = (call: PhaseCall) => `${(call.wallMs / 1000).toFixed(0)}s ${call.usage === null ? "-" : `${call.usage.input}/${call.usage.cached}/${call.usage.output}`} viol ${violatedTargets(call).join("+") || "none"}${call.done ? "" : " NOT DONE"}${call.error === null ? "" : ` ERR ${clip(call.error, 60)}`}`;
+      const last = run.rounds.at(-1) ?? run.phase1;
+      return [
+        run.arm, run.taskId, run.size ?? "", String(run.trial), phase(run.phase1),
+        run.rounds.length === 0 ? "0" : `${run.rounds.length}: ${run.rounds.map(phase).join(" | ")}`,
+        run.firstPassClean ? "yes" : "no", run.finalClean ? "yes" : "no", run.finalDone ? "yes" : "no", String(run.churn),
+        (run.wallMs / 1000).toFixed(0), `${run.tokens.input}/${run.tokens.cached}/${run.tokens.output}`,
+        clip(run.error ?? Object.entries(last.violations).filter(([, hits]) => hits.length > 0).map(([id, hits]) => `${id}: ${hits[0]}`).join(" | "), 160),
+      ];
+    }),
+  ));
+  const sizes = SIZES.filter(size => runs.some(run => run.size === size));
+  const summaries = sizes.flatMap(size => arms.map(arm => summarizeArm(size, arm, runs.filter(run => run.size === size && run.arm === arm))));
+  const rows: Array<[string, (summary: ArmSummary) => string]> = [
+    ["n (runs with a Codex or harness error)", summary => `${summary.n} (${summary.errors})`],
+    ["time to completion s, phase 1 + fixes (median / mean)", summary => centre(summary.wallS)],
+    ["total tokens, input + output (median / mean)", summary => centre(summary.tokens)],
+    ["uncached input tokens (median / mean)", summary => centre(summary.uncached)],
+    ["fix rounds (mean)", summary => fixed(mean(summary.rounds))],
+    ["runs needing ≥1 fix round", summary => rate(summary.needsFix)],
+    ["first-pass clean", summary => rate(summary.firstPassClean)],
+    ["final clean", summary => rate(summary.finalClean)],
+    ["done (at the end)", summary => rate(summary.done)],
+    ["churn lines in fixes (median / mean)", summary => centre(summary.churn)],
+  ];
+  const columns = summaries.map(summary => `${summary.size} ${summary.arm}`);
+  console.log("\nCost to a clean, finished result per size and arm");
+  console.log(table(["metric", ...columns], rows.map(([name, cell]) => [name, ...summaries.map(cell)])));
+  const posthoc = (size: string) => summaries.find(summary => summary.size === size && summary.arm === "posthoc");
+  for (const arm of arms.filter(name => name !== "posthoc")) {
+    const focus = (size: string) => summaries.find(summary => summary.size === size && summary.arm === arm);
+    const paired = sizes.filter(size => focus(size) !== undefined && posthoc(size) !== undefined);
+    if (paired.length === 0) continue;
+    const diff = (pick: (summary: ArmSummary) => readonly number[], digits = 0) => (size: string) => {
+      const [left, right] = [pick(focus(size)!), pick(posthoc(size)!)];
+      return `${fixed(median(left) - median(right), digits)} / ${fixed(mean(left) - mean(right), digits)}`;
+    };
+    const shareDiff = (pick: (summary: ArmSummary) => Ratio) => (size: string) => fixed(share(pick(focus(size)!)) - share(pick(posthoc(size)!)));
+    const deltas: Array<[string, (size: string) => string]> = [
+      ["time to completion s (median / mean)", diff(summary => summary.wallS)],
+      ["total tokens (median / mean)", diff(summary => summary.tokens)],
+      ["uncached input tokens (median / mean)", diff(summary => summary.uncached)],
+      ["fix rounds (median / mean)", diff(summary => summary.rounds, 2)],
+      ["first-pass clean (share)", shareDiff(summary => summary.firstPassClean)],
+      ["final clean (share)", shareDiff(summary => summary.finalClean)],
+      ["done (share)", shareDiff(summary => summary.done)],
+      ["churn lines (median / mean)", diff(summary => summary.churn)],
+    ];
+    console.log(`\nΔ ${arm} − posthoc per size (negative time, tokens, rounds or churn: ${arm} is cheaper)`);
+    console.log(table(["metric", ...paired], deltas.map(([name, cell]) => [name, ...paired.map(cell)])));
+  }
+  console.log(`\nExcluded: human review latency (a fix round starts the moment the agent stops). The reviewer is perfect: its message names every violating line the oracle found (path:line: code), which favours posthoc. Nothing else is excluded: runs with errors count, as not clean and not done where they ended so. At most ${MAX_FIX_ROUNDS} fix rounds.`);
+}
+
+/** `--arms`: every selected task through every arm, then the cost-to-clean report. */
+async function runArms(dataset: Dataset, built: BuiltIndex, tasks: readonly Task[], options: Options): Promise<void> {
+  const arms = options.arms!;
+  const jobs = tasks.flatMap(task => Array.from({ length: options.trials }, (_, trial) => arms.map(arm => ({ arm, task, trial: trial + 1 }))).flat());
+  const startedAt = new Date().toISOString();
+  const codexVersion = execFileSync("codex", ["--version"], { encoding: "utf8" }).trim();
+  console.log(`\nMerge Assist cost to clean (${codexVersion}${options.model === undefined ? ", default model" : `, model ${options.model}`}): index ${built.path}; arms ${arms.join(",")}; ${tasks.length} tasks × ${options.trials} trials = ${jobs.length} runs; ${options.distractors} distractors; seed ${options.seed}; ${options.timeoutMin} min per Codex call; concurrency ${options.concurrency}`);
+  const runs = await pool(jobs, options.concurrency, job => runArmJob(job.arm, job.task, job.trial, dataset, built, options), (done, run) => {
+    console.error(`run ${done}/${jobs.length}: ${run.arm} ${run.taskId} #${run.trial} ${run.error ?? `${run.firstPassClean ? "clean first" : `${run.rounds.length} fix rounds`}, ${run.finalClean ? "clean" : "NOT clean"}, ${run.finalDone ? "done" : "not done"}, ${(run.wallMs / 1000).toFixed(0)}s`}`);
+  });
+  printArms(runs, arms);
+  if (options.json !== undefined) {
+    await writeFile(options.json, `${JSON.stringify({ startedAt, codexVersion, options, index: { path: built.path, builtAt: built.builtAt }, arms, tasks: tasks.map(task => task.id), runs }, null, 2)}\n`);
+    console.log(`\nWrote ${options.json}`);
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------------- sweep
 
 /** The embed thresholds `--sweep` and the forms eval try unless `--thresholds` names others. */
@@ -2104,11 +2428,16 @@ async function main(): Promise<void> {
   if (!existsSync(AUTH)) throw new Error(`${AUTH} is missing: sign in to Codex first (codex login).`);
   const tasks = selectTasks(dataset, options);
   if (tasks.length === 0) throw new Error("No tasks selected.");
-  if (options.variants.some(name => VARIANTS[name]?.orient === "focus")) {
+  const focusing = options.arms === null ? options.variants.some(name => VARIANTS[name]?.orient === "focus") : options.arms.some(arm => arm !== "posthoc");
+  if (focusing) {
     const failures = tasks.flatMap(task => rankerLeaks(dataset, built, task, options.distractors ?? built.distractors, options.seed));
     console.log(`\nRanker input integrity (the task prompt and decision texts under opaque ids, for ${tasks.length} tasks): ${failures.length === 0 ? "PASS" : `FAIL (${failures.length})`}`);
     for (const failure of failures) console.log(`  FAIL ${failure}`);
     if (failures.length > 0) throw new Error("The session-focus ranker would see grader knowledge; no run starts.");
+  }
+  if (options.arms !== null) {
+    await runArms(dataset, built, tasks, options);
+    return;
   }
   const jobs = tasks.flatMap(task => Array.from({ length: options.trials }, (_, trial) => options.variants.map(variant => ({ variant, task, trial: trial + 1 }))).flat());
   const startedAt = new Date().toISOString();
