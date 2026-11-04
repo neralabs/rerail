@@ -35,6 +35,10 @@
     {
       "path": "packs/python/rules/bandit-b310-urllib-urlopen.json",
       "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b310-urllib-urlopen\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Pass a timeout to this call.\"\n      }\n    },\n    {\n      \"id\": \"second\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"urllib\\\\.urlopen\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"Y\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Bandit B310 (urllib_urlopen)\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/python/candidates/rules/ruff-a005-stdlib-module-shadowing.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-a005-stdlib-module-shadowing\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Rename a module that shadows a standard-library module.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Ruff A005: rename this module.\"\n      }\n    }\n  ]\n}\n"
     }
   ],
   "passed": [
