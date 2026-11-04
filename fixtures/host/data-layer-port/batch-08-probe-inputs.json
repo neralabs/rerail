@@ -2040,6 +2040,36 @@
           "source": "def f():\n    \"\"\"\n    value.resolve()\n    \"\"\"\n    return 1\n"
         }
       ]
+    },
+    {
+      "id": "syntax-error-authentication_plan_purity",
+      "check": "authentication_plan_purity",
+      "files": [
+        {
+          "path": "impl/broken.py",
+          "source": "class AuthPlanStep(:\n"
+        }
+      ]
+    },
+    {
+      "id": "syntax-error-readthrough_authority_architecture",
+      "check": "readthrough_authority_architecture",
+      "files": [
+        {
+          "path": "impl/broken.py",
+          "source": "class ReadThroughWriteTransaction(:\n"
+        }
+      ]
+    },
+    {
+      "id": "syntax-error-lazy_adapter_ownership",
+      "check": "lazy_adapter_ownership",
+      "files": [
+        {
+          "path": "impl/broken.py",
+          "source": "def broken_lazy(:\n"
+        }
+      ]
     }
   ]
 }

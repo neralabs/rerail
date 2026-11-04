@@ -2,17 +2,20 @@
   "format": "rerail.data-layer-recording/v1",
   "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "checks": [
+    "authentication_plan_purity",
     "cached_pure_lazy_allowlist",
     "eager_resolve",
+    "lazy_adapter_ownership",
     "lazy_architecture",
     "lazy_sql_surface",
-    "plan_helpers_allowlist"
+    "plan_helpers_allowlist",
+    "readthrough_authority_architecture"
   ],
   "source_mismatches": [],
   "pytest_exit_code": 0,
   "collected_tests": 0,
   "uncaptured_tests": [],
-  "loaded_source_files_checked": 125,
+  "loaded_source_files_checked": 128,
   "events": [
     {
       "test": "probe:batch8:call-_grammar_effect_lazy",
@@ -6001,6 +6004,95 @@
         "options": {
           "oracleAnalyzer": true,
           "entryPoint": "_scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:syntax-error-authentication_plan_purity",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/broken.py",
+          "source": "class AuthPlanStep(:\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_sources"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:syntax-error-readthrough_authority_architecture",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/broken.py",
+          "source": "class ReadThroughWriteTransaction(:\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_sources"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:syntax-error-lazy_adapter_ownership",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/broken.py",
+          "source": "def broken_lazy(:\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/broken.py",
+          "line": 1,
+          "column": null,
+          "code": "LAO000",
+          "message": "SyntaxError: invalid syntax (broken.py, line 1)"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
         }
       }
     }
