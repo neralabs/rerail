@@ -6255,3 +6255,22 @@ The native assertion receipt binds the engine, rule programs, fact programs, ada
 Root red commits `5cb371089`, `0a5f86198` and `992350ca5` capture the stronger comparisons and positive regressions.
 Companion red commit `bc138befc` captures the syntax-error contract.
 No full-repository cold benchmark ran. This correctness work makes no new CPU or RSS claim.
+
+
+## 2026-11-04 — Audit remaining batch-eight gaps
+
+The completion statement was broader than the evidence. Two fresh comparisons demonstrate remaining defects.
+The LA-011 hydration consumer uses minimum location instead of supplied call order.
+For matching calls ordered at lines 3 and 2, upstream returns line 3; Rerail returns line 2.
+This reproduction uses the supplied-fact API, not a claim about ordinary source discovery.
+The standalone transitive helper also ignores an existing memo entry.
+For a cached root line of 99 and a target edge at line 10, upstream returns 99; Rerail returns 10.
+Both native reproductions report zero semantic fallbacks.
+The passing 456-case suite and recorded corpus did not cover these inputs.
+
+The strict API and complete-fact comparisons remain manual commands outside CI.
+The companion engine features are not integrated into this worktree's default native build.
+Default production scopes and complete Rerail reporter/signing/ratchet workflows still need integration coverage.
+The pack remains inactive. GPU lowering remains separate.
+The revised batch-eight kernels have no new CPU/RSS profiling receipt.
+No implementation changed during this audit.

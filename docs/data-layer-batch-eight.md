@@ -1,7 +1,7 @@
 # Data-layer batch eight
 
 Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
-Status: all ten candidates pass native-backed upstream assertions and positive corpus replay. The repository now has 80 candidate ports. The historical repository benchmark predates these changes.
+Status: the recorded suites pass, but a follow-up audit found two correctness defects outside that corpus. Batch eight is not yet exact. The repository has 80 candidate ports. The historical repository benchmark predates these changes.
 
 | Check | Main contract |
 | --- | --- |
@@ -15,6 +15,17 @@ Status: all ten candidates pass native-backed upstream assertions and positive c
 | `readthrough_authority_architecture` | Read-through authority ownership and transaction entry paths |
 | `authentication_plan_purity` | Authentication state, reachable helpers and compatibility forwarding |
 | `lazy_adapter_ownership` | Shared lazy bodies, direct adapters and legacy ownership |
+
+## Open correctness defects
+
+The supplied-fact lazy-architecture consumer selects the lowest source location for the LA-011 hydration diagnostic.
+The upstream consumer selects the first call in visitation order.
+A batch with matching calls ordered at lines 3 and 2 returns line 3 upstream and line 2 in Rerail.
+
+The standalone `_transitive_line_to_target_symbols` adapter ignores supplied memo entries.
+With `memo={'root': 99}` and a target call at line 10, upstream returns 99 and the adapter returns 10.
+The production ordered-graph producer is separate from this helper adapter.
+These defects need regression cases and fixes. The passing corpus below does not cover them.
 
 ## Complete native comparisons
 
