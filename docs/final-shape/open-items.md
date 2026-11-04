@@ -40,6 +40,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O38 | Phase 9 | The interpreter's per-lane transient workspace (lanes × states, sized before any task runs) exceeds the buffer budget for 5 of 39 interpreted S2 clauses and for 70 of 158 under `RERAIL_HOST_SWEEPS`. 2026-11-04: tasks are implicit in segments and lanes are fitted to the free budget (decision 0033); 37 of 39 equal | closed |
 | O40 | Phase 9 | Two interpreted S2 clauses (ruff-async251, ruff-sim300) are recursive groups whose host rounds exceed the 200-launch limit (`BackendLaunchLimit`); their rounds belong on the device | open |
 | O41 | Phase 10 | Bounded cross-file rounds (k = 2) leave calls.rdl short of its fixpoint on the vtab corpus (a third file crossing adds 8 of 5,112 hop rows); the unconverged frontier is reported but not yet marked pending | open |
+| O42 | Phase 10 | `typing::{terms, declare, deps}` are built and tested alone; the typing programs do not yet produce or read terms, and the corpus runner reads no declarations or dependency summaries | open |
 | O39 | Phase 9 | S7's sample, cold on Metal: the footprint peaks at 871 MB (budget 500 MB) in the label runs (`3a.plan` and the roots' partition), after `WalkFrames` removed the 3,017 MB of interpreted retries (decision 0032). 2026-11-04: the roots are rules over the codes (decision 0033), with no node lists (70 M roots before) and no walk items; the peak (889 MB) now rises in the GPU run and the roots' partition. Roots that are walks no longer size each file for a backend that never runs (one packed batch per file, ~130 MB over the GPU run's): 752 MB, in the GPU run. The kernels keep no thread memory (the driver's scratch, decision 0034): 603 MB, 335 MB after the audit | open |
 
 ## O1. Stale-fact detection after a crash
@@ -1160,3 +1161,28 @@ with k = 2 they stop 8 rows short. `RERAIL_CROSS_ROUNDS=<n>` overrides k as a di
 - **Also:** each round reruns the whole cross-file part. The digest cutoff should be per document
   (rerun only the dependents of documents whose interface rows changed), as `typing::rounds` does.
 - **Test:** `own_ingestion_derives_what_t_facts_do` prints both and asserts them.
+
+## O42. Terms, declarations and dependency summaries are not yet wired in
+
+Found at list step 29 (2026-11-04). The three write-new modules of Phase 10 exist with their
+own tests:
+- `typing::terms` holds:
+  - interned terms, with unions carrying an `open` flag, and widening past depth 4 or 8 members;
+  - must/may traits, with `proven`/`possible` and `some`/`every`;
+  - one-way instantiation;
+  - the `type_term`/`type_arg` tables.
+- `typing::declare` reads `rerail.types/v1` stub syntax, fills gaps only, and reports conflicts.
+- `typing::deps` holds:
+  - identity from `RECORD` and lockfiles;
+  - content-addressed summaries in a machine-wide cache;
+  - the re-export demand, with a budget per package;
+  - Pending kept apart from ⊤.
+
+Nothing calls them yet:
+- **Programs:** the typing programs' `type_of`/`returns` still carry name atoms, not term ids.
+  The step is a `type_term`/`type_arg` input pair, and the join of their lattice values through
+  `Terms::union`.
+- **Runner:** `corpus::run` reads no `rerail.types/v1` files and does not demand dependency
+  summaries for the imports it resolves. Nothing writes summaries yet: a summary is the
+  cross-file part's exported signatures, printed as a stub.
+- **Variance:** variance for library types is not modelled. A check that needs it gives unknown.

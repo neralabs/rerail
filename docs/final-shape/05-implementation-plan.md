@@ -591,6 +591,7 @@ What was left, and how each was closed (2026-11-03, the user's choice for the fi
 **Status (2026-11-04, list step 29):**
 - Programs split (`typing::file_local::programs`); calls.rdl's hand-written demand replaced by `.demand found` (magic sets); the corpus runner plans from its own ingestion.
 - Bounded rounds (`typing::cross_rounds`): hops read the previous round's rows, the same file's are exact, digest cutoff over the hop relations, k = 2. workload converges; calls needs a third crossing (O41).
+- Write-new: `typing::terms` (I12–I14), `typing::declare` (I4, I17), `typing::deps` (I18), each with its own tests; wiring them into the programs and the runner is O42.
 
 ### Phase 11: gate and tooling (throughout; M1–M4, L1, L2)
 
