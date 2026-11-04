@@ -710,6 +710,17 @@ impl PackedDemand {
     /// each record count within `u32` (halved, as a margin). A file that cannot be sized runs
     /// alone, in program groups (`program_groups`). The third value: each file's bytes, or
     /// `u64::MAX` where it could not be sized.
+    /// Whether every terminal program's roots are walks: records the device walked with the
+    /// labels (`with_records`), or a micro walk the host runs.
+    fn walks_only(&self) -> bool {
+        use super::super::transducer::packed::Micro;
+        (0..self.programs.len()).all(|program| {
+            !matches!(self.producer_kinds[program], ProducerKind::Terminal)
+                || self.records.get(program).is_some_and(Option::is_some)
+                || Micro::of(&self.programs[program]).is_some()
+        })
+    }
+
     fn execution_partitions(&self) -> (Vec<Range<usize>>, Vec<HardPartition>, Vec<u64>) {
         use rayon::prelude::*;
         let metal = matches!(
@@ -839,7 +850,17 @@ impl PackedDemand {
             self.backend,
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground
         );
-        let (partition_ranges, partitions, sizes) = crate::code_rule_dsl::prof::time("demand.partitions", || self.execution_partitions());
+        // Roots that are walks (the device's records, or the host's micro walks) run no backend:
+        // they are walked over the whole chunk first, and only if a walk fails is the chunk sized
+        // and partitioned for the backend. Sizing builds a packed batch of each file, which on S7's
+        // sample was ~300 MB of the footprint peak for executions that never ran (O39).
+        let walks = (!metal || !self.records.is_empty()) && self.walks_only() && std::env::var_os("RERAIL_ROOTS_JIT").is_none() && std::env::var_os("RERAIL_ROOTS_CHECK").is_none();
+        let whole = walks.then(|| self.walked(0..self.files.len(), 0..self.programs.len())).flatten();
+        let (partition_ranges, partitions, sizes) = if whole.is_some() {
+            (Vec::new(), Vec::new(), vec![0; self.files.len()])
+        } else {
+            crate::code_rule_dsl::prof::time("demand.partitions", || self.execution_partitions())
+        };
         crate::code_rule_dsl::prof::count("demand.ranges", partition_ranges.len());
         // Sizing built a batch per file (in parallel): its pages returned before the roots run.
         crate::code_rule_dsl::prof::release();
@@ -1278,6 +1299,10 @@ impl PackedDemand {
                     }
                 }
             };
+            if let Some(walked) = whole {
+                executed += 1;
+                absorb((0, 0, walked));
+            }
             for job in &jobs {
                 match execute(job) {
                     Ok(executions) => {
