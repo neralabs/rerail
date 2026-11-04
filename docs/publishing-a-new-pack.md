@@ -219,7 +219,7 @@ Find the message you see in the table; the fix is beside it.
 |---|---|
 | `the checkout has changes; publish from a clean checkout` | Changed or untracked files in the worktree. Restart at step 1. |
 | `commit <sha> is not on GitHub, or gh cannot read the repository` | Not on a pushed commit, or `gh` isn't logged in. Use `origin/main` as in step 1; check `gh auth status`. |
-| `<name>@<version> answers an anonymous request with <status>: it is not public` | npm keeps the package private. Run `npm access set status=public <name>`, then rerun the script. |
+| `<name>@<version> answers an anonymous request with <status> 3 minutes after its publish: it is not public` | npm keeps the package private, or is slower than usual to serve it. Check `npm access get status <name>`; if private, run `npm access set status=public <name>`. Then rerun the script. |
 | `EOTP` or an "Authenticate your account" URL | npm needs 2FA. Approve the URL in the browser; the command carries on. |
 | The gate fails to load the native engine | Run `npm run build:native` with `~/.cargo/bin` on `PATH`. |
 | The gate says a tool-pack's test data is missing and to run `npm run fixtures:pull` | The worktree has no pack data. Run `npm run fixtures:pull -- --pack <id>` with read access to the bucket, then step 2 again. |
