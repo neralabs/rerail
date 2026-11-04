@@ -41,7 +41,7 @@ function docsRowFindings(repo, dir, name) {
 function nameFindings(repo, dir, name) {
   if (typeof name !== "string") return [];
   const problems = toolsNamed(repo, dir, name).map((tool) => finding(`${dir}/pack.json`, `name "${name}" names the tool ${tool}: tools go in covers`));
-  if (/[()\d]/.test(name)) {
+  if (/[()[\]{}\d]/.test(name)) {
     problems.push(finding(`${dir}/pack.json`, `name "${name}" has brackets or digits: a name says what the pack is about, and limits and versions go in covers`));
   }
   return [

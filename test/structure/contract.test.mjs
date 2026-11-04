@@ -83,6 +83,11 @@ describe("#8 pack format", () => {
     expect(messages(packNamed("Complexity limit 6"))).toEqual([
       'packs/php/pack.json: name "Complexity limit 6" has brackets or digits: a name says what the pack is about, and limits and versions go in covers',
     ]);
+    for (const name of ["PHP [strict]", "PHP {strict}"]) {
+      expect(messages(packNamed(name))).toEqual([
+        `packs/php/pack.json: name "${name}" has brackets or digits: a name says what the pack is about, and limits and versions go in covers`,
+      ]);
+    }
   });
 
   it("refuses a name holding a tool the pack ports, whatever its case", () => {
@@ -104,9 +109,10 @@ describe("#8 pack format", () => {
   });
 
   it("requires a published pack's row in the docs table, by its exact name", () => {
-    expect(messages(validPack("php", { "docs/rule-packs.md": "| PHP (old) | language |\n" }))).toEqual([
+    expect(messages(validPack("php", { "docs/rule-packs.md": "| Pack |\n| PHP (old) | language |\n" }))).toEqual([
       'docs/rule-packs.md: no table row names the pack "PHP"',
     ]);
+    expect(messages(validPack("php", { "docs/rule-packs.md": "| Pack |\n| PHP | language |\n" }))).toEqual([]);
   });
 
   it("does not ask a private pack for a docs row", () => {

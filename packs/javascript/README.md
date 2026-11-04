@@ -1,4 +1,4 @@
-# Rerail rule pack: JavaScript and TypeScript
+# Rerail rule pack: JavaScript
 
 121 code rules for JavaScript and TypeScript source, with their default options: 118 ported from ESLint 10.11.0's core
 rules and 3 from eslint-plugin-unicorn 76.0.0, which run on `.js`, `.jsx`, `.mjs` and `.cjs` files only, as unicorn
