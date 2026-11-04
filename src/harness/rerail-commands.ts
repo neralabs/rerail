@@ -5,7 +5,7 @@
  * everywhere.
  */
 
-import type { CommandSigil } from "../engine/adapter-contract.js";
+import type { CommandSigil, ObservedFileWrite } from "../engine/adapter-contract.js";
 
 export type RerailCommandName =
   | "rerail"
@@ -167,11 +167,8 @@ export interface ShowMeInstructionsInput {
   /** The shell-quoted launcher the agent runs. */
   cli: string;
   sigil: CommandSigil;
-  /**
-   * How the agent writes the demo file. Codex's hooks see a write made through its shell tool, not through
-   * apply_patch, so Codex writes with one shell command; every other agent uses its own edit tool.
-   */
-  write: "edit-tool" | "shell";
+  /** How the agent writes the demo file so the hooks see it: its capability profile's `observedFileWrite`. */
+  write: ObservedFileWrite;
 }
 
 /**

@@ -39,6 +39,12 @@ export type SteerStrategy = (typeof STEER_STRATEGIES)[number];
 /** How a person types a Rerail command in a coding agent: Codex runs skills as `$name`, every other agent as `/name`. */
 export type CommandSigil = "/" | "$";
 
+/**
+ * How a coding agent writes a file so that Rerail's hooks see the edit: Codex's hooks see a write through its shell
+ * tool, not through apply_patch; every other agent's own edit tool is seen.
+ */
+export type ObservedFileWrite = "edit-tool" | "shell";
+
 export interface AdapterCapabilityProfile {
   host: RerailHost;
   assistantObservation: AssistantObservation;
@@ -49,6 +55,8 @@ export interface AdapterCapabilityProfile {
   sampleEvents: Readonly<Record<"user" | "assistant" | "tool" | "turn", string>>;
   /** What Rerail's commands start with in this coding agent, in every text that names one. */
   commandSigil: CommandSigil;
+  /** How this coding agent writes a file so that Rerail's hooks see the edit. */
+  observedFileWrite: ObservedFileWrite;
 }
 
 export const ADAPTER_CAPABILITIES = {
@@ -70,6 +78,7 @@ export const ADAPTER_CAPABILITIES = {
       turn: "turn_end",
     },
     commandSigil: "/",
+    observedFileWrite: "edit-tool",
   },
   pi: {
     host: "pi",
@@ -89,6 +98,7 @@ export const ADAPTER_CAPABILITIES = {
       turn: "turn_end",
     },
     commandSigil: "/",
+    observedFileWrite: "edit-tool",
   },
   "claude-code": {
     host: "claude-code",
@@ -108,6 +118,7 @@ export const ADAPTER_CAPABILITIES = {
       turn: "Stop/StopFailure",
     },
     commandSigil: "/",
+    observedFileWrite: "edit-tool",
   },
   codex: {
     host: "codex",
@@ -127,6 +138,7 @@ export const ADAPTER_CAPABILITIES = {
       turn: "Stop",
     },
     commandSigil: "$",
+    observedFileWrite: "shell",
   },
   cursor: {
     host: "cursor",
@@ -146,6 +158,7 @@ export const ADAPTER_CAPABILITIES = {
       turn: "stop",
     },
     commandSigil: "/",
+    observedFileWrite: "edit-tool",
   },
 } as const satisfies Record<RerailHost, AdapterCapabilityProfile>;
 
