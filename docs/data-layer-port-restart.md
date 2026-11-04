@@ -9,7 +9,7 @@ The first cumulative run failed with 22 engine errors; its results are not a par
 The admission and legacy-query regressions now pass. The corrected 70-rule repository gate matches all findings with zero engine failures.
 There are now 90 ports and 52 checks left in the pinned scope.
 Twenty documents ship in the opt-in pack; seventy earlier ports remain candidates.
-Batch nine adds 198 assertion cases and 240 recorded API results.
+Batch nine adds 201 assertion cases and 245 recorded API results.
 See [its report](data-layer-batch-nine.md) for native coverage and runtime contracts.
 Batch eight now matches 534 source observations and 15 exact cached-discovery observations.
 Its 50 edit/removal transitions also pass.
@@ -163,9 +163,6 @@ Record new performance changes alongside parity; the existing RSS failure remain
 
 | Batch | Checks | Focus |
 | --- | ---: | --- |
-| 7 | 10 | Publication, post-operation ownership, and declared contracts |
-| 8 | 10 | Pure lazy execution, adapters, and runtime authority |
-| 9 | 10 | Connection services, schema contracts, and bootstrap behavior |
 | 10 | 10 | Graph plans, optimizer contracts, matching, and indexing |
 | 11 | 10 | Permissions, grants, provider storage, and API boundaries |
 | 12 | 10 | Performance assertions, types, and operational contracts |
@@ -173,9 +170,10 @@ Record new performance changes alongside parity; the existing RSS failure remain
 | 14 | 10 | Identity contracts, remaining legacy surfaces, and policy artifacts |
 | 15 | 2 | Final two checks, preserving metric and source-disabled behavior |
 
-The pinned survey has no associated tests for six checks: `bootstrap_eager_resolve`, `bootstrap_lazy_sql`, `explicit_semantic_ids`, `pending_pipeline_effect_kinds`, `plan_optimizer_v2`, and `rust_sql_grammar_boundary`.
-The last already has supplemental coverage in batch four.
-The other five need explicit oracle probes or another verified source boundary when their batch starts.
+The original pinned survey found no associated tests for six checks: `bootstrap_eager_resolve`, `bootstrap_lazy_sql`, `explicit_semantic_ids`, `pending_pipeline_effect_kinds`, `plan_optimizer_v2`, and `rust_sql_grammar_boundary`.
+Batch nine recovered the lazy-SQL tests and added separate eager-resolution entry-point controls.
+The Rust grammar check already has supplemental coverage in batch four.
+The other three need explicit oracle probes when their batches start.
 Absence of discovered tests is not a passing gate.
 
 ## Runtime and measurement caveats

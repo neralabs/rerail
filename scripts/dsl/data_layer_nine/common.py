@@ -80,8 +80,9 @@ def clause(name,stages,query,locations=None,options=None,partition=True):
 
 def document(name,clauses,scope=None,options=None):
     p=policy(name,scope or ['**/*.py']);p['description']=p['description'].replace('Candidate port','Exact port')
-    if name in {'schema_bootstrap_contracts','bootstrap_lazy_sql','bootstrap_eager_resolve','bootstrap_cache_health','plan_composition_architecture','connection_service_architecture'}:
+    if name in {'schema_bootstrap_contracts','bootstrap_lazy_sql','bootstrap_eager_resolve','bootstrap_cache_health','plan_composition_architecture','connection_service_architecture','schema_architecture'}:
         error_rule=K('module')
+        if name=='schema_architecture':error_rule=A(error_rule,{'$option':'entryPoint','cases':{'scan_source':TRUE},'default':FALSE})
         if name=='bootstrap_cache_health':
             error_rule=clauses[0]['relational']['inputs']['gate']['evidence']['query']['ast']['rule']
         if name=='connection_service_architecture':

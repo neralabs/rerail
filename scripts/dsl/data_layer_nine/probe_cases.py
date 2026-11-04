@@ -258,3 +258,27 @@ def test_publication_preserves_repeated_empty_dependency_keywords(tmp_path,monke
  path=write(tmp_path,'l3200_metadata/bootstrap_coordinator.py',source);monkeypatch.setattr(lint,'REPO_ROOT',tmp_path);monkeypatch.setattr(lint,'BOOTSTRAP_FILES',(path,));monkeypatch.setattr(lint,'BOOTSTRAP_ENGINE_FILES',frozenset({path}))
  rows=lint._collect_file_violations(path)
  assert [(r.code,r.line) for r in rows if r.code=='BEI016']==[('BEI016',2),('BEI016',2)]
+
+
+def test_legacy_wrapper_missing_counterpart_control():
+ from scripts import lint_connection_service_architecture as lint
+ source='class Example:\n @legacy_sync\n def fetch(self):\n  _legacy_delegate_stub()\n'
+ assert [r.code for r in lint.analyze_source(Path('example.py'),source)]==['CONN401']
+ source+=' @pure_lazy\n def fetch_lazy(self):\n  pass\n'
+ assert lint.analyze_source(Path('example.py'),source)==[]
+
+
+def test_versioning_owner_rejects_duplicate_table_installation(tmp_path,monkeypatch):
+ from scripts import lint_bootstrap_engine_invariants as lint
+ monkeypatch.setattr(lint,'REPO_ROOT',tmp_path)
+ path=write(tmp_path,'bootstrap.py','def ensure_versioning_domain_schema():\n ensure_tables()\n')
+ monkeypatch.setattr(lint,'BOOTSTRAP_FILES',(path,));monkeypatch.setattr(lint,'BOOTSTRAP_ENGINE_FILES',frozenset({path}))
+ assert [r.code for r in lint._collect_file_violations(path)]==['BEI045']
+ path.write_text('def ensure_versioning_domain_schema():\n ensure_table()\n')
+ assert lint._collect_file_violations(path)==[]
+
+
+def test_schema_plugin_preserves_parser_errors(request):
+ suite=backend(request)
+ with pytest.raises(SyntaxError):
+  suite.schema_plugin.scan_source(Path('schema.py'),'def broken(\n')

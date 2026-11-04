@@ -4,7 +4,7 @@
   "mode": "snapshot",
   "exitCode": 0,
   "sourceFilesChecked": 1494,
-  "engineSha256": "acc5d060af7ad0835a1c477c808cc7fe96f88ea407c172176d0e71a59b5305d6",
+  "engineSha256": "d000bf29dcf827d087409633bab7340357c192048d1e0145f9515a073ca3a5fd",
   "records": [
     {
       "test": "scripts/tests/test_lint_connection_mode_split.py::test_linter_rejects_old_mixed_connection_name",
@@ -6855,6 +6855,110 @@
           "message": "metadata publication call must pass preplanned artifacts: ['publication_plan', 'publication_rows']"
         }
       ]
+    },
+    {
+      "test": "::test_legacy_wrapper_missing_counterpart_control",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "example.py",
+          "sourceSha256": "b182be0ee41713eb7c44138c761d906b4a23ee0f7ab4f8a5ceef6de151e2e5cb"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "example.py",
+          "detail": "Example.fetch legacy wrapper missing lazy counterpart fetch_lazy",
+          "line": 3,
+          "code": "CONN401"
+        }
+      ]
+    },
+    {
+      "test": "::test_legacy_wrapper_missing_counterpart_control",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "example.py",
+          "sourceSha256": "519dc0a44914d6f5d103f550edee5a4c5bb6b1031bb070fa16bd7cd6ffaa8cf9"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "::test_versioning_owner_rejects_duplicate_table_installation",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_file_violations",
+      "files": [
+        {
+          "path": "bootstrap.py",
+          "sourceSha256": "a0bfd3a71f54443c9fe2548021c0ce3da853b9a088baee24c4addba7c00199c6"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [
+          "bootstrap.py"
+        ],
+        "bootstrapPaths": [
+          "bootstrap.py"
+        ]
+      },
+      "expected": [
+        {
+          "code": "BEI045",
+          "path": "bootstrap.py",
+          "line": 2,
+          "message": "ensure_versioning_domain_schema must be the sole owner of versioning infra tables; do not emit ENSURE_TABLE duplicates"
+        }
+      ]
+    },
+    {
+      "test": "::test_versioning_owner_rejects_duplicate_table_installation",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_file_violations",
+      "files": [
+        {
+          "path": "bootstrap.py",
+          "sourceSha256": "c8b3357bb6cd28cb4b483ddd884a132a2f9819bab8dcf87ce64c00902f5dc4e1"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [
+          "bootstrap.py"
+        ],
+        "bootstrapPaths": [
+          "bootstrap.py"
+        ]
+      },
+      "expected": []
+    },
+    {
+      "test": "::test_schema_plugin_preserves_parser_errors",
+      "check": "schema_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "schema.py",
+          "sourceSha256": "553eda8c53fc903895e005a1bc644c6058ffd91ce4df67c9fbdbe8763f6d8862"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "exception": {
+          "type": "SyntaxError",
+          "message": "'(' was never closed (schema.py, line 1)",
+          "msg": "'(' was never closed",
+          "lineno": 1,
+          "offset": 11,
+          "text": "def broken(\n",
+          "end_lineno": 1,
+          "end_offset": 0
+        }
+      }
     }
   ],
   "calls": [],
@@ -9630,6 +9734,48 @@
         "phase": "teardown",
         "outcome": "passed"
       }
+    ],
+    "::test_legacy_wrapper_missing_counterpart_control": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_versioning_owner_rejects_duplicate_table_installation": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_schema_plugin_preserves_parser_errors": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
     ]
   },
   "semanticFallbacks": [],
@@ -9637,11 +9783,11 @@
   "instrumentationTranslations": [],
   "policySha256": {
     "connection_mode_split": "290347a63f74a05fed41aa9175cdac771060563b7943364ef990c39bfd3716b7",
-    "connection_structural_boundaries": "3e19ec5cfee29c30805a38f510dfb7a2706fed8b5dfbe2ecfcabec3f2ca6bafc",
+    "connection_structural_boundaries": "308f837699ad0973a4e10982dbc72b17129f1596cee3856766ee904f41373ffa",
     "connection_service_architecture": "780c8086f52c0887570e39aa6c3e79658003db3c1058789cbb1adebf37cc279c",
-    "schema_architecture": "9e1dd054f70dea06366dd0ac6d9c1dfe67f19ba59c24cbc5efcb67888dc403fb",
+    "schema_architecture": "ac9bc0f817e848a963cbff9e19949b2a6028696bf93bcada663838f12c50f17a",
     "schema_bootstrap_contracts": "5dbe113c87998cb90b4ce10c5d936db28ee03b609a1f7297ccd9417f523ef67d",
-    "bootstrap_engine_invariants": "f1e8204f4f48e9215027f5c98391e939fddfc75b3b9e795d7ea4eaf72645cf3f",
+    "bootstrap_engine_invariants": "5adad9b00a7f32e3bdea3f7964b2862348669e09cb946ee0ea4f4eb074ca4f7d",
     "bootstrap_lazy_sql": "7fb29ffcb43910b8e5ed21fbfe2fd32b5b1111c78dbece23275f03ab88bdbd70",
     "bootstrap_eager_resolve": "9744402aa96ae17ec632a1020f80c22bd6e9130eaaa05507c04ab99e237c05c5",
     "bootstrap_cache_health": "9ce3784ee65adbb429adac996eb7641be43dd925d3946fd9ca0b91000151e782",
@@ -9934,6 +10080,10 @@
     "fb2afa4a1c960a535654078b21e55df71980d4c343e476681892d391df420665": "class Example:\n @legacy_sync\n @legacy_async\n def fetch(self): pass\n",
     "fbd694e3d40461227a87759d02fb73bfbcf114d951ca7d144f67c26de9caabc3": "class _ConnectionLifecycleMixin:\n def __aenter__(self): self.connect()\n def __enter__(self): self.connect()\n def __enter__(self): self.connect()\nclass _ConnectionLifecycleMixin:\n def __enter__(self): self.connect()\n",
     "23ecac006fefb13c85fed7c7d40b4cac607ecf3d170383f9908dfdd58f8d2129": "def execute_application_plan():\n del conn, conn\n return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=0,b=0,c=0,d=0),mutation_counts=BootstrapMutationCounts(a=0,b=0,c=0,d=0))\n",
-    "f1e411d08b5deeada6fd4349fb520d0d4cc374a4b2cb77097b331ff2d6f95476": "def _enqueue_application_schema_lazy():\n publish_bootstrap_metadata_lazy(dependency_refs=(),dependency_refs=())\n bootstrap_schema_tail_lazy()\n"
+    "f1e411d08b5deeada6fd4349fb520d0d4cc374a4b2cb77097b331ff2d6f95476": "def _enqueue_application_schema_lazy():\n publish_bootstrap_metadata_lazy(dependency_refs=(),dependency_refs=())\n bootstrap_schema_tail_lazy()\n",
+    "b182be0ee41713eb7c44138c761d906b4a23ee0f7ab4f8a5ceef6de151e2e5cb": "class Example:\n @legacy_sync\n def fetch(self):\n  _legacy_delegate_stub()\n",
+    "519dc0a44914d6f5d103f550edee5a4c5bb6b1031bb070fa16bd7cd6ffaa8cf9": "class Example:\n @legacy_sync\n def fetch(self):\n  _legacy_delegate_stub()\n @pure_lazy\n def fetch_lazy(self):\n  pass\n",
+    "a0bfd3a71f54443c9fe2548021c0ce3da853b9a088baee24c4addba7c00199c6": "def ensure_versioning_domain_schema():\n ensure_tables()\n",
+    "c8b3357bb6cd28cb4b483ddd884a132a2f9819bab8dcf87ce64c00902f5dc4e1": "def ensure_versioning_domain_schema():\n ensure_table()\n"
   }
 }

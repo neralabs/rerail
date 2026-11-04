@@ -87,7 +87,7 @@ export class NineReplay {
       const file = files.find(f => f.path === syntax[0]!.path)!;
       const response = JSON.parse(loadNativeBinding().CodeRuleDslRuntime.pythonAstBatch(JSON.stringify([{ source: file.source, requests: [{ start: 0, end: Buffer.byteLength(file.source), kind: "module", fields: ["syntax_error"] }] }])));
       const detail = JSON.parse(response.documents[0][0].syntax_error);
-      const filename = ["schema_bootstrap_contracts", "bootstrap_lazy_sql", "bootstrap_eager_resolve", "plan_composition_architecture", "bootstrap_cache_health"].includes(record.check) ? file.path.split("/").at(-1) : "<unknown>";
+      const filename = ["schema_architecture", "schema_bootstrap_contracts", "bootstrap_lazy_sql", "bootstrap_eager_resolve", "plan_composition_architecture", "bootstrap_cache_health"].includes(record.check) ? file.path.split("/").at(-1) : "<unknown>";
       const message = `${detail.msg} (${filename}, line ${detail.lineno})`;
       if (record.check === "bootstrap_cache_health") return [{ path: file.path, line: 1, code: "BCH000", message: `SyntaxError: ${message}` }];
       return { exception: { type: "SyntaxError", message, ...detail } };

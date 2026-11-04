@@ -8,10 +8,10 @@ The private pack ships twenty documents. Seventy earlier ports remain candidates
 | --- | --- | ---: |
 | `connection_mode_split` | Public names, imports, handle modes, method kinds and explicit file scope | 9 |
 | `connection_structural_boundaries` | File limits, class bases, lifecycle ownership, supplied trees and definition order | 10 |
-| `connection_service_architecture` | Delegation, schema authority, facades, ownership across files and legacy wrappers | 21 |
+| `connection_service_architecture` | Delegation, schema authority, facades, ownership across files and legacy wrappers | 22 |
 | `schema_architecture` | Standalone planning checks and the configured lifecycle plugin, SAP001–SAP005 | 8 |
 | `schema_bootstrap_contracts` | Exact annotation names, parameter kinds, lazy signatures and authority use | 11 |
-| `bootstrap_engine_invariants` | Function checks, raw-source checks, nested traversal, primitive installation and diagnostic multiplicity | 62 |
+| `bootstrap_engine_invariants` | Function checks, raw-source checks, nested traversal, primitive installation and diagnostic multiplicity | 63 |
 | `bootstrap_lazy_sql` | Eager materialization, query chains, row loops and helper calls | 1 |
 | `bootstrap_eager_resolve` | The same detector, exposed through its separate configured entry point | 1 |
 | `bootstrap_cache_health` | Bootstrap frequency, fixture ownership, table creation, exemptions and parser diagnostics | 10 |
@@ -24,20 +24,20 @@ Its upstream script delegates to the lazy-SQL CLI. Both ports receive independen
 
 ## Assertion and result coverage
 
-The corpus contains 198 pytest cases:
+The corpus contains 201 pytest cases:
 
 - 133 upstream linter and supplied-tree framework cases.
 - 13 adjacent upstream codemod cases, retained as host coverage.
-- 52 additional cases, evaluated first by the original Python implementation.
+- 55 additional cases, evaluated first by the original Python implementation.
 
 The 133 upstream cases include seven lifecycle-plugin cases outside `scripts/tests`.
 They also include the service-rule repository-clean test, which reads 100 files and 3,425,634 source bytes.
 That complete test domain remains intact.
 
-The original implementation records 240 complete API results, including 140 results with findings.
+The original implementation records 245 complete API results, including 142 results with findings.
 One instrumentation case measures the original Python subtree walk.
 Its native replacement checks one actual module walk and one actual parse.
-The remaining 239 results compare complete return values through both native APIs.
+The remaining 244 results compare complete return values through both native APIs.
 Comparison includes ordering, multiplicity, messages, paths, line numbers, exception details and fact identifiers.
 Absolute paths inside fact identifiers receive the same root normalization as their path fields.
 
@@ -103,13 +103,14 @@ Recorded observations reproduce tests; they cannot replace fresh observations in
 
 ## Reproduction
 
-Generate the documents with `scripts/generate/packs/data-layer-nine.py --source <pinned-checkout>`.
+Generate the documents with `scripts/generate/packs/data_layer_batch_nine.py --source <pinned-checkout>`.
 Run `scripts/dsl/data_layer_nine/suite.py` with `--oracle` to record original results.
 Then run it with `--baseline fixtures/host/data-layer-port/batch-09-complete-api.json` and each native `--mode`.
-Use `--part 0 --parts 2` and `--part 1 --parts 2` for bounded shards.
+Use `--parts 4` and each `--part` from zero through three for bounded shards.
 The shards divide test cases; each case retains its complete file domain.
 
 `scripts/dsl/data_layer_nine/evidence.py` checks aggregate coverage and detector-disabled controls.
+`scripts/dsl/data_layer_nine/receipt.py` binds both execution paths, controls and implementation hashes.
 The `data-layer-parity` CI job runs both native APIs and the disabled controls.
 `conformance/data-layer/batch-nine-kernels.ts` measures only the new canonical-column kernel.
 Compile CPU and evaluation CPU remain separate.

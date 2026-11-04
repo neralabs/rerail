@@ -6390,3 +6390,73 @@ No full-repository cold run was performed.
 The initial interrupted discovery runs are timeout observations, not before/after benchmark measurements.
 This work does not claim to resolve the historical repository CPU or 20.451 GB peak-memory problem.
 There are 62 rules left to port. No Linear issues were created.
+
+## 2026-11-04 — Batch nine: canonical columns and exact API parity
+
+The port inventory advances from 80 to 90 of 142 checks.
+The private pack now ships twenty documents; seventy earlier ports remain candidates.
+The [batch report](data-layer-batch-nine.md) records the source pin, contracts and reproduction commands.
+
+The original oracle passes 201 cases and records 245 complete API results.
+Those results include 142 positive observations.
+The corpus combines 133 upstream linter/framework cases, 13 adjacent codemod cases and 55 additional controls.
+One native instrumentation translation measures actual parse and module-walk counters.
+The other 244 API results require complete-value parity.
+Detector-disabled controls must fail the original positive assertions for all ten checks.
+The final [assertion receipt](../fixtures/host/data-layer-port/batch-09-native-assertions.json) records each native execution path.
+
+The new service-rule repository test exposed concrete preparation defects:
+
+1. Complete AST row dictionaries exceeded the 64 MiB transport limit on its 100-file input.
+   The worker now sends demanded column arrays. The native adapter retains column vectors.
+2. Unused annotation rendering and breadth-first ordering still ran for every document.
+   Canonical demand now controls both operations. SQLite column analysis narrows generated producer fields.
+3. Rejoining every canonical node to the CST repeated unnecessary work.
+   Validated canonical source spans remove that join and preserve variadic-parameter locations.
+4. Delegate body lookups lacked an index on their actual join key.
+   The body relation now indexes path and node identity. An ownership anti-join avoids repeated delegate scans.
+5. An inner alias shadowed its method owner in a descendant query.
+   The resulting uncorrelated predicate falsely flagged 351 clean methods. Explicit aliases restore correlation.
+6. Cached SQL results could outlive their canonical anchor proofs in a fresh workspace document.
+   The SQL owner now retains source-versioned proofs under its existing binding-memory limit.
+
+Additional controls found lost diagnostic multiplicity for repeated delete targets and keyword arguments.
+The corrected joins preserve each occurrence.
+Legacy structural helpers also preserve first-definition behavior and their explicit method order.
+No capacity or statement limit increased.
+
+The new canonical-column kernel uses twenty files, 44,980 source bytes and 400 findings.
+Both retained addons execute the same kernel. Each row reports the median of three fresh processes.
+Compilation is separate from evaluation. The command also performs one repeated evaluation.
+The [kernel receipt](../fixtures/host/data-layer-port/batch-09-kernels.json) retains all six runs and addon hashes.
+
+| Retained implementation | Compile CPU, Node | Cold evaluation CPU, Node | Cold evaluation wall | Whole-command family CPU | Maximum RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Complete row dictionaries | 1.797 ms | 108.868 ms | 414.796 ms | 1.32 s | 216.6 MiB |
+| Demanded column arrays | 1.702 ms | 73.656 ms | 223.495 ms | 1.20 s | 212.2 MiB |
+
+Node evaluation CPU excludes the CPython child. It is not total kernel CPU.
+External BSD `time` includes process startup, compilation, both evaluations and waited child processes.
+Its family CPU improvement is about nine percent for this small command.
+Startup therefore limits this comparison. The wall-time reduction is not a CPU reduction of the same size.
+RSS reports the maximum per-process resident size, not simultaneous family memory.
+These retained builds identify a local kernel improvement; they do not establish an engine-wide speedup.
+
+Reproduce the kernel with `node --import tsx conformance/data-layer/batch-nine-kernels.ts`.
+All ordinary test commands remain bounded at 115 seconds.
+An early combined retained-test command and a two-shard workspace attempt reached that bound under concurrent load.
+The acceptance runs use smaller independent assertion shards. Each repository-wide test retains its complete file domain.
+Builds used the existing authorization to finish.
+
+No cumulative cold repository benchmark ran.
+The historical full-repository CPU and 20.451 GB memory problems remain open.
+No Linear issues were created.
+
+Final validation passes 201 cases in each native API mode, with zero differences across 244 complete results per mode.
+Disabled detectors produce 147 expected failed cases and 54 passing host or clean cases.
+All ten checks reject their positive controls.
+The native DSL suite passes 1,576 tests, with 23 existing ignores.
+The TypeScript replay and receipt tests pass all 26 cases.
+Retained checks pass 34 supplied-fact API cases, thirteen capability cases and four prior-receipt cases.
+TypeScript typecheck passes. The ten documents regenerate byte for byte.
+The structure check retains three pre-existing directory-size findings; all other metrics pass.

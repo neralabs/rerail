@@ -476,15 +476,15 @@ jobs:
           unset RERAIL_ENGINE_PATH GIT_PAGER RERAIL_NATIVE_CONTRACTS
           reports="$RUNNER_TEMP/batch-nine-reports"
           mkdir -p "$reports"
-          for part in 0 1; do
+          for part in 0 1 2 3; do
             timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_nine/suite.py \
               --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
               --baseline fixtures/host/data-layer-port/batch-09-complete-api.json \
-              --part "$part" --parts 2 --mode "$MODE" --output "$reports/api-$MODE-$part.json"
+              --part "$part" --parts 4 --mode "$MODE" --output "$reports/api-$MODE-$part.json"
           done
           python scripts/dsl/data_layer_nine/evidence.py \
             --oracle fixtures/host/data-layer-port/batch-09-complete-api.json \
-            --reports "$reports/api-$MODE-0.json" "$reports/api-$MODE-1.json" \
+            --reports "$reports/api-$MODE-0.json" "$reports/api-$MODE-1.json" "$reports/api-$MODE-2.json" "$reports/api-$MODE-3.json" \
             --output "$reports/summary-$MODE.json"
       - name: Require batch-nine positives to reject disabled detectors
         if: matrix.mode == 'snapshot'
@@ -495,18 +495,18 @@ jobs:
           unset RERAIL_ENGINE_PATH GIT_PAGER RERAIL_NATIVE_CONTRACTS
           reports="$RUNNER_TEMP/batch-nine-reports"
           python scripts/dsl/data_layer_nine/evidence.py --mutants packs/data-layer/rules --output "$RUNNER_TEMP/batch-nine-mutants/rules"
-          for part in 0 1; do
+          for part in 0 1 2 3; do
             status=0
             timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_nine/suite.py \
               --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
               --baseline fixtures/host/data-layer-port/batch-09-complete-api.json --mutant \
               --policies "$RUNNER_TEMP/batch-nine-mutants/rules" --mode snapshot \
-              --part "$part" --parts 2 --output "$reports/controls-$part.json" || status=$?
+              --part "$part" --parts 4 --output "$reports/controls-$part.json" || status=$?
             if [ "$status" -ne 1 ]; then echo "Expected assertion failures, got $status"; exit 1; fi
           done
           python scripts/dsl/data_layer_nine/evidence.py \
             --oracle fixtures/host/data-layer-port/batch-09-complete-api.json --controls \
-            --reports "$reports/controls-0.json" "$reports/controls-1.json" --output "$reports/controls-summary.json"
+            --reports "$reports/controls-0.json" "$reports/controls-1.json" "$reports/controls-2.json" "$reports/controls-3.json" --output "$reports/controls-summary.json"
       - name: Upload batch-nine assertion receipts
         if: always()
         uses: actions/upload-artifact@v7

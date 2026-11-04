@@ -399,6 +399,42 @@
         "message": "Architecture contract violation",
         "anchor": "witness.span"
       }
+    },
+    {
+      "id": "source-syntax",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "invalid",
+          "rule": {
+            "all": [
+              {
+                "kind": "module"
+              },
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "scan_source": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "NATIVE-SYNTAX",
+        "message": "Python source cannot be parsed",
+        "anchor": "witness.span"
+      }
     }
   ]
 }

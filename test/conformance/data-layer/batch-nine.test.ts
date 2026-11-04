@@ -14,7 +14,7 @@ const checks = ["connection_mode_split", "connection_structural_boundaries", "co
 const unique = [...new Map(oracle.records.map(record => [JSON.stringify({ ...record, test: undefined }), record])).values()];
 
 it("retains all upstream cases, complete results and independently observed sources", () => {
-  expect(Object.keys(oracle.cases)).toHaveLength(198);
+  expect(Object.keys(oracle.cases)).toHaveLength(201);
   for (const [digest, source] of Object.entries(oracle.sources)) expect(createHash("sha256").update(source).digest("hex")).toBe(digest);
   for (const check of checks) {
     const records = oracle.records.filter(r => r.check === check);
@@ -79,3 +79,22 @@ it.each([
     expect((await edit(5, spec.path, source)).violations).toHaveLength(expected.length);
   } finally { await enforcer.close(); await rm(root, { recursive: true, force: true }); }
 }, 30_000);
+
+it("binds the final assertions, disabled controls and kernel evidence to their implementations", () => {
+  const path = "fixtures/host/data-layer-port/batch-09-native-assertions.json";
+  const receipt = JSON.parse(readFileSync(path, "utf8"));
+  expect(receipt.sourcePin).toBe("2b1504adc4291daaf080b2e932962b134da1a69a");
+  for (const mode of ["snapshot", "workspace"]) {
+    expect(receipt.executionPaths[mode]).toMatchObject({ cases: 201, completeResults: 244, positiveResults: 142, rejected: [] });
+    expect(receipt.executionPaths[mode].engineSha256).toBe(receipt.engineSha256);
+    expect(Object.keys(receipt.executionPaths[mode].caseOutcomes)).toHaveLength(201);
+    expect(receipt.executionPaths[mode].instrumentationTranslations).toHaveLength(1);
+    for (const phases of Object.values(receipt.executionPaths[mode].caseOutcomes) as { outcome: string }[][])
+      expect(phases.map(p => p.outcome)).toEqual(["passed", "passed", "passed"]);
+  }
+  expect(receipt.positiveControls.cases).toBe(201);
+  expect(receipt.positiveControls.rejected).toEqual([...checks].sort());
+  expect(receipt.positiveControls.failedCases).toBe(147);
+  for (const [path, digest] of Object.entries(receipt.fileSha256))
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex"), path).toBe(digest);
+});

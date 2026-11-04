@@ -228,7 +228,7 @@ class Suite(NativeSuite):
   syntax=[row for row in rows if row['code']=='NATIVE-SYNTAX']
   if syntax:
    finding=syntax[0];details=finding['variables']['syntax_error'];path=originals[finding['path']]
-   filename=str(path) if check in {'schema_bootstrap_contracts','bootstrap_lazy_sql','bootstrap_eager_resolve','plan_composition_architecture','bootstrap_cache_health'} else '<unknown>'
+   filename=str(path) if (check=='schema_architecture' and entry=='scan_source') or check in {'schema_bootstrap_contracts','bootstrap_lazy_sql','bootstrap_eager_resolve','plan_composition_architecture','bootstrap_cache_health'} else '<unknown>'
    error=SyntaxError(details['msg'],(filename,details['lineno'],details['offset'],details['text'],details['end_lineno'],details['end_offset']))
    if check=='bootstrap_cache_health':return [module.BootstrapCacheHealthViolation(path,1,'BCH000','SyntaxError: '+str(error))]
    raise error
