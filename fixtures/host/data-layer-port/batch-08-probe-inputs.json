@@ -2070,6 +2070,51 @@
           "source": "def broken_lazy(:\n"
         }
       ]
+    },
+    {
+      "id": "purity-transitive-cross-file-import",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\nfrom impl.helper import inspect_runtime\n@pure_lazy\ndef derive(tx):\n    return inspect_runtime(tx)\n"
+        },
+        {
+          "path": "impl/helper.py",
+          "source": "def inspect_runtime(tx):\n    return tx._conn\n"
+        }
+      ]
+    },
+    {
+      "id": "purity-transitive-cross-file-module-import",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\nimport impl.helper as helper\n@pure_lazy\ndef derive(tx):\n    return helper.inspect_runtime(tx)\n"
+        },
+        {
+          "path": "impl/helper.py",
+          "source": "def inspect_runtime(tx):\n    return tx._conn\n"
+        }
+      ]
+    },
+    {
+      "id": "purity-transitive-cross-file-relative",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\nfrom .helper import inspect_runtime\n@pure_lazy\ndef derive(tx):\n    return inspect_runtime(tx)\n"
+        },
+        {
+          "path": "impl/helper.py",
+          "source": "def inspect_runtime(tx):\n    return tx._conn\n"
+        }
+      ]
     }
   ]
 }

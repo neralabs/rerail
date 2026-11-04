@@ -9,13 +9,14 @@
     "lazy_architecture",
     "lazy_sql_surface",
     "plan_helpers_allowlist",
+    "pure_lazy_runtime_purity",
     "readthrough_authority_architecture"
   ],
   "source_mismatches": [],
   "pytest_exit_code": 0,
   "collected_tests": 0,
   "uncaptured_tests": [],
-  "loaded_source_files_checked": 128,
+  "loaded_source_files_checked": 132,
   "events": [
     {
       "test": "probe:batch8:call-_grammar_effect_lazy",
@@ -6093,6 +6094,123 @@
         "options": {
           "oracleAnalyzer": true,
           "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:purity-transitive-cross-file-import",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\nfrom impl.helper import inspect_runtime\n@pure_lazy\ndef derive(tx):\n    return inspect_runtime(tx)\n"
+        },
+        {
+          "path": "impl/helper.py",
+          "source": "def inspect_runtime(tx):\n    return tx._conn\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/helper.py",
+          "line": 2,
+          "column": null,
+          "code": "PLP-003",
+          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_paths"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:purity-transitive-cross-file-module-import",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\nimport impl.helper as helper\n@pure_lazy\ndef derive(tx):\n    return helper.inspect_runtime(tx)\n"
+        },
+        {
+          "path": "impl/helper.py",
+          "source": "def inspect_runtime(tx):\n    return tx._conn\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/helper.py",
+          "line": 2,
+          "column": null,
+          "code": "PLP-003",
+          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_paths"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:purity-transitive-cross-file-relative",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\nfrom .helper import inspect_runtime\n@pure_lazy\ndef derive(tx):\n    return inspect_runtime(tx)\n"
+        },
+        {
+          "path": "impl/helper.py",
+          "source": "def inspect_runtime(tx):\n    return tx._conn\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/helper.py",
+          "line": 2,
+          "column": null,
+          "code": "PLP-003",
+          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_paths"
         }
       }
     }

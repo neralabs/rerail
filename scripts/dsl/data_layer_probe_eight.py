@@ -44,6 +44,8 @@ def main():
                     policy_entries=json.dumps([asdict(item) for item in selected],sort_keys=True)
                 elif check in {'readthrough_authority_architecture','authentication_plan_purity'}:
                     raw=module.scan_sources(tuple(root/file['path'] for file in files));entry='scan_sources'
+                elif check=='pure_lazy_runtime_purity' and entry=='scan_paths':
+                    raw=module.scan_paths([root/file['path'] for file in files],root=root,directories=sorted({file['path'].split('/')[0] for file in files}))
                 elif check=='lazy_architecture':
                     raw=module.scan_files([root/file['path'] for file in files]);entry='scan_files'
                 elif check=='plan_helpers_allowlist':
