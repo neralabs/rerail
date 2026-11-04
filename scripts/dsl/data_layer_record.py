@@ -28,6 +28,7 @@ import data_layer_batch_four as batch_four
 import data_layer_batch_five as batch_five
 import data_layer_batch_six as batch_six
 import data_layer_batch_seven as batch_seven
+import data_layer_batch_eight as batch_eight
 
 
 BATCH_ONE = (
@@ -219,6 +220,8 @@ class Recorder:
             batch_six.install(self)
         if self.batch == 7:
             batch_seven.install(self)
+        if self.batch == 8:
+            batch_eight.install(self)
 
     def pytest_collection_finish(self, session) -> None:
         self.collected = [item.nodeid for item in session.items]
@@ -242,13 +245,13 @@ def main() -> None:
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--revision", default="2b1504adc4291daaf080b2e932962b134da1a69a")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--batch", type=int, choices=(1, 2, 3, 4, 5, 6, 7), default=1)
+    parser.add_argument("--batch", type=int, choices=(1, 2, 3, 4, 5, 6, 7, 8), default=1)
     parser.add_argument("tests", nargs="*", help="Defaults to the selected batch's unchanged test modules.")
     args = parser.parse_args()
     if not args.tests:
-        batches = {1: BATCH_ONE, 2: batch_two.BATCH_TWO, 3: batch_three.BATCH_THREE, 4: batch_four.BATCH_FOUR, 5: batch_five.BATCH_FIVE, 6: batch_six.BATCH_SIX, 7: batch_seven.BATCH_SEVEN}
-        paths = batch_seven.TESTS if args.batch == 7 else batch_six.TESTS if args.batch == 6 else batch_five.TESTS if args.batch == 5 else {check:f"scripts/tests/test_lint_{check}.py" for check in batches[args.batch]}
-        args.tests = [path for path in (paths.values() if args.batch == 6 else (paths[check] for check in batches[args.batch])) if (args.source / path).exists()]
+        batches = {1: BATCH_ONE, 2: batch_two.BATCH_TWO, 3: batch_three.BATCH_THREE, 4: batch_four.BATCH_FOUR, 5: batch_five.BATCH_FIVE, 6: batch_six.BATCH_SIX, 7: batch_seven.BATCH_SEVEN, 8: batch_eight.BATCH_EIGHT}
+        paths = batch_eight.TESTS if args.batch == 8 else batch_seven.TESTS if args.batch == 7 else batch_six.TESTS if args.batch == 6 else batch_five.TESTS if args.batch == 5 else {check:f"scripts/tests/test_lint_{check}.py" for check in batches[args.batch]}
+        args.tests = [path for item in (paths.values() if args.batch == 6 else (paths[check] for check in batches[args.batch])) for path in (item if isinstance(item,list) else [item]) if (args.source / path).exists()]
     root = args.source.resolve()
     commit = subprocess.check_output(["git", "-C", str(args.repo), "rev-parse", f"{args.revision}^{{commit}}"], text=True).strip()
     tree = subprocess.check_output(["git", "-C", str(args.repo), "ls-tree", "-rz", commit])
@@ -259,9 +262,9 @@ def main() -> None:
             expected[path.decode()] = metadata.split()[2].decode()
 
     sys.path.insert(0, str(root))
-    if args.batch in (5, 6, 7):
+    if args.batch in (5, 6, 7, 8):
         sys.path.insert(1, str(root / 'scripts'))
-    if args.batch in (6, 7):
+    if args.batch in (6, 7, 8):
         args.output = args.output.resolve()
         os.chdir(root)
     recorder = Recorder(root, args.batch)
@@ -282,8 +285,8 @@ def main() -> None:
     output = {
         "format": "rerail.data-layer-recording/v1",
         "commit": commit,
-        "missing_test_modules": [path for path in batch_seven.TESTS.values() if not (root/path).exists()] if args.batch == 7 else [f"scripts/tests/test_lint_{check}.py" for check in batch_four.BATCH_FOUR if not (root / f"scripts/tests/test_lint_{check}.py").exists()] if args.batch == 4 else [path for path in batch_five.TESTS.values() if not (root/path).exists()] if args.batch == 5 else [],
-        "checks": list(batch_seven.BATCH_SEVEN) if args.batch == 7 else list(batch_six.BATCH_SIX) if args.batch == 6 else list(batch_five.BATCH_FIVE) if args.batch == 5 else list(batch_four.BATCH_FOUR) if args.batch == 4 else sorted({check for check in (*BATCH_ONE, *batch_two.BATCH_TWO, *batch_three.BATCH_THREE, *batch_four.BATCH_FOUR) if any(f"test_lint_{check}.py" in test for test in args.tests)}),
+        "missing_test_modules": [path for paths in batch_eight.TESTS.values() for path in paths if not (root/path).exists()] if args.batch == 8 else [path for path in batch_seven.TESTS.values() if not (root/path).exists()] if args.batch == 7 else [f"scripts/tests/test_lint_{check}.py" for check in batch_four.BATCH_FOUR if not (root / f"scripts/tests/test_lint_{check}.py").exists()] if args.batch == 4 else [path for path in batch_five.TESTS.values() if not (root/path).exists()] if args.batch == 5 else [],
+        "checks": list(batch_eight.BATCH_EIGHT) if args.batch == 8 else list(batch_seven.BATCH_SEVEN) if args.batch == 7 else list(batch_six.BATCH_SIX) if args.batch == 6 else list(batch_five.BATCH_FIVE) if args.batch == 5 else list(batch_four.BATCH_FOUR) if args.batch == 4 else sorted({check for check in (*BATCH_ONE, *batch_two.BATCH_TWO, *batch_three.BATCH_THREE, *batch_four.BATCH_FOUR) if any(f"test_lint_{check}.py" in test for test in args.tests)}),
         "python": sys.version,
         "pytest": pytest.__version__,
         "root_conftest_present": (root / "conftest.py").exists(),
