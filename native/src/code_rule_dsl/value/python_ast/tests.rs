@@ -139,3 +139,27 @@ fn literal_metadata_has_canonical_json_without_source_execution() {
     .unwrap();
     assert_eq!(out[0][0]["literal_json"], r#"["x",["y",3]]"#);
 }
+
+#[test]
+fn canonical_names_and_annotation_repr_preserve_python_semantics() {
+    let source = "import ｍｏｄ.ｎａｍｅ as alias\nvalue: \"OptimizerRunCache\"\n";
+    let name = "ｍｏｄ.ｎａｍｅ";
+    let annotation = "\"OptimizerRunCache\"";
+    let make = |text: &str, kind: &str, fields: &[&str]| Request {
+        start: source.find(text).unwrap(),
+        end: source.find(text).unwrap() + text.len(),
+        kind: kind.into(),
+        fields: fields.iter().map(|f| (*f).into()).collect(),
+    };
+    let out = batch(&[Document {
+        source: source.into(),
+        requests: vec![
+            make(name, "dotted_name", &["identifier"]),
+            make(annotation, "type", &["unparse", "repr_unparse"]),
+        ],
+    }])
+    .unwrap();
+    assert_eq!(out[0][0]["identifier"], "mod.name");
+    assert_eq!(out[0][1]["unparse"], "'OptimizerRunCache'");
+    assert_eq!(out[0][1]["repr_unparse"], "\"'OptimizerRunCache'\"");
+}

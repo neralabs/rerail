@@ -45,7 +45,7 @@ for document in request["documents"]:
     offsets = [0, *(match.end() for match in re.finditer(rb"\r\n?|\n",source_bytes))]
     by_span = {}
     by_start = {}
-    needed_types=tuple({kind for item in document["requests"] if item["kind"]!="module" and not (item["kind"]=="identifier" and item["fields"]==["identifier"]) for kind in KINDS.get(item["kind"],())})
+    needed_types=tuple({kind for item in document["requests"] if item["kind"]!="module" and not (item["kind"] in {"identifier","dotted_name","relative_import"} and item["fields"]==["identifier"]) for kind in KINDS.get(item["kind"],())})
     for node in ast.walk(tree) if needed_types else ():
         if not isinstance(node,needed_types) or not hasattr(node, "lineno"):
             continue
@@ -62,9 +62,9 @@ for document in request["documents"]:
             if output_bytes>64*1024*1024:raise ValueError("Python AST batch exceeds its output capacity")
             rows.append({"column":value})
             continue
-        if kind == "identifier" and item["fields"] == ["identifier"]:
+        if kind in {"identifier","dotted_name","relative_import"} and item["fields"] == ["identifier"]:
             text=source_bytes[item["start"]:item["end"]].decode("utf-8")
-            value=unicodedata.normalize("NFKC",text)
+            value=unicodedata.normalize("NFKC",re.sub(r"\\\r?\n|\s+","",text))
             output_bytes+=len(value.encode("utf-8"))
             if output_bytes>64*1024*1024:raise ValueError("Python AST batch exceeds its output capacity")
             rows.append({"identifier":value})
@@ -88,8 +88,10 @@ for document in request["documents"]:
                 value = hashlib.sha256(ast.dump(node, include_attributes=False).encode("utf-8")).hexdigest()
             elif field == "literal_json":
                 value = json.dumps(ast.literal_eval(node), sort_keys=True, separators=(",", ":"))
-            elif field == "unparse":
+            elif field in {"unparse", "repr_unparse"}:
                 value = ast.unparse(node)
+                if field == "repr_unparse":
+                    value = repr(value)
             elif field == "dump":
                 value = ast.dump(node, include_attributes=False)
             elif field == "identifier":
