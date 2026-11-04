@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import { replay } from "../../../conformance/data-layer/replay.js";
 import { fixturesPath } from "../../support/oracles.js";
 
-it.each(["readthrough_authority_architecture", "authentication_plan_purity", "legacy_callback_quarantine", "lazy_adapter_ownership", "plan_helpers_allowlist", "lazy_sql_surface", "pure_lazy_runtime_purity", "eager_resolve"])("ports original %s positives and clean cases", async check => {
+it.each(["readthrough_authority_architecture", "authentication_plan_purity", "legacy_callback_quarantine", "lazy_adapter_ownership", "plan_helpers_allowlist", "lazy_sql_surface", "pure_lazy_runtime_purity", "eager_resolve", "lazy_architecture"])("ports original %s positives and clean cases", async check => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-batch-eight-"));
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   try {
@@ -27,4 +27,11 @@ it.each(["readthrough_authority_architecture", "authentication_plan_purity", "le
     expect(report).toMatchObject({
       hostGuardCalls: 0, falsePositives: 0, falseNegatives: 0, engineFailures: 0, executionPathDifferences: 0, missingNativeCoverage: [] });
   } finally { log.mockRestore(); rmSync(directory, { recursive: true, force: true }); }
+}, 30_000);
+
+it("keeps positive oracle probes for all eighteen lazy architecture diagnostics", () => {
+  const probes = JSON.parse(readFileSync(fixturesPath("host", "data-layer-port", "batch-08-probes.json"), "utf8"));
+  const codes = new Set(probes.events.filter((event: { check: string }) => event.check === "lazy_architecture")
+    .flatMap((event: { findings: { code: string }[] }) => event.findings.map(finding => finding.code)));
+  for (let number = 1; number <= 18; number++) expect(codes.has(`LA-${String(number).padStart(3, "0")}`)).toBe(true);
 });
