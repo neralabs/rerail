@@ -2,8 +2,8 @@ name: Release pull request
 
 # On every push to main: releases core if main's package.json names a version not released yet, then opens or updates
 # the "Release" pull request with everything releasable (scripts/release/release-version.mjs):
-#   - packs: with changesets pending, `npm run version:packs`, each pack's version and CHANGELOG.md, written by
-#     changesets (docs/pack-format.md, "Release");
+#   - packs: with changesets pending, `npm run version:packs` for each pack's version, and each CHANGELOG.md's section
+#     for it, written from pack.json and the changesets (docs/pack-format.md, "Release");
 #   - core: when anything core ships has changed since its last `v*` tag, the next patch version in package.json and
 #     package-lock.json, and CHANGELOG.md's section for that version, its unreleased lead and the entries pending in
 #     .changelog/ by change type, whose files it deletes (docs/release.md, "Release notes").

@@ -49,9 +49,10 @@ export function changelogPath(name) {
 }
 
 /**
- * A pack's changelog section as its Release notes: without the one `### <Type> Changes` heading changesets writes
- * over every section of a pack below 1.0.0 (kept when a section has two or more types), and without the commit hash
- * the default generator led each entry with before changeset-changelog.mjs (the backfilled sections keep it).
+ * A pack's changelog section as its Release notes. A section the Release pull request wrote (pack-changelog.mjs) goes
+ * as it is. One from before it, which a backfill reads, loses the one `### <Bump> Changes` heading changesets wrote over
+ * every section of a pack below 1.0.0 (kept when a section has two or more) and the commit hash its default generator
+ * led each entry with.
  */
 export function packReleaseNotes(section) {
   const lines = section.split("\n").map((line) => line.replace(HASH_LED_ENTRY, "$1"));

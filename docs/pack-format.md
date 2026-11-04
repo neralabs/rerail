@@ -743,14 +743,15 @@ Packs are pre-release until 1.0.0: below it, every change is a `patch`. From 1.0
 | A rule removed or renamed; a default mode made stricter; the core range narrowed | major |
 
 Versions are managed with [changesets](https://github.com/changesets/changesets). A pull request that changes what a
-pack publishes adds a changeset naming the pack's package, its bump and a one-line summary for users:
+pack publishes adds a changeset naming the pack's package, its bump and a one-line summary for users, then renames it
+so it starts with its change type (`fixed-vue-no-unused-vars-filters.md`, [.changeset/README.md](../.changeset/README.md)):
 
 ```sh
 npx changeset
 ```
 
 Nobody edits a pack's `version` or `CHANGELOG.md` by hand: at release, `npx changeset version` applies pending
-changesets, bumps each pack and writes its `CHANGELOG.md`.
+changesets and bumps each pack, and the Release pull request writes its `CHANGELOG.md`.
 
 <details>
 <summary>What needs a changeset, and how it is enforced</summary>
@@ -780,9 +781,9 @@ changeset still bumps the pack.
 
 The summary says what changed plainly, in a sentence or two, without commit hashes, ticket ids, pull request numbers or
 repository-internal maintenance. The **Changesets** job fails a changeset that breaks this
-([release notes](release.md#release)). `changeset version` writes each summary as one changelog entry, as written, with
-no commit hash (`scripts/release/changeset-changelog.mjs`, the generator `.changeset/config.json` names), unlike
-changesets' default generator, and an empty summary as no entry. Rule counts are left to the Release pull request
+([release notes](release.md#release)), and one whose file name gives no change type. The Release pull request writes each
+summary as one entry, as written, under its type, and an empty summary as no entry; changesets itself writes no changelog
+(`"changelog": false` in `.changeset/config.json`). Rule counts are left to the Release pull request
 because changesets pile up between releases and each counts against the `main` it was written on.
 
 </details>
@@ -806,11 +807,14 @@ Core's `v*` release (`release.yml`) is separate.
 - With changesets pending, it runs `npm run version:packs`: `changeset version`, then
   `scripts/release/sync-pack-lockfile.mjs` to record the new versions in `package-lock.json`. It bumps core too when
   what core ships has changed.
-- It then dates each released pack's new `CHANGELOG.md` section and opens it with what changed in the pack's rules
-  since the commit that released its previous version (`scripts/release/pack-changelog.mjs`): how many rules it ships
-  and how many start on, its new rules (by id, or counted by group past 12) and how each starts, those it no longer
-  ships, and those that start differently. The changesets' entries follow, without the `### Patch Changes` heading,
-  which says nothing below 1.0.0.
+- It then writes each released pack's dated `CHANGELOG.md` section (`scripts/release/pack-changelog.mjs`), in the format
+  of core's: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), with the two differences the changelog's
+  header states. The lead says how many rules it ships and how many start on. Under Added, Changed, Deprecated, Removed,
+  Fixed and Security, in that order and leaving out types with no entry, come what changed in its rules since the commit
+  that released its previous version (its new rules, by id or counted by group past 12, and how each starts, under
+  Added; those it no longer ships under Removed; those that start differently under Changed), then the changesets'
+  entries in file-name order. Sections already released keep the format they went out in. A pending changeset with no
+  type fails the run, naming the file: one `changeset version` bumps every pack, so no pack can wait for its rename.
 - Its description lists every package and version it releases, with changelog entries. Review it like any pull
   request.
 - A newer push cancels an older run; with nothing releasable, an open Release pull request is closed.
@@ -867,8 +871,8 @@ summaries.
 <details>
 <summary>How GitHub Releases are made</summary>
 
-- Sections written before the Release pull request dated them lose their one `### Patch Changes` heading and the
-  commit hash their entries carry.
+- Sections from before the Release pull request wrote them lose their one `### Patch Changes` heading and the commit
+  hash their entries carry.
 - After **Published dist-tags** passes, the **GitHub Releases** job makes one per published version
   (`scripts/release/github-release.mjs`). Rerun, it rewrites an existing Release's notes and flags.
 - A pack's Release is never the repository's latest release, which is core's. It is a pre-release only for a held pack

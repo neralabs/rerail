@@ -518,7 +518,7 @@ Add a changeset (`patch`, "Add the Laravel pack: …"). Every later pack change 
 [versioning](pack-format.md#versioning-and-release) says which bump (`patch` until 1.0.0):
 
 ```sh
-npx changeset   # pick @neralabs/rerail-pack-laravel, choose the bump, write the summary
+npx changeset   # pick @neralabs/rerail-pack-laravel, choose the bump, write the summary; then rename it added-laravel-pack.md
 ```
 
 Every rule needs proof: `examples` (one caught, one that passes, each `path` inside the rule's scope) or a port entry

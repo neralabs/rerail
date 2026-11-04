@@ -92,7 +92,7 @@ A rule with no upstream needs no test data; its examples are the proof.
    [text criteria](pack-format.md#description), check 8).
 2. List it in `pack.json` with a caught and a passing example in the rule's scope (check 3).
 3. Add its section under `## Rule details` in `packs/<id>/README.md` (check 5).
-4. Add a changeset.
+4. Add a changeset, its file name opening with its change type ([.changeset/README.md](../.changeset/README.md)).
 5. Run `npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"`.
 
 The pull request says what the examples show and what they leave out.
@@ -310,7 +310,7 @@ Promote from the judged commit's promotable list, after confirming `main` has no
 
 1. Move the document to `rules/`; point the port entry at it.
 2. List it in `pack.json`: off if the comment's **Starts** column says off, with its example pair if any.
-3. Move its README section; add a changeset (its summary may be empty: the Release pull request lists new rules).
+3. Move its README section; add a changeset, `added-…` (its summary may be empty: the Release pull request lists new rules).
 4. Grep for the old path: `git grep -F candidates/rules/<rule>.json`.
 5. Re-pin the native anchors test, last: `cargo test --manifest-path Cargo.toml -p rerail-engine anchors::tests`.
 
@@ -325,7 +325,8 @@ Promote from the judged commit's promotable list, after confirming `main` has no
 - **The anchors test**: `native/src/code_rule_dsl/matcher/anchors/tests.rs` pins the count of `ast` queries in shipped
   documents, so any move between `rules/` and `candidates/` changes it. The cargo command prints the new value.
 - **Add the suppression case** where the tool's generator demands one.
-- **Changeset summary = release note**: what changed for the upgrader, at most 60 words, no ticket id, pull request
+- **Changeset = release note**: its file name opens with its change type (`fixed-…`), and its summary says what changed
+  for the upgrader, at most 60 words, no ticket id, pull request
   number or commit hash. The **Changesets** job enforces this. Which rules ship and how each starts is written by the
   Release pull request from `pack.json`, so a promotion with nothing else to say leaves the summary empty
   ([versioning](pack-format.md#versioning-and-release)).
@@ -344,7 +345,7 @@ A shipped rule that fails a blocking check the same pull request does not fix go
 - Move its README section to `candidates/README.md`, in sorted place, with one sentence (file and line) on why.
 - Tests loading the rule by id read `rules/` only; also pass the pack's `candidates/` directory, as
   `test/engine/code-rule/pack-rules/python-harmful-steers.test.ts` does.
-- Re-pin the anchors test. The changeset says why the rule no longer ships; the Release pull request lists it.
+- Re-pin the anchors test. The changeset (`removed-…`) says why the rule no longer ships; the Release pull request lists it.
 - No re-derive: the generator's authored output does not depend on which rules ship.
 
 </details>

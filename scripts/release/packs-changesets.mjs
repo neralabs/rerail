@@ -2,14 +2,15 @@
 // A pull request that changes what a pack publishes adds a changeset naming it (docs/pack-format.md, "Versioning and
 // release"): without one, the change is never released. Compares this checkout's HEAD with its merge base with BASE.
 // Each changeset the pull request adds or edits is the pack's release note, so its summary stays at a sentence or two
-// and names no ticket, pull request or commit (docs/release.md, "Release notes"). The Release pull request writes
+// and names no ticket, pull request or commit (docs/release.md, "Release notes"), and every changeset pending in the
+// checkout names its change type, which the Release pull request files it under. The Release pull request writes
 // versions and changelogs from the changesets themselves and is not checked.
 //
 //   node scripts/release/packs-changesets.mjs BASE   (BASE: the base branch's tip, `origin/main`, its history fetched)
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { changesetSummary, listPacks, manifestChanged, missingChangesets, ROOT } from "./packs.mjs";
+import { changesetSummary, changesetTypeRefusal, listPacks, manifestChanged, missingChangesets, readChangesets, ROOT } from "./packs.mjs";
 import { releaseNoteRefusal } from "./release-notes.mjs";
 
 const base = process.argv[2];
@@ -43,6 +44,8 @@ const packs = listPacks().map((pack) => ({
 
 const failures = missingChangesets(changed, changesets, packs);
 for (const failure of failures) console.log(`::error title=Changeset needed::${failure}. Run npx changeset and pick the pack (.changeset/README.md).`);
+const untyped = readChangesets().map(({ file }) => ({ file: `.changeset/${file}`, refusal: changesetTypeRefusal(file) })).filter(({ refusal }) => refusal !== null);
+for (const { file, refusal } of untyped) console.log(`::error file=${file},title=Changeset type::${file} ${refusal}.`);
 const notes = changesets.map(({ file, text }) => ({ file, refusal: releaseNoteRefusal(changesetSummary(text)) })).filter(({ refusal }) => refusal !== null);
 for (const { file, refusal } of notes) console.log(`::error file=${file},title=Changeset summary::${file}'s summary ${refusal} (.changeset/README.md).`);
 console.log(
@@ -50,5 +53,6 @@ console.log(
     ? `Changesets: every pack this pull request changes what it publishes of has one (${changesets.length} changeset(s) added or edited).`
     : `Changesets: ${failures.length} pack(s) change what they publish with no changeset.`,
 );
+if (untyped.length > 0) console.log(`Changesets: ${untyped.length} name(s) no change type.`);
 if (notes.length > 0) console.log(`Changesets: ${notes.length} summary(ies) not written for the person upgrading.`);
-process.exit(failures.length === 0 && notes.length === 0 ? 0 : 1);
+process.exit(failures.length === 0 && untyped.length === 0 && notes.length === 0 ? 0 : 1);

@@ -76,6 +76,11 @@ describe("packReleaseNotes", () => {
     expect(packReleaseNotes(section)).toBe("### Minor Changes\n\n- A rule added.\n\n### Patch Changes\n\n- A fix.");
   });
 
+  it("leaves a section in Keep a Changelog's format as it is, a lone change type's heading included", () => {
+    const section = "10 rules, all on by default.\n\n### Added\n\n- New rule: `x` starts in Steer.";
+    expect(packReleaseNotes(section)).toBe(section);
+  });
+
   it("leaves text that is no hash alone", () => {
     expect(packReleaseNotes("- deadbee: not a hash, no digit\n- Version 0.1.0 is out.")).toBe("- deadbee: not a hash, no digit\n- Version 0.1.0 is out.");
   });

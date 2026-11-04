@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { NEXT_TAG, raiseNext } from "./dist-tags.mjs";
+import { changeType, changeTypeRefusal, releaseNoteEntry } from "./release-notes.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const PACKS = join(ROOT, "packs");
@@ -108,6 +109,19 @@ export function changesetEntries(text) {
     .map((line) => /^\s*["']?([^"':]+)["']?\s*:\s*(patch|minor|major)\s*$/u.exec(line))
     .filter((entry) => entry !== null)
     .map(([, name, bump]) => ({ name, bump }));
+}
+
+/** Why the changeset `file` can't go under a heading of a pack's release notes, or null: its name gives no type. */
+export const changesetTypeRefusal = (file) => changeTypeRefusal(file, ".changeset/README.md");
+
+/**
+ * What the `changesets` (readChangesets) say to the people who upgrade `name`, in order, for its release notes:
+ * `{ type, entry }` each, leaving out those that do not name it and those with an empty summary.
+ */
+export function changesetNotes(changesets, name) {
+  return changesets
+    .filter(({ text }) => changesetEntries(text).some((entry) => entry.name === name) && changesetSummary(text) !== "")
+    .map(({ file, text }) => ({ type: changeType(file), entry: releaseNoteEntry(changesetSummary(text)) }));
 }
 
 /**

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Writes the Release pull request's changes into the checkout, and its description to <body.md>: the version of every
 // package that merging it releases.
-//   - Packs: with changesets pending, `npm run version:packs` (each pack's version and CHANGELOG.md, then the lockfile),
-//     then each released pack's new CHANGELOG.md section dated today and led by what changed in its rules since the
-//     commit that released its previous version (pack-changelog.mjs).
+//   - Packs: with changesets pending, `npm run version:packs` (each pack's version, then the lockfile), then each
+//     released pack's CHANGELOG.md section for it, dated today: what changed in its rules since the commit that released
+//     its previous version, and the changesets' entries by change type (pack-changelog.mjs). A pending changeset with
+//     no type fails the run, naming it: one `changeset version` bumps every pack, so no pack can wait for its rename.
 //   - Core: when core's version is released (its `v<version>` tag exists) and anything core ships has changed since
 //     that tag (coreChanges in core-paths.mjs), the next version (nextCoreVersion) in package.json and package-lock.json's
 //     root entries, the installer plugins' pins of it (PLUGIN_PINS), and the root CHANGELOG.md's section for it, dated
@@ -15,12 +16,12 @@
 //
 //   node scripts/release/release-version.mjs <body.md>
 import { execFileSync } from "node:child_process";
-import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import { changelogEntryTypeRefusal, changelogLead, changelogSection, PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
-import { packRuleChanges, packRuleNotes, packRules, releasedPackSection } from "./pack-changelog.mjs";
-import { listPacks, readChangesets, ROOT } from "./packs.mjs";
+import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
+import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
 
 /**
  * The most of the description the changelog sections quoted in it may take: a pull request description holds 65,536
@@ -92,14 +93,19 @@ const [bodyPath] = process.argv.slice(2);
 if (bodyPath === undefined) throw new Error("usage: release-version.mjs <body.md>");
 
 const packsBefore = listPacks();
-if (readChangesets().length > 0) execFileSync("npm", ["run", "version:packs"], { cwd: ROOT, stdio: "inherit" });
+// `changeset version` deletes the changesets, so they are read first.
+const changesets = readChangesets();
+const untypedChangeset = changesets.find(({ file }) => changesetTypeRefusal(file) !== null);
+if (untypedChangeset !== undefined) throw new Error(`on main, .changeset/${untypedChangeset.file} ${changesetTypeRefusal(untypedChangeset.file)}`);
+if (changesets.length > 0) execFileSync("npm", ["run", "version:packs"], { cwd: ROOT, stdio: "inherit" });
 const packs = listPacks()
   .map((pack) => ({ ...pack, from: packsBefore.find((before) => before.id === pack.id)?.version ?? null }))
   .filter((pack) => pack.from !== pack.version);
 for (const pack of packs) {
   const path = `packs/${pack.id}/CHANGELOG.md`;
   const changes = packRuleChanges(rulesAt(pack, releasedCommit(pack)), rulesAt(pack, null));
-  writeFileSync(join(ROOT, path), releasedPackSection(readText(path), pack.version, today, packRuleNotes(changes)));
+  const changelog = existsSync(join(ROOT, path)) ? readText(path) : "";
+  writeFileSync(join(ROOT, path), releasedPackChangelog(changelog, pack.name, pack.version, today, packRuleNotes(changes), changesetNotes(changesets, pack.name)));
 }
 
 /** Why core's next version can't be released (release-pr.yml's tag-core would refuse its tag), or null. */
