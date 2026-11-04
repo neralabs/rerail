@@ -1,0 +1,71 @@
+---
+id: data-layer:function-level-imports
+revision: 1
+mode: block            # enforcement: ratchet. A code blocks only when its count passes its budget.
+language: python
+description: Function-level imports, classified by reason.
+scope: {dirs: public, tests: false}       # the checker's `directories` and include_tests
+budget:
+  by: code
+  max: {circular-avoidance: 7615, other: 223, typing-only: 6, total: 7844}
+---
+// B1: scripts/lint_function_level_imports.py at 2b1504ad, unchanged in meaning, quirks included:
+//   - the dots of a relative import are dropped (`from .x import y` classifies "x");
+//   - an import in a nested def counts against the outermost def;
+//   - each alias of `import a, b` is classified on its own.
+// (PR 2539's YAML port does not match this. See ../rule-syntax-options.md.)
+
+.set typing_module = "typing" | "typing_extensions" | "collections.abc"
+.set typing_name   = "TYPE_CHECKING" | "TypeVar" | "TypeAlias" | "Protocol" | "Generic" | "ClassVar"
+                   | "Final" | "Literal" | "Annotated" | "Union" | "Optional" | "Any"
+.set internal_root = "api" | "impl" | "data_layer" | "_internal"
+.kindset fdef = "function_definition"
+.kindset cdef = "class_definition"
+
+// imp(i, module, name): statement i imports `name` from `module`, one row per alias.
+//   import a.b as c         → (i, "a.b", "a.b")
+//   from .x import y as z   → (i, "x", "y")
+//   from . import y         → (i, "", "y")
+.decl imp(i: node, m: sym, x: sym)
+imp($i, $m, $m)  :- kind($i, "import_statement"), field($i, "name", $n), dotted($n, $m).
+imp($i, $m, $x)  :- kind($i, "import_from_statement"), from_module($i, $m), field($i, "name", $n), dotted($n, $x).
+imp($i, $m, "*") :- kind($i, "import_from_statement"), from_module($i, $m), child($i, $w, _), kind($w, "wildcard_import").
+
+.decl dotted(n: node, s: sym)
+dotted($n, $s) :- kind($n, "dotted_name"), text($n, $s).
+dotted($n, $s) :- kind($n, "aliased_import"), field($n, "name", $d), text($d, $s).
+
+.decl from_module(i: node, m: sym)
+from_module($i, $m) :- field($i, "module_name", $mn), kind($mn, "dotted_name"), text($mn, $m).
+from_module($i, $m) :- field($i, "module_name", $mn), kind($mn, "relative_import"),
+    child($mn, $d, _), kind($d, "dotted_name"), text($d, $m).
+from_module($i, "") :- field($i, "module_name", $mn), kind($mn, "relative_import"),
+    !(child($mn, $d, _), kind($d, "dotted_name")).
+
+// Attribution: the outermost def above the import, and the innermost class above that def.
+.decl def_name(f: node, s: sym)
+def_name($f, $s) :- field($f, "name", $n), text($n, $s).
+.decl top_def(i: node, f: node)
+top_def($i, $f) :- imp($i, _, _), within($i, $f), kind($f, "function_definition"), !nearest($f, _, fdef).
+.decl scope_of(i: node, fn: sym, scope: sym)
+scope_of($i, $fn, @cat($cn, $fn)) :- top_def($i, $f), def_name($f, $fn), nearest($f, $c, cdef), def_name($c, $cn).
+scope_of($i, $fn, $fn)            :- top_def($i, $f), def_name($f, $fn), !nearest($f, _, cdef).
+
+// A from-import counts as typing-only if any of its names is a typing construct.
+.decl names_typing(i: node)
+names_typing($i) :- kind($i, "import_from_statement"), imp($i, _, $y), $y in typing_name.
+
+// The closed deferred-import registry's dispatch table is skipped.
+.decl skipped(i: node)
+skipped($i) :- scope_of($i, _, "load_python_module"), docof($i, $d), doc($d, "_internal/dynamic_import.py", _).
+
+.violation FUNCTION_IMPORT(at: node, code: sym) "{at.text} (in {scope})"
+FUNCTION_IMPORT($i, $c) :- imp($i, $m, $x), scope_of($i, $fn, _), !skipped($i),
+    $c = first {
+      "typing-only"        if $m in typing_module or $x in typing_name or names_typing($i);
+      "test-helper"        if $fn =~ "^test_";
+      "circular-avoidance" if $m in internal_root or $m = ""
+                           or $m =~ "^(api|impl|data_layer|_internal|conform|scripts)\."
+                           or $m =~ "^l\d{3,4}_[a-z][a-z0-9_]*(\.|$)";
+      "other"
+    }.

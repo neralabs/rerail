@@ -1,0 +1,80 @@
+---
+id: local:no-nested-routers
+revision: 2
+mode: log
+possible: log          # findings reached only through components whose behaviour is unknown
+language: typescript
+description: A router rendered inside another router, directly or through components.
+scope:
+  include: [src/**/*.tsx, src/**/*.jsx]
+  exclude: ["**/*.test.*", "**/*.spec.*", "**/fixtures/**"]
+---
+// B2: also catches nesting through components (across files), router wrappers, re-exports,
+// namespace imports, composites that render {children}, Fragment, and <Route element={…}>.
+
+.use tsx/names
+//   sym_of(n, q)          identifier or member chain n denotes exported symbol q ("module#name"). Follows imports,
+//                         aliases, `import * as`, and re-export chains across files. Stops at package boundaries.
+.use tsx/jsx
+//   tag(e, t)             the tag name of element e (none for <>…</>)
+//   host_tag(t)           t is a lowercase intrinsic tag: div, span, …
+//   component(q, f)       function f defines component q: function, arrow, memo(…) or forwardRef(…)
+//   render_root(f, e)     e is a top element of what f returns
+//   render_up(c, p)       p is the element c renders under, one step up within a file. Transparent: fragments
+//                         (<>, Fragment, React.Fragment), {…}, && and ?:, callbacks in child position (xs.map(x => <X/>)).
+//                         Attributes and other functions end it.
+//   render_attr(c, e, a)  c is the value of attribute a ("module#Tag.prop") of element e
+//   children_slot(f, s)   s is a {children} or {props.children} in what f returns
+//
+// Three-valued relations are declared `must, may`. In a must derivation `!R` reads may-R; in a may derivation it
+// reads must-R. So a definite finding never rests on an unknown.
+
+.set router_module = "react-router" | "react-router-dom" | "react-router/dom"
+                   | "react-router-dom/server" | "react-router/dom/server" | "react-router/server"
+.set router_export = "BrowserRouter" | "HashRouter" | "MemoryRouter" | "Router" | "RouterProvider"
+                   | "HistoryRouter" | "unstable_HistoryRouter" | "StaticRouter" | "StaticRouterProvider"
+.set render_prop   = "react-router#Route.element" | "react-router#Route.errorElement"
+                   | "react-router-dom#Route.element" | "react-router-dom#Route.errorElement"
+
+// Components that give router context to what they render: routers, and wrappers that render {children} under one.
+.decl provider(q: sym)
+provider($q) :- $m in router_module, $x in router_export, $q = @qname($m, $x).
+provider($q) :- component($q, $f), children_slot($f, $s), outer($s, _).
+
+.decl provider_el(e: node)
+provider_el($e) :- tag($e, $t), sym_of($t, $q), provider($q).
+
+// passes(e): what e is given as children is rendered beneath it.
+.decl passes(e: node)  must, may
+must passes($e) :- tag($e, $t), host_tag($t).
+must passes($e) :- provider_el($e).
+must passes($e) :- tag($e, $t), sym_of($t, $q), component($q, $f), children_slot($f, _).
+may  passes($e) :- tag($e, $t), sym_of($t, $q), !component($q, _).   // a package component with no summary
+may  passes($e) :- tag($e, $t), !sym_of($t, _).                      // a tag that does not resolve
+
+// outer(c, r): c renders under provider element r, within one file (a tape climb).
+// Every cycle through provider, outer, provider_el and passes is positive, so the program stays stratified.
+.decl outer(c: node, r: node)  must, may
+outer($c, $r) :- render_up($c, $r), provider_el($r).
+outer($c, $r) :- render_up($c, $p), passes($p), outer($p, $r).
+outer($c, $r) :- render_attr($c, $e, $a), $a in render_prop, outer($e, $r).
+
+// rendered(f, e): component function f renders element e.
+.decl rendered(f: node, e: node)  must, may
+rendered($f, $e) :- render_root($f, $e).
+rendered($f, $e) :- rendered($f, $p), render_up($e, $p), passes($p).
+
+// roots(q, r): component q renders provider element r with no provider above it inside q.
+// Recurses across files on the interned key q, so it runs in waves.
+.decl roots(q: sym, r: node)  must, may
+roots($q, $r) :- component($q, $f), rendered($f, $r), provider_el($r), !outer($r, _).
+roots($q, $r) :- component($q, $f), rendered($f, $e), !outer($e, _), tag($e, $t), sym_of($t, $q2), roots($q2, $r).
+
+.violation NESTED_ROUTER_JSX(at: node, outer: node)
+    "Remove this inner router; <{outer.tag}> at line {outer.line} already provides one."
+NESTED_ROUTER_JSX($e, $o) :- provider_el($e), outer($e, $o).
+
+.violation NESTED_ROUTER_VIA_COMPONENT(at: node, inner: node)
+    "<{at.tag}> renders a router ({inner.path}:{inner.line}) but is used inside another router."
+NESTED_ROUTER_VIA_COMPONENT($u, $r) :-
+    tag($u, $t), !provider_el($u), sym_of($t, $q), roots($q, $r), outer($u, _).

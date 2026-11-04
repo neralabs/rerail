@@ -1,0 +1,46 @@
+---
+id: local:no-explicitly-nested-routers
+revision: 1
+mode: log
+language: typescript
+description: Avoid explicitly nesting imported routers through host JSX elements and fragments.
+scope:
+  include: [src/**/*.tsx, src/**/*.jsx]
+  exclude: ["**/*.test.*", "**/*.spec.*", "**/fixtures/**"]
+---
+// B1: the JSON rule's meaning, unchanged.
+// Inputs: the tape relations (kind, field, text, string_value), plus ref_site(ref, site) from the
+// TypeScript scope table (the fact behind resolves.binding.site).
+
+.set router_module = "react-router" | "react-router-dom" | "react-router/dom"
+                   | "react-router-dom/server" | "react-router/dom/server" | "react-router/server"
+.set router_export = "BrowserRouter" | "HashRouter" | "MemoryRouter" | "Router" | "RouterProvider"
+                   | "HistoryRouter" | "unstable_HistoryRouter" | "StaticRouter"
+.kindset import_stmt = "import_statement"
+.kindset barrier     = "arrow_function" | "function_expression" | "function_declaration"
+                     | "method_definition" | "jsx_attribute"
+
+// The tag name of a JSX element. Fragments (<>…</>) have none.
+.decl tag(e: node, t: node)
+tag($e, $t) :- kind($e, "jsx_element"), field($e, "open_tag", $o), field($o, "name", $t).
+tag($e, $t) :- kind($e, "jsx_self_closing_element"), field($e, "name", $t).
+
+// `import { x as y } from "m"`: the specifier binds y to m's export x.
+.decl imported(spec: node, m: sym, x: sym)
+imported($s, $m, $x) :- kind($s, "import_specifier"), field($s, "name", $n), text($n, $x),
+    nearest($s, $i, import_stmt), field($i, "source", $src), string_value($src, $m).
+
+.decl router_el(e: node)
+router_el($e) :- tag($e, $t), kind($t, "identifier"), ref_site($t, $s),
+    imported($s, $m, $x), $m in router_module, $x in router_export.
+
+// Climbing from a router, the first of these ends the climb. The stop node itself is tested, as stopBy does.
+.decl stop(n: node)
+stop($n) :- kind($n, $k), $k in barrier.
+stop($n) :- router_el($n).
+stop($e) :- kind($e, "jsx_element"), !router_el($e), tag($e, $t),          // a composite element:
+    !(kind($t, "identifier"), text($t, $s), $s =~ "^[a-z]").                //   not a lowercase host tag
+
+.violation NESTED_ROUTER_JSX(at: node)
+    "Remove this inner router and use the outer router for its children."
+NESTED_ROUTER_JSX($inner) :- router_el($inner), nearest($inner, $outer, stop), router_el($outer).

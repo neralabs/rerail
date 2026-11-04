@@ -1,0 +1,86 @@
+---
+id: data-layer:function-level-imports
+revision: 2
+mode: block
+language: python
+description: Each function-level import, classified by the evidence for why it is deferred.
+scope: {dirs: public, tests: false}
+budget:
+  by: code
+  max: {total: 7844}        # B2 splits the codes; per-code budgets are re-baselined on the first signed run
+allow:                      # header rows become allow(path, scope) facts
+  - {path: _internal/dynamic_import.py, scope: load_python_module, reason: closed deferred-import registry}
+---
+// B2: classifies from evidence, not from module names.
+//   typing-only          under `if TYPE_CHECKING:`, or every name it binds is read only in annotations
+//   unread               it binds nothing that is read: unused, or imported for its side effects
+//   test-helper          inside a test function or a pytest fixture
+//   optional-dependency  inside `try:` with a handler for ImportError
+//   circular-avoidance   moving it to the top would close an import cycle, proven on the module graph
+//   deferred-no-cycle    a workspace module that could move to the top (B1 counted these as circular-avoidance)
+//   heavy-dependency     a known expensive package (the Python declares KNOWN_EXPENSIVE_IMPORTS and never uses it)
+//   other
+
+.use python/imports
+//   import_stmt(i)      i is an import or from-import statement
+//   module_text(i, m)   the module as written, absolute (relative imports resolved against the file's package)
+//   loads(i, q)         running i loads workspace module q, and each package above it. `from p import m` loads p.m
+//                       when p.m is a module.
+//   pkg_above(a, q)     q is a package containing module a (already initialising when a runs)
+//   binds(i, s)         s is a binding site that i creates, one per alias
+//   module_of(n, q)     node n is in workspace module q
+.use python/names
+//   ref_site(r, s)            reference r reads binding site s (the scope table behind resolves.binding)
+//   annotation(r)             r is in an annotation, including a string annotation's parsed body
+//   sym_of(n, q)              n denotes qualified name q (resolves.import)
+//   type_checking_block(b)    b is the body of `if TYPE_CHECKING:`, with TYPE_CHECKING resolved, not matched by name
+//   catches(x, q)             except clause x catches q, tuples included
+//   decorator(f, d), def_name(f, s), scope_name(n, s)   scope_name is "Class.method", as the Python reports it
+
+.kindset fdef = "function_definition" | "lambda"
+.set import_error = "builtins.ImportError" | "builtins.ModuleNotFoundError"
+
+// The import graph at import time: module-level and class-body statements, outside TYPE_CHECKING.
+.decl import_time(i: node)
+import_time($i) :- import_stmt($i), !nearest($i, _, fdef), !some { within($i, $b), type_checking_block($b) }.
+.decl runs(a: sym, b: sym)
+runs($a, $b) :- import_time($i), module_of($i, $a), loads($i, $b).
+.decl reaches(a: sym, b: sym)
+.demand reaches(bound, bound)     // only (target, importer) pairs of local imports: a forward search per target
+reaches($a, $b) :- runs($a, $b).
+reaches($a, $c) :- reaches($a, $b), runs($b, $c).
+
+.decl local_import(i: node)
+local_import($i) :- import_stmt($i), nearest($i, _, fdef).
+
+// The evidence.
+.decl cycle(i: node)              // importing b at the top of a would close a → b → … → a
+cycle($i) :- local_import($i), module_of($i, $a), loads($i, $b), $b != $a, !pkg_above($a, $b), reaches($b, $a).
+.decl workspace(i: node)
+workspace($i) :- local_import($i), loads($i, _).
+.decl guarded(i: node)
+guarded($i) :- local_import($i), within($i, $body), field($t, "body", $body), kind($t, "try_statement"),
+    child($t, $x, _), catches($x, $q), $q in import_error.
+.decl read(i: node)
+read($i) :- binds($i, $s), ref_site(_, $s).
+.decl value_read(i: node)
+value_read($i) :- binds($i, $s), ref_site($r, $s), !annotation($r).
+.decl test_fn(f: node)
+test_fn($f) :- def_name($f, $n), $n =~ "^test_".
+test_fn($f) :- decorator($f, $d), sym_of($d, "pytest.fixture").
+.decl allowed(i: node)
+allowed($i) :- allow($p, $s), docof($i, $d), doc($d, $p, _), scope_name($i, $s).
+
+.violation FUNCTION_IMPORT(at: node, code: sym) "{at.text} (in {scope_name(at)})"
+FUNCTION_IMPORT($i, $c) :- local_import($i), !allowed($i),
+    $c = first {
+      "typing-only"         if some { within($i, $b), type_checking_block($b) };
+      "unread"              if !read($i);
+      "typing-only"         if !value_read($i);
+      "test-helper"         if some { within($i, $f), test_fn($f) };
+      "optional-dependency" if guarded($i);
+      "circular-avoidance"  if cycle($i);
+      "deferred-no-cycle"   if workspace($i);
+      "heavy-dependency"    if some { module_text($i, $m), $m =~ "^(torch|tensorflow|numpy|pandas|scipy|matplotlib)(\.|$)" };
+      "other"
+    }.

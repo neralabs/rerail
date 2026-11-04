@@ -285,35 +285,41 @@ classifiers:
 # … then relations: (where.expr), rules: (one per code, each re-emitting 7 fields), final_query:, policy.ratchets:
 ```
 
-The same rule as `.rr`:
+The `.rr` versions are in `rule-syntax/`. B1 matches the original Python linter; B2 is the more accurate version.
 
-```prolog
----
-id: data-layer:function-level-imports
-mode: block
-language: python
-scope: {production: true, exclude_tests: true}
-budget: {by: code, max: {circular-avoidance: 7615, other: 223, typing-only: 6, total: 7844}}
----
-.use python/imports   // function_import(n, module, names, scope, level)
+**The YAML port drifted from the Python.** `scripts/lint_function_level_imports.py` checks exact name membership, `enclosing.startswith("test_")` and `^l\d{3,4}_[a-z][a-z0-9_]*$`. The PR 2539 YAML writes these as SQL `LIKE` strings instead, and SQLite's `LIKE` changes their meaning:
+- It is case-insensitive, so `'%Any%'` matches an imported `get_company`.
+- `_` is a wildcard, so `'test_%'` matches `testing`.
+- It tests `Class.method` instead of the def name.
+- It adds `%level > 0`.
 
-.set typing_module = "typing" | "typing_extensions" | "collections.abc"
+Writing rules as expression strings hid these differences. With set literals and regexes in the language, `function-level-imports.b1.rr` states the original exactly.
 
-.violation FUNCTION_IMPORT(at: node, code: sym) "from {module} import {names} (in {scope})"
-FUNCTION_IMPORT($i, $c) :-
-    function_import($i, $m, $names, $scope, $level),
-    !($scope = "load_python_module", path_of($i) =~ "/_internal/dynamic_import\.py$"),
-    $c = first {
-      "typing-only"        if $m in typing_module
-                           or $names =~ "TYPE_CHECKING|TypeVar|TypeAlias|Protocol|Generic|ClassVar|Final|Literal|Annotated|Union|Optional|Any";
-      "test-helper"        if $scope =~ "(^|\.)test_";
-      "circular-avoidance" if $level > 0 or $m = ""
-                           or $m =~ "^(api|impl|data_layer|_internal)(\.|$)|^(conform|scripts)\.|^l\d{3,4}_[A-Za-z]";
-      "other"
-    }.
-```
+**What B2 changes.** B2 replaces the name heuristics with evidence:
+- **Cycles are proven.** `circular-avoidance` means there is an import-time path from the target module back to the importer. It is a recursive `reaches` relation, demand-driven on (target, importer) pairs.
+- **Imports with no cycle get their own code.** Workspace imports with no cycle become `deferred-no-cycle`; B1 counted them as `circular-avoidance`.
+- **`typing-only` comes from use.** It means the bound names are read only in annotations (from the scope table), not that they have a typing-ish name.
+- **New categories.** `unread`, `optional-dependency` (inside `try`/`except ImportError`) and `heavy-dependency` (`KNOWN_EXPENSIVE_IMPORTS`, which the Python declares and never uses).
+- **The exclusion moves to the header.** The `dynamic_import.py` exclusion becomes a header `allow:` row.
 
-The PR 2539 YAML runs to about 150 lines with an SQL string in every predicate. The `.rr` version is 20 lines with no SQL. The budget sits in the header, where the ratchet tooling rewrites it. The harder data-layer rules (public-symbol queries, general relations, signed allowlists) need `.use` libraries, cross-file joins on interned keys, and inputs from policy artifacts (`.input allowlist(path, entry)` loaded from a header-named file). The logic body has all of these; A2 has none.
+Because B2 changes the codes, its budgets have to be re-baselined.
+
+The harder data-layer rules (public-symbol queries, general relations, signed allowlists) need three things: `.use` libraries, cross-file joins on interned keys, and inputs from policy artifacts. The logic body can express all three; A2 cannot.
+
+### Constructs the four `.rr` files use beyond today's `.rdl`
+
+| Construct | Use |
+|---|---|
+| YAML header: `budget`, `allow`, `possible` | values that tools rewrite; `allow` rows become facts |
+| `.use lib` | `tsx/names`, `tsx/jsx`, `python/imports`, `python/names`: Datalog programs like `calls.rdl` |
+| `.set`, `in`, `=~`, `!( … )`, `some { … }` | sugar: fact lists, membership, regex, negated conjunction, existential |
+| `nearest(n, a, R)` over a derived relation `R` | `inside` + `stopBy` with a rule-defined stop set |
+| `within(n, a)` | `inside` with no stop, as tape arithmetic (§12) |
+| `first { … }` | ordered classification; desugars to negation chains |
+| `.violation CODE(at, …) "template"` | declares a finding relation and its message |
+| `must` / `may` relations | three-valued results (§12, §13) |
+| `.demand r(bound, bound)` | magic sets (built in Typing-support rounds 8–9) |
+| `@qname`, `@cat` | value builtins |
 
 ## Open questions
 
