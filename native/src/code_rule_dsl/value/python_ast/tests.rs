@@ -1,4 +1,25 @@
 use super::*;
+
+#[test]
+fn syntax_error_facts_are_batched_and_do_not_walk_invalid_modules() {
+    let documents = ["def invalid(\n", "raise RuntimeError('never execute')\n"].map(|source| Document {
+        source: source.into(),
+        requests: vec![Request { start: 0, end: source.len(), kind: "module".into(), fields: vec!["syntax_error".into()] }],
+    });
+    let result = batch_with_metrics(&documents).unwrap_or_else(|error| panic!("{}", error.0));
+    assert_eq!(result.parses, 2);
+    assert_eq!(result.module_walks, 0);
+    let error: serde_json::Value = serde_json::from_str(&result.documents[0][0]["syntax_error"]).unwrap();
+    assert_eq!(error["msg"], "'(' was never closed");
+    assert_eq!(error["lineno"], 1);
+    assert_eq!(error["offset"], 12);
+    assert_eq!(error["text"], "def invalid(\n");
+    assert_eq!(result.documents[1][0]["syntax_error"], "null");
+    let invalid = Document { source: "def invalid(\n".into(), requests: vec![Request {
+        start: 0, end: 13, kind: "module".into(), fields: vec!["syntax_error".into(), "dump".into()],
+    }] };
+    assert!(batch(&[invalid]).is_err());
+}
 use crate::code_rule_dsl::{language::GrammarDialect, oracle};
 use ast_grep_core::{Doc, Node, tree_sitter::LanguageExt};
 use serde_json::Value;
