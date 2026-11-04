@@ -3,7 +3,7 @@
 > Structural tool-call rules catch commands an agent should never run: `git push --force`, `rm -rf`,
 > `--no-verify`. Every example ran through the engine. **FLAG**: the rule fired. **PASS**: it stayed quiet.
 
-Internal testing: Rerail 0.1.0 releases code rules only, not tool-call rules. See
+Internal testing: Rerail's latest release ships code rules only, not tool-call rules. See
 [Internal testing](../README.md#internal-testing).
 
 ---

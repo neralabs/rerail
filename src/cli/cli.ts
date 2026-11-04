@@ -186,7 +186,7 @@ function usage(): string {
     "  rerail update status",
     "  rerail update --channel <tag>",
     "",
-    internalTesting("Not part of the 0.1.0 release:"),
+    internalTesting("Not part of the latest release:"),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
     "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
     "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]",
