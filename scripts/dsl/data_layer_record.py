@@ -300,6 +300,7 @@ def main() -> None:
         "clean_calls": sum(not event["findings"] for event in eligible),
         "test_outcomes": recorder.reports,
         "events": recorder.events,
+        "source_probes": getattr(recorder,"source_probes",[]),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, indent=2) + "\n")

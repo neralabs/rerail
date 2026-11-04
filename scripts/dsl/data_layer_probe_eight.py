@@ -24,6 +24,8 @@ def main():
                 entry=case.get('entry','scan_source')
                 if check in {'readthrough_authority_architecture','authentication_plan_purity'}:
                     raw=module.scan_sources(tuple(root/file['path'] for file in files));entry='scan_sources'
+                elif check=='lazy_architecture':
+                    raw=module.scan_files([root/file['path'] for file in files]);entry='scan_files'
                 elif check=='plan_helpers_allowlist':
                     if entry=='scan_repo':raw=module.scan_repo(root)
                     else:raw=module.scan_file(root/files[0]['path']);entry='scan_file'

@@ -50,12 +50,17 @@ def install(recorder):
     recorder.originals.append((ast,'parse',original_parse));ast.parse=parse
     modules={name:importlib.import_module(module) for name,module in MODULES.items()}
     analyzed_sources={};active_sources=[]
+    recorder.source_probes=[]
     cls=modules['lazy_architecture'].FunctionAnalyzer;original_init=cls.__init__
     @wraps(original_init)
     def observed_init(self,path,tree,*args,**kwargs):
         text=trees.get(tree)
         if text is not None:
             analyzed_sources[id(self)]=(path,text)
+            if recorder.item is not None:
+                root=modules['lazy_architecture'].ROOT
+                relative=Path(path).relative_to(root).as_posix() if Path(path).is_relative_to(root) else Path(path).as_posix()
+                recorder.source_probes.append({'test':recorder.item.nodeid,'check':'lazy_architecture','files':[{'path':relative,'source':text}]})
             if active_sources:active_sources[-1].append((path,text))
         return original_init(self,path,tree,*args,**kwargs)
     recorder.originals.append((cls,'__init__',original_init));cls.__init__=observed_init
@@ -103,7 +108,8 @@ def install(recorder):
             try:
                 source=arguments.get('source',arguments.get('content'));path=arguments.get('file_path',arguments.get('path',arguments.get('rel_path','input.py')))
                 tree=next((v for v in arguments.values() if isinstance(v,ast.AST)),None)
-                if source is None and tree is not None:source=trees.get(tree)
+                if source is None and tree is not None:source=ast.unparse(tree) if check=='eager_resolve' else trees.get(tree)
+                if check=='eager_resolve':event['oracle_config']['options']['externalIoBoundaries']=module._load_external_io_boundary_allowlist()
                 if isinstance(source,str):files=[{'path':logical(path),'source':source}]
                 else:
                     paths=arguments.get('paths',arguments.get('files'))
