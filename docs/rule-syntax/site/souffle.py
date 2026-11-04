@@ -392,7 +392,7 @@ if __name__ == "__main__":
 BUILTIN_FN = {"cat", "strlen", "to_number", "to_string", "contains", "substr", "ord", "min", "max", "sum",
               "count", "mean"}
 RELATION_ARG = {"within_stop": 2, "nearest": 2, "precedes_stop": 2}
-STMT_TOK = re.compile(r'"(?:[^"\\]|\\.)*"|`+|//[^\n]*|:-|=>|!=|<=|>=|[A-Za-z_][A-Za-z0-9_]*|@[A-Za-z_]\w*|\d+|\S', re.S)
+STMT_TOK = re.compile(r'"(?:[^"\\]|\\.)*"|`+|//[^\n]*|:-|=>|!=|<=|>=|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|[A-Za-z_][A-Za-z0-9_]*|@[A-Za-z_]\w*|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|\S', re.S)
 
 
 def _lex(s):

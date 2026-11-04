@@ -382,7 +382,7 @@ NESTED_ROUTER_JSX(inner) :- router_el(inner),
       <div class="stat"><b>{{rules}}</b><span>pack rules translated from JSON</span></div>
       <div class="stat"><b>{{json_mb}} → {{rr_mb}}</b><span>pretty JSON → .rr, comments excluded</span></div>
       <div class="stat"><b>{{atom_rules}}</b><span>rules still holding an untranslated JSON piece</span></div>
-      <div class="stat"><b>{{ungrounded}}</b><span>generated rules not yet grounded, marked in the output</span></div>
+      <div class="stat"><b>{{ungrounded}}</b><span>generated rules with an unbound variable, by the groundedness check</span></div>
       <div class="stat"><b>{{dl_py_lines}} → {{dl_rr_code}}</b><span>data-layer lines: Python → .rr logic</span></div>
     </div>
     <ul class="tight">

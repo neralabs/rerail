@@ -41,7 +41,7 @@ confirm once a parser and engine exist. None is fixed yet.
    source-order test, else nearly every repeat is reported.
 2. function-level-imports b1/b2: the allowlist names `load_python_module`; the oracle skips
    `_load_python_module_uncached`. b2 matches via `scope_name`, which adds a `Class.` prefix.
-3. function-level-imports b1: the message uses `{scope}`, not a column of the violation.
+3. Fixed: function-level-imports b1 and b2 carry `scope` as a column of the finding; one per statement.
 4. function-level-imports b1: findings keyed by statement, so `import os, sys` counts once; the oracle counts two.
 5. Fixed: function-level-imports b2 no longer redefines `import_time`, `runs`, `reaches`; it uses python/imports.
 6. public-api-triples: `direct_wrapper_bypasses_lazy_owner` accepts a listed set of `*_lazy` helpers (oracle: any
@@ -50,9 +50,9 @@ confirm once a parser and engine exist. None is fixed yet.
 8. swallowed-exceptions: the body summary says "other statements" where the oracle lists the first five types.
 
 ## Soufflé form
-1. Generated pack rules: 432 rules in 119 policies are not grounded (a variable only negated or compared). Most
-   are `any` alternatives that leave a metavariable the message or a later literal uses empty. Each is marked
-   `// Not grounded: …` in the output; a translator that splits such alternatives or adds `_` columns would fix them.
+1. Fixed: every generated pack rule is grounded. Captures of option-dependent regexes, JSON `transform`s and
+   option-valued operands are lowered; a metavariable an alternative leaves empty is bound to core's `unset`
+   (578 rules), as ast-grep leaves it empty; a variable used once under `!` is written `_`.
 2. Relation names share one namespace per program (rule file, includes, core). `site/check_rr.py` reports duplicate
    declarations and ungrounded rules in the hand files; it prints ok today.
 3. Additions to Soufflé that an engine must support: pattern atoms `` n ~ `…` ``, named-group captures in `match`

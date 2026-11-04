@@ -287,6 +287,9 @@ hook_name(f, x) :- def_name(f, n), match(&quot;use_(?&lt;x&gt;.*)&quot;, n).
       <tr><td><code>"fix": "$E"</code></td><td><code>… =&gt; replace(n, `$E`)</code> on each rule of the clause</td></tr>
       <tr><td><code>"fix": {"template": "", "range": "capture.X"}</code></td><td><code>… =&gt; replace(X, ``)</code></td></tr>
       <tr><td><code>"$option": "name"</code></td><td><code>option("name", v)</code></td></tr>
+      <tr><td><code>"regex": {"$option": "o", "cases": {…}}</code>, and option-valued operands</td><td>One constant per configured value: <code>(option("o", "never"), match("…", n) ; !option("o", "never"), match("…", n))</code>, so capture groups still bind</td></tr>
+      <tr><td>An <code>any</code> alternative that does not bind <code>$X</code></td><td><code>unset(X)</code>: core's one empty value, which ast-grep gives a metavariable its match left unbound. Its text is <code>""</code></td></tr>
+      <tr><td><code>"transform": {"T": {"replace": {"source": "$S", …}}}</code></td><td><code>text(S, t), T = @replace_all(t, "re", "by")</code>; likewise <code>@convert</code>, <code>@slice</code>, <code>@to_precision</code>, and <code>line(S, T)</code>, <code>list_len(S, T)</code> for <code>line</code> and <code>count</code></td></tr>
       <tr><td><code>mode</code>, <code>scope</code>, <code>violation</code></td><td>Directives</td></tr>
     </table></div>
   </section>

@@ -49,6 +49,12 @@
 .decl docof(n: loc, d: number)
 // line(n, 12): used in messages ("at line {outer.line}") and line-based suppressions.
 .decl line(n: loc, l: number)                            // 1-based start line
+// unset(x): one row, the empty value. A rule translated from ast-grep binds a metavariable that its match left
+// empty to it: an `any` alternative that does not mention $X, as ast-grep allows. text(x, "") holds, and no
+// tree relation has it, so `kind(X, …)` on an empty metavariable is false, as in ast-grep.
+.decl unset(x: loc)
+// list_len(l, k): list variable l (a $$$X of a pattern) has k nodes. For a JSON `count` transform.
+.decl list_len(l: loc, k: number)
 // value(n, "a\nb") for the literal "a\\nb"; value(n, "255") for 0xff. Lets rules compare literals by meaning.
 .decl value(n: node, v: symbol)  // static value of a literal: strings unescaped, numbers normalised
 // string_value(n, "react") for the literal 'react' or "react": contents without quotes.
@@ -57,7 +63,7 @@
 .decl static_value(n: node, v: symbol)                   // value after following file-local constant bindings
 // value_type("12", "int") for Python, "number" for TypeScript: the type of a value produced by `value`.
 .decl value_type(v: symbol, t: symbol)                   // "str", "int", "string", "number", …
-.input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line
+.input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
 .input value, string_value, static_value, value_type
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
@@ -139,6 +145,15 @@
 // @package_of("react-router-dom/server") = "react-router-dom/server" (subpath kept), "@a/b/c" -> "@a/b/c".
 // Names the package entry point a bare specifier imports, as the target symbol's module.
 .functor package_of(spec: symbol): symbol
+// Transforms: today's JSON `transform` computes a metavariable from another one's text. Each kind is one functor.
+// @replace_all("a  b", "\\s+", " ") = "a b": every match of re becomes by; ${1} in by is group 1.
+.functor replace_all(s: symbol, re: symbol, by: symbol): symbol
+// @convert("max-age", "camelCase", "dash") = "maxAge". Cases: lowerCase, upperCase, capitalize, camelCase,
+// snakeCase, kebabCase, pascalCase. seps lists separators ("dash,underscore"); "" splits on all of them.
+.functor convert(s: symbol, to: symbol, seps: symbol): symbol
+// @slice("_name", 1, 5) = "name": characters start to end-1; negative positions count from the end.
+.functor slice(s: symbol, start: number, end: number): symbol
+.functor to_precision(n: symbol, digits: number): symbol  // JavaScript's Number.prototype.toPrecision
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
 // Facts from the repository that are not source code. Each reader parses one kind of file (JSON configs,

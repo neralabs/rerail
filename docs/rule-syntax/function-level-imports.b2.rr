@@ -89,11 +89,13 @@ test_fn(f) :- decorator(f, d), sym_of(d, "pytest.fixture").
 allowed(i) :- allow(p, s), docof(i, d), doc(d, p, _), scope_name(i, s).
 
 // The finding: one per local import that is not allowed, with one code.
-.violation FUNCTION_IMPORT(at: node, code: symbol) "{at.text} (in {scope_name(at)})"
+// scope is the enclosing "Class.method" (scope_name); a statement has one, so it adds no findings.
+.violation FUNCTION_IMPORT(at: node, code: symbol, scope: symbol) "{at.text} (in {scope})"
     fix safe hoist_import "Move `{at.text}` to the top of the module"
     fix remove_import "Delete `{at.text}`: nothing reads what it binds"
 // The code is the highest-priority one whose evidence holds: min picks the lowest rank among the candidates.
-FUNCTION_IMPORT(i, c) :- local_import(i), !allowed(i), r = min k : { candidate(i, k, _) }, candidate(i, r, c).
+FUNCTION_IMPORT(i, c, s) :- local_import(i), !allowed(i), scope_name(i, s),
+    r = min k : { candidate(i, k, _) }, candidate(i, r, c).
 
 // candidate(i, rank, code): code's evidence holds for i. The rank is a priority: stronger, more specific evidence
 // first. An unread import is reported as unread even inside a test, and a cycle is only claimed for imports that
@@ -128,11 +130,11 @@ candidate(i, 9, "other")               :- local_import(i).
 //   - nothing at module level already binds the same name to something else (clash).
 // The library edit `hoist` (python/imports) deletes the statement, leaving `pass` if the body would be empty, and
 // adds the same text among the top-level imports, or only deletes it if the module already has that import.
-hoist_import(i, "deferred-no-cycle") :- plain_stmt(i), !clash(i) => hoist(i).
+hoist_import(i, "deferred-no-cycle", _) :- plain_stmt(i), !clash(i) => hoist(i).
 
 // remove_import is a suggestion (the default): "unread" also covers imports kept for their side effects, such as
 // registering plugins, so a person or the agent decides. remove_stmt keeps the function body valid.
-remove_import(i, "unread") => remove_stmt(i).
+remove_import(i, "unread", _) => remove_stmt(i).
 
 // plain_stmt(i): i sits directly in a function's body block.
 .decl plain_stmt(i: node)

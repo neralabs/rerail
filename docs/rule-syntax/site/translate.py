@@ -22,7 +22,13 @@ LANG_LIB = {
 INLINE_MAX = 4      # alternatives written as a disjunction; more become a relation of facts
 
 
+class OptVar(str):
+    """A variable holding an option's configured value, standing where a JSON constant would."""
+
+
 def q(s):
+    if isinstance(s, OptVar):
+        return str(s)
     return json.dumps(s, ensure_ascii=False)
 
 
@@ -62,10 +68,44 @@ def mv(name):
     return str(name).lstrip("$")
 
 
+def cap(name):
+    """A capture name as a variable. Captures are metavariables, which are written in capitals."""
+    return mv(name).upper()
+
+
+def caps(pattern):
+    """Named groups renamed to capitals, so a group binds the same variable its anchor or message names."""
+    return re.sub(r"\(\?(P?)<([A-Za-z_]\w*)>", lambda m: f"(?{m.group(1)}<{m.group(2).upper()}>", pattern)
+
+
+def opt_alts(arg, render):
+    """A JSON operand that may be {"$option": name, "cases": {…}, "default": …}: one guarded alternative per
+    configured value. render(constant) gives the literal for one value."""
+    if not (isinstance(arg, dict) and "$option" in arg):
+        return render(arg)
+    if not (arg.get("cases") or "default" in arg):      # the operand is the option's value itself
+        return render_option(arg["$option"], render)
+    name, keys = q(arg["$option"]), list(arg.get("cases") or {})
+    parts = [f"option({name}, {q(c)}), {opt_alts(arg['cases'][c], render)}" for c in keys]
+    guard = [f"!option({name}, {q(c)})" for c in keys]
+    if "default" in arg:
+        parts.append(", ".join(guard + [opt_alts(arg["default"], render)]))
+    return "(" + " ; ".join(parts) + ")" if len(parts) > 1 else parts[0]
+
+
+def render_option(name, render):
+    o = OptVar(f"o_{snake(name)}")
+    return f"option({q(name)}, {o}), " + render(o)
+
+
 def match(pattern, subject):
-    if not isinstance(pattern, str):     # e.g. {"$option": …}: no .rr form yet
+    if isinstance(pattern, dict) and "$option" in pattern:
+        return opt_alts(pattern, lambda p: match(p, subject))
+    if not isinstance(pattern, str):
         return f"ast({subject}, {compact({'regex': pattern})})"
-    return f"match({q(whole(pattern))}, {subject})"
+    if isinstance(pattern, OptVar):
+        return f"match({pattern}, {subject})"
+    return f"match({q(whole(caps(pattern)))}, {subject})"
 
 
 def _balanced(s):
@@ -131,6 +171,7 @@ class Program:
         self.names = set()
         self.notes = {}  # name -> comment lines printed above its .decl
         self.numeric = set()  # metavariables bound to a count
+        self.symbolic = set()  # metavariables bound to a string by a transform
 
     def helper(self, base, note):
         self.helpers += 1
@@ -184,15 +225,15 @@ def lower(prog, rule, v, vs, skip=()):
             continue
         if k == "kind":
             lits.append(f"kind({v}, {q(val)})")
-        elif k == "regex" and isinstance(val, dict) and "$option" in val:
-            o = vs.fresh("o")
+        elif k == "regex" and isinstance(val, dict) and "$option" in val and not (val.get("cases") or "default" in val):
+            o = vs.fresh("o")   # the regex is the option's value itself
             lits.append(f"option({q(val['$option'])}, {o}), match({o}, {v})")
         elif k == "regex":
             lits.append(match(val, v))
         elif k == "spread" and isinstance(val, bool):
             lits.append(f"spread({v})" if val else f"!spread({v})")
         elif k == "capture" and isinstance(val, str):
-            lits.append(f"{mv(val)} = {v}")
+            lits.append(f"{cap(val)} = {v}")
         elif k == "compare" and isinstance(val, dict) and {"left", "op", "right"} <= set(val):
             lits.extend(compare(val, vs))
         elif k == "count" and isinstance(val, dict):
@@ -226,11 +267,12 @@ def lower(prog, rule, v, vs, skip=()):
                 if op == "regex":
                     lits.append(match(arg, x))
                 elif op == "eq":
-                    lits.append(f"{x} = {q(arg)}")
+                    lits.append(opt_alts(arg, lambda c: f"{x} = {q(c)}"))
                 elif op == "type":
-                    lits.append(f"value_type({x}, {q(arg)})")
+                    lits.append(opt_alts(arg, lambda c: f"value_type({x}, {q(c)})"))
                 elif op in ("ne", "lt", "le", "gt", "ge"):
-                    lits.append(f"{x} {({'ne': '!=', 'lt': '<', 'le': '<=', 'gt': '>', 'ge': '>='})[op]} {q(arg)}")
+                    sym = {'ne': '!=', 'lt': '<', 'le': '<=', 'gt': '>', 'ge': '>='}[op]
+                    lits.append(opt_alts(arg, lambda c: f"{x} {sym} {q(c)}"))
                 else:
                     prog.untranslated += 1
                     lits.append(f"ast({v}, {compact({'value': {op: arg}})})")
@@ -241,11 +283,11 @@ def lower(prog, rule, v, vs, skip=()):
         elif k == "value" and isinstance(val, dict) and len(val) == 1:
             op, arg = next(iter(val.items()))
             if op == "eq":
-                lits.append(f"value({v}, {q(arg)})")
+                lits.append(opt_alts(arg, lambda c: f"value({v}, {q(c)})"))
             elif op in ("ne", "lt", "le", "gt", "ge"):
                 x = vs.fresh("v")
                 sym = {"ne": "!=", "lt": "<", "le": "<=", "gt": ">", "ge": ">="}[op]
-                lits.append(f"value({v}, {x}), {x} {sym} {q(arg)}")
+                lits.append(f"value({v}, {x}), " + opt_alts(arg, lambda c: f"{x} {sym} {q(c)}"))
             elif op == "in" and isinstance(arg, list):
                 lits.append(one_of(prog, vs, f"value({v}, {{}})", arg, "v", "the JSON `value.in` list"))
             elif op == "regex":
@@ -487,6 +529,23 @@ def resolves(prog, r, v, vs):
     return lits
 
 
+def split_alts(s):
+    """The top-level ` ; `-separated alternatives of a disjunction body."""
+    out, d, start, ins = [], 0, 0, False
+    for i, ch in enumerate(s):
+        if ch == '"' and (i == 0 or s[i - 1] != "\\"):
+            ins = not ins
+        elif not ins and ch in "({":
+            d += 1
+        elif not ins and ch in ")}":
+            d -= 1
+        elif not ins and d == 0 and s.startswith(" ; ", i):
+            out.append(s[start:i].strip())
+            start = i + 3
+    out.append(s[start:].strip())
+    return out
+
+
 def wrap(head, lits, width=88, edits=None):
     if not lits:
         return head + (f" => {', '.join(edits)}." if edits else ".")
@@ -497,6 +556,16 @@ def wrap(head, lits, width=88, edits=None):
     lines = []
     for i, lit in enumerate(lits):
         piece = lit + ("," if i < len(lits) - 1 else ".")
+        if len(piece) > width - 4 and lit.startswith("(") and " ; " in lit:
+            # A long disjunction: one alternative per line, under its opening parenthesis.
+            alts = split_alts(lit[1:-1])
+            if len(alts) > 1 and lit.endswith(")"):
+                lines.append(line.rstrip())
+                lines.append("    ( " + alts[0])
+                lines += ["    ; " + a for a in alts[1:]]
+                lines.append("    )" + piece[len(lit):])
+                line = "    "
+                continue
         if len(line) + len(piece) + 1 > width and line.strip() not in (head + " :-",):
             lines.append(line.rstrip())
             line = "    " + piece + " "
@@ -525,6 +594,92 @@ def render_util(prog, name, rule, out):
         out.append((f"{rel}(n)", lower(prog, rule, "n", Vars())))
 
 
+def transform_targets(tr):
+    """Metavariables a JSON `transform` defines, through `$option` cases too."""
+    if not isinstance(tr, dict):
+        return set()
+    if "$option" in tr:
+        out = set()
+        for sub in list((tr.get("cases") or {}).values()) + [tr.get("default", {})]:
+            out |= transform_targets(sub)
+        return out
+    return {t for t in tr if not t.startswith("$")}
+
+
+def transform_lits(prog, tr, vs, defined):
+    """Body literals for a JSON `transform`: each target is a functor of its source's text (or value).
+    `defined` holds every target, so a source that is itself a target is read as a string, not a node."""
+    if "$option" in tr:
+        name, keys, parts = q(tr["$option"]), list(tr.get("cases") or {}), []
+        every = transform_targets(tr)
+        branches = [([f"option({name}, {q(c)})"], tr["cases"][c]) for c in keys]
+        if "default" in tr:
+            branches.append(([f"!option({name}, {q(c)})" for c in keys], tr["default"]))
+        else:
+            branches.append(([f"!option({name}, {q(c)})" for c in keys], {}))
+        for guard, sub in branches:
+            body = guard + transform_lits(prog, sub, vs, defined)
+            body += [f"unset({t})" for t in sorted(every - transform_targets(sub))]   # not defined in this case
+            parts.append(", ".join(body))
+        return ["(" + " ; ".join(parts) + ")"]
+    lits = []
+    for t, spec in tr.items():
+        if not (isinstance(spec, dict) and len(spec) == 1):
+            prog.untranslated += 1
+            lits.append(f"ast(n, {compact({'transform': {t: spec}})})")
+            continue
+        op, a = next(iter(spec.items()))
+        src = mv(a.get("source", "")) if isinstance(a, dict) else ""
+
+        def read():
+            if src in defined:
+                return src
+            x = vs.fresh("t")
+            lits.append(f"{'value' if a.get('value') else 'text'}({src}, {x})")
+            return x
+        if op == "count":
+            lits.append(f"list_len({src}, {t})")
+            prog.numeric.add(t)
+        elif op == "line":
+            lits.append(f"line({src}, {t})")
+            prog.numeric.add(t)
+        elif op == "replace" and isinstance(a.get("replace"), str) and isinstance(a.get("by"), str):
+            x = read()
+            f = f"{t} = @replace_all({x}, {q(a['replace'])}, {q(a['by'])})"
+            if "default" in a and src not in defined:
+                lits[-1:] = [f"(unset({src}), {t} = {q(a['default'])} ; !unset({src}), {lits[-1]}, {f})"]
+            else:
+                lits.append(f)
+            prog.symbolic.add(t)
+        elif op == "convert" and isinstance(a.get("toCase"), (str, dict)):
+            x = read()
+            seps = q(",".join(a.get("separatedBy") or []))
+            case = a["toCase"]
+            if isinstance(case, str):
+                lits.append(f"{t} = @convert({x}, {q(case)}, {seps})")
+            else:       # the case depends on an option
+                name, keys = q(case["$option"]), list(case.get("cases") or {})
+                parts = [f"option({name}, {q(c)}), {t} = @convert({x}, {q(case['cases'][c])}, {seps})" for c in keys]
+                parts.append(", ".join([f"!option({name}, {q(c)})" for c in keys]
+                                       + [f"{t} = @convert({x}, {q(case.get('default', 'lowerCase'))}, {seps})"]))
+                lits.append("(" + " ; ".join(parts) + ")")
+            prog.symbolic.add(t)
+        elif op == "substring":
+            x = read()
+            start, end = a.get("startChar", 0), a.get("endChar")
+            lits.append(f"{t} = {x}" if not start and end is None else
+                        f"{t} = @slice({x}, {start}, {end if end is not None else f'strlen({x})'})")
+            prog.symbolic.add(t)
+        elif op == "toPrecision" and isinstance(a.get("digits"), str):
+            x, d = read(), vs.fresh("d")
+            lits.append(f"text({mv(a['digits'])}, {d}), {t} = @to_precision({x}, to_number({d}))")
+            prog.symbolic.add(t)
+        else:
+            prog.untranslated += 1
+            lits.append(f"ast(n, {compact({'transform': {t: spec}})})")
+    return lits
+
+
 def fix_edits(viol):
     """Today's ast fix template as a native edit: replace the witness, or the capture `range` names."""
     fx = viol.get("fix")
@@ -532,7 +687,7 @@ def fix_edits(viol):
         return [f"replace(n, {tick(fx)})"]
     if isinstance(fx, dict) and isinstance(fx.get("template"), str):
         rng = fx.get("range", "")
-        target = rng[len("capture."):] if rng.startswith("capture.") else "n"
+        target = cap(rng[len("capture."):]) if rng.startswith("capture.") else "n"
         return [f"replace({target}, {tick(fx['template'])})"]
     return None
 
@@ -551,17 +706,18 @@ def violation_columns(viol):
         cols.append(mv(viol["each"]))
     anchor = viol.get("anchor") or ""
     if anchor.startswith("capture."):
-        cols.append(anchor[len("capture."):])
+        cols.append(cap(anchor[len("capture."):]))
     cols += message_vars(viol.get("message", ""))
     return list(dict.fromkeys(cols))
 
 
-def violation_lines(viol, rel, cols, ast=False, numeric=()):
+def violation_lines(viol, rel, cols, ast=False, numeric=(), symbolic=()):
     code = viol.get("code", rel)
     msg = viol.get("message", "")
     for c in sorted(cols, key=len, reverse=True) if isinstance(msg, str) else ():
         msg = re.sub(r"\$\$?\$?" + c + r"\b", "{" + c.lower() + "}", msg)
-    colsig = "".join(f", {c.lower()}: {'number' if c in numeric else 'loc'}" for c in cols)
+    colsig = "".join(f", {c.lower()}: {'number' if c in numeric else 'symbol' if c in symbolic else 'loc'}"
+                     for c in cols)
     head = f".violation {rel}(at: node{colsig})"
     if code != rel:
         head += f" code {q(code)}"
@@ -752,8 +908,14 @@ def translate(doc):
         if cols:
             note.append(f"// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one "
                         f"finding per distinct row.")
-        opts = {k: v for k, v in a.items() if k not in ("language", "rule", "utils", "constraints")}
-        vl = violation_lines(viol, rel, cols, ast=True)
+        opts = {k: v for k, v in a.items() if k not in ("language", "rule", "utils", "constraints", "transform")}
+        vs = Vars()
+        tr = a.get("transform") if isinstance(a.get("transform"), dict) else {}
+        tlits = transform_lits(prog, tr, vs, transform_targets(tr)) if tr else []
+        if tr:
+            note.append(f"// The JSON `transform` computes {', '.join(sorted(transform_targets(tr)))} from other "
+                        f"metavariables' text; its literals end each rule.")
+        vl = violation_lines(viol, rel, cols, ast=True, symbolic=prog.symbolic)
         edits = fix_edits(viol)
         if edits:
             note.append("// `=> replace(…)` is today's fix template: the edit suggested with each finding.")
@@ -766,7 +928,6 @@ def translate(doc):
         body.append(("note", note))
         body.append(("viol", vl))
         rule = a.get("rule", {})
-        vs = Vars()
         if isinstance(rule, dict) and set(rule) == {"any"} and isinstance(rule["any"], list):
             bodies = grouped(prog, rule["any"], "n", vs)
         else:
@@ -776,7 +937,7 @@ def translate(doc):
             cons.extend(lower(prog, crule, mv(var), vs))
         hd = f"{rel}(n{''.join(', ' + c for c in cols)})"
         for b in bodies:
-            body.append(("rule", {"head": hd, "lits": b + cons, "edits": edits}))
+            body.append(("rule", {"head": hd, "lits": b + cons + tlits, "edits": edits}))
         for h, lits in local:
             body.append(("rule", {"head": h, "lits": lits}))
 
@@ -788,7 +949,8 @@ def translate(doc):
     for name, ps in params.items():
         if ps and name in prog.decls:
             prog.decls[name] = prog.decls[name][:-1] + "".join(
-                f", {p.lower()}: {'number' if p in prog.numeric else 'loc'}" for p in ps) + ")"
+                f", {p.lower()}: {'number' if p in prog.numeric else 'symbol' if p in prog.symbolic else 'loc'}"
+                for p in ps) + ")"
             ins = [p for p in ps if p in share_metavariables.inputs[name]]
             outs = [p for p in ps if p not in ins]
             if ins:
@@ -816,15 +978,25 @@ def translate(doc):
             lits = [f"node(_, n, _, _, _)"] + list(lits)
             text = wrap(h, lits, edits=edits)
             bad = check_rule(text, fix_rels, inputs)
+        once = [x for x in bad if re.fullmatch(r"[a-z]\w*", x)
+                and len(re.findall(r"(?<![\w\"@$])" + x + r"\b", _mask_ticks(_strip_strings(text)))) == 1]
+        if once:
+            # A variable used once, under `!`, means "any value": Soufflé writes it `_`.
+            pat = re.compile(r"(?<![\w@$])(" + "|".join(once) + r")\b(?!\s*\()")
+            lits = ["".join(p if p.startswith(("\"", "`")) else pat.sub("_", p)
+                            for p in re.split(r'("(?:[^"\\]|\\.)*"|`+[^`]*`+)', l)) for l in lits]
+            text = wrap(h, lits, edits=edits)
+            bad = check_rule(text, fix_rels, inputs)
+        empty = [x for x in bad if re.fullmatch(r"[A-Z][A-Z0-9_]*", x)]
+        if empty:
+            # ast-grep leaves a metavariable empty when the match does not bind it; core's unset is that value.
+            lits = list(lits) + [f"unset({x})" for x in empty]
+            text = wrap(h, lits, edits=edits)
+            bad = check_rule(text, fix_rels, inputs)
+            out.append(f"// {', '.join(empty)}: not bound by this rule, so empty (unset), as in ast-grep.")
         if bad:
             ungrounded += 1
-            name = h.split("(")[0]
-            outs = set(params.get(name, ())) - set(inputs)
-            if set(bad) <= outs:
-                out.append(f"// Not grounded: this alternative binds no {', '.join(bad)}. ast-grep leaves such a "
-                           f"metavariable empty; Datalog has no empty value.")
-            else:
-                out.append(f"// Not grounded: no positive atom binds {', '.join(bad)}.")
+            out.append(f"// Not grounded: no positive atom binds {', '.join(bad)}.")
         out.append(text)
 
     def emit_decl(name):

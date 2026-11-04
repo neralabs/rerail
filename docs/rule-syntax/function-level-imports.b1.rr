@@ -97,17 +97,19 @@ names_typing(i) :- kind(i, "import_from_statement"), imp(i, _, y), typing_name(y
 skipped(i) :- scope_of(i, _, "load_python_module"), docof(i, d), doc(d, "_internal/dynamic_import.py", _).
 
 // The finding: one per (import statement, code). `at` is the statement, so {at.text} prints the import as written.
-.violation FUNCTION_IMPORT(at: node, code: symbol) "{at.text} (in {scope})"
+// scope is the "Class.func" label from scope_of; a statement has one, so it adds no findings.
+.violation FUNCTION_IMPORT(at: node, code: symbol, scope: symbol) "{at.text} (in {scope})"
 // The tests run in the Python linter's _classify_import order and the first that holds gives the code, so each
 // rule below also requires that every earlier test fails. The order matters: an internal typing helper is
 // typing-only, and a test function's internal import is test-helper, not circular-avoidance.
-FUNCTION_IMPORT(i, "typing-only")        :- local_imp(i, m, x), typing_imp(i, m, x).
-FUNCTION_IMPORT(i, "test-helper")        :- local_imp(i, m, x), !typing_imp(i, m, x), test_helper(i).
-FUNCTION_IMPORT(i, "circular-avoidance") :- local_imp(i, m, x), !typing_imp(i, m, x), !test_helper(i),
-    internal(m).
+FUNCTION_IMPORT(i, "typing-only", s)        :- local_imp(i, m, x), scope_of(i, _, s), typing_imp(i, m, x).
+FUNCTION_IMPORT(i, "test-helper", s)        :- local_imp(i, m, x), scope_of(i, _, s), !typing_imp(i, m, x),
+    test_helper(i).
+FUNCTION_IMPORT(i, "circular-avoidance", s) :- local_imp(i, m, x), scope_of(i, _, s), !typing_imp(i, m, x),
+    !test_helper(i), internal(m).
 // Everything else: stdlib and third-party imports.
-FUNCTION_IMPORT(i, "other")              :- local_imp(i, m, x), !typing_imp(i, m, x), !test_helper(i),
-    !internal(m).
+FUNCTION_IMPORT(i, "other", s)              :- local_imp(i, m, x), scope_of(i, _, s), !typing_imp(i, m, x),
+    !test_helper(i), !internal(m).
 
 // local_imp: the imp rows inside a def (scope_of has a row only there), without the registry (!skipped).
 .decl local_imp(i: node, m: symbol, x: symbol)
