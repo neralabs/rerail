@@ -5944,3 +5944,17 @@ Four new oracle probes cover Unicode names and quoted annotations.
 The selected correction uses canonical token facts and canonical annotation formatting.
 The canonical name relation has one admitted scope and several consumers. It does not combine unrelated rule scopes.
 No new Linear issues or optional backends were introduced.
+
+The chosen-key and child-edge run reduces execution failures from sixteen to two.
+Eager resolution matches all 34 expected repository findings without failures.
+Lazy architecture reaches `function_events`; purity reaches `global_receivers` before interruption.
+The run still omits all 235 expected purity findings and fails acceptance.
+Cold wall time is 407.224 seconds, parent CPU is 409.692 seconds, and maximum RSS is 7.837 GB.
+The external receipt reports 408.76 seconds wall and 411.79 seconds process-family CPU.
+Its final phase overlaps a focused native test build and replay. These timings remain diagnostic.
+
+The event joins require `owned_nodes(__path,id)` and `owned_nodes(__path,__start,__end)`.
+The existing index starts with `(__path,fn,id)` and cannot serve either complete lookup key.
+Purity also scans each function's node range before selecting global names.
+The next query starts with global names and the indexed expression-root name relation.
+The findings and source scopes remain unchanged.

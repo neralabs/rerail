@@ -359,6 +359,10 @@
               [
                 "__path",
                 "expression"
+              ],
+              [
+                "__path",
+                "name"
               ]
             ]
           },

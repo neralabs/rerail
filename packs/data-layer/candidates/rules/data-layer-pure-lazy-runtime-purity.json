@@ -315,6 +315,10 @@
               [
                 "__path",
                 "expression"
+              ],
+              [
+                "__path",
+                "name"
               ]
             ]
           },
@@ -613,7 +617,7 @@
           },
           {
             "name": "global_receivers",
-            "query": "SELECT \"__path\",\"fn\",\"id\",\"name\",NULL AS \"mutable\",\"managed\" FROM (SELECT f.__path,f.id fn,n.id,g.name,g.mutable,g.managed FROM active_functions f JOIN nodes n ON n.__path=f.__path AND n.__start>=f.body_start AND n.__end<=f.body_end JOIN expression_roots r ON r.__path=n.__path AND r.expression=n.id JOIN global_state g ON g.__path=r.__path AND g.name=r.name WHERE NOT r.through_call AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.name=g.name) AND NOT EXISTS(SELECT 1 FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id WHERE a.__path=f.__path AND a.fn=f.id AND b.name=g.name))",
+            "query": "SELECT \"__path\",\"fn\",\"id\",\"name\",NULL AS \"mutable\",\"managed\" FROM (SELECT f.__path,f.id fn,n.id,g.name,g.mutable,g.managed FROM global_state g JOIN expression_roots r ON r.__path=g.__path AND r.name=g.name AND NOT r.through_call JOIN nodes n ON n.__path=r.__path AND n.id=r.expression JOIN active_functions f ON f.__path=n.__path AND n.__start>=f.body_start AND n.__end<=f.body_end WHERE 1 AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.name=g.name) AND NOT EXISTS(SELECT 1 FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id WHERE a.__path=f.__path AND a.fn=f.id AND b.name=g.name))",
             "indexes": [
               [
                 "__path",
