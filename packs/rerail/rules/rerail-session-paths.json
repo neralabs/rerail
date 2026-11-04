@@ -153,7 +153,7 @@
       "violation": {
         "code": "SESSION_ROOT_DEFAULT",
         "anchor": "witness.span",
-        "message": "Take the storage root from resolveSessionPaths() in src/runtime/session-paths.ts, or from the caller, instead of rebuilding the .rerail/sessions default here."
+        "message": "Take the storage root from resolveSessionPaths() in src/runtime/session-paths.ts or the caller instead of rebuilding .rerail/sessions; for another checkout's default use defaultStorageRoot(checkout)."
       }
     },
     {

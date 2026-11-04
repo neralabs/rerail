@@ -286,7 +286,7 @@
       "violation": {
         "code": "GRAMMAR_NODE_KIND",
         "anchor": "witness.span",
-        "message": "Grammar node kinds are per-grammar names: put this kind on the family's Engine Adapter (a constant such as COMMENT_KINDS, PREAMBLE_KINDS or BODY_KINDS on Adapter, or REFERENCE_KINDS/NAME_KINDS on ScopeRules and EXPRESSION_KINDS/VALUE_KINDS on ValueRules) and read it through with_adapter!(Family::of(dialect), A => A::...). If this code only runs once one family is chosen (its only callers are that family's adapter impl or modules), move it into that family's module or name the function for the family."
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
       }
     },
     {
@@ -323,7 +323,7 @@
       "violation": {
         "code": "GRAMMAR_NODE_KIND",
         "anchor": "witness.span",
-        "message": "Grammar node kinds are per-grammar names: put this kind on the family's Engine Adapter (a constant such as COMMENT_KINDS, PREAMBLE_KINDS or BODY_KINDS on Adapter, or REFERENCE_KINDS/NAME_KINDS on ScopeRules and EXPRESSION_KINDS/VALUE_KINDS on ValueRules) and read it through with_adapter!(Family::of(dialect), A => A::...). If this code only runs once one family is chosen (its only callers are that family's adapter impl or modules), move it into that family's module or name the function for the family."
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
       }
     },
     {
@@ -372,7 +372,7 @@
       "violation": {
         "code": "GRAMMAR_NODE_KIND",
         "anchor": "witness.span",
-        "message": "Grammar node kinds are per-grammar names: put this kind on the family's Engine Adapter (a constant such as COMMENT_KINDS, PREAMBLE_KINDS or BODY_KINDS on Adapter, or REFERENCE_KINDS/NAME_KINDS on ScopeRules and EXPRESSION_KINDS/VALUE_KINDS on ValueRules) and read it through with_adapter!(Family::of(dialect), A => A::...). If this code only runs once one family is chosen (its only callers are that family's adapter impl or modules), move it into that family's module or name the function for the family."
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
       }
     },
     {
@@ -409,7 +409,7 @@
       "violation": {
         "code": "GRAMMAR_NODE_KIND",
         "anchor": "witness.span",
-        "message": "Grammar node kinds are per-grammar names: put this kind on the family's Engine Adapter (a constant such as COMMENT_KINDS, PREAMBLE_KINDS or BODY_KINDS on Adapter, or REFERENCE_KINDS/NAME_KINDS on ScopeRules and EXPRESSION_KINDS/VALUE_KINDS on ValueRules) and read it through with_adapter!(Family::of(dialect), A => A::...). If this code only runs once one family is chosen (its only callers are that family's adapter impl or modules), move it into that family's module or name the function for the family."
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
       }
     },
     {
@@ -446,7 +446,7 @@
       "violation": {
         "code": "GRAMMAR_NODE_KIND",
         "anchor": "witness.span",
-        "message": "Grammar node kinds are per-grammar names: put this kind on the family's Engine Adapter (a constant such as COMMENT_KINDS, PREAMBLE_KINDS or BODY_KINDS on Adapter, or REFERENCE_KINDS/NAME_KINDS on ScopeRules and EXPRESSION_KINDS/VALUE_KINDS on ValueRules) and read it through with_adapter!(Family::of(dialect), A => A::...). If this code only runs once one family is chosen (its only callers are that family's adapter impl or modules), move it into that family's module or name the function for the family."
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
       }
     },
     {
@@ -483,7 +483,7 @@
       "violation": {
         "code": "GRAMMAR_NODE_KIND",
         "anchor": "witness.span",
-        "message": "Grammar node kinds are per-grammar names: put this kind on the family's Engine Adapter (a constant such as COMMENT_KINDS, PREAMBLE_KINDS or BODY_KINDS on Adapter, or REFERENCE_KINDS/NAME_KINDS on ScopeRules and EXPRESSION_KINDS/VALUE_KINDS on ValueRules) and read it through with_adapter!(Family::of(dialect), A => A::...). If this code only runs once one family is chosen (its only callers are that family's adapter impl or modules), move it into that family's module or name the function for the family."
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
       }
     }
   ]

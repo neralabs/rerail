@@ -31,7 +31,7 @@ kebab-case and name the part of the module that reads them (`php/compile/format-
   ([README](packs/README.md)).
 - `rerail/`: the private `rerail` pack's own rule cases, one `<rule id>.cases.json` per rule of `packs/rerail/` (the
   `caught` and `passed` cases the rule was drafted with, as `rerail rules test` reads a draft's `cases`), with no
-  feature directory. `test/engine/code-rule/pack-rules/rerail-pack.test.ts` runs them.
+  feature directory. `test/cli/rerail-pack.test.ts` runs them.
 
 `node scripts/check-structure/fixtures.mjs` prints the table below from the tree and fails on a feature directory that
 names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/upstream/`.

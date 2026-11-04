@@ -39,6 +39,10 @@
     {
       "path": "src/cli/home-rules.ts",
       "content": "const RECORDS = new Set([\"rules.json\", \"consent.json\"]);\n"
+    },
+    {
+      "path": "src/cli/home-scrub-hint.ts",
+      "content": "export const RERAIL_RECORDS = [\"scrub-hint.json\", \"daemon.json\"];\n"
     }
   ],
   "passed": [

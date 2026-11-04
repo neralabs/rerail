@@ -45,7 +45,7 @@
       "violation": {
         "code": "PACK_NAME_LITERAL",
         "anchor": "witness.span",
-        "message": "Build Rerail's own pack name with rulePackPackageName, under node_modules for its folder; recognise any pack name and its id with packIdOfPackage or RULE_PACK_PACKAGE_NAME in engine/catalog/rule-packs.ts."
+        "message": "Build Rerail's own pack name with rulePackPackageName, and its node_modules folder from that; read any pack name and id with packIdOfPackage or RULE_PACK_PACKAGE_NAME in engine/catalog/rule-packs.ts."
       }
     }
   ]

@@ -5,7 +5,7 @@ written down (REVIEW.md, CONTEXT.md, `src/README.md`, `docs/`) and has broken be
 repository with a `packs/*/pack.json`; it is a `repository` pack, added for the whole repository (see
 `docs/rule-packs.md`).
 
-The pack ships 34 rules: 17 in Steer mode, which steer the coding agent in the session, and 17 in Log mode,
+The pack ships 34 rules: 16 in Steer mode, which steer the coding agent in the session, and 18 in Log mode,
 which only record, because today's code still breaks them or the place the code should use does not exist yet. Each
 rule's details say why it is Log and what has to land before it can steer. Every rule is a code rule but
 `rerail-pack-data-through-publish`, a conversation rule on the commands the coding agent runs.
@@ -14,8 +14,8 @@ The pack is private (`"private": true` in its `package.json`): it is never publi
 `rerail packs add ./packs/rerail` installs it from this checkout. Each rule was drafted with `rerail rules test` and
 checked against the repository's history; the cases it was drafted with are in
 [`fixtures/rerail/<rule id>.cases.json`](../../fixtures/rerail/), and
-`test/engine/code-rule/pack-rules/rerail-pack.test.ts` runs them. The candidates not shipped, and the history behind
-each rule, are in [candidates/README.md](candidates/README.md).
+`test/cli/rerail-pack.test.ts` runs them. The history behind each rule is in [HISTORY.md](HISTORY.md), and the
+drafts not shipped are in [candidates/README.md](candidates/README.md).
 
 The repository pass of `rerail rules test` does not read hidden folders, so the counts it gives for the two workflow
 rules, whose files are under `.github/`, come from a copy of the tree. Live checks read `.github/` as any other folder.
@@ -29,7 +29,7 @@ rules, whose files are under `.github/`, come from a copy of the tree. Live chec
 | Ownership | `rerail-command-sigil` | A command sigil decided in place, or a hard-coded `/rerail…` a Codex user reads | Steer |
 | Ownership | `rerail-fixed-value-lists` | Hosts, audit values, rule modes or pack categories listed again instead of taken from their constant | Log |
 | Ownership | `rerail-git-no-lazy-fetch` | Git started outside `src/engine/git.ts`, or without lazy fetch off | Steer |
-| Ownership | `rerail-home-file-names` | A hand-kept list of the Rerail home's file names | Steer |
+| Ownership | `rerail-home-file-names` | A hand-kept list of the Rerail home's file names | Log |
 | Ownership | `rerail-home-file-paths` | The home's `current`, `versions`, `update-state.json` or `bin` path joined by hand | Log |
 | Ownership | `rerail-no-code-execution` | Pack matches or repository config run as code; npm pack installs that run scripts | Log |
 | Ownership | `rerail-no-message-classification` | Failures told apart by message wording; steer text parsed back | Log |
@@ -179,10 +179,16 @@ writers export, such as `RERAIL_DATABASE_FILE` and `DAEMON_STATE_FILE`, keeping 
 `src/**/*.ts`, leaving out tests and generated files; prose naming files passes.
 
 History: Built on #222's uninstall list; it caught the first draft sent back in review, and the fix and merge still
-matched because they kept a hand list, which drifted when #241 added `access-token`; quiet on 17 recent merged PRs.
+matched because they kept a hand list, which drifted when #241 added `access-token`. It is not quiet on recent merged
+work: #362 merged two more hand lists, the private files in `src/engine/storage/private-files.ts` and the agent's
+denied Read patterns in `src/setup/harness-registration.ts`. This pull request builds uninstall's list and the
+harness-registration one from the writers' constants.
 
-Gaps: Misses `Set.add` chains, names built by `.map`, regexes like `/daemon[.](?:json|log)/` and lists of only generic
-names (`current`, `versions`, `bin`, `packs`). An owner's own side-file list is flagged.
+Gaps: Log because 1 match is on main today, `PRIVATE_HOME_FILES` in `src/engine/storage/private-files.ts`: the
+engine cannot import the daemon's and the coding-agent store's constants (`DAEMON_STATE_FILE`, `DAEMON_LOG_FILE`,
+`DAEMON_ACCESS_TOKEN_FILE` in `src/runtime/`, `CLAUDE_STATUS_DATABASE_FILE` in `src/setup/`) until they move into
+`src/engine/storage/`. Misses `Set.add` chains, names built by `.map`, regexes like `/daemon[.](?:json|log)/` and lists
+of only generic names (`current`, `versions`, `bin`, `packs`). An owner's own side-file list is flagged.
 
 ### `rerail-home-file-paths`
 
@@ -195,7 +201,7 @@ History: Built on the paths re-spelled by #25, #140 and #222; it caught each at 
 #133, the one fix, and was quiet on 17 recent merged PRs.
 
 Gaps: Log until the four names are exported constants in a module `src/engine/` can import and the matcher stops matching
-comments; 8 matches on main today. `join(context.home, "bin")` with the user's home is logged; `home + sep + "current"`
+comments; 11 matches on main today. `join(context.home, "bin")` with the user's home is logged; `home + sep + "current"`
 is missed. `scripts/` is out of scope.
 
 ### `rerail-no-code-execution`
@@ -249,10 +255,12 @@ third party's pack.
 Flags code that reads `RERAIL_STORAGE_ROOT` or `RERAIL_MODEL_PATH` from the environment, rebuilds the default storage root
 or the bundled model path (for example from `import.meta.url`), or guesses the default root from a folder name. It runs
 on `src/**/*.ts`, leaving out tests, `src/engine/package-root.ts` and the owner `src/runtime/session-paths.ts`. Resolve
-paths once with `resolveSessionPaths()`, `resolveModelPath()` and `isDefaultStorageRoot()` and pass them in.
+paths once with `resolveSessionPaths()`, `resolveModelPath()` and `isDefaultStorageRoot()` and pass them in; for another
+checkout's default root, as scrub and the support bundle need, call `defaultStorageRoot(checkout)`.
 
 History: Built on #19's own model path in the rule-draft code and #1's daemon copy, both dropped by the #26 fix, and on the
-folder-name guess #221 merged; it stayed quiet on the other 15 of 16 recent merged PRs.
+folder-name guess #221 merged. It is not quiet on recent merged work: #368's scrub and #377's support bundle each built
+another checkout's `.rerail/sessions` by hand; this pull request routes both through `defaultStorageRoot`.
 
 Gaps: Misses `process.env[CONSTANT]` and a default built in two `join` steps. May flag the variable passed through into
 a child's environment (`RERAIL_STORAGE_ROOT: env.RERAIL_STORAGE_ROOT ?? x`) and a folder-name check on another path, such
@@ -269,8 +277,8 @@ tests and generated files. Use `stateOf` and the owner's decisions in `src/runti
 History: Built on the copies #23, #25 and #26 merged (a private `stateOf` copy, a host extension that had to change in
 lockstep when `not-set-up` was added) and their first drafts; quiet on 16 recent merged PRs, and no fix exists to check.
 
-Gaps: Log because the owner has no "runs here" predicate yet and engine code cannot import it; 6 matches are on main
-today. Misses `status.started === false`, `=== true && … === true`, a `Record<RepositoryStartState, boolean>` table,
+Gaps: Log because the owner has no "runs here" predicate yet and engine code cannot import it; 7 matches are on main
+today, one from #413's headless scan. Misses `status.started === false`, `=== true && … === true`, a `Record<RepositoryStartState, boolean>` table,
 `answered === "stopped"` used as a decision, and the older `=== "started"` spelling of "runs here". Its patterns also
 match in comments and strings, such as a two-element `z.enum(["started", "not-set-up"])`.
 
@@ -285,8 +293,10 @@ History: Built on the probes in the first drafts of #25 and #45 and the one re-a
 caused `no such table: checkouts`; quiet on the #49 central fix and on 12 recent merged PRs.
 
 Gaps: Log because storage exports no table check to call yet and maintainers merged and kept all three probes, two at a
-review's request; 3 matches are on main today. The probe in `src/runtime/repository-start.ts` is needed (it covers a file
-whose creator has not committed the schema), so it must move, not go; the message says so.
+review's request; 6 matches are on main today, in `audit-store.ts`, `setup-review.ts`, `repository-start.ts`,
+`settings-entries-store.ts`, `scrub-cli.ts` and #413's `headless-scan.ts`. The probe in
+`src/runtime/repository-start.ts` is needed (it covers a file whose creator has not committed the schema), so it must
+move, not go; the message says so.
 
 ### `rerail-walk-limits`
 
@@ -513,7 +523,7 @@ Flags tree-sitter node kinds named in shared native engine code: a kind compared
 in a `match` on a kind or in `matches!`, tested with `.ends_with("comment")` or `["…"].contains(&node.kind())`, or passed
 to `kind_id`, `kind_ids` or `id_for_node_kind`. Kinds are per-grammar names, so shared code that names one branches on a
 language (#373 review). Put them on the family's Engine Adapter (`Adapter::COMMENT_KINDS`, `PREAMBLE_KINDS` and
-`BODY_KINDS`, which #400 adds; `ScopeRules::REFERENCE_KINDS` and `NAME_KINDS`; `ValueRules::EXPRESSION_KINDS` and
+`BODY_KINDS`, from #400; `ScopeRules::REFERENCE_KINDS` and `NAME_KINDS`; `ValueRules::EXPRESSION_KINDS` and
 `VALUE_KINDS`) and read them through `with_adapter!(Family::of(dialect), A => …)`. Code that only runs once its family is
 chosen moves into the family's module or is named for the family.
 
@@ -535,14 +545,13 @@ It runs on `native/src/**/*.rs`. Left out:
 - tests and `#[cfg(test)]` items.
 
 Punctuation tokens (`","`, `"("`) and `ERROR` pass: tree-sitter names them the same in every grammar. The triage of
-every match is in [candidates/README.md](candidates/README.md#rerail-grammar-node-kinds-grammar-node-kinds-only-on-the-familys-adapter).
+every match is in [HISTORY.md](HISTORY.md#rerail-grammar-node-kinds-grammar-node-kinds-only-on-the-familys-adapter).
 
 History: Built on #50's `rerail-ignore` reader, whose comment, preamble and Python body kinds review flagged on #50 and
-which merged unchanged; the #373 review answered that they are branching, and #400 moves them onto each family's
-adapter. The rule matches those 3 lines on this branch and none on #400's head.
+which merged unchanged; the #373 review answered that they are branching, and #400 moved them onto each family's
+adapter. The rule matched those 3 lines before #400 and matches none of them since.
 
-Gaps: Log until #400 merges and the shared matches move. 14 matches on this branch: the 3 in `suppress/rerail.rs`,
-which #400 moves, and 11 that stay after it: `compile/resolve.rs`'s `parenthesized_expression`, `dotted_name`,
+Gaps: Log until the 11 shared matches on main today move onto the adapter: `compile/resolve.rs`'s `parenthesized_expression`, `dotted_name`,
 `attribute`, `scoped_identifier` and `this` (6), `matcher/arguments.rs`'s `named_children` and `unparenthesized`,
 `matcher/compare.rs`'s `element_index` and `unparenthesized`, and `matcher/util.rs`'s `is_comment_kind`, each reached
 for several families. Misses kinds held in a constant or variable before the comparison, field names
@@ -563,8 +572,8 @@ resolver probe-order files.
 History: caught both of #52's first drafts (gone at their fix) and #2's and #33's hand-kept tables; quiet on #52's merge
 and on 17 recent merged PRs; #207's merge adds the real `by_package_type` table.
 
-Gaps: Log until `SOURCE_SUFFIXES` is generated from the registry; main has 4 matches today: `git_workspace.rs`'s
-`SOURCE_SUFFIXES`, the two `by_package_type` arms in `language.rs`, and a judgement call in `calls/closure.rs`. Misses a
+Gaps: Log until the `by_package_type` table comes from the registry; main has 3 matches today: the two
+`by_package_type` arms in `language.rs`, and a judgement call in `calls/closure.rs`. Misses a
 lone `path.ends_with(".py")`, `scripts/**`, and resolver tables kept as eslint-plugin-n's and Next's probe order. A new
 family module with a neutral name is flagged until it is listed.
 

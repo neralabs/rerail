@@ -8,8 +8,8 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { parseRuleDraft, testRuleDraftCases } from "../../../../src/cli/index.js";
-import { fixturesPath, repositoryPath } from "../../../support/oracles.js";
+import { parseRuleDraft, testRuleDraftCases } from "../../src/cli/index.js";
+import { fixturesPath, repositoryPath } from "../support/oracles.js";
 
 const TIMEOUT = 120_000;
 

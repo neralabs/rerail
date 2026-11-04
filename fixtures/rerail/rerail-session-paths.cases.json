@@ -81,6 +81,10 @@
     {
       "path": "src/daemon/daemon.ts",
       "content": "import { resolveSessionPaths } from \"../runtime/session-paths.js\";\n\nexport function sessionPaths(workspaceRoot: string) {\n  const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);\n  return { storageRoot, modelPath };\n}\n"
+    },
+    {
+      "path": "src/cli/scrub-sessions.ts",
+      "content": "import { defaultStorageRoot } from \"../runtime/session-paths.js\";\n\nexport function ledgers(checkout: string): string {\n  const sessions = defaultStorageRoot(checkout);\n  return sessions;\n}\n"
     }
   ]
 }

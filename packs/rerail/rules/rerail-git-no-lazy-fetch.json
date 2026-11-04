@@ -201,7 +201,7 @@
       "violation": {
         "code": "GIT_LAZY_FETCH_ON",
         "anchor": "witness.span",
-        "message": "Set this Git process's env to { ...process.env, GIT_NO_LAZY_FETCH: \"1\" }, keeping any keys it already adds, so a partial clone never fetches a missing object; leave it if its env already sets that."
+        "message": "Set this Git process's env to { ...process.env, GIT_NO_LAZY_FETCH: \"1\" }, keeping the keys it adds, so a partial clone never fetches a missing object; leave it if its env already sets that."
       }
     },
     {
