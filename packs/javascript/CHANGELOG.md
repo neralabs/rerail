@@ -1,5 +1,13 @@
 # @neralabs/rerail-pack-javascript
 
+## 0.1.6 (2026-11-04)
+
+121 rules, 36 of them on by default.
+
+- 50 new rules (47 from ESLint and 3 from eslint-plugin-unicorn): 11 start in Steer, 1 in Log and 38 off.
+- `eslint-no-loss-of-precision` no longer reports a decimal literal that a JavaScript number stores exactly, such as `9223372036854775808` (2^63): it compares the literal with the number at the same precision, as ESLint does.
+- `eslint-no-setter-return` no longer reports `return /* comment */;` in a setter, now reports an arrow setter whose body follows a comment (`set: v => /* comment */ v`), and reports a parenthesized arrow body at the expression inside the parentheses, as ESLint does. Its message for a `return` now says to return without a value.
+
 ## 0.1.5
 
 ### Patch Changes

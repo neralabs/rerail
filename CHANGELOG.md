@@ -4,9 +4,50 @@ Every notable change to Rerail's core package, `@neralabs/rerail`, latest first.
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. A release is a patch unless it names a later version, and a patch can change or remove what you use, so read the notes before you update.
 
-## Unreleased
+## 0.1.1 (2026-11-04)
 
 0.1.1 locks the daemon to you, keeps each coding agent's Rerail tools inside its own repository, and loads rules from a checkout's own folder and from third parties' packs, in Log until you approve them. Before you update: open the dashboard with `rerail manage`, since old bookmarks stop working; have scripts that call the daemon send `x-rerail-access`; and give a daemon reachable from other machines a TLS certificate or `--insecure-http`.
+
+### Added
+
+- `/rerail-create` also writes architecture rules: where code belongs and which way dependencies run.
+- Code rules gain a `file` query, for files that should not exist, and `importTarget`, for what a JavaScript or TypeScript import points at ([DSL reference](docs/code-rule-dsl-reference.html#importTarget)).
+- `rerail install --remove --delete-data` also deletes Rerail's data; add `--dry-run` to list it first.
+- The docs are a website, [neralabs.github.io/rerail](https://neralabs.github.io/rerail/), with architecture rule examples from real reviews and a readable DSL reference. Every page is also served as Markdown, with `llms.txt`, for coding agents.
+- `rerail support-bundle` writes one diagnostics file to attach to an issue, with no prompts, code or rule text, and `/rerail-bug-report` walks you through it ([support bundles](docs/privacy.md#support-bundles)).
+- Third parties' rule packs load with `rerail packs add`, from npm (`rerail-pack-<id>`) or a folder, marked as not reviewed by Rerail ([third parties' packs](docs/rule-packs.md#third-parties-packs)).
+- Rule documents in a checkout's `.rerail/rules/` run in that checkout without being installed ([a worktree's own rules](docs/rule-packs.md#a-worktrees-own-rules)).
+
+### Changed
+
+- Rules Rerail did not publish run in Log until you approve them with `rerail rules approve` or the dashboard, and again after each change. Library rules you already have stay approved ([approval](docs/rule-scoping.md#approval)).
+- The dashboard's copy is shorter, its top bar and toasts say what to do next, and its tiles open History filtered to them.
+- Rerail no longer scans the whole repository when it first sees a checkout, so violations the code already held no longer fill a fresh dashboard.
+- Rerail runs the Git on your `PATH`, skipping entries inside the repository or `node_modules`.
+- Rerail and its rule packs are public on npm, so installing them needs no npm account.
+- Rules with a `regex` read every text file in their scope, `Justfile`, `LICENSE` and lock files included.
+
+### Removed
+
+- `rerail update rollback` is removed. `rerail update` still saves `rerail.sqlite.pre-update`; to go back, stop Rerail and copy it over `rerail.sqlite` ([database compatibility](docs/how-setup-works.md#database-compatibility)).
+
+### Fixed
+
+- JavaScript, TypeScript and Python rules match ESLint, typescript-eslint and Ruff in more cases, and a `rerail-ignore` before a SQL or Rust block covers the whole block.
+- `rerail status` and the dashboard report a broken bundled model instead of a healthy daemon.
+- A panic in the native engine fails the check that hit it instead of stopping the daemon.
+- Installing Rerail from Pi's package gallery no longer loads it twice.
+- `rerail rules test` no longer stops on large repositories, and `--json` lists every match.
+
+### Security
+
+- Every request to the daemon needs its access capability, so other users and sandboxed processes on your machine get nothing. Open the dashboard with `rerail manage`, and have scripts send `x-rerail-access` from `daemon.json` ([troubleshooting](docs/troubleshooting.md#the-dashboard-says-needs-the-dashboard-link)).
+- A coding agent's Rerail tools reach only its own repository, and the transcripts they read leave out tool output and secret-like paths.
+- A daemon reachable from other machines needs `--tls-cert` and `--tls-key`, or `--insecure-http` to stay on plain HTTP.
+- The daemon limits request size and time, Rerail's files and sockets are private to you, more file names count as secret-like and stay out of `rerail rules test` and stored transcripts, and steers drop control and invisible characters.
+- Rerail redacts the secrets it recognizes before writing anything to disk, and `rerail scrub` cleans what earlier versions stored.
+- Set-up keeps Claude Code and the Cursor CLI out of Rerail's data, and `rerail status` says what each coding agent can reach ([details](docs/installation.md#what-a-coding-agent-can-reach)).
+- `rerail update` checks npm signatures and provenance, ignores a repository's `.npmrc`, runs no install scripts, and installs the dependency versions Rerail was tested with.
 
 ## 0.1.0 (2026-10-27)
 

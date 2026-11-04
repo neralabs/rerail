@@ -9,12 +9,12 @@ Rerail installs with its own set-up, run through `npx` at the version this plugi
 questions; your job is to relay them and run the command for each answer. Never answer a question for the person.
 
 1. Check that this is Claude Code with a terminal you can run commands in. If it is not (claude.ai chat, Cowork),
-   tell the person to run `npx @neralabs/rerail@0.1.0 setup` in a terminal, in their repository, and stop.
+   tell the person to run `npx @neralabs/rerail@0.1.1 setup` in a terminal, in their repository, and stop.
 2. Check `node --version` is 24 or later and `git --version` works. If not, say which is missing and stop.
 3. From the repository's root folder, run:
 
    ```sh
-   npx --yes @neralabs/rerail@0.1.0 setup --relay
+   npx --yes @neralabs/rerail@0.1.1 setup --relay
    ```
 
 4. Set-up prints one question at a time, with one command per answer, and exits. Show the person the question and its

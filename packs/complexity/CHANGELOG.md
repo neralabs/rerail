@@ -1,5 +1,12 @@
 # @neralabs/rerail-pack-complexity
 
+## 0.1.5 (2026-11-04)
+
+7 rules, all on by default.
+
+- 4 new rules: `complexity-cyclomatic-php`, `complexity-cyclomatic-blade`, `complexity-cyclomatic-rust` and `complexity-cyclomatic-vue` start in Steer.
+- Set-up now recommends the pack for PHP, Blade, Rust and Vue source too, not only Python, TypeScript and JavaScript.
+
 ## 0.1.4
 
 ### Patch Changes

@@ -1,1 +1,0 @@
-Code rules gain a `file` query, for files that should not exist, and `importTarget`, for what a JavaScript or TypeScript import points at ([DSL reference](docs/code-rule-dsl-reference.html#importTarget)).

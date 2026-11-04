@@ -1,1 +1,0 @@
-The docs are a website, [neralabs.github.io/rerail](https://neralabs.github.io/rerail/), with architecture rule examples from real reviews and a readable DSL reference. Every page is also served as Markdown, with `llms.txt`, for coding agents.

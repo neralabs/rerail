@@ -1,5 +1,11 @@
 # @neralabs/rerail-pack-typescript
 
+## 0.1.5 (2026-11-04)
+
+65 rules, 23 of them on by default.
+
+- 41 new rules (38 from typescript-eslint and 3 from @vitest/eslint-plugin): 9 start in Steer, 1 in Log and 31 off.
+
 ## 0.1.4
 
 ### Patch Changes
