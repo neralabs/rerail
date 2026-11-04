@@ -1,5 +1,11 @@
 # @neralabs/rerail-pack-next
 
+## 0.1.5 (2026-11-04)
+
+21 rules, all on by default.
+
+- No change to its rules.
+
 ## 0.1.4
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Checks the code your coding agent writes against your rules while it works, and steers it back in the same session",
   "license": "Apache-2.0",
   "publishConfig": {

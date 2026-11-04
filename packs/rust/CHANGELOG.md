@@ -1,5 +1,11 @@
 # @neralabs/rerail-pack-rust
 
+## 0.1.5 (2026-11-04)
+
+33 rules, 17 of them on by default.
+
+- 15 new rules from Clippy: 4 start in Steer and 11 off.
+
 ## 0.1.4
 
 ### Patch Changes

@@ -1,1 +1,0 @@
-Every request to the daemon needs its access capability, so other users and sandboxed processes on your machine get nothing. Open the dashboard with `rerail manage`, and have scripts send `x-rerail-access` from `daemon.json` ([troubleshooting](docs/troubleshooting.md#the-dashboard-says-needs-the-dashboard-link)).

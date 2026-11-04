@@ -1,5 +1,13 @@
 # @neralabs/rerail-pack-blade
 
+## 0.1.6 (2026-11-04)
+
+10 rules, 8 of them on by default.
+
+- New rule: `blade-parser-duplicate-condition-expressions` starts in Steer.
+- No longer shipped: `tlint-no-json-directive`.
+- `tlint-no-json-directive` left because it missed `@json` in real templates that embed large script blocks, which the engine reads only in part, though it matches tlint on tlint's own test templates.
+
 ## 0.1.5
 
 ### Patch Changes
