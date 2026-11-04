@@ -1,5 +1,6 @@
 """Canonical CPython AST facts. Source text is parsed and is never executed."""
 import ast
+import bisect
 import hashlib
 import json
 import re
@@ -55,6 +56,12 @@ for document in request["documents"]:
     rows = []
     for item in document["requests"]:
         kind = item["kind"]
+        if item["fields"] == ["column"]:
+            value=str(item["start"]-offsets[bisect.bisect_right(offsets,item["start"])-1])
+            output_bytes+=len(value)
+            if output_bytes>64*1024*1024:raise ValueError("Python AST batch exceeds its output capacity")
+            rows.append({"column":value})
+            continue
         if kind == "identifier" and item["fields"] == ["identifier"]:
             text=source_bytes[item["start"]:item["end"]].decode("utf-8")
             value=unicodedata.normalize("NFKC",text)

@@ -428,7 +428,8 @@ pub(super) fn evaluate_global(
             .cloned()
         {
             // P's relational clauses (test-only, open item O18) may read their scope's sources.
-            let reads_source = matches!(&clause.kind, ClauseKind::Relational(plan) if plan.reads_source);
+            let reads_source =
+                matches!(&clause.kind, ClauseKind::Relational(plan) if plan.reads_source);
             let source_snapshot = if reads_source {
                 let paths = state
                     .files
@@ -593,14 +594,18 @@ pub(super) fn evaluate_batched_relations(
             } else {
                 // Queue file identities only; admission precedes source hydration.
                 let empty = std::sync::Arc::new(String::new());
-                let files = state.files.values().map(|file| &file.input)
+                let files = state
+                    .files
+                    .values()
+                    .map(|file| &file.input)
                     .chain(state.evicted_inputs.values())
                     .filter(|file| code_rule.scope.matches(&file.path))
                     .map(|file| {
                         let mut input = file.clone();
                         input.source = std::sync::Arc::clone(&empty);
                         input
-                    }).collect();
+                    })
+                    .collect();
                 // A repository clause's work grows with the code in its scope, as a file's does.
                 let read_bytes = scoped_source_bytes(state, code_rule);
                 jobs.push(Job {
@@ -717,7 +722,6 @@ pub(super) fn evaluate_batched_relations(
                         return Err(invalid("relational source snapshot exceeds maxFiles"));
                     }
                     let mut files = Vec::with_capacity(paths.len());
-                    let mut bytes = 0usize;
                     for path in paths {
                         let mut input = state
                             .files
@@ -726,8 +730,7 @@ pub(super) fn evaluate_batched_relations(
                             .or_else(|| state.evicted_inputs.get(&path).cloned())
                             .ok_or_else(|| invalid("relational source removed"))?;
                         input.source = super::documents::source(state, &path)?;
-                        bytes = bytes.saturating_add(input.source.len());
-                        if bytes > code_rule.capabilities.limits.max_source_bytes {
+                        if input.source.len() > code_rule.capabilities.limits.max_source_bytes {
                             return Err(invalid(
                                 "relational source snapshot exceeds maxSourceBytes",
                             ));
@@ -774,11 +777,19 @@ pub(super) fn evaluate_batched_relations(
                         .enumerate()
                         .map(|(slot, file)| (file.path.clone(), slot))
                         .collect::<std::collections::HashMap<_, _>>();
-                    let mut remaining = code_rule.capabilities.limits.max_source_bytes;
+                    let per_file_limit = code_rule.capabilities.limits.max_source_bytes;
                     for paths in paths.chunks(128) {
-                        let documents = super::documents::load_many(state, paths, remaining)?;
+                        let documents = super::documents::load_many(
+                            state,
+                            paths,
+                            per_file_limit.saturating_mul(paths.len()),
+                        )?;
                         for (path, (version, document)) in paths.iter().zip(documents) {
-                            remaining = remaining.saturating_sub(document.source.len());
+                            if document.source.len() > per_file_limit {
+                                return Err(invalid(
+                                    "syntax source exceeds per-file maxSourceBytes",
+                                ));
+                            }
                             let slot = *file_slots
                                 .get(path)
                                 .ok_or_else(|| invalid("syntax source snapshot is incomplete"))?;

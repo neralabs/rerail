@@ -21,6 +21,7 @@ pub(in crate::code_rule_dsl) const FIELDS: &[&str] = &[
     "unparse",
     "literal_json",
     "dump_sha256",
+    "column",
 ];
 pub(super) fn shape(fields: &[String]) -> String {
     let mut columns = vec![

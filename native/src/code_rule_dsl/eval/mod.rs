@@ -276,8 +276,8 @@ pub(super) fn evaluate_clauses(
         .files
         .iter()
         .filter(|file| code_rule.scope.matches(&file.path))
-        .fold((0usize, 0usize), |(files, bytes), file| {
-            (files + 1, bytes + file.source.len())
+        .fold((0usize, 0usize), |(files, bytes): (usize, usize), file| {
+            (files + 1, bytes.max(file.source.len()))
         });
     // Each reported clause has a coverage entry; a synthetic leaf is part of the clause it serves.
     let covered: Vec<(Option<String>, String)> = clauses
@@ -426,19 +426,22 @@ pub(super) fn evaluate_clauses(
                     vec![snapshot.clone()]
                 };
                 for partition in partitions {
-                    relational_jobs.push(crate::code_rule_dsl::residency::admission::relational::Job {
-                        code_rule,
-                        clause,
-                        inputs: crate::code_rule_dsl::residency::admission::relational::Inputs {
-                            gate: None,
-                            file_local: false,
-                            read_bytes: 0,
-                            rows: None,
-                            facts: Vec::new(),
-                            snapshot: partition,
+                    relational_jobs.push(
+                        crate::code_rule_dsl::residency::admission::relational::Job {
+                            code_rule,
+                            clause,
+                            inputs:
+                                crate::code_rule_dsl::residency::admission::relational::Inputs {
+                                    gate: None,
+                                    file_local: false,
+                                    read_bytes: 0,
+                                    rows: None,
+                                    facts: Vec::new(),
+                                    snapshot: partition,
+                                },
+                            budget: super::budget::Context::capture(),
                         },
-                        budget: super::budget::Context::capture(),
-                    });
+                    );
                 }
             }
             ClauseKind::Llm => evaluation.failures.push(failure(
@@ -449,7 +452,9 @@ pub(super) fn evaluate_clauses(
             )),
         }
     }
-    for result in crate::code_rule_dsl::residency::admission::relational::evaluate_batch(relational_jobs) {
+    for result in
+        crate::code_rule_dsl::residency::admission::relational::evaluate_batch(relational_jobs)
+    {
         merge(&mut evaluation, result);
     }
     if evaluation.metrics.witnesses > limits.max_witnesses

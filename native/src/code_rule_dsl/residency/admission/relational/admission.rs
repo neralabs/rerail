@@ -6,15 +6,15 @@ use crate::code_rule_dsl::{
 };
 
 pub(in crate::code_rule_dsl) fn limits(rule: &CompiledCodeRule, snapshot: &Snapshot) -> Result<()> {
-    let (files, bytes) = snapshot
+    let files = snapshot
         .files
         .iter()
         .filter(|f| rule.scope.matches(&f.path))
-        .fold((0usize, 0usize), |(n, bytes), f| {
-            (n + 1, bytes.saturating_add(f.source.len()))
-        });
-    if files > rule.capabilities.limits.max_files
-        || bytes > rule.capabilities.limits.max_source_bytes
+        .collect::<Vec<_>>();
+    if files.len() > rule.capabilities.limits.max_files
+        || files
+            .iter()
+            .any(|f| f.source.len() > rule.capabilities.limits.max_source_bytes)
     {
         return Err(invalid("repository input budget exceeded"));
     }
