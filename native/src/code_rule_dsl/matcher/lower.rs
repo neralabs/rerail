@@ -215,7 +215,16 @@ impl DocumentGate {
 /// include a `kind` other than `module`.
 pub(in crate::code_rule_dsl) fn gated_match_tree(grammar: &GrammarMatcher) -> Result<(MatchTree, Vec<DocumentGate>), Unsupported> {
     use super::Semantic;
-    let AstMatcher::All(items) = &grammar.matcher else { return Ok((match_tree(grammar)?, Vec::new())) };
+    let AstMatcher::All(_) = &grammar.matcher else { return Ok((match_tree(grammar)?, Vec::new())) };
+    // The root's conjuncts, nested `all`s flattened (an option's case is often an `all` of path tests).
+    fn conjuncts<'a>(matcher: &'a AstMatcher, out: &mut Vec<&'a AstMatcher>) {
+        match matcher {
+            AstMatcher::All(items) => items.iter().for_each(|item| conjuncts(item, out)),
+            other => out.push(other),
+        }
+    }
+    let mut items = Vec::new();
+    conjuncts(&grammar.matcher, &mut items);
     let module = grammar.language.kind_id("module");
     let is_module = |matcher: &AstMatcher| match matcher {
         AstMatcher::Kind(kind) => kind.potential_kinds().is_some_and(|kinds| kinds.iter().eq([usize::from(module)])),
@@ -229,11 +238,11 @@ pub(in crate::code_rule_dsl) fn gated_match_tree(grammar: &GrammarMatcher) -> Re
             AstMatcher::Inside(related, super::relation::StopBy::End) if kind_other_than_module => match related.rule() {
                 AstMatcher::All(parts) => match parts.as_slice() {
                     [kind, AstMatcher::Regex(regex)] if is_module(kind) => gates.push(DocumentGate::Text(regex.clone())),
-                    _ => rest.push(item.clone()),
+                    _ => rest.push((*item).clone()),
                 },
-                _ => rest.push(item.clone()),
+                _ => rest.push((*item).clone()),
             },
-            other => rest.push(other.clone()),
+            other => rest.push((*other).clone()),
         }
     }
     if gates.is_empty() {
