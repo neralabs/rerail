@@ -33,13 +33,13 @@ try {
   New-Item -ItemType Directory -Force "$base\packs" | Out-Null
   $node = Get-RerailNode
   $npmCli = Join-Path (Split-Path -Parent $node) "node_modules\npm\bin\npm-cli.js"
-  foreach ($pack in Get-ChildItem -Directory (Join-Path $PSScriptRoot "..\..\packs")) {
-    $manifest = Join-Path $pack.FullName "package.json"
-    if (-not (Test-Path $manifest)) { continue }
-    # A private pack is left out: npm refuses to publish it to any registry.
-    if ((Get-Content -Raw $manifest | ConvertFrom-Json).private -eq $true) { continue }
-    & $node $npmCli pack $pack.FullName --pack-destination "$base\packs" --ignore-scripts --silent | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "npm pack $($pack.Name) exited $LASTEXITCODE" }
+  # A private pack is left out: npm refuses to publish it to any registry. publishedPacks is the one reading of the flag.
+  $releaseScripts = ([Uri](Join-Path $PSScriptRoot "..\release\packs.mjs")).AbsoluteUri
+  $packIds = @(& $node --input-type=module -e "const { publishedPacks } = await import(process.argv[1]); for (const { id } of publishedPacks()) console.log(id);" $releaseScripts)
+  if ($LASTEXITCODE -ne 0) { throw "listing the published packs exited $LASTEXITCODE" }
+  foreach ($id in $packIds) {
+    & $node $npmCli pack (Join-Path $PSScriptRoot "..\..\packs\$id") --pack-destination "$base\packs" --ignore-scripts --silent | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "npm pack $id exited $LASTEXITCODE" }
   }
   $packTarballs = @(Get-ChildItem "$base\packs" -Filter *.tgz | ForEach-Object { $_.FullName })
   Write-Host "packed $($packTarballs.Count) rule packs"
