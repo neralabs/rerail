@@ -18,8 +18,9 @@ name: Release
 # environment approval and with trusted publishing, so no npm login is needed. With `publish`, run from main, it retries
 # a release that failed before publishing: it builds main, checks and publishes it as that version behind the same
 # approval, leaving the version's tag where it is. It is refused unless the version is the one main's package.json
-# names, its tag exists and nothing core ships has changed since the tag (scripts/release/core-retry-check.mjs), so main
-# holds the package the tag and the notes describe. A release tag can't move, so without this a failed version is lost.
+# names, its tag exists and nothing core ships has changed since the tag (scripts/release/core-retry-check.mjs), so core's
+# own code is the tag's. How the package is built and its changelog can differ, and the run summary lists every path
+# changed since the tag for whoever approves. A release tag can't move, so without this a failed version is lost.
 #
 # package.yml restores the cargo cache and never saves it: release-cache.yml builds and saves it on main.
 #

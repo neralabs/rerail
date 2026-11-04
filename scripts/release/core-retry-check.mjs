@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// Refuses release.yml's `publish` input unless it retries a release that never published what is on main now
-// (publishRetryRefusal in core-paths.mjs). It runs before `npm ci`, so it uses nothing but core-paths.mjs.
+// Refuses release.yml's `publish` input unless it retries a release with main's core code the same as the tag's
+// (publishRetryRefusal in core-paths.mjs), and lists what did change in the run summary for whoever approves the publish
+// (retrySummary). It runs before `npm ci`, so it uses nothing but core-paths.mjs.
 //
 //   VERSION=0.1.2 GITHUB_REF=refs/heads/main GITHUB_REPOSITORY=owner/name GH_TOKEN=... node scripts/release/core-retry-check.mjs
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { coreChanges, publishRetryRefusal } from "./core-paths.mjs";
+import { coreChanges, publishRetryRefusal, retrySummary } from "./core-paths.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const git = (args) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
@@ -30,18 +31,18 @@ function fetchTag() {
   }
 }
 
-/** The shipped paths changed since the version's tag. */
-function shippedSinceTag() {
-  const tag = `v${version}`;
-  const changed = git(["diff", "--name-only", "--no-renames", tag, "HEAD"]).split("\n").filter((path) => path !== "");
-  return coreChanges(changed, (at) => git(["show", `${at === "release" ? tag : "HEAD"}:package-lock.json`]));
-}
+const tagName = `v${version}`;
+const changedSinceTag = () => git(["diff", "--name-only", "--no-renames", tagName, "HEAD"]).split("\n").filter((path) => path !== "");
+const readLock = (at) => git(["show", `${at === "release" ? tagName : "HEAD"}:package-lock.json`]);
 
 const before = publishRetryRefusal({ version, ref, packageVersion, tagged: true, shipped: [] });
 const tagged = before === null && fetchTag();
-const refusal = before ?? publishRetryRefusal({ version, ref, packageVersion, tagged, shipped: tagged ? shippedSinceTag() : [] });
+const changed = tagged ? changedSinceTag() : [];
+const refusal = before ?? publishRetryRefusal({ version, ref, packageVersion, tagged, shipped: coreChanges(changed, readLock) });
 if (refusal !== null) {
   console.error(`::error::${refusal}`);
   process.exit(1);
 }
-console.log(`Retrying ${version}: nothing core ships has changed since v${version}.`);
+const summary = retrySummary(version, changed);
+console.log(summary);
+if (process.env.GITHUB_STEP_SUMMARY !== undefined) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);

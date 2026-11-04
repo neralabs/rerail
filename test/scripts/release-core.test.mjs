@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
-import { coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, shipsWithCore } from "../../scripts/release/core-paths.mjs";
+import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
 import { CHANGE_TYPES, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, newChangelogEntries, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
@@ -69,6 +69,28 @@ describe("publishRetryRefusal", () => {
     const refusal = publishRetryRefusal({ ...retry, shipped: ["src/cli/cli.ts", "package-lock.json"] });
     expect(refusal).toContain("src/cli/cli.ts, package-lock.json");
     expect(refusal).toContain("the next version");
+  });
+});
+
+describe("retrySummary", () => {
+  it("counts the paths that build or are packed into the tarball, and no others", () => {
+    for (const path of [".github/workflows/package.yml", ".github/actions/lfs/action.yml", "scripts/release/shrinkwrap-pack.mjs", ".gitattributes", "CHANGELOG.md"]) expect(changesPackage(path)).toBe(true);
+    for (const path of [".github/workflows/release.yml", "docs/release.md", "scripts/host/azure/matrix.mjs", "scripts/release/core-paths.mjs"]) expect(changesPackage(path)).toBe(false);
+  });
+
+  it("lists what can change the tarball first, under its own heading, then every other path", () => {
+    const summary = retrySummary("0.1.2", ["docs/release.md", ".github/workflows/package.yml", "scripts/host/azure/matrix.mjs"]);
+    expect(summary).toContain("3 path(s) changed since the tag");
+    expect(summary).toContain("**Can change the tarball, so check these before approving (1):**\n\n- `.github/workflows/package.yml`");
+    expect(summary).toContain("**Other changes (2):**\n\n- `docs/release.md`\n- `scripts/host/azure/matrix.mjs`");
+    expect(summary.indexOf("package.yml")).toBeLessThan(summary.indexOf("docs/release.md"));
+  });
+
+  it("says so when nothing that builds the tarball changed, and when nothing changed at all", () => {
+    expect(retrySummary("0.1.2", ["docs/release.md"])).toContain("Nothing that builds or is packed into the tarball changed.");
+    const none = retrySummary("0.1.2", []);
+    expect(none).toContain("0 path(s) changed since the tag");
+    expect(none).not.toContain("Other changes");
   });
 });
 

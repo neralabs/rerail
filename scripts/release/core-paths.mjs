@@ -78,8 +78,10 @@ export function coreChanges(changed, readLock) {
  * Why release.yml's `publish` input can't publish core's `version`, or null. It retries a release that failed before
  * publishing, once whatever broke it is fixed on main, so a failed release never blocks its version: run from main
  * (`ref`), for the version main's package.json names (`packageVersion`), whose tag exists (`tagged`), with no path
- * that ships changed since that tag (`shipped`, as `coreChanges` gives). So what is published is what the tag and the
- * version's notes describe. A fix to what ships takes the next version, which the Release pull request already offers.
+ * that ships changed since that tag (`shipped`, as `coreChanges` gives). So core's own code is the tag's; how the
+ * package is built and its changelog can differ (PACKAGE_INPUTS), so that a fix to the build can be retried too, and
+ * retrySummary shows them to whoever approves the publish. A fix to what ships takes the next version, which the Release
+ * pull request already offers.
  */
 export function publishRetryRefusal({ version, ref, packageVersion, tagged, shipped }) {
   if (ref !== "refs/heads/main") return `a retry runs from main, not ${ref}`;
@@ -88,6 +90,39 @@ export function publishRetryRefusal({ version, ref, packageVersion, tagged, ship
   if (!tagged) return `v${version} has no tag: a release starts from the Release pull request, and a retry only repeats one`;
   if (shipped.length > 0) return `what core ships changed since v${version} (${shipped.join(", ")}): release it as the next version, through the Release pull request`;
   return null;
+}
+
+/**
+ * Paths `coreChanges` doesn't count that can still change the tarball: what builds it, what packing runs, how Git checks
+ * out the large files it packs, and the changelog it packs. A directory ends in `/`.
+ */
+export const PACKAGE_INPUTS = [
+  ".gitattributes",
+  ".github/actions/",
+  ".github/workflows/package.yml",
+  "CHANGELOG.md",
+  "scripts/release/shrinkwrap-pack.mjs",
+];
+
+/** Whether a change to repository path `path` can change the tarball though `coreChanges` doesn't count it. */
+export const changesPackage = (path) => PACKAGE_INPUTS.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
+
+/**
+ * The run summary of a retry of `version`, for whoever approves its publish: every path in `changed` (all changed since
+ * the tag), those that can change the tarball (`changesPackage`) first.
+ */
+export function retrySummary(version, changed) {
+  const list = (paths) => paths.map((path) => `- \`${path}\``);
+  const inputs = changed.filter(changesPackage);
+  const others = changed.filter((path) => !changesPackage(path));
+  return [
+    `### Retrying ${version} from main`,
+    "",
+    `Core's own code is the same as at \`v${version}\`, but the tarball is built from main. ${changed.length} path(s) changed since the tag.`,
+    ...(inputs.length === 0 ? ["", "Nothing that builds or is packed into the tarball changed."] : ["", `**Can change the tarball, so check these before approving (${inputs.length}):**`, "", ...list(inputs)]),
+    ...(others.length === 0 ? [] : ["", `**Other changes (${others.length}):**`, "", ...list(others)]),
+    "",
+  ].join("\n");
 }
 
 /** What the environment matrix itself runs on: a change to one of these is tested even though core does not ship it. */

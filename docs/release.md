@@ -116,12 +116,15 @@ gh workflow run release.yml --ref main -f publish=<version>
 ```
 
 The run builds `main`, runs every check and publishes behind the same approval. The tag stays where it is, and npm's
-provenance names the `main` commit. It is refused unless all of these hold, so `main` holds the package the tag and the
-notes describe:
+provenance names the `main` commit. It is refused unless all of these hold, so core's own code is the tag's:
 
 - it runs from `main`, and `main`'s `package.json` names that version;
 - the `v<version>` tag exists;
 - nothing core ships has changed since the tag (`publishRetryRefusal` in `scripts/release/core-paths.mjs`).
+
+How the package is built and its changelog can still differ from the tag, so that a fix to the build can be retried
+too. The run summary lists every path changed since the tag, starting with those that can change the tarball (`PACKAGE_INPUTS`): the build
+workflow and its actions, the shrinkwrap step, `.gitattributes` and `CHANGELOG.md`. Check that list before approving.
 
 If the fix changes what ships, it takes the next version: the Release pull request offers one as soon as the fix is on
 `main`. Say in that version's lead that the failed version was never published, since its notes won't reach anyone
