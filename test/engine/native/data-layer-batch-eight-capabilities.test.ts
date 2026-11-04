@@ -57,3 +57,17 @@ it("applies the source byte limit per file in both repository execution paths", 
     expect(result.evaluation.failures).toEqual([]); expect(result.evaluation.violations).toHaveLength(3);
   } finally { workspace.close(); }
 });
+
+it("identifies incomplete relational input tables and source files", () => {
+  const caps = JSON.parse(capabilities); caps.limits.maxWitnesses = 1;
+  const authored = { format: "rerail.policy/v1", id: "incomplete-diagnostic", revision: 1, mode: "log", clauses: [{ id: "selected", relational: {
+    inputs: { functions: { evidence: { as: "f", query: { ast: { language: "python", rule: { kind: "function_definition" } } }, project: { path: "file.path" } } } },
+    query: "SELECT __path path,__start start_byte,__end end_byte FROM functions",
+  }, violation: { code: "CHECK", message: "check", anchor: "witness.span" } }] };
+  const rule = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(authored), "json", JSON.stringify(caps));
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
+    files: [{ path: "a.py", language: "python", source: "def a(): pass\ndef b(): pass\n" }] }), "report"));
+  expect(result.failures).toHaveLength(1);
+  expect(result.failures[0].message).toContain("functions");
+  expect(result.failures[0].message).toContain("a.py");
+});
