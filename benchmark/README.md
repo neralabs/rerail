@@ -24,15 +24,16 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   (per-case rows with `--verbose`). Capture, transfer and compare spend the person's model budget on every judge call;
   results are never committed.
 - `merge-assist-context.ts` (`node --import tsx benchmark/merge-assist-context.ts --build-index out.json
-  [--distractors N]`, then `--index index.json --variants none,guard-signals,... --split dev|heldout|all
+  [--distractors N]`, then `--index index.json --variants none,guard-signals,... --split dev|heldout|size|confirm|all
   [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--no-control] [--json out.json] [--keep]
   [--verbose] [--model m] [-c key=value]`, `--sweep control.json`, `--list-variants`, `--validate-oracles`) asks
   whether injecting teammates' decisions into
   a real Codex loop, when it touches files they cover, makes its code follow them, and which protocol does so with the
   least chatter. The dataset, `fixtures/host/benchmark/merge-assist/context.json`, reuses cases.json's project and
   names its ten lasting decisions (team or peer, with the hand-written text and scope the oracles grade through), the
-  distractor pool and 26 tasks: per split (`dev` for tuning, `heldout` to confirm), nine that tempt one decision each,
-  two neutral ones and two where this branch's decision contradicts a teammate's. Nothing hand-written about a real
+  distractor pool and 53 tasks: per split (`dev` for tuning, `heldout` to confirm), nine that tempt one decision each,
+  two neutral ones and two where this branch's decision contradicts a teammate's; then the `size` and `confirm` splits
+  of `--arms` below. Nothing hand-written about a real
   decision reaches the agent: `--build-index` runs the product's `draftDecision` with the person's agent CLI judge on
   each decision's capture case (correction, before and after) and keeps the decision text, scope and validated signals
   it produces, leaving out any the judge calls one-off or does not answer; distractors and the conflict tasks'
@@ -64,10 +65,17 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   one product judge call (`rankPrompt`) over the task prompt and every decision covering a project file, under opaque
   ids, writes its picks to the run folder. An area's first touch injects its conflict pairs and its share of the top
   3 or 5 picks, once the ranker has answered; a pre-edit waits up to 15 s for it, then ranks that area by prompt
-  embedding, and a failed ranker means the same for the run. Before any focus run the ranker's input is checked to hold
-  no index id, oracle regex or task label; the report adds whether focus was ready at the first area touch, pre-edit
-  waits, fallbacks, ranker time and its prompt tokens (characters / 4). `--seed N` draws other distractors and, above
-  1, shuffles the run index, so ties and prompt order change; 1 is the default layout. `--replay run.json`
+  embedding, and a failed ranker means the same for the run. `focus-pool` is the same session call answered as up to
+  12 picks (`rankPrompt`'s `max`), of which an area's first touch injects at most 3, in rank order (its fallback at
+  most 3 too). `focus-area` makes no session call: an area's first touch starts a ranker over the decisions covering
+  the touched file or a project file in that area, answered as at most 3 and written to `focus-<area>.json`; areas rank
+  concurrently, the picks go out at the first hook call after the answer, and a pre-edit patching an area still
+  ranking waits up to 15 s, then falls back to `area-embed` for that area, 3 at most. Before any focus run every prompt
+  its rankers would send (the session's, and one per project area for `focus-area`) is built offline and checked to
+  hold no index id, oracle regex or task label; the report adds whether focus was ready at the first area touch,
+  pre-edit waits, fallbacks, ranker time (per area for `focus-area`) and its prompt tokens (characters / 4).
+  `--seed N` draws other distractors and, above 1, shuffles the run index, so ties and prompt order change; 1 is the
+  default layout. `--replay run.json`
   re-chooses a report's injections from its logs. Deterministic oracles grade `git diff main`, and every oracle is
   first checked against the labelled files in cases.json (`--validate-oracles` alone needs no model). It prints, per
   variant: the tempt-task violation rate with a Wilson interval and its reduction against the control, the guardrails
@@ -76,7 +84,8 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   actually consumed) and the hill-climbing score (per-run rows with `--verbose`). Every run spends the person's Codex
   budget. `--timeout-min N` (default 6) bounds each Codex call.
 
-  `--arms focus-k3,posthoc` asks what a clean, finished result costs: session focus as frozen, against no injection
+  `--arms focus-k3,posthoc` asks what a clean, finished result costs: a focus protocol (`focus-k3`, `focus-k5`,
+  `focus-pool` or `focus-area`), against no injection
   with the violations fixed afterwards. It runs the `size` split by default: nine tasks, three each small (one file,
   one tempted decision), medium (two to four files, two) and large (api, db, ui and routes, three or four). Each run
   goes to the agent's end, then, in both arms, the oracles grade it and, while a target is violated, at most three fix
@@ -85,6 +94,26 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   `posthoc`, and human review latency is left out. It prints per size and arm (medians and means, with n): time to
   completion, total and uncached tokens, fix rounds and the share of runs needing one, first-pass and final clean,
   done, churn (lines changed by the fixes), and the focus − posthoc difference per size.
+
+  `--split confirm` holds 18 more tasks for the pre-registered confirmatory comparison, six per size (small one
+  target, medium two, large three or four in at least three areas), with prompts, features and file names new to the
+  dataset and each of the nine graded decisions targeted at least three times. It is held out: no agent runs on it
+  before its pre-registration is committed.
+- `merge-assist-stats.ts` (`node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...]
+  --arms A,B [--metric m] [--look N] [--seed N]`, or `--self-test`) analyses `--arms` reports, no model involved. A
+  run is the unit, stratified by task; several reports' batches are pooled (one look each unless `--look` says
+  otherwise), and reports with a different index, arm definitions, fix-round limit or run settings are refused. `A` is
+  the treatment, `B` the control, and every test is one-sided in A's favour. Binary metrics (`first_pass_clean`,
+  `needs_fix_round`) get a stratified permutation test (arm labels shuffled within each task, 20,000 times, seeded) on
+  the summed within-task difference in proportions, and their mean within-task difference with a cluster-bootstrap
+  95% CI (tasks, then runs within each task and arm, 10,000 resamples). Continuous metrics (`time_to_completion`,
+  `total_tokens`, `uncached_tokens`) get the same test on mean log(value + 1) and the ratio of geometric means (A/B);
+  `churn` the plain difference. A run with an error counts as a failure for its arm (not clean, needing a fix, and at
+  least as costly as its task's worst run). Without `--metric` it tests the pre-registered primary family with Holm's
+  correction, then the secondary hypotheses, and judges each look against the Pocock boundary for three looks
+  (nominal one-sided α 0.0221); the last line is `STOP: success`, `CONTINUE` or `STOP: futility/max looks`.
+  `--self-test` prints the false-positive rate under no effect and the power under a large one, 200 synthetic datasets
+  each.
 - `merge-assist-guard.ts` (`node --import tsx benchmark/merge-assist-guard.ts --index index.json [--thresholds ...]
   [--hook-calls N]`) scores the guard offline, with no agent: each labelled teammate file and project file as a
   patch, it prints per real decision and source the recall on its caught files, fires on its passed files and cross

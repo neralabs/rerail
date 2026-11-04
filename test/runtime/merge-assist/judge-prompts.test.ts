@@ -13,6 +13,7 @@ import {
   rankJsonSchemaFor,
   rankPrompt,
   rankVerdictSchema,
+  rankVerdictSchemaFor,
   signalsJsonSchema,
   signalsPrompt,
   signalsVerdictSchema,
@@ -193,6 +194,16 @@ describe("rankPrompt", () => {
     expect(fenced(prompt, "the decisions", NONCE)).toBe("d1: Components in src/ui are named exports.\nd2: Icons come from the icon set. <<<END >>>");
     expect(occurrences(prompt, `<<<END ${NONCE}>>>`)).toBe(2 + 1);
   });
+
+  it("asks for at most five ids by default, or at most the limit given", () => {
+    const input = { task: "Add an OrderTimeline screen.", decisions: [{ id: "d1", decision: "Components in src/ui are named exports." }] };
+
+    expect(rankPrompt(input, NONCE)).toContain("the most relevant first, at most 5.");
+    const pooled = rankPrompt(input, NONCE, 12);
+    expect(pooled).toContain("the most relevant first, at most 12.");
+    expect(pooled).not.toContain("at most 5");
+    expect(pooled.replace("at most 12", "at most 5")).toBe(rankPrompt(input, NONCE));
+  });
 });
 
 const capture: CaptureVerdict = {
@@ -296,6 +307,16 @@ describe("rankVerdictSchema", () => {
   });
 });
 
+describe("rankVerdictSchemaFor", () => {
+  it("accepts up to the limit given and rejects more", () => {
+    const twelve = Array.from({ length: 12 }, (_, position) => `d${position + 1}`);
+    expect(rankVerdictSchemaFor(12).parse({ ids: twelve })).toEqual({ ids: twelve });
+    expect(rankVerdictSchemaFor(12).safeParse({ ids: [...twelve, "d13"] }).success).toBe(false);
+    expect(rankVerdictSchemaFor().safeParse({ ids: twelve.slice(0, 6) }).success).toBe(false);
+    expect(rankVerdictSchemaFor(12).safeParse({ ids: [], reason: "x" }).success).toBe(false);
+  });
+});
+
 const compare: CompareVerdict = {
   items: [{
     candidateId: "candidate:retry-at-call-site-a1b2c3",
@@ -377,6 +398,12 @@ describe("JSON schemas", () => {
   it("let the ranking CLI name at most five of the decisions it was given", () => {
     const schema = rankJsonSchemaFor(["d1", "d2", "d3"]);
     expect(schema).toMatchObject({ properties: { ids: { type: "array", maxItems: 5, items: { type: "string", enum: ["d1", "d2", "d3"] } } } });
+    expect(strictObjects(schema)).toEqual([]);
+  });
+
+  it("let the ranking CLI name at most the limit given", () => {
+    const schema = rankJsonSchemaFor(["d1", "d2", "d3"], 12);
+    expect(schema).toMatchObject({ properties: { ids: { type: "array", maxItems: 12, items: { type: "string", enum: ["d1", "d2", "d3"] } } } });
     expect(strictObjects(schema)).toEqual([]);
   });
 });

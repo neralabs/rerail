@@ -52,10 +52,13 @@ import {
   recordCheckout,
   setUpRepository,
 } from "../src/engine/index.js";
-import { type AgentJudge, createAgentJudge, deriveSignals, draftDecision, type DraftOutcome, rankPrompt, setRepositoryStarted } from "../src/runtime/index.js";
+import { type AgentJudge, createAgentJudge, deriveSignals, draftDecision, type DraftOutcome, MAX_RANKED, rankPrompt, setRepositoryStarted } from "../src/runtime/index.js";
 import { fixturesPath } from "../test/support/oracles.js";
 import {
   advance,
+  type AreaFocusLog,
+  areaFocusPath,
+  areaOf,
   BUDGETS,
   type Channel,
   CHANNELS,
@@ -94,15 +97,18 @@ const WORK_BRANCH = "tbelanger/work";
 const OWN_AUTHOR = "Tim Belanger";
 /** How long one Codex call (a run, or a fix round) may take unless `--timeout-min` says otherwise. */
 const DEFAULT_TIMEOUT_MIN = 6;
-/** `dev` for tuning, `heldout` to confirm, `size` for the cost-to-clean comparison (`--arms`). */
-const SPLITS = ["dev", "heldout", "size"] as const;
+/**
+ * `dev` for tuning, `heldout` to confirm, `size` for the cost-to-clean comparison (`--arms`), `confirm` for the
+ * pre-registered confirmatory `--arms` runs (held out: no agent runs on it before the pre-registration is committed).
+ */
+const SPLITS = ["dev", "heldout", "size", "confirm"] as const;
 export const SIZES = ["small", "medium", "large"] as const;
 const KINDS = ["tempt", "neutral", "conflict"] as const;
 
 // ---------------------------------------------------------------------------------------------------------- variants
 
 /** One selection channel: everything but `hybrid`. */
-const SINGLE = { channels: "single", orient: null, areaRank: null, guard: null, embedThreshold: null, guardCap: null, focusK: null } as const;
+const SINGLE = { channels: "single", orient: null, areaRank: null, guard: null, embedThreshold: null, guardCap: null, focusK: null, rankMax: null, areaCap: null } as const;
 /** Round one's protocol defaults: directories trigger, no budget per run, the agent is asked to tell the user. */
 const LISTINGS = { ...SINGLE, dirs: true, sessionCap: null, conflict: "tell", budget: "session", threshold: null } as const;
 /** Only files read or edited trigger, each new file at most two items, the conflict as a line to end with. */
@@ -150,13 +156,18 @@ const VARIANTS: Readonly<Record<string, VariantParameters | null>> = {
   "focus-k3": { ...AREA, orient: "focus", areaRank: null, cap: null, guardCap: null, focusK: 3 },
   /** Session focus with the ranker's top 5 picks in play. */
   "focus-k5": { ...AREA, orient: "focus", areaRank: null, cap: null, guardCap: null, focusK: 5 },
+  /** Session focus over a pool: the ranker names up to 12 picks, and an area's first touch takes at most 3 of them. */
+  "focus-pool": { ...AREA, orient: "focus", areaRank: null, cap: null, guardCap: null, focusK: null, rankMax: 12, areaCap: 3 },
+  /** Per-area focus: an area's first touch starts a ranking call over its own decisions, which names at most 3. */
+  "focus-area": { ...AREA, orient: "area-focus", areaRank: null, cap: null, guardCap: null, focusK: null, rankMax: 3, areaCap: 3 },
 };
 const CONTROL = "none";
 
 function describeVariant(parameters: VariantParameters | null): string {
   if (parameters === null) return "control: no injection (the hook only logs)";
   const embed = parameters.guard === "embed" || parameters.guard === "both" ? ` embedThreshold=${parameters.embedThreshold ?? "NOT FROZEN"}` : "";
-  const orient = `orient=${parameters.orient}${parameters.orient === "area" ? ` areaRank=${parameters.areaRank}` : ""}${parameters.orient === "focus" ? ` focusK=${parameters.focusK}` : ""}`;
+  const focus = parameters.orient === "focus" || parameters.orient === "area-focus" ? ` focusK=${parameters.focusK ?? "all"} rankMax=${parameters.rankMax ?? MAX_RANKED} areaCap=${parameters.areaCap ?? "none"}` : "";
+  const orient = `orient=${parameters.orient}${parameters.orient === "area" ? ` areaRank=${parameters.areaRank}` : ""}${focus}`;
   const channels = parameters.channels === "hybrid" ? ` channels=hybrid ${orient} guard=${parameters.guard ?? "none"} guardCap=${parameters.guardCap ?? "none"}${embed}` : "";
   return `when=${parameters.when} budget=${parameters.budget} cap=${parameters.cap ?? "all"} sessionCap=${parameters.sessionCap ?? "all"} dirs=${parameters.dirs} dedupe=${parameters.dedupe} format=${parameters.format} rank=${parameters.rank} threshold=${parameters.threshold ?? "none"} only=${parameters.only} conflict=${parameters.conflict}${channels}`;
 }
@@ -181,7 +192,7 @@ type DatasetEntry = z.infer<typeof entrySchema>;
 const taskSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/u),
   split: z.enum(SPLITS),
-  /** `size` split only: how big the task is. */
+  /** `size` and `confirm` splits only: how big the task is. */
   size: z.enum(SIZES).optional(),
   kind: z.enum(KINDS),
   prompt: z.string().min(1),
@@ -242,7 +253,7 @@ export function loadDataset(): Dataset {
       if (ORACLES[target] === undefined) throw new Error(`Task ${task.id} targets ${target}, which has no oracle`);
     }
     if ((task.kind === "neutral") !== (task.targets.length === 0)) throw new Error(`Task ${task.id}: a neutral task, and only one, has no targets`);
-    if ((task.split === "size") !== (task.size !== undefined)) throw new Error(`Task ${task.id}: a size task, and only one, names its size`);
+    if ((task.split === "size" || task.split === "confirm") !== (task.size !== undefined)) throw new Error(`Task ${task.id}: a size or confirm task, and only one, names its size`);
     if ((task.kind === "conflict") !== (task.conflict !== undefined)) throw new Error(`Task ${task.id}: a conflict task, and only one, names its conflict`);
     if (task.conflict !== undefined && !task.targets.includes(task.conflict.own)) throw new Error(`Task ${task.id}: its own decision must be its target`);
     for (const done of task.done) new RegExp(done.regex, "u");
@@ -481,25 +492,38 @@ export function teammateLeaks(dataset: Dataset, calls: readonly JudgeCall[]): st
 }
 
 /**
- * What the session-focus ranker's prompt for `task` would hold that it must not: anything but the task prompt as the
- * person wrote it and the decision texts of the run's index under opaque ids. An index id (`x-…` names a distractor,
- * a real id names its oracle's topic), an oracle's regex, or the task's labels (kind, split, targets) fails it.
+ * What a focus ranker's prompt for `task` would hold that it must not: anything but the task prompt as the person
+ * wrote it and the decision texts of the run's index under opaque ids. An index id (`x-…` names a distractor, a real
+ * id names its oracle's topic), an oracle's regex, or the task's labels (kind, split, targets) fails it. Every prompt
+ * the variants would send is built offline: the session ranker's for `focus`, and one per area the project has for
+ * `area-focus` (an area's ranker sees the same decisions whichever of its files was touched).
  */
-function rankerLeaks(dataset: Dataset, built: BuiltIndex, task: Task, distractors: number, seed: number): string[] {
+function rankerLeaks(dataset: Dataset, built: BuiltIndex, task: Task, distractors: number, seed: number, variants: readonly VariantParameters[]): { prompts: number; failures: string[] } {
   const index = runIndex(dataset, built, task, distractors, seed);
-  const input = rankerInput({ index, files: Object.keys(dataset.project), prompt: task.prompt });
-  const prompt = rankPrompt({ task: input.task, decisions: input.decisions }, "0".repeat(32));
+  const files = Object.keys(dataset.project);
+  const areaFiles = [...new Map(files.map(file => [areaOf(file), file])).values()];
   const texts = new Set(index.map(entry => entry.decision));
+  const checked = new Set<string>();
   const failures: string[] = [];
-  if (input.task !== task.prompt) failures.push(`${task.id}: the ranker's task is not the task prompt`);
-  for (const decision of input.decisions) {
-    if (!/^d\d+$/u.test(decision.id)) failures.push(`${task.id}: decision id ${decision.id} is not opaque`);
-    if (!texts.has(decision.decision)) failures.push(`${task.id}: ${decision.id}'s text is not an index decision`);
+  for (const variant of variants) {
+    const max = variant.rankMax ?? MAX_RANKED;
+    for (const path of variant.orient === "focus" ? [null] : variant.orient === "area-focus" ? areaFiles : []) {
+      const where = `${task.id} (${path === null ? "session" : `area ${areaOf(path) || "."}`}, at most ${max})`;
+      if (checked.has(where)) continue;
+      checked.add(where);
+      const input = rankerInput({ index, files, prompt: task.prompt }, path);
+      const prompt = rankPrompt({ task: input.task, decisions: input.decisions }, "0".repeat(32), max);
+      if (input.task !== task.prompt) failures.push(`${where}: the ranker's task is not the task prompt`);
+      for (const decision of input.decisions) {
+        if (!/^d\d+$/u.test(decision.id)) failures.push(`${where}: decision id ${decision.id} is not opaque`);
+        if (!texts.has(decision.decision)) failures.push(`${where}: ${decision.id}'s text is not an index decision`);
+      }
+      for (const entry of index) if (prompt.includes(entry.id)) failures.push(`${where}: the prompt names index id ${entry.id}`);
+      for (const [id, oracle] of Object.entries(ORACLES)) for (const pattern of oracle.patterns) if (prompt.includes(pattern.source)) failures.push(`${where}: the prompt holds oracle ${id}'s regex`);
+      for (const label of [`kind: ${task.kind}`, `split: ${task.split}`, task.id]) if (prompt.includes(label)) failures.push(`${where}: the prompt holds the task label ${label}`);
+    }
   }
-  for (const entry of index) if (prompt.includes(entry.id)) failures.push(`${task.id}: the prompt names index id ${entry.id}`);
-  for (const [id, oracle] of Object.entries(ORACLES)) for (const pattern of oracle.patterns) if (prompt.includes(pattern.source)) failures.push(`${task.id}: the prompt holds oracle ${id}'s regex`);
-  for (const label of [`kind: ${task.kind}`, `split: ${task.split}`, task.id]) if (prompt.includes(label)) failures.push(`${task.id}: the prompt holds the task label ${label}`);
-  return failures;
+  return { prompts: checked.size, failures };
 }
 
 function printIntegrity(report: IntegrityReport): void {
@@ -600,7 +624,7 @@ interface Options {
   arms: Arm[] | null;
 }
 
-const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|size|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--timeout-min N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --arms focus-k3,posthoc [--split size] [--tasks id,id] [--trials N] [--timeout-min N] ... | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
+const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|size|confirm|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--timeout-min N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --arms focus-k3,posthoc [--split size|confirm] [--tasks id,id] [--trials N] [--timeout-min N] ... | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
 
 function positive(flag: string, value: string | undefined): number {
   const number = Number(value);
@@ -1104,11 +1128,16 @@ interface RunResult {
 }
 
 interface FocusRun {
-  /** The ranker's answer, read after the run (waiting for it if it landed after Codex finished); null if it never came. */
+  /** `focus`: the ranker's answer, read after the run (waiting for it if it landed after Codex finished); null if it never came, and under `area-focus`. */
   readonly file: FocusFile | null;
+  /**
+   * `area-focus`: each area's ranker, in the order the areas were first touched: its answer (read as `file` is; its
+   * `ms` is the area's ranker time) and how the area's picks went out (null: they never did).
+   */
+  readonly areas: ReadonlyArray<{ readonly area: string; readonly file: FocusFile | null; readonly via: AreaFocusLog["via"] | null }>;
   /** Whether the ranker had answered at the first call that touched an area; null when no area was touched. */
   readonly readyAtFirstArea: boolean | null;
-  /** How long each pre-edit waited for the ranker, in milliseconds. */
+  /** How long each pre-edit waited for a ranker, in milliseconds. */
   readonly waits: readonly number[];
   readonly fallback: "timeout" | "failed" | null;
 }
@@ -1244,16 +1273,23 @@ function readLog(path: string): HookLogEntry[] {
 /** How long a finished run waits for a ranker still at work: the judge's own timeout and a margin. */
 const FOCUS_SETTLE_MS = 150_000;
 
-/** The ranker's part in a run, from the hook log and `focus.json`; waits for a ranker still at work so none outlives the run. */
-async function focusRun(folder: string, log: readonly HookLogEntry[]): Promise<FocusRun> {
-  const started = performance.now();
-  while (!existsSync(focusPath(folder)) && performance.now() - started < FOCUS_SETTLE_MS) await sleep(1_000);
-  const file = existsSync(focusPath(folder)) ? JSON.parse(readFileSync(focusPath(folder), "utf8")) as FocusFile : null;
+/**
+ * The rankers' part in a run, from the hook log and `focus.json` (`focus`) or each touched area's `focus-<area>.json`
+ * (`area-focus`); waits for rankers still at work so none outlives the run.
+ */
+async function focusRun(folder: string, orient: VariantParameters["orient"], log: readonly HookLogEntry[]): Promise<FocusRun> {
   const calls = log.flatMap(entry => (entry.focus === undefined ? [] : [entry.focus]));
+  const touched = orient === "area-focus" ? [...new Set(calls.flatMap(call => call.fresh))] : [];
+  const paths = orient === "area-focus" ? touched.map(area => areaFocusPath(folder, area)) : [focusPath(folder)];
+  const started = performance.now();
+  while (paths.some(path => !existsSync(path)) && performance.now() - started < FOCUS_SETTLE_MS) await sleep(1_000);
+  const read = (path: string) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as FocusFile : null);
+  const served = calls.flatMap(call => call.areas ?? []);
   const first = calls.find(call => call.fresh.length > 0);
   const fallbacks = calls.map(call => call.fallback);
   return {
-    file,
+    file: orient === "area-focus" ? null : read(focusPath(folder)),
+    areas: touched.map(area => ({ area, file: read(areaFocusPath(folder, area)), via: served.find(entry => entry.area === area)?.via ?? null })),
     readyAtFirstArea: first === undefined ? null : first.ready,
     waits: calls.flatMap(call => (call.waitedMs === null ? [] : [call.waitedMs])),
     fallback: fallbacks.includes("failed") ? "failed" : fallbacks.includes("timeout") ? "timeout" : null,
@@ -1348,7 +1384,8 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
     const outcome = await runCodex(repo, codexHome, configPath, task.prompt, options, join(folder, "rerail-home"));
     const events = readEvents(outcome.stdout);
     const log = readLog(logPath);
-    const focus = config.variant?.orient === "focus" ? await focusRun(folder, log) : null;
+    const orient = config.variant?.orient ?? null;
+    const focus = orient === "focus" || orient === "area-focus" ? await focusRun(folder, orient, log) : null;
     const changes = diffAgainstMain(repo);
     const hits = grade(changes, dataset.decisions);
     const graded = task.kind === "neutral" ? Object.keys(hits) : task.targets;
@@ -1551,7 +1588,7 @@ function summarize(variant: string, runs: readonly RunResult[], control: Variant
   const targetCut = ratio(targeted.filter(({ delivery }) => delivery.cut).length, targeted.length);
   const focused = ran.flatMap(run => (run.focus === null ? [] : [run.focus]));
   const waits = focused.flatMap(focus => focus.waits);
-  const rankers = focused.flatMap(focus => (focus.file === null ? [] : [focus.file]));
+  const rankers = focused.flatMap(focus => [focus.file, ...focus.areas.map(area => area.file)].flatMap(file => (file === null ? [] : [file])));
   const landedRuns = ran.filter(run => run.landed !== null);
   const landed = ratio(landedRuns.reduce((sum, run) => sum + run.landed!, 0), landedRuns.reduce((sum, run) => sum + run.injections, 0));
   const at = (value: number, bound: number, op: ">=" | "<="): boolean | null => (Number.isNaN(value) || Number.isNaN(bound) ? null : op === ">=" ? value >= bound - 1e-9 : value <= bound + 1e-9);
@@ -1706,6 +1743,17 @@ function printRuns(runs: readonly RunResult[]): void {
       ].join(" | "), 220),
     ]),
   ));
+  printAreaRankers(runs.map(run => ({ name: run.variant, run })));
+}
+
+/** `area-focus` runs: each area's ranker, its time, its picks and how the area was served. */
+function printAreaRankers(runs: ReadonlyArray<{ name: string; run: { readonly taskId: string; readonly trial: number; readonly focus: FocusRun | null } }>): void {
+  const rows = runs.flatMap(({ name, run }) => (run.focus?.areas ?? []).map(({ area, file, via }) => [
+    name, run.taskId, String(run.trial), area || ".", file === null ? "-" : String(file.ms), file === null ? "never answered" : file.ok ? file.ids.join(" ") || "(none)" : `failed: ${clip(file.error ?? "", 80)}`, via ?? "never served",
+  ]));
+  if (rows.length === 0) return;
+  console.log("\nArea rankers (area-focus)");
+  console.log(table(["variant", "task", "#", "area", "ranker ms", "picks", "served by"], rows));
 }
 
 // ---------------------------------------------------------------------------------------------------------- replay
@@ -1758,8 +1806,8 @@ function replay(dataset: Dataset, built: BuiltIndex, path: string, thresholds: r
   const rows: string[][] = [];
   for (const [name, parameters] of Object.entries(report.variants)) {
     if (parameters === null) continue;
-    if (parameters.orient === "focus") {
-      console.log(`skip ${name}: session focus depends on when the ranker answered, which a replay cannot reproduce`);
+    if (parameters.orient === "focus" || parameters.orient === "area-focus") {
+      console.log(`skip ${name}: focus depends on when its rankers answered, which a replay cannot reproduce`);
       continue;
     }
     const runs = report.runs.filter(run => run.variant === name && run.error === null && (run.hookLog ?? []).some(entry => entry.candidates !== undefined));
@@ -1793,13 +1841,13 @@ function replay(dataset: Dataset, built: BuiltIndex, path: string, thresholds: r
 // ---------------------------------------------------------------------------------------------------------- arms
 
 /**
- * The cost-to-clean comparison (`--arms`): session focus (`focus-k3`, as frozen) against no injection with the
- * violations fixed after the agent finishes (`posthoc`, the control's hooks), the way a landing check or a reviewer
- * would. Both arms then go through the same fix rounds, so both end clean when they can.
+ * The cost-to-clean comparison (`--arms`): a focus protocol (`focus-k3`, `focus-k5`, `focus-pool` or `focus-area`)
+ * against no injection with the violations fixed after the agent finishes (`posthoc`, the control's hooks), the way a
+ * landing check or a reviewer would. Both arms then go through the same fix rounds, so both end clean when they can.
  */
-export const ARMS = ["focus-k3", "focus-k5", "posthoc"] as const;
+export const ARMS = ["focus-k3", "focus-k5", "focus-pool", "focus-area", "posthoc"] as const;
 export type Arm = (typeof ARMS)[number];
-const ARM_VARIANTS: Readonly<Record<Arm, string>> = { "focus-k3": "focus-k3", "focus-k5": "focus-k5", posthoc: CONTROL };
+const ARM_VARIANTS: Readonly<Record<Arm, string>> = { "focus-k3": "focus-k3", "focus-k5": "focus-k5", "focus-pool": "focus-pool", "focus-area": "focus-area", posthoc: CONTROL };
 /** The most fix rounds a run gets after the agent's first finish. */
 const MAX_FIX_ROUNDS = 3;
 /** The most oracle hits one decision's part of a reviewer message names. */
@@ -1949,7 +1997,7 @@ async function runArmJob(arm: Arm, task: Task, trial: number, dataset: Dataset, 
       wallMs: calls.reduce((sum, phase) => sum + phase.wallMs, 0),
       tokens: calls.reduce((total, phase) => addUsage(total, phase.usage), { input: 0, cached: 0, output: 0 }),
       error,
-      focus: variant?.orient === "focus" ? await focusRun(folder, log) : null,
+      focus: variant?.orient === "focus" || variant?.orient === "area-focus" ? await focusRun(folder, variant.orient, log) : null,
       hookLog: log.map(({ text: _text, ...entry }) => entry),
       folder: options.keep ? folder : null,
     };
@@ -2019,6 +2067,7 @@ function printArms(runs: readonly ArmRun[], arms: readonly Arm[]): void {
       ];
     }),
   ));
+  printAreaRankers(runs.map(run => ({ name: run.arm, run })));
   const sizes = SIZES.filter(size => runs.some(run => run.size === size));
   const summaries = sizes.flatMap(size => arms.map(arm => summarizeArm(size, arm, runs.filter(run => run.size === size && run.arm === arm))));
   const rows: Array<[string, (summary: ArmSummary) => string]> = [
@@ -2074,7 +2123,8 @@ async function runArms(dataset: Dataset, built: BuiltIndex, tasks: readonly Task
   });
   printArms(runs, arms);
   if (options.json !== undefined) {
-    await writeFile(options.json, `${JSON.stringify({ startedAt, codexVersion, options, index: { path: built.path, builtAt: built.builtAt }, arms, tasks: tasks.map(task => task.id), runs }, null, 2)}\n`);
+    const armDefinitions = Object.fromEntries(arms.map(arm => [arm, { variant: ARM_VARIANTS[arm], parameters: VARIANTS[ARM_VARIANTS[arm]] ?? null }]));
+    await writeFile(options.json, `${JSON.stringify({ startedAt, codexVersion, options, index: { path: built.path, builtAt: built.builtAt }, arms, armDefinitions, maxFixRounds: MAX_FIX_ROUNDS, tasks: tasks.map(task => task.id), runs }, null, 2)}\n`);
     console.log(`\nWrote ${options.json}`);
   }
 }
@@ -2428,12 +2478,14 @@ async function main(): Promise<void> {
   if (!existsSync(AUTH)) throw new Error(`${AUTH} is missing: sign in to Codex first (codex login).`);
   const tasks = selectTasks(dataset, options);
   if (tasks.length === 0) throw new Error("No tasks selected.");
-  const focusing = options.arms === null ? options.variants.some(name => VARIANTS[name]?.orient === "focus") : options.arms.some(arm => arm !== "posthoc");
-  if (focusing) {
-    const failures = tasks.flatMap(task => rankerLeaks(dataset, built, task, options.distractors ?? built.distractors, options.seed));
-    console.log(`\nRanker input integrity (the task prompt and decision texts under opaque ids, for ${tasks.length} tasks): ${failures.length === 0 ? "PASS" : `FAIL (${failures.length})`}`);
+  const names = options.arms === null ? options.variants : options.arms.map(arm => ARM_VARIANTS[arm]);
+  const focusing = names.flatMap(name => VARIANTS[name] ?? []).filter(variant => variant.orient === "focus" || variant.orient === "area-focus");
+  if (focusing.length > 0) {
+    const checks = tasks.map(task => rankerLeaks(dataset, built, task, options.distractors ?? built.distractors, options.seed, focusing));
+    const failures = checks.flatMap(check => check.failures);
+    console.log(`\nRanker input integrity (the task prompt and decision texts under opaque ids; ${checks.reduce((sum, check) => sum + check.prompts, 0)} prompts for ${tasks.length} tasks): ${failures.length === 0 ? "PASS" : `FAIL (${failures.length})`}`);
     for (const failure of failures) console.log(`  FAIL ${failure}`);
-    if (failures.length > 0) throw new Error("The session-focus ranker would see grader knowledge; no run starts.");
+    if (failures.length > 0) throw new Error("A focus ranker would see grader knowledge; no run starts.");
   }
   if (options.arms !== null) {
     await runArms(dataset, built, tasks, options);

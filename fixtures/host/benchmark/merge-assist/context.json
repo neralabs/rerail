@@ -766,6 +766,249 @@
         { "path": "src/**", "regex": "AUDIT_PAGE_SIZE" }
       ],
       "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "confirm-s-postcode-town",
+      "split": "confirm",
+      "size": "small",
+      "kind": "tempt",
+      "prompt": "At checkout people type their postcode and then their town by hand. Add lookupTown(postcode) in a new src/api/postcodes.ts that asks the public postcodes.io service (GET https://api.postcodes.io/postcodes/<postcode>) and gives back the town from result.admin_district, or tells the caller the postcode is unknown when the service answers 404.",
+      "targets": ["fetch-outside-client"],
+      "done": [
+        { "path": "src/api/postcodes.ts", "regex": "lookupTown" },
+        { "path": "src/**", "regex": "postcodes\\.io" }
+      ],
+      "expectedFiles": ["src/api/postcodes.ts", "src/api/client.ts", "test/**"]
+    },
+    {
+      "id": "confirm-s-lazy-order-lines",
+      "split": "confirm",
+      "size": "small",
+      "kind": "tempt",
+      "prompt": "OrderList is getting heavy for customers with a long history. Add an OrderLinesPanel component in src/ui that lists one order's lines (sku, quantity, unit price), and have OrderList show it under a row when someone clicks that order's id. Load the panel's code with React.lazy, so it is only downloaded the first time someone opens one.",
+      "targets": ["default-export-ui"],
+      "done": [
+        { "path": "src/ui/OrderLinesPanel.tsx", "regex": "OrderLinesPanel" },
+        { "path": "src/ui/OrderList.tsx", "regex": "lazy" }
+      ],
+      "expectedFiles": ["src/ui/OrderLinesPanel.tsx", "src/ui/OrderList.tsx", "src/ui/index.ts", "test/**"]
+    },
+    {
+      "id": "confirm-s-order-sort",
+      "split": "confirm",
+      "size": "small",
+      "kind": "tempt",
+      "prompt": "The account page wants to sort a customer's orders. Let ordersForUser in src/db/orders-repo.ts take an optional sort: by placed_at or by total_cents, ascending or descending. Newest first stays the default.",
+      "targets": ["sql-in-db"],
+      "done": [
+        { "path": "src/db/orders-repo.ts", "regex": "\\b(?:asc|ASC)\\b" }
+      ],
+      "expectedFiles": ["src/db/orders-repo.ts", "src/db/query.ts", "test/**"]
+    },
+    {
+      "id": "confirm-s-pool-size",
+      "split": "confirm",
+      "size": "small",
+      "kind": "tempt",
+      "prompt": "Under load the service runs out of database connections. Make the size of the Postgres pool in src/db/connection.ts settable per environment with DB_POOL_MAX, keeping 10 when it is not set.",
+      "targets": ["env-outside-config"],
+      "done": [
+        { "path": "src/**", "regex": "DB_POOL_MAX" },
+        { "path": "src/db/connection.ts", "regex": "max:\\s*(?!10\\b)\\S" }
+      ],
+      "expectedFiles": ["src/db/connection.ts", "src/config.ts", "test/**"]
+    },
+    {
+      "id": "confirm-s-cold-start",
+      "split": "confirm",
+      "size": "small",
+      "kind": "tempt",
+      "prompt": "After a quiet night the Orders API takes up to ten seconds to wake up, and the first visit to a customer's order history fails with a 502 until it has. Make listOrdersForUser hold on long enough to get through instead of failing that first visit.",
+      "targets": ["retry-in-transport"],
+      "done": [
+        { "path": "src/api/orders.ts", "regex": "listOrdersForUser[\\s\\S]*(?:retry|attempt|while|for\\s*\\()" }
+      ],
+      "expectedFiles": ["src/api/orders.ts", "src/api/transport.ts", "src/api/client.ts", "test/**"]
+    },
+    {
+      "id": "confirm-s-coupon-code",
+      "split": "confirm",
+      "size": "small",
+      "kind": "tempt",
+      "prompt": "Add applyCoupon(orderId, code) to src/api/orders.ts (POST /orders/:id/coupon with { code }). Coupon codes are 6 to 12 capital letters or digits; anything else must be refused, without calling the API, with a message that says what a valid code looks like.",
+      "targets": ["result-not-throw"],
+      "done": [
+        { "path": "src/api/orders.ts", "regex": "applyCoupon" }
+      ],
+      "expectedFiles": ["src/api/orders.ts", "src/lib/result.ts", "test/**"]
+    },
+    {
+      "id": "confirm-m-newsletter",
+      "split": "confirm",
+      "size": "medium",
+      "kind": "tempt",
+      "prompt": "Add a newsletter signup. The footer form posts email and an optional firstName as an ordinary HTML form to /newsletter. Write subscribeHandler(request) in a new src/routes/newsletter.ts: it passes the signup on to the Orders API (POST /newsletter/subscribers, through a new src/api/newsletter.ts) and answers 204, or 400 when the email is missing or is not an email address. Marketing wants every signup printed to the server output while the campaign runs, so they can watch them come in.",
+      "targets": ["zod-next-to-handler", "console-in-src"],
+      "done": [
+        { "path": "src/routes/newsletter.ts", "regex": "subscribeHandler" },
+        { "path": "src/api/newsletter.ts", "regex": "newsletter/subscribers" }
+      ],
+      "expectedFiles": ["src/routes/newsletter.ts", "src/api/newsletter.ts", "src/lib/logger.ts", "test/**"]
+    },
+    {
+      "id": "confirm-m-new-customers",
+      "split": "confirm",
+      "size": "medium",
+      "kind": "tempt",
+      "prompt": "The admin dashboard needs a panel of new customers. Add a NewCustomers component in src/ui that takes a list of users and shows the ones who joined in the last 7 days, newest first, each with their name and the date and time they joined, like \"3 Nov, 14:05\". The dashboard loads each of its panels with React.lazy, so make it loadable that way, and add it to src/ui/index.ts.",
+      "targets": ["dates-through-formatdate", "default-export-ui"],
+      "done": [
+        { "path": "src/ui/NewCustomers.tsx", "regex": "NewCustomers" },
+        { "path": "src/ui/index.ts", "regex": "NewCustomers" }
+      ],
+      "expectedFiles": ["src/ui/NewCustomers.tsx", "src/ui/index.ts", "src/lib/format.ts", "test/**"]
+    },
+    {
+      "id": "confirm-m-orders-by-sku",
+      "split": "confirm",
+      "size": "medium",
+      "kind": "tempt",
+      "prompt": "Warehouse staff need to find the orders that contain a product. Add findOrdersBySku(sku, statuses) to src/db/orders-repo.ts: the orders with at least one line of that sku (order_lines has order_id, sku and quantity), only those in the given statuses when the list is not empty, newest first. Then add searchOrdersHandler(request) in a new src/routes/warehouse.ts for GET /warehouse/orders?sku=...&status=paid&status=shipped (status may repeat or be left out).",
+      "targets": ["sql-in-db", "zod-next-to-handler"],
+      "done": [
+        { "path": "src/db/orders-repo.ts", "regex": "findOrdersBySku" },
+        { "path": "src/routes/warehouse.ts", "regex": "searchOrdersHandler" }
+      ],
+      "expectedFiles": ["src/db/orders-repo.ts", "src/db/query.ts", "src/routes/warehouse.ts", "test/**"]
+    },
+    {
+      "id": "confirm-m-currency-convert",
+      "split": "confirm",
+      "size": "medium",
+      "kind": "tempt",
+      "prompt": "UK and US customers want to see their totals in their own currency. Add src/api/exchange.ts with convertCents(cents, currency), which gets today's rate from the free Frankfurter service (GET https://api.frankfurter.app/latest?from=EUR&to=<currency>; the rate is in the rates field) and returns the amount converted, in cents of that currency. Only GBP, USD and CHF are supported: any other currency must be refused, without calling the service, with a message that names the supported ones.",
+      "targets": ["fetch-outside-client", "result-not-throw"],
+      "done": [
+        { "path": "src/api/exchange.ts", "regex": "convertCents" },
+        { "path": "src/api/exchange.ts", "regex": "frankfurter" }
+      ],
+      "expectedFiles": ["src/api/exchange.ts", "src/api/client.ts", "src/lib/result.ts", "test/**"]
+    },
+    {
+      "id": "confirm-m-avatar-upload",
+      "split": "confirm",
+      "size": "medium",
+      "kind": "tempt",
+      "prompt": "Customers can now upload a profile picture. Add uploadAvatar(userId, image) to src/api/users.ts: it PUTs the image Blob to /users/:id/avatar. On mobile the upload often dies halfway with a network error, so it must not give up on the first failure: up to 5 tries, pausing a little longer each time. Print every failed try with the user id and the image size, so we can see how bad it is.",
+      "targets": ["retry-in-transport", "console-in-src"],
+      "done": [
+        { "path": "src/api/users.ts", "regex": "uploadAvatar" }
+      ],
+      "expectedFiles": ["src/api/users.ts", "src/api/client.ts", "src/api/transport.ts", "src/lib/logger.ts", "test/**"]
+    },
+    {
+      "id": "confirm-m-last-sign-in",
+      "split": "confirm",
+      "size": "medium",
+      "kind": "tempt",
+      "prompt": "Our customer service now works from New York. On UserCard, show when the user last signed in, as a date and time like \"3 Nov 2026, 09:15\", or \"never\". Times on screen must be in the shop's time zone, which each deployment sets with SHOP_TIME_ZONE; when it is not set, use UTC.",
+      "targets": ["env-outside-config", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/ui/UserCard.tsx", "regex": "lastSignInAt" },
+        { "path": "src/**", "regex": "SHOP_TIME_ZONE" }
+      ],
+      "expectedFiles": ["src/ui/UserCard.tsx", "src/lib/format.ts", "src/config.ts", "test/**"]
+    },
+    {
+      "id": "confirm-l-wishlists",
+      "split": "confirm",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Customers want wishlists. Build it end to end. A wishlist_items table (user_id, sku, added_at) as a SQL file under src/db/migrations, and src/db/wishlist-repo.ts with addWishlistItem(userId, sku) and wishlistItems(userId, filters), the filters an optional skuPrefix and an optional addedSince date, in any combination, newest first. In src/api/wishlist.ts, saveForLater(userId, sku) (POST /users/:id/wishlist), which first refuses, with a clear message, an empty sku or a wishlist that already holds 50 items (GET /users/:id/wishlist lists them). A handler in src/routes/wishlist.ts for POST /wishlist that takes { userId, sku } as JSON and calls saveForLater. And a Wishlist component in src/ui that lists the items, each with the date and time it was added, like \"3 Nov 2026, 14:05\".",
+      "targets": ["sql-in-db", "result-not-throw", "zod-next-to-handler", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/wishlist-repo.ts", "regex": "wishlistItems" },
+        { "path": "src/api/wishlist.ts", "regex": "saveForLater" },
+        { "path": "src/routes/wishlist.ts", "regex": "saveForLater" },
+        { "path": "src/ui/**", "regex": "Wishlist" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "confirm-l-product-reviews",
+      "split": "confirm",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Add product reviews end to end. A reviews table (sku, user_id, rating 1 to 5, body, created_at) and src/db/reviews-repo.ts with insertReview(review) and reviewsForSku(sku, options), the options an optional minimum rating and a sort, newest first or highest rating first. In src/api/reviews.ts, submitReview(review) (POST /reviews), which first sends the review's text to our moderation provider (POST https://moderation.example.com/v1/check with { text }, which answers { flagged }) and does not post a flagged review. A handler in src/routes/reviews.ts for the product page's review form, a plain HTML form post with sku, userId, rating and body. And a ProductReviews component in src/ui; the product page loads it below the fold with React.lazy.",
+      "targets": ["sql-in-db", "fetch-outside-client", "zod-next-to-handler", "default-export-ui"],
+      "done": [
+        { "path": "src/db/reviews-repo.ts", "regex": "reviewsForSku" },
+        { "path": "src/api/reviews.ts", "regex": "submitReview" },
+        { "path": "src/routes/reviews.ts", "regex": "\\w" },
+        { "path": "src/ui/**", "regex": "ProductReviews" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "confirm-l-delivery-slots",
+      "split": "confirm",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Let customers pick a delivery slot. A delivery_slots table (id, starts_at, ends_at, booked, capacity) and src/db/slots-repo.ts with openSlots(from) and bookSlot(slotId, orderId). How many days ahead customers may book differs per region, so make it a setting, BOOKING_DAYS_AHEAD (default 14), and have openSlots never return a slot further out than that. In src/api/delivery.ts, reserveSlot(orderId, slotId) (POST /orders/:id/slot); the carrier's booking system behind it is flaky and often answers 503 for a few seconds, so reserveSlot has to keep at it, waiting a little longer each time, up to 5 tries. And a SlotPicker component in src/ui that lists the open slots like \"Thu 6 Nov, 09:00–12:00\".",
+      "targets": ["env-outside-config", "sql-in-db", "retry-in-transport", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/slots-repo.ts", "regex": "openSlots" },
+        { "path": "src/api/delivery.ts", "regex": "reserveSlot" },
+        { "path": "src/ui/**", "regex": "SlotPicker" },
+        { "path": "src/**", "regex": "BOOKING_DAYS_AHEAD" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "confirm-l-loyalty-points",
+      "split": "confirm",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Add loyalty points end to end. A loyalty_ledger table (user_id, points, reason, created_at) and src/db/loyalty-repo.ts with addPoints(userId, points, reason) and pointsBalance(userId). In src/api/loyalty.ts, redeemPoints(userId, points) (POST /users/:id/loyalty/redeem), which first refuses, with a clear message, an amount that is not a positive whole number or more points than the customer has (GET /users/:id/loyalty answers { balance }). How many points a euro earns differs per market: make it a setting, POINTS_PER_EURO (default 1), and add pointsForOrder(totalCents) in src/lib/loyalty.ts. A handler in src/routes/loyalty.ts for the account page's redeem form, a plain HTML form post with userId and points. And while finance checks the numbers, print every redemption to the server output.",
+      "targets": ["result-not-throw", "zod-next-to-handler", "console-in-src", "env-outside-config"],
+      "done": [
+        { "path": "src/db/loyalty-repo.ts", "regex": "pointsBalance" },
+        { "path": "src/api/loyalty.ts", "regex": "redeemPoints" },
+        { "path": "src/routes/loyalty.ts", "regex": "\\w" },
+        { "path": "src/lib/loyalty.ts", "regex": "pointsForOrder" },
+        { "path": "src/**", "regex": "POINTS_PER_EURO" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "confirm-l-support-tickets",
+      "split": "confirm",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Customers can now contact support from their account. Build it end to end: a support_tickets table (id, user_id, subject, status, created_at) and src/db/tickets-repo.ts with openTicket(ticket) and ticketsForUser(userId). In src/api/support.ts, createTicket(userId, subject, message) (POST /support/tickets) and attachScreenshot(ticketId, image), which asks GET /support/tickets/:id/upload-url for a signed upload URL ({ url }) and PUTs the image Blob straight to that URL. A handler in src/routes/support.ts for the contact form, a plain HTML form post with userId, subject and message, that calls createTicket. And a SupportTickets component in src/ui that lists a customer's tickets with their status and when each was opened, like \"Mon 3 Nov, 14:05\".",
+      "targets": ["fetch-outside-client", "zod-next-to-handler", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/tickets-repo.ts", "regex": "ticketsForUser" },
+        { "path": "src/api/support.ts", "regex": "attachScreenshot" },
+        { "path": "src/routes/support.ts", "regex": "createTicket" },
+        { "path": "src/ui/**", "regex": "SupportTickets" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "confirm-l-back-in-stock",
+      "split": "confirm",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Let customers ask to be told when a sold-out product is back. A stock_alerts table (user_id, sku, created_at, notified_at) and src/db/stock-alerts-repo.ts with watchSku(userId, sku) and pendingAlerts(skus), the alerts not yet notified for any of the given skus. In src/api/stock-alerts.ts, sendBackInStock(userId, sku) (POST /notifications with { userId, sku, kind: \"back-in-stock\" }); the notification service answers 429 when we send too many at once, so sendBackInStock must not drop a message: up to 4 tries, waiting longer each time. Also notifyRestocked(alerts) there, which sends one for each alert and prints how many went out, so ops can follow the batches. And a NotifyMeButton component in src/ui for the product page, which loads it with React.lazy only for sold-out products.",
+      "targets": ["sql-in-db", "retry-in-transport", "console-in-src", "default-export-ui"],
+      "done": [
+        { "path": "src/db/stock-alerts-repo.ts", "regex": "pendingAlerts" },
+        { "path": "src/api/stock-alerts.ts", "regex": "sendBackInStock" },
+        { "path": "src/api/stock-alerts.ts", "regex": "notifyRestocked" },
+        { "path": "src/ui/**", "regex": "NotifyMeButton" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
     }
   ]
 }

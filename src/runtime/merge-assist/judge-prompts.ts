@@ -352,7 +352,7 @@ export function signalsPrompt(input: SignalsInput, nonce: string): string {
   return parts.join("\n");
 }
 
-/** The most decisions one ranking answer names. */
+/** The most decisions one ranking answer names, unless the caller asks for another limit. */
 export const MAX_RANKED = 5;
 /** The most decisions one ranking prompt carries; the rest are left out. */
 const MAX_RANK_DECISIONS = 400;
@@ -364,33 +364,40 @@ export interface RankInput {
 }
 
 export interface RankVerdict {
-  /** The decisions the task most likely needs, most relevant first; at most {@link MAX_RANKED}. */
+  /** The decisions the task most likely needs, most relevant first; at most the limit the prompt asked for. */
   ids: string[];
 }
 
-export const rankVerdictSchema: z.ZodType<RankVerdict> = z.object({ ids: z.array(z.string().min(1)).max(MAX_RANKED) }).strict();
+/** The ranking answer, at most `max` ids, closed. */
+export function rankVerdictSchemaFor(max: number = MAX_RANKED): z.ZodType<RankVerdict> {
+  return z.object({ ids: z.array(z.string().min(1)).max(max) }).strict();
+}
 
-/** The ranking answer as a JSON schema for the agent CLI: only the given ids, at most {@link MAX_RANKED}, closed. */
-export function rankJsonSchemaFor(ids: readonly string[]): Record<string, unknown> {
+export const rankVerdictSchema: z.ZodType<RankVerdict> = rankVerdictSchemaFor();
+
+/** The ranking answer as a JSON schema for the agent CLI: only the given ids, at most `max`, closed. */
+export function rankJsonSchemaFor(ids: readonly string[], max: number = MAX_RANKED): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
     required: ["ids"],
-    properties: { ids: { type: "array", maxItems: MAX_RANKED, items: { type: "string", enum: [...ids] } } },
+    properties: { ids: { type: "array", maxItems: max, items: { type: "string", enum: [...ids] } } },
   };
 }
 
-const RANK_INSTRUCTIONS = `A coding agent is about to do the task below in this repository. The repository's decisions follow, one per line, each after its id. Pick the decisions the agent will most likely need for this task: ones its natural implementation could break, or that govern code it will write. Ignore decisions about unrelated topics, even when they cover the same folders.
+function rankInstructions(max: number): string {
+  return `A coding agent is about to do the task below in this repository. The repository's decisions follow, one per line, each after its id. Pick the decisions the agent will most likely need for this task: ones its natural implementation could break, or that govern code it will write. Ignore decisions about unrelated topics, even when they cover the same folders.
 
-ids: the chosen decisions' ids, the most relevant first, at most ${MAX_RANKED}. Fewer is better than padding; answer an empty list when none applies.`;
+ids: the chosen decisions' ids, the most relevant first, at most ${max}. Fewer is better than padding; answer an empty list when none applies.`;
+}
 
-/** The ranking prompt for one task, with the task and the decisions fenced as data. */
-export function rankPrompt(input: RankInput, nonce: string): string {
+/** The ranking prompt for one task, asking for at most `max` ids, with the task and the decisions fenced as data. */
+export function rankPrompt(input: RankInput, nonce: string, max: number = MAX_RANKED): string {
   const decisions = input.decisions.slice(0, MAX_RANK_DECISIONS).map(entry => `${entry.id}: ${cleanDecision(entry.decision)}`);
   return [
     framing(nonce, "When unsure, leave a decision out."),
     "",
-    RANK_INSTRUCTIONS,
+    rankInstructions(max),
     "",
     fenceData("the task", cut(input.task, MAX_CORRECTION_CHARS), nonce),
     fenceData("the decisions", decisions.length > 0 ? decisions.join("\n") : "(none)", nonce),
