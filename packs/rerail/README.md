@@ -662,8 +662,8 @@ read. To add a tool, add it to the word list at the end of the pattern; the rest
 
 History: Part of message criterion 5 (`docs/pack-format.md`, "Message"), the part that takes no judgement. #162 rewrote
 the bare messages, #173 left the wording to review and named rule ids and tool names as the problems a rule could catch,
-and #176 is that rule. Quiet on the other packs' 3,661 `message` keys across 1,058 documents; its one near miss is
-`Unexpected 'eslint' comment`, an option value in quotes.
+and #176 is that rule. Quiet on the other packs' 3,661 `message` keys across 1,058 documents; its two near misses are
+quoted: `Unexpected 'eslint' comment`, an option value, and `` `# ruff: noqa: F401` ``.
 
 Gaps: A rule id or code is flagged only beside a tool name: 945 of the 1,058 ids contain one, the `n-`, `next-`, `react-`,
 `vitest-` and `complexity-` ones don't, and a bare code such as `B113` doesn't. Comparing a message with the document's
