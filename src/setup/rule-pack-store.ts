@@ -161,7 +161,7 @@ export function npmPackStore(home: string = defaultRerailHome(), npm: NpmRunner 
           if (tag === PACK_FALLBACK_TAG || !(error instanceof Error) || !NO_VERSION_UNDER_TAG.test(error.message)) throw error;
           await install(PACK_FALLBACK_TAG);
         }
-        return { id, directory: join(into, "node_modules", "@neralabs", `rerail-pack-${id}`) };
+        return { id, directory: join(into, "node_modules", rulePackPackageName(id)) };
       };
       const settled = await Promise.allSettled(ids.map(fetchOne));
       const fetched: FetchedPack[] = [];
