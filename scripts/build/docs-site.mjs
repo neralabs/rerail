@@ -301,17 +301,28 @@ function labelTableCells(html, maxColumns) {
 }
 
 /**
- * Escaped text that may break after `/`, `\`, `.`, `=`, `,` or `|` (`<wbr>`) where a name continues on both sides: not
- * after a leading `.` or `/`, not inside `1.0`, and not before a short extension (`README.md`). `:` joins one name
- * (`fixtures:pull`), and so does `_` in a short one; a snake name of 21 characters or more (a test name, an operation,
- * a long constant) may break at its underscores. A long path then wraps at its separators before mid-name, and a
- * table column holding one narrows there without any cell breaking a word.
+ * Escaped text that may break after `/`, `\`, `.`, `=`, `,`, `|` or `::` (`<wbr>`) where a name continues on both
+ * sides: not after a leading `.` or `/`, not inside `1.0`, and not before a short extension (`README.md`). `:` joins
+ * one name (`fixtures:pull`), and so do `_`, `-` and case changes in a short one. A name of 21 characters or more (a
+ * test name, an operation, a long constant) may break at its underscores, and one of 24 or more where its case changes
+ * (`recoverRepeated|Unterminated…`) or at its hyphens, so even a phone's line never splits a word inside it. A call may
+ * break after its `(`, a query string before `?` and `&`, markup between two tags, a format between `][`. A long path
+ * then wraps at its separators before mid-name, and a table column holding one narrows there without any cell breaking
+ * a word.
  */
 const breakAt = (escaped) =>
   escaped
-    .replace(/(?<=[\p{L}\p{N})\]}*;])([/\\=,|])(?=[\p{L}*&{([])/gu, "$1<wbr>")
+    .replace(/(?<=[\p{L}\p{N})\]}*;])([/\\=,|(])(?=[\p{L}*&{([])/gu, "$1<wbr>")
     .replace(/(?<=[\p{L}\p{N})\]}*;])\.(?=\p{L}[\p{L}\p{N}_-]{4})/gu, ".<wbr>")
-    .replace(/[\p{L}\p{N}_]{21,}/gu, (name) => name.replace(/_(?=\p{L})/gu, "_<wbr>"));
+    .replace(/(?<=[\p{L}\p{N}])::(?=\p{L})/gu, "::<wbr>")
+    .replace(/(?<=[\p{L}\p{N}…])(?=\?|&amp;)/gu, "<wbr>")
+    .replace(/&gt;(?=&lt;|@)/gu, "&gt;<wbr>")
+    .replace(/\](?=\[)/gu, "]<wbr>")
+    .replace(/[\p{L}\p{N}_]{21,}/gu, (name) => {
+      const snake = name.replace(/_(?=\p{L})/gu, "_<wbr>");
+      return name.length >= 24 ? snake.replace(/(?<=\p{Ll})(?=\p{Lu})/gu, "<wbr>") : snake;
+    })
+    .replace(/[\p{L}\p{N}-]{24,}/gu, (name) => name.replace(/-(?=\p{L})/gu, "-<wbr>"));
 
 /** Inline code up to this long is one unbroken piece: a flag, a name or a short command never splits. */
 const WHOLE_CODE = 14;
@@ -685,6 +696,7 @@ table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.
 /* Cells wrap between words (break-word keeps each word whole when sizing columns; anywhere would let a column shrink to
    one letter wide). Code breaks at the <wbr> after its separators. */
 th, td { padding: 0.55em 0.9em; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); overflow-wrap: break-word; }
+@media (max-width: 900px) { th, td { padding: 0.5em 0.6em; } }
 td code, th code { overflow-wrap: break-word; }
 :is(td, th).short { white-space: nowrap; }
 tr:last-child td { border-bottom: 0; }
