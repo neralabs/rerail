@@ -181,7 +181,7 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 
 | # | St | Requirement | Source | § |
 |---|---|---|---|---|
-| K1 | C | 500 MB total RAM, 10 GB disk; SQLite on disk so little is resident | W26 17:01 | §5 |
+| K1 | C | 500 MB total RAM, 10 GB disk; SQLite on disk so little is resident. Raised to 1 GB by the user on 2026-11-04 ("just put it up to 1GB and we will deal with it later"; O39) | W26 17:01 | §5 |
 | K2 | C | Memory limits are part of the design | P25 16:11 | §17 |
 | K3 | I | Every allocation belongs to a pool sized at plan time; CI gates on peak RSS, device bytes and the Unknown rate | PIAT spec-tooling | §17 |
 

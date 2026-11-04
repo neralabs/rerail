@@ -1122,6 +1122,8 @@ the process (`RERAIL_DIAG_PAUSE_AT`).
     (~36 MB) and the plan and encode state (~45 MB in the run).
 - **The arithmetic does not close:** 63 + 113 + 256 (the Metal buffer budget) = 432 MB, which
   leaves ~70 MB of heap under a 500 MB total.
+- **Budget raised (2026-11-04):** the user set the total to 1 GB for now ("just put it up to 1GB and
+  we will deal with it later"), so 603 MB is within it. The shape below stays the fix.
 - **What the shape needs** (not a tuning):
   - The Metal buffer budget must be set from the total. It is the total less the process base,
     the driver's fixed cost and a heap share, not a separate 256 MB.
