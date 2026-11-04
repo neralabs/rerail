@@ -1,1 +1,0 @@
-A rule pack can be private: `"private": true` in its `package.json` keeps it off npm and out of the packs set-up fetches, while `rerail packs add <folder>` still installs it and every pack check still validates it.
