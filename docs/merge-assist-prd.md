@@ -300,6 +300,35 @@ the decision in 18/18 trials (all 9 graded decisions, 2 trials each). B broke th
 focus against 19/46 without (−0.38, CI [−0.61, −0.16], p 5e−5, 14 B tasks); every one of those 4 was a run in which
 the decision was not among the focus picks.
 
+#### 6.3.3 Large tasks
+
+Large tasks (3–4 decisions at stake across at least 3 areas) are where aligning early has the most to gain. A second
+pre-registered comparison ran on 16 more unseen large tasks, three looks of 2 trials per task and arm (96 runs per
+arm, no errors). It included a diagnostic arm that delivers exactly the decisions each task puts at stake, to measure
+the ceiling. Ranking each area's decisions at its first touch (5 picks per area) was the candidate to replace session
+focus.
+
+| Arm (96 runs each) | First pass clean | Needing a fix round | Median time | Median tokens |
+| --- | --- | --- | --- | --- |
+| Fix after | 19 | 77 | 96 s | 484k |
+| Session focus | 56 | 40 | 86 s | 277k |
+| Per-area ranking | 60 | 36 | 89 s | 309k |
+| Exactly the decisions at stake (ceiling) | 85 | 11 | 75 s | 206k |
+
+- Against fixing after, per-area ranking held up: first pass clean +0.43 (CI [+0.24, +0.60]), tokens ×0.81, time not
+  worse (×0.99, under the ×1.10 margin), all at Holm p ≤ 0.01.
+- Against session focus it did not: first pass clean +0.04 (CI [−0.10, +0.20], p 0.30), tokens ×1.08, so the stopping
+  rule ended at look 3 without success. Session focus stays: one ranking call per session against about seven.
+- The two fail in opposite ways. Session focus left 136 of 378 decisions at stake undelivered, and 42 of those were
+  broken, most of them the SQL decision. Per-area ranking delivered 326, but sent 18 decisions per run against 7, and
+  more delivered decisions were broken (28 against 16): more decisions, less attention to each.
+- The ceiling is 25 points of first pass clean and a third of the tokens above either. Outside dates, the ceiling's
+  agents broke almost nothing they were given (2 of 378). So the gain is in *which* few decisions arrive, not in more
+  of them.
+- Dates are broken even when delivered (10 of 64 at the ceiling). The tasks ask for formats such as "Tue 4 Nov,
+  08:30", and the captured decision says to use `formatDate` without saying to add a format there. That is an
+  amendment for the decision's author to make, not a delivery problem.
+
 The same lookup drives comparison: a peer decision is compared with this branch's only when an agent here works in
 its scope. A branch nobody's work touches costs nothing.
 
