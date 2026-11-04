@@ -192,6 +192,9 @@ as its document, with no `format`. It steers on the coding agent's session rathe
 `tool:Bash`, the command as the call's `input.command`), and the sampled text otherwise. Its schema has no
 `description`, so check 8 leaves it out; say what it does in the pack's README.
 
+Internal testing: conversation rules in a pack, as every conversation rule; Rerail 0.1.0 releases code rules only. See
+[Internal testing](../README.md#internal-testing).
+
 </details>
 
 A ported rule starts at the level upstream's recommended configuration gives it: upstream `warn` becomes

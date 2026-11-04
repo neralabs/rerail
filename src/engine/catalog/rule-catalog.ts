@@ -240,6 +240,7 @@ function compileProblem(loaded: LoadedRulePack, coreVersion: string | undefined)
     `${rerail} cannot run its rule ${ruleId}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${engineSays}`;
   for (const document of loaded.documents) {
     if (document.kind === "conversation") {
+      // Internal testing: conversation rules in a pack, as every conversation rule (docs/internal-testing.md).
       const [issue] = engineRegexIssues(document.rule);
       if (issue !== undefined) return cannotRun(document.rule.id, `${issue.path.join(".")} ${issue.message}`);
       continue;

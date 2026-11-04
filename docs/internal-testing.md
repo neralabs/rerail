@@ -11,7 +11,7 @@ start with `[Internal testing]`, via `internalTesting()` in `src/engine/internal
 | Feature | Where it surfaces |
 | --- | --- |
 | Full-repository scanning | `rerail scan`; `audit_requests_create`, `audit_requests_list`, `repository_audits_list`, `repository_audit_entries_list` |
-| Conversation rules, cosine (similarity) and command (tool-call) | `kind: "conversation"` rules, badged `Internal testing` in the dashboard; `/cosine-rules` and `conversation_rules` in OMP and Pi; `/rerail-create`'s command rules ([Tool-call rules](tool-call-rules.md)) |
+| Conversation rules, cosine (similarity) and command (tool-call) | `kind: "conversation"` rules, badged `Internal testing` in the dashboard; `/cosine-rules` and `conversation_rules` in OMP and Pi; `/rerail-create`'s command rules ([Tool-call rules](tool-call-rules.md)); conversation rules a rule pack ships ([pack format](pack-format.md#packjson)) |
 | Semantic tools | `rerail_mark`, `rerail_select`, `rerail_project`, `rerail_relate` in OMP and Pi |
 | Block mode | `mode: "block"`, stored and delivered exactly like `steer`; CLI and API writes that set it say it steers in this release, the dashboard shows `Block (steers for now)` |
 | Activation profiles | `rerail activate`, `rerail activation request`, `rerail profile`, `--profile` |
