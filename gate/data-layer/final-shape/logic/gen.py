@@ -38,6 +38,7 @@ def admission(clause):
 # ---- the anchors: (clause, code, matcher) ----
 ANCHORS = {
     "ANCHOR042": ("spq-vector-filter-constants", "SPQ-042", input_matcher("spq-vector-filter-constants", "filter_names")),
+    "ANCHOR050": ("spq-runtime-state-annotations", "SPQ-050", input_matcher("spq-runtime-state-annotations", "annotated")),
 }
 
 # ---- the helpers ----
@@ -66,9 +67,46 @@ def module_constant(path, value=None):
     return ast({"all": [{"kind": "identifier"}, path, {"inside": dict(assignment, stopBy="neighbor", field="left")}]})
 
 
+# spq-runtime-state-annotations: its files (not tests, naming a runtime-state type), and its inputs'
+# matchers without their file gate (the anchor's gate admits the files).
+SERVICES = "AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"
+RUNTIME_FILES = [{"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|" + SERVICES}], "stopBy": "end"}}]
+IN_ANNOTATION = {"inside": {"kind": "assignment", "stopBy": "end", "field": "type"}}
+
+
+def runtime(*conditions):
+    return ast({"all": list(conditions) + RUNTIME_FILES})
+
+
+def runtime_input(name):
+    return ast(CLAUSES["spq-runtime-state-annotations"]["relational"]["inputs"][name]["evidence"]["query"]["ast"]["rule"])
+
+
 HELPERS = {
     "CONSTANT": module_constant(VECTOR_QUERY),
     "IDCONSTANT": module_constant(VECTOR_QUERY, "^[rRuU]*['\"](?:branch_id|revision_id)['\"]$"),
+    # Scopes, and the names bound in them.
+    "FN": runtime_input("fn_scopes"),
+    "CLS": runtime_input("class_scopes"),
+    "BOUND": runtime_input("bound_names"),
+    "PLAIN_PARAM": runtime_input("plain_params"),
+    "TYPED_PARAM": runtime_input("typed_params"),
+    "GLOBAL": runtime_input("global_names"),
+    "NONLOCAL": runtime_input("nonlocal_names"),
+    # Imports: statements, and their aliased entries.
+    "FROM": runtime({"kind": "import_from_statement"}),
+    "IMPORT": runtime({"kind": "import_statement"}),
+    "ALIASED": runtime({"kind": "aliased_import"}),
+    # An annotation's atoms: a name not in an attribute, or an outermost dotted attribute; and the
+    # first identifier of an attribute chain (an atom's head shares its start).
+    "NAME_ATOM": runtime_input("name_atoms"),
+    "MEMBER_ATOM": runtime({"kind": "attribute"}, {"not": {"inside": {"kind": "attribute", "stopBy": "neighbor"}}},
+                           {"regex": "^[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*$"}, IN_ANNOTATION),
+    "HEAD": runtime({"kind": "identifier"}, {"inside": {"kind": "attribute", "stopBy": "neighbor", "field": "object"}}, IN_ANNOTATION),
+    "GENERIC": runtime({"kind": "generic_type"}, IN_ANNOTATION),
+    # Identifiers whose text is Callable, or names a runtime-state type: an origin's pieces.
+    "CALLABLE_IDENT": runtime({"kind": "identifier"}, {"regex": "^Callable$"}),
+    "SERVICE_IDENT": runtime({"kind": "identifier"}, {"regex": SERVICES}),
 }
 
 # ---- the policy: the define's options, and one forbid clause per anchor ----
