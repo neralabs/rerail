@@ -49,6 +49,16 @@ def install(recorder):
         return tree
     recorder.originals.append((ast,'parse',original_parse));ast.parse=parse
     modules={name:importlib.import_module(module) for name,module in MODULES.items()}
+    analyzed_sources={};active_sources=[]
+    cls=modules['lazy_architecture'].FunctionAnalyzer;original_init=cls.__init__
+    @wraps(original_init)
+    def observed_init(self,path,tree,*args,**kwargs):
+        text=trees.get(tree)
+        if text is not None:
+            analyzed_sources[id(self)]=(path,text)
+            if active_sources:active_sources[-1].append((path,text))
+        return original_init(self,path,tree,*args,**kwargs)
+    recorder.originals.append((cls,'__init__',original_init));cls.__init__=observed_init
     entries={
         'eager_resolve':['_scan_source','_scan_file','_scan_preprocess_ast','_scan_lower_compile_ast','_scan_transitive_eager_ast','_scan_legacy_boundary_definition_ast','_scan_external_io_boundary_definition_ast'],
         'lazy_architecture':['scan_files','_scan_analyzed_files'],
@@ -85,6 +95,8 @@ def install(recorder):
                 if isinstance(source,str):files=[{'path':logical(path),'source':source}]
                 else:
                     paths=arguments.get('paths',arguments.get('files'))
+                    if check=='lazy_architecture' and 'by_file' in arguments:
+                        files=[{'path':logical(path),'source':text} for analyzer in arguments['by_file'].values() for path,text in [analyzed_sources[id(analyzer)]]];paths=[]
                     if check=='cached_pure_lazy_allowlist':
                         functions=arguments.get('functions',arguments.get('discovered',()))
                         paths=sorted({function.path for function in functions})
@@ -99,13 +111,19 @@ def install(recorder):
                     for p in paths:
                         p=Path(p)
                         if p.is_file():files.append({'path':logical(p),'source':p.read_text()})
-                if not files and check not in {'cached_pure_lazy_allowlist','authentication_plan_purity','readthrough_authority_architecture'}:raise ValueError('No readable analyzer inputs')
+                if not files and check not in {'lazy_architecture','cached_pure_lazy_allowlist','authentication_plan_purity','readthrough_authority_architecture'}:raise ValueError('No readable analyzer inputs')
                 if not Path.read_text.__module__.startswith('pathlib'):raise ValueError('Test replaces the original source reader')
                 event['files']=files
             except Exception as error:event['retained_reason']='Input adapter: '+type(error).__name__+': '+str(error)
+            captured=[]
+            if check=='lazy_architecture':active_sources.append(captured)
             recorder.depth+=1;start=time.perf_counter()
             try:result=original(*args,**kwargs)
-            finally:recorder.depth-=1;event['oracle_ms']=(time.perf_counter()-start)*1000
+            finally:
+                recorder.depth-=1;event['oracle_ms']=(time.perf_counter()-start)*1000
+                if check=='lazy_architecture':active_sources.pop()
+            if check=='lazy_architecture' and captured:
+                by_path={logical(path):text for path,text in captured};files=[{'path':path,'source':text} for path,text in by_path.items()];event['files']=files
             if 'retained_reason' not in event:
                 try:event['findings']=normalize(check,result,files,logical)
                 except Exception as error:event['retained_reason']='Output adapter: '+type(error).__name__+': '+str(error)

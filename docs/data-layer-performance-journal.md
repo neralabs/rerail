@@ -5740,3 +5740,24 @@ The [coverage report](data-layer-testsuite-coverage.md) separates oracle tests, 
 The resolved production post-op program has identical before/after SHA-256 `e6d5f2ff3ab1166ae96aa9718231568520f7da2bd022645e025d02a5fce732d8`.
 The historical repository benchmark remains unchanged; these tests do not establish a new performance result.
 No Linear issue was created.
+
+## 2026-11-03 — Batch eight: first four native ports
+
+The previous 70-rule checkpoint is committed and pushed at `4c6517314`.
+Batch eight records the next ten unchanged source linters at the same source pin.
+The original tests pass: 456 tests, with no source mismatches.
+The recorder captures AST-backed source inputs without adding source reads or AST walks to the observed analyzer.
+This preserves tests that count parser work and tests that supply parsed trees for virtual paths.
+
+Four candidates pass the first native parity ladder: read-through authority, authentication plan purity,
+legacy callback quarantine, and lazy adapter ownership.
+They match 35 original observations: 28 positive and seven clean.
+Both snapshot and workspace execution agree, with no extra findings, missed findings, or engine failures.
+The initial authority test was committed red in `18572162d`.
+Its missing finding exposed a real difference between direct scanner calls and production source-trigger admission.
+The callback tests also require separate repository and single-file path filters.
+The ports preserve those entry-point contracts.
+
+These four candidates are a partial delivery. Batch eight is not complete.
+The cached policy rule requires byte-exact CPython AST fingerprints; its implementation choice remains pending.
+No performance claim or Linear issue is added.
