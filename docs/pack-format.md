@@ -525,7 +525,13 @@ the person upgrading, in plain language, in a sentence or two (at most 60 words)
 ticket ids, pull request numbers and repository-internal maintenance; the **Changesets** job fails a pull request
 whose changeset says otherwise ([release notes](release.md#release)). `changeset version` writes each summary as one
 changelog entry, as written (`scripts/release/changeset-changelog.mjs`, the generator `.changeset/config.json`
-names), without the commit hash changesets' default generator led each entry with.
+names), without the commit hash changesets' default generator led each entry with. Which rules a pack ships and how
+each starts is not the summary's to say: the Release pull request writes it from `pack.json` (step 1 of
+[Release](#release)), since changesets pile up between releases and each counts against the `main` it was written
+on. A summary says what a rule now does differently (what it reports, where, its options and messages, which files
+it reads, which repositories set-up recommends the pack for), or why a rule no longer ships. A change with nothing
+else to say, a rule shipped or a README reworded, takes a changeset with an empty summary: it bumps the pack and adds
+no entry.
 A change counts when it touches what the pack publishes: its `package.json` (except `publishConfig` alone, which only
 steers `npm publish`) or a path its `files` lists (`pack.json`, `rules/`, `licenses/`, `LICENSE`, `NOTICE`,
 `README.md`); expected findings, candidates and `CHANGELOG.md` do not. The
@@ -547,7 +553,12 @@ them; core's `v*` release (`release.yml`) is separate.
 1. **Version.** On each push to `main` with anything releasable, `release-pr.yml` opens or updates the **Release**
    pull request (opened by the `neralabs-ci` app, so CI runs on it). With changesets pending it runs
    `npm run version:packs`: `changeset version`, then `scripts/release/sync-pack-lockfile.mjs`, which records the new
-   versions in `package-lock.json`. The same pull request bumps core when what core ships has changed. Its
+   versions in `package-lock.json`. Then it dates each released pack's new `CHANGELOG.md` section and opens it with
+   what changed in the pack's rules since the commit that released its previous version
+   (`scripts/release/pack-changelog.mjs`): how many rules it ships and how many start on, its new rules (by id, or
+   counted by group past 12) and how each starts, those it no longer ships, and those that start differently, Steer,
+   Log or off. The changesets' entries follow, without the `### Patch Changes` heading changesets writes, which says
+   nothing below 1.0.0. The same pull request bumps core when what core ships has changed. Its
    description lists every package and version merging it releases, with their changelog entries. Review it like any
    pull request; merging it is the release. A newer push to `main` cancels an older run, and with nothing releasable
    an open Release pull request is closed. CI runs only its licence and lint jobs on it, since `release-packs.yml`
@@ -584,10 +595,10 @@ them; core's `v*` release (`release.yml`) is separate.
    the run. These runs go one at a time.
 
 Every released pack version gets a GitHub Release on its tag `@neralabs/rerail-pack-<id>@<version>`, whose notes are
-that version's section of the pack's `CHANGELOG.md`, so a pack's release notes are written once, in its changeset's
-summary, in words for the people who upgrade. The notes are the section's entries alone: its one `### Patch Changes`
-heading, which changesets writes over every section of a pack below 1.0.0, and the commit hash the entries of versions
-released before this generator carry, are left out. After the **Published dist-tags** job passes, the run's **GitHub
+that version's section of the pack's `CHANGELOG.md`, so a pack's release notes are written once, by the Release pull
+request and in its changesets' summaries, in words for the people who upgrade. Sections written before the Release
+pull request dated them lose their one `### Patch Changes` heading and the commit hash their entries carry. After
+the **Published dist-tags** job passes, the run's **GitHub
 Releases** job makes one for each version it published (`scripts/release/github-release.mjs`). A pack's Release is
 never the repository's latest release, which is core's, and is a pre-release only for a held pack published under
 `next`. Run again, the job rewrites the notes and flags of a Release that exists. Releases missing for tags released

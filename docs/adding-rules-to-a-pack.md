@@ -252,7 +252,9 @@ commit's promotable list, confirm `main` has not moved since, and:
   `cargo test --manifest-path Cargo.toml -p rerail-engine anchors::tests` prints the value to pin;
 - **add the suppression case**, for the tools whose generator demands one;
 - **the changeset summary is the release note**: what changed for the person upgrading, at most 60 words, no ticket
-  id, pull request number or commit hash; the **Changesets** job fails one that says otherwise;
+  id, pull request number or commit hash; the **Changesets** job fails one that says otherwise. Which rules ship and
+  how each starts is not for it to say: the Release pull request writes that from `pack.json`, so a promotion with
+  nothing else to say takes an empty summary ([versioning](pack-format.md#versioning-and-release));
 - **the evidence**: the results against the tool's expected findings, the rename variants and samples, every
   divergence checked, and, for a `rename_exempt` rule, why the reason holds
   ([REVIEW.md](../REVIEW.md#what-blocks-a-merge-here)).
@@ -263,7 +265,8 @@ The reverse, for a shipped rule that fails a blocking check and is not fixed in 
 section goes to `candidates/README.md` at its sorted place with one sentence saying what sent it back, file and line;
 a test that loads the rule by id reads `rules/` only, so pass the pack's `candidates/` directory too
 (`test/engine/code-rule/pack-rules/python-harmful-steers.test.ts` does); re-pin the anchors test; the changeset
-states the net effect against `main`. No re-derive: the generator's authored output does not depend on which rules ship.
+says why the rule no longer ships, which the Release pull request's summary of the pack's rules does not. No
+re-derive: the generator's authored output does not depend on which rules ship.
 
 ## Before you open the pull request
 
