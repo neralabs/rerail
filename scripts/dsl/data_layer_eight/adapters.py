@@ -7,6 +7,7 @@ from data_layer_eight.relations import clause
 def candidate(source,policy):
     module=source/'scripts/lint_lazy_adapter_ownership.py'
     p=policy('lazy_adapter_ownership',['impl/**/*.py','data_layer/**/*.py','_internal/**/*.py','l*/**/*.py'])
+    p['clauses'].append({'id':'invalid-source','forbid':{'ast':{'language':'python','syntax':'invalid','rule':{'kind':'module'}}},'violation':{'code':'LAO000','message':'Cannot inspect Python source','anchor':'witness.span'}})
     p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'scan_source'}}}})
     legacy=literals(constant(module,'LEGACY_DECORATORS'));external=literals(constant(module,'EXTERNAL_BOUNDARY_DECORATORS'));eager=literals(constant(module,'EAGER_TERMINALS'))
     stages=[

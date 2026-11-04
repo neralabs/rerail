@@ -5833,3 +5833,51 @@ No expected diagnostic is moved or discarded.
 The final cached-policy port remains open.
 It requires exact CPython 3.13 AST fingerprints, rather than a source-text or structural-equality hash.
 No new Linear ticket or performance claim is added.
+
+### Batch eight: cached policy and broader source ladders
+
+The cached policy now matches its 13 original observations through both native APIs.
+Supplemental ladders cover clean memoization, body and signature drift, metadata changes, unsafe cache access, aliases and stale entries.
+The tests retain policy configuration as input. They do not supply oracle-computed actual fingerprints to the native detector.
+
+The first expanded ladder exposes three concrete differences.
+Policy dictionaries retain the last duplicate entry; duplicate diagnostics still inspect the original list.
+A negative Python integer literal has a unary-expression AST, so it fails the verifier's constant-integer requirement.
+Stale entries must remain visible when the source trigger disappears. These closed-domain clauses therefore execute on empty syntax input.
+
+The selected generic producer uses one isolated CPython 3.13 process per nonempty demand wave.
+It parses each demanded document once within that wave and publishes typed, indexed result columns.
+SQL callbacks read completed columns. They do not start Python or parse nodes.
+The self-contained AST serializer prototype remains outside Git and is not an optional production backend.
+This choice adds a CPython 3.13 runtime dependency, documented in the batch report.
+
+The independent oracle covers 30 source documents and 160 function fingerprints.
+Six canonical-AST unit tests pass. A seventh native test checks artifact SHA-256.
+The selected engine commit is `41cba695d9388ac8db05dd525c31c09d4fe0751a`.
+The addon SHA-256 is `27bd5226769985775484b6b3d739cbd4ed4b2108de254c586d55db0a13e26da2`.
+Its allocator remains jemalloc, with no extra build features.
+
+Broader source probes expose the missing eager raw-line scan.
+The port now checks all six original patterns, including string contents, with comment and multiline-string exclusions.
+Three positive probes also require purity propagation through imported helpers across files.
+A separate inherited-method probe returns no original finding through this cached entry point.
+The attempted inheritance propagation produced a false positive and was removed. The clean oracle probe remains as a regression.
+
+Invalid-source probes distinguish actual behavior from unused error branches.
+The adapter scanner reports `LAO000`; authentication and read-through source scanners return no findings for their selected malformed inputs.
+The ports retain those observed contracts.
+No Linear ticket was created from these differences.
+
+A fresh upstream run passes all 456 tests with zero pinned-source mismatches.
+The broader TypeScript gate passes 70 tests.
+The native gate passes 2,522 tests, with 67 existing ignores and the previously documented snapshot-hash test excluded.
+The ten edit/removal ladders pass all 50 transitions. Typechecking and SQL-column generator tests pass.
+
+The repository oracle for this batch completes in 174.9999 seconds wall and 168.0570 seconds CPU.
+Its plans select 3,186 files and report 34 eager findings plus 235 purity findings.
+The native diagnostic run uses the previously verified, fixed 9,021-file input domain.
+The oracle plans and expected findings remain unchanged.
+The initial native diagnostic overlaps focused tests and includes an external sample. Its timings cannot establish a performance improvement.
+Node phase CPU excludes CPython child processes; the driver now states this explicitly.
+An external process-family CPU receipt is required for measurements of the new producer.
+Repository parity and activation remain separate gates.

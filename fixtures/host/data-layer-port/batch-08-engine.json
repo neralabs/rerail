@@ -1,0 +1,18 @@
+{
+  "format": "rerail.data-layer-integrated-engine/v1",
+  "base_commit": "9bc955cc5",
+  "commit": "41cba695d9388ac8db05dd525c31c09d4fe0751a",
+  "branch": "jeremy/data-layer-integrated-compat-20261103",
+  "native_sha256": "27bd5226769985775484b6b3d739cbd4ed4b2108de254c586d55db0a13e26da2",
+  "build": {
+    "package": "rerail-engine",
+    "profile": "profiling",
+    "extra_features": [],
+    "allocator": "jemalloc"
+  },
+  "frontend_schema_sha256": "50d17f10ed163b536e201fb6cc692030600004b1a4c8d0c1c556d216d3e8ec20",
+  "frontend_capabilities_sha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01",
+  "python": "Python 3.13.12",
+  "boundary": "Production schema and native compiled-rule/workspace APIs; relational compatibility, with wave/GPU lowering separate.",
+  "runtime_dependency": "CPython 3.13; one isolated batch per nonempty canonical Python producer wave."
+}

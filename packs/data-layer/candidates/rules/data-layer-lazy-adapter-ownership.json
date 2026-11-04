@@ -26,6 +26,23 @@
   },
   "clauses": [
     {
+      "id": "invalid-source",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "invalid",
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "code": "LAO000",
+        "message": "Cannot inspect Python source",
+        "anchor": "witness.span"
+      }
+    },
+    {
       "id": "entry",
       "define": {
         "options": {
