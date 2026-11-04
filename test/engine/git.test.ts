@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { gitCandidates, gitInstalled, readGitBlobs, runGit } from "../../src/engine/git.js";
+import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -22,19 +23,6 @@ async function repository(files: Record<string, string>): Promise<string> {
   return root;
 }
 
-/**
- * Whether this Git honours `GIT_NO_LAZY_FETCH`: 2.45.0 on, and the 2024-04-19 security releases of 2.39 to 2.44.
- * An older Git ignores it, so it fetches what the partial-clone tests below say it must not.
- */
-function honoursNoLazyFetch(): boolean {
-  const match = /(\d+)\.(\d+)\.(\d+)/u.exec(execFileSync("git", ["--version"], { encoding: "utf8" }));
-  if (match === null) return false;
-  const [major, minor, patch] = match.slice(1).map(Number) as [number, number, number];
-  const securityPatch: Record<number, number> = { 39: 4, 40: 2, 41: 1, 42: 2, 43: 4, 44: 1 };
-  if (major !== 2) return major > 2;
-  return minor >= 45 || (securityPatch[minor] !== undefined && patch >= securityPatch[minor]);
-}
-
 /** A `--filter=blob:none` clone of a one-file repository, and the id of the blob it does not hold. */
 async function partialClone(): Promise<{ clone: string; oid: string }> {
   const origin = await repository({ "a.py": "print(1)\n" });
@@ -43,11 +31,6 @@ async function partialClone(): Promise<{ clone: string; oid: string }> {
   roots.push(clone);
   git(origin, "clone", "--quiet", "--filter=blob:none", "--no-checkout", `file://${origin}`, clone);
   return { clone, oid: git(clone, "rev-parse", "HEAD:a.py").trim() };
-}
-
-/** Still missing: asking for it fetched nothing from the remote. */
-function expectStillMissing(clone: string, oid: string): void {
-  expect(() => execFileSync("git", ["cat-file", "-e", oid], { cwd: clone, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" }, stdio: "ignore" })).toThrow();
 }
 
 describe("readGitBlobs", () => {
@@ -63,7 +46,7 @@ describe("readGitBlobs", () => {
   it.skipIf(!honoursNoLazyFetch())("never fetches a blob a partial clone does not hold", async () => {
     const { clone, oid } = await partialClone();
     expect(await readGitBlobs(clone, ["HEAD:./a.py"], { maxBlobBytes: 1_000 })).toEqual(new Map());
-    expectStillMissing(clone, oid);
+    expect(partialCloneLacks(clone, oid)).toBe(true);
   });
 });
 
@@ -71,7 +54,7 @@ describe("runGit", () => {
   it.skipIf(!honoursNoLazyFetch())("never fetches an object a partial clone does not hold", async () => {
     const { clone, oid } = await partialClone();
     expect(runGit(clone, ["cat-file", "-p", oid]).status).not.toBe(0);
-    expectStillMissing(clone, oid);
+    expect(partialCloneLacks(clone, oid)).toBe(true);
   });
 });
 
