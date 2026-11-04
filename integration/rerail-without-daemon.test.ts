@@ -51,17 +51,17 @@ function startSetUp(root: string, databasePath: string): void {
 }
 
 describe("Rerail with no daemon running", () => {
-  test("says not on here, with /rerail-start, in a checkout not yet started or stopped", async () => {
+  test("says not on here, with /rerail-start, and draws no footer, in a checkout not yet started or stopped", async () => {
     const { root, env } = await checkout();
     const notOn = `○ Rerail is not on in ${basename(root)}.\n  Start it with /rerail-start.`;
     expect(await rerailSession(root, env, ["cursor"])).toBe(notOn);
     expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(notOn);
-    expect(await claudeStatus(root, env)).toBe("R E R A I L ○ not on here");
+    expect(await claudeStatus(root, env)).toBe("");
 
     startTestRepository(root, join(env.RERAIL_HOME!, "rerail.sqlite"));
     stopTestRepository(root, join(env.RERAIL_HOME!, "rerail.sqlite"));
     expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(notOn);
-    expect(await claudeStatus(root, env)).toBe("R E R A I L ○ not on here");
+    expect(await claudeStatus(root, env)).toBe("");
   }, 30_000);
 
   test("says not set up, with /rerail-start, in a started checkout whose repository is not set up", async () => {
@@ -93,7 +93,7 @@ describe("Rerail's frequent readers", () => {
     const before = await readFile(databasePath);
     expect(workspaceStartState(root, databasePath)).toBe("stopped");
 
-    expect(await claudeStatus(root, env)).toBe("R E R A I L ○ not on here");
+    expect(await claudeStatus(root, env)).toBe("");
     expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(`○ Rerail is not on in ${basename(root)}.\n  Start it with /rerail-start.`);
     expect(await rerailSession(root, env, ["cursor"])).toContain("○ Rerail is not on in");
     expect(await readFile(databasePath)).toEqual(before);
