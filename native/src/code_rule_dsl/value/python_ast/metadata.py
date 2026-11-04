@@ -11,7 +11,7 @@ STRUCTURE_FIELDS = (
 TEXT_FIELDS = ('source_lines','source_line','previous_line')
 
 
-def structure_index(tree, offsets, source_size):
+def structure_index(tree, offsets, source_size, breadth=True, annotations=True):
     rows={}; nodes=[]; depths=[]
     def visit(node,parent=None,field='',index=0,depth=0,fn=None,cls=None):
         ordinal=len(nodes);nodes.append(node);depths.append(depth)
@@ -31,7 +31,7 @@ def structure_index(tree, offsets, source_size):
         else:row.update(ast_value_kind='',ast_value='')
         row['ast_name_repr']=repr(row['ast_name'])
         row['ast_value_repr']=repr(node.value) if isinstance(node,ast.Constant) else ''
-        row['ast_annotation']=ast.unparse(node) if field in {'annotation','returns'} else ''
+        row['ast_annotation']=ast.unparse(node) if annotations and field in {'annotation','returns'} else ''
         row['ast_annotation_repr']=repr(row['ast_annotation'])
         rows[id(node)]=row
         next_fn=ordinal if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)) else fn
@@ -42,8 +42,9 @@ def structure_index(tree, offsets, source_size):
                 if isinstance(child,ast.AST):visit(child,ordinal,name,child_index,depth+1,next_fn,next_cls)
         row['ast_end']=str(len(nodes)-1)
     visit(tree)
-    for rank,(_,node) in enumerate(sorted(enumerate(nodes),key=lambda item:(depths[item[0]],item[0]))):
-        rows[id(node)]['ast_breadth_order']=str(rank)
+    if breadth:
+        for rank,(_,node) in enumerate(sorted(enumerate(nodes),key=lambda item:(depths[item[0]],item[0]))):
+            rows[id(node)]['ast_breadth_order']=str(rank)
     return rows,nodes
 
 

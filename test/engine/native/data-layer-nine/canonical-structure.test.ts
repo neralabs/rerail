@@ -27,14 +27,15 @@ it("expands a complete typed AST and forward annotations from a module demand", 
     { start: 0, end: Buffer.byteLength(source), kind: "module", fields: ["ast_nodes"] },
     { start: 0, end: Buffer.byteLength(source), kind: "module", fields: ["ast_annotations"] },
   ] }])));
-  const nodes = JSON.parse(response.documents[0][0].ast_nodes) as Record<string, string>[];
+  const columns = JSON.parse(response.documents[0][0].ast_nodes) as Record<string, string[]>;
+  const nodes = columns.ast_kind!.map((_, i) => Object.fromEntries(Object.entries(columns).map(([name, values]) => [name, values[i]!])));
   expect(nodes.filter(n => n.ast_kind === "arg").map(n => [n.ast_name, n.ast_field])).toEqual([
     ["x", "args"], ["args", "vararg"], ["kwargs", "kwarg"],
   ]);
   expect(nodes.filter(n => n.ast_kind === "Name").map(n => n.ast_name)).toEqual(["int", "str", "first", "second", "value", "other"]);
   expect(nodes.every(n => Number(n.ast_preorder) <= Number(n.ast_end))).toBe(true);
   const names = JSON.parse(response.documents[0][1].ast_annotations);
-  expect(names.map((n: { name: string }) => n.name)).toEqual(["Sequence", "Widget", "int", "str"]);
+  expect(names.name).toEqual(["Sequence", "Widget", "int", "str"]);
   expect(response.parses).toBe(1); expect(response.module_walks).toBe(1);
 });
 

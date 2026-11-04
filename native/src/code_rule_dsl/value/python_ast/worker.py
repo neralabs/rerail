@@ -86,7 +86,8 @@ for document in request["documents"]:
     needed_types=tuple({kind for item in document["requests"] if item["kind"]!="module" and not text_only(item) for kind in KINDS.get(item["kind"],())})
     module_walks += bool(needed_types or structural)
     if structural:
-        details,all_nodes=structure_index(tree,offsets,len(source_bytes))
+        requested={field for item in document['requests'] for field in (item.get('columns',STRUCTURE_FIELDS) if item['fields']==['ast_nodes'] else item['fields'])}
+        details,all_nodes=structure_index(tree,offsets,len(source_bytes),breadth='ast_breadth_order' in requested,annotations=bool({'ast_annotation','ast_annotation_repr'}&requested))
     else:all_nodes=ast.walk(tree) if needed_types else ()
     for node in all_nodes:
         if (not structural and not isinstance(node,needed_types)) or not hasattr(node,"lineno"):continue
@@ -102,11 +103,15 @@ for document in request["documents"]:
             if item['fields']==['ast_nodes']:
                 # Operators and contexts are shared singleton objects. They are
                 # not located syntax nodes; each located node keeps its own edge.
-                expanded=[details[id(node)] for node in all_nodes if isinstance(node,ast.Module) or hasattr(node,'lineno')]
+                selected=[node for node in all_nodes if isinstance(node,ast.Module) or hasattr(node,'lineno')]
+                fields=list(dict.fromkeys([*item.get('columns',STRUCTURE_FIELDS),'ast_start','ast_stop']))
+                if any(field not in STRUCTURE_FIELDS for field in fields):raise ValueError('Unknown canonical expansion column')
+                expanded={field:[details[id(node)][field] for node in selected] for field in fields}
             else:
                 roots=[node for node in all_nodes if details[id(node)]['ast_field'] in {'annotation','returns'}]
                 selected={id(node):node for root in roots for node in ast.walk(root) if node is root or isinstance(node,ast.expr) and details[id(node)]['ast_field'] in {'value','slice'} and details[id(node)]['ast_parent_kind']=='Subscript'}
-                expanded=[dict(annotation=details[id(node)]['ast_preorder'],name=name) for node in selected.values() for name in annotation_names(node)]
+                pairs=[(details[id(node)]['ast_preorder'],name) for node in selected.values() for name in annotation_names(node)]
+                expanded=dict(annotation=[p[0] for p in pairs],name=[p[1] for p in pairs])
             value=json.dumps(expanded,ensure_ascii=True,separators=(',',':'))
             output_bytes+=len(value)
             if output_bytes>64*1024*1024:raise ValueError('Python AST batch exceeds its output capacity')

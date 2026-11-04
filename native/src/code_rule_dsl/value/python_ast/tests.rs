@@ -6,6 +6,7 @@ fn syntax_error_facts_are_batched_and_do_not_walk_invalid_modules() {
         ["def invalid(\n", "raise RuntimeError('never execute')\n"].map(|source| Document {
             source: source.into(),
             requests: vec![Request {
+                columns: None,
                 start: 0,
                 end: source.len(),
                 kind: "module".into(),
@@ -25,6 +26,7 @@ fn syntax_error_facts_are_batched_and_do_not_walk_invalid_modules() {
     let invalid = Document {
         source: "def invalid(\n".into(),
         requests: vec![Request {
+            columns: None,
             start: 0,
             end: 13,
             kind: "module".into(),
@@ -48,6 +50,7 @@ fn dumps_and_signed_fingerprints_match_cpython_3_13() {
         let source = case["source"].as_str().unwrap();
         let tree = GrammarDialect::Python.ast_grep(source);
         let mut requests = vec![Request {
+            columns: None,
             start: 0,
             end: source.len(),
             kind: "module".into(),
@@ -66,6 +69,7 @@ fn dumps_and_signed_fingerprints_match_cpython_3_13() {
                 .find(|n| n.start_pos().line() + 1 == line)
                 .unwrap();
             requests.push(Request {
+                columns: None,
                 start: node.range().start,
                 end: node.range().end,
                 kind: "function_definition".into(),
@@ -117,6 +121,7 @@ fn source_is_parsed_without_executing_imports_or_statements() {
     let out = batch(&[Document {
         source: source.into(),
         requests: vec![Request {
+            columns: None,
             start: 0,
             end: source.len(),
             kind: "module".into(),
@@ -132,6 +137,7 @@ fn unknown_fields_and_invalid_source_fail_the_whole_batch() {
         let error = batch(&[Document {
             source: source.into(),
             requests: vec![Request {
+                columns: None,
                 start: 0,
                 end: source.len(),
                 kind: "module".into(),
@@ -148,6 +154,7 @@ fn annotations_use_canonical_unparse() {
     let out = batch(&[Document {
         source: "x: dict[str,int] = {}\n".into(),
         requests: vec![Request {
+            columns: None,
             start: 3,
             end: 16,
             kind: "type".into(),
@@ -164,6 +171,7 @@ fn literal_metadata_has_canonical_json_without_source_execution() {
     let out = batch(&[Document {
         source: source.into(),
         requests: vec![Request {
+            columns: None,
             start: 0,
             end: source.len(),
             kind: "tuple".into(),
@@ -180,6 +188,7 @@ fn canonical_names_and_annotation_repr_preserve_python_semantics() {
     let name = "ｍｏｄ.ｎａｍｅ";
     let annotation = "\"OptimizerRunCache\"";
     let make = |text: &str, kind: &str, fields: &[&str]| Request {
+        columns: None,
         start: source.find(text).unwrap(),
         end: source.find(text).unwrap() + text.len(),
         kind: kind.into(),
@@ -204,12 +213,14 @@ fn text_columns_do_not_parse_or_walk_the_module() {
         source: "  ｃａｃｈｅ\n".into(),
         requests: vec![
             Request {
+                columns: None,
                 start: 2,
                 end: 17,
                 kind: "identifier".into(),
                 fields: vec!["identifier".into()],
             },
             Request {
+                columns: None,
                 start: 2,
                 end: 17,
                 kind: "identifier".into(),
@@ -231,12 +242,14 @@ fn function_fields_share_one_real_parse_and_module_walk() {
         source: source.into(),
         requests: vec![
             Request {
+                columns: None,
                 start: 0,
                 end: 17,
                 kind: "function_definition".into(),
                 fields: vec!["body_sha256".into(), "signature_sha256".into()],
             },
             Request {
+                columns: None,
                 start: 18,
                 end: 35,
                 kind: "function_definition".into(),

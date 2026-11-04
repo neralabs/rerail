@@ -112,6 +112,7 @@ impl Facts {
         }
         let span = self.packed.span(id);
         Ok(crate::code_rule_dsl::value::python_ast::Request {
+            columns: None,
             start: span.start,
             end: span.end,
             kind: self.packed.kind(id).into(),

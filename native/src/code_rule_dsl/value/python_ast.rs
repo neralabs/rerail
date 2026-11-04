@@ -16,6 +16,8 @@ pub(crate) struct Request {
     pub end: usize,
     pub kind: String,
     pub fields: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<Vec<String>>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

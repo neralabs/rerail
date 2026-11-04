@@ -149,7 +149,10 @@ pub(super) fn execute(
                     Some("annotations") => vec!["ast_annotations".into()],
                     _ => fields.clone(),
                 };
-                let request = facts.python_ast_request(root.node, requested)?;
+                let mut request = facts.python_ast_request(root.node, requested)?;
+                if demand.python_ast.as_ref().unwrap().expand.as_deref() == Some("nodes") {
+                    request.columns = Some(fields.clone());
+                }
                 let row = documents[document].requests.len();
                 documents[document].requests.push(request);
                 mapping.push((document, row));
@@ -200,40 +203,57 @@ pub(super) fn execute(
                                 "ast_annotations"
                             })
                             .expect("expanded canonical relation");
-                        let expanded: Vec<BTreeMap<String, String>> =
+                        let mut expanded: BTreeMap<String, Vec<String>> =
                             serde_json::from_str(&encoded).map_err(|e| invalid(e.to_string()))?;
+                        let len = expanded.values().next().map_or(0, Vec::len);
+                        if expanded.values().any(|column| column.len() != len) {
+                            return Err(invalid("canonical column lengths differ"));
+                        }
                         if request.expand.as_deref() == Some("nodes") {
-                            let spans = expanded
+                            let starts = expanded
+                                .get("ast_start")
+                                .ok_or_else(|| invalid("missing canonical starts"))?;
+                            let stops = expanded
+                                .get("ast_stop")
+                                .ok_or_else(|| invalid("missing canonical ends"))?;
+                            let spans = starts
                                 .iter()
-                                .map(|r| {
-                                    let offset = |field: &str| {
-                                        r.get(field)
-                                            .and_then(|v| v.parse::<u32>().ok())
-                                            .ok_or_else(|| invalid("missing canonical source span"))
-                                    };
-                                    Ok((offset("ast_start")?, offset("ast_stop")?))
+                                .zip(stops)
+                                .map(|(start, end)| {
+                                    Ok((
+                                        start
+                                            .parse::<u32>()
+                                            .map_err(|_| invalid("invalid canonical start"))?,
+                                        end.parse::<u32>()
+                                            .map_err(|_| invalid("invalid canonical end"))?,
+                                    ))
                                 })
                                 .collect::<Result<Vec<_>>>()?;
                             demand.trees[root.file as usize]
                                 .facts
                                 .register_python_spans(spans)?;
                         }
-                        for expanded_row in expanded {
-                            source::charge(&demand.work, 1)?;
-                            output.files.push(root.file);
-                            output.nodes.push(root.node);
-                            for (column, field) in output.fields.iter().enumerate() {
-                                let value = expanded_row
-                                    .get(field)
-                                    .ok_or_else(|| invalid("missing expanded canonical column"))?
-                                    .clone();
+                        source::charge(&demand.work, len)?;
+                        output.files.extend(std::iter::repeat_n(root.file, len));
+                        output.nodes.extend(std::iter::repeat_n(root.node, len));
+                        for (column, field) in output.fields.iter().enumerate() {
+                            let values = expanded
+                                .remove(field)
+                                .ok_or_else(|| invalid("missing canonical column"))?;
+                            let before = bytes;
+                            for value in &values {
                                 bytes = bytes.saturating_add(value.len());
                                 if bytes > 64 * 1024 * 1024 {
                                     return Err(invalid("Python AST output capacity"));
                                 }
-                                source::charge(&demand.work, value.len().div_ceil(256))?;
-                                output.values[column].push(value);
                             }
+                            // Column transfer is bulk work. Count row setup separately,
+                            // then charge actual text and String headers in 256-byte units.
+                            let transferred = (bytes - before).saturating_add(
+                                values.len().saturating_mul(std::mem::size_of::<String>()),
+                            );
+                            source::charge(&demand.work, transferred.div_ceil(256))?;
+                            output.values[column].extend(values);
                         }
                         continue;
                     }
