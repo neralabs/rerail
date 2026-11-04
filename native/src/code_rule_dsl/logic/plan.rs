@@ -511,7 +511,8 @@ pub(in crate::code_rule_dsl) type Plan = (Vec<Step>, f64, f64);
 
 impl Model {
     fn card(&self, rel: &str) -> f64 {
-        if rel == "node" { self.stats.nodes } else { self.stats.card.get(rel).copied().unwrap_or(1000.0) }
+        // `node` is the corpus's nodes, except where a batch binds it: then its estimate is the batch's.
+        if rel == "node" && !self.inputs.batch.contains_key(rel) { self.stats.nodes } else { self.stats.card.get(rel).copied().unwrap_or(1000.0) }
     }
 
     fn ndv_or_1(&self, rel: &str, c: usize) -> f64 {
@@ -820,10 +821,25 @@ fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
     for (rel, (_, rows)) in &inputs.batch {
         let rows = rows.max(1.0);
         stats.card.insert(rel.clone(), rows);
-        stats.indexes.insert(rel.clone(), Vec::new());
+        // A base relation bound as a batch source is its vtab, which answers T's indexes' probes; any other
+        // batch source is scanned.
+        stats.indexes.insert(rel.clone(), vtab_indexes(rel));
+        let names = super::sql::select::input_columns(rel);
         for col in 0..prog.decls.get(rel).map_or(0, Vec::len) {
-            ndv.insert((rel.clone(), col), rows);
-            stats.fan.insert((rel.clone(), col), 1.0);
+            // A base relation's distinct values by column: a chunk's documents, kinds, child indexes, fields
+            // and parents are far fewer than its rows. Other columns are taken as keys.
+            let distinct = match names.and_then(|names| names.get(col)).copied() {
+                Some("d") => rows.min(300.0),
+                Some("kind") => rows.min(200.0),
+                Some("idx") => rows.min(20.0),
+                Some("f") => rows.min(50.0),
+                Some("depth") => rows.min(30.0),
+                Some("p" | "par") => (rows / 3.0).max(1.0),
+                Some("s") => (rows / 5.0).max(1.0),
+                _ => rows,
+            };
+            ndv.insert((rel.clone(), col), distinct);
+            stats.fan.insert((rel.clone(), col), (rows / distinct).max(1.0));
         }
     }
     for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel)) {
