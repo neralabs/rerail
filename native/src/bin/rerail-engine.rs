@@ -2,11 +2,11 @@
 //!
 //!   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
 //!   rerail-engine asm <file.rir>
-//!   rerail-engine logic <program.rdl> <corpus root> <T facts.sqlite> <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]
+//!   rerail-engine logic <program.rdl> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rdl> <corpus root> <T facts.sqlite> <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rdl> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -46,8 +46,14 @@ fn logic(args: &[String]) -> Result<String, String> {
             other => positional.push(other.to_owned()),
         }
     }
-    let [program, root, facts, out] = positional.as_slice() else { return Err(USAGE.into()) };
-    rerail_engine::tools::logic(&read(program)?, Path::new(root), Path::new(facts), Path::new(out), &modes, metal, chunk)
+    // `<program> <corpus> <out>` on the typing programs' own ingestion, or `<program> <corpus> <T facts> <out>` to
+    // reproduce T (its statistics and node ids).
+    let (program, root, facts, out) = match positional.as_slice() {
+        [program, root, out] => (program, root, None, out),
+        [program, root, facts, out] => (program, root, Some(Path::new(facts.as_str())), out),
+        _ => return Err(USAGE.into()),
+    };
+    rerail_engine::tools::logic(&read(program)?, Path::new(root), facts, Path::new(out), &modes, metal, chunk)
 }
 
 fn dump(args: &[String]) -> Result<String, String> {

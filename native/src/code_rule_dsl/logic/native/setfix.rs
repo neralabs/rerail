@@ -133,9 +133,18 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
 
 /// Marks `conn`'s symbols held (`true`, after one catch-up) or released for a planner run: while held, the engine's
 /// entry points do not read the `atoms` table's tail (one statement each), since the run is its only writer.
+/// While held, the run is also the table's only writer: the store's interning waits for the release
+/// (`content_store::atoms::hold`), taken before the catch-up so no row lands between it and the run's own.
 pub fn hold_symbols(conn: &Connection, held: bool) -> Result<()> {
+    let path = conn.path().map(std::path::PathBuf::from);
+    if held && let Some(path) = &path {
+        crate::content_store::atoms::hold(path, true);
+    }
     let syms = symbols(conn)?;
     syms.write().unwrap().held = held;
+    if !held && let Some(path) = &path {
+        crate::content_store::atoms::hold(path, false);
+    }
     Ok(())
 }
 

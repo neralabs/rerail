@@ -105,13 +105,59 @@ impl Interner {
     }
 }
 
+/// Who may append to a database's `atoms` table now. A planner run allocates the symbols it makes from its own
+/// mirror of the table (`logic::native`'s, flushed at its end) and so must be the table's only writer while it runs:
+/// it holds the database (`hold`), and the store's interning waits for the release (`ContentStore::intern_atoms`)
+/// unless it is on the holder's thread. (A chunk built on one thread while the run on another interned its names
+/// between the run's ids, list step 29.)
+#[derive(Default)]
+struct Hold {
+    /// The holding thread and how many holds it has taken (a store's interning inside a held run nests).
+    holder: parking_lot::Mutex<Option<(std::thread::ThreadId, usize)>>,
+    released: parking_lot::Condvar,
+}
+
+static HOLDS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<std::path::PathBuf, std::sync::Arc<Hold>>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn hold_of(path: &std::path::Path) -> std::sync::Arc<Hold> {
+    let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    std::sync::Arc::clone(HOLDS.lock().entry(key).or_default())
+}
+
+/// Takes (`true`, waiting for another thread's release) or gives back (`false`) the right to append to the `atoms`
+/// table of the database at `path`, for the calling thread. Holds nest on one thread.
+pub fn hold(path: &std::path::Path, held: bool) {
+    let hold = hold_of(path);
+    let mut holder = hold.holder.lock();
+    let me = std::thread::current().id();
+    if held {
+        while holder.is_some_and(|(other, _)| other != me) {
+            hold.released.wait(&mut holder);
+        }
+        let depth = holder.map_or(0, |(_, depth)| depth);
+        *holder = Some((me, depth + 1));
+    } else if let Some((other, depth)) = *holder
+        && other == me
+    {
+        *holder = (depth > 1).then_some((me, depth - 1));
+        if holder.is_none() {
+            hold.released.notify_all();
+        }
+    }
+}
+
 impl ContentStore {
     /// The atom of each of `values`, appending the new ones to the table in one transaction.
     pub fn intern_atoms(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
-        let mut atoms = self.atoms.lock();
-        if let Some(found) = values.iter().map(|value| atoms.get(value)).collect::<Option<Vec<_>>>() {
+        if let Some(found) = values.iter().map(|value| self.atoms.lock().get(value)).collect::<Option<Vec<_>>>() {
             return Ok(found);
         }
+        // New rows are appended holding the table (`hold`): after a planner run that holds it, and
+        // never between its catch-up and its own rows. The hold is taken before the mirror's lock,
+        // so a holder interning on its own thread never waits on a thread waiting for its release.
+        hold(&self.database_path, true);
+        let mut atoms = self.atoms.lock();
         // The mirror keeps only committed rows: each attempt starts from what it held, and a
         // failed one is undone.
         let start = atoms.len();
@@ -134,6 +180,8 @@ impl ContentStore {
         if result.is_err() {
             atoms.truncate(start);
         }
+        drop(atoms);
+        hold(&self.database_path, false);
         result
     }
 

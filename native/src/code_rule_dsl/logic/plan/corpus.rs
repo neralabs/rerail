@@ -6,10 +6,15 @@
 //! mode over atoms (`run_atoms_native`, O13). Its outputs are written as T's `rdl.py sql` writes them: one sorted,
 //! tab-separated `<relation>.csv` per output, symbols as text and node ids as T's.
 //!
-//! Two things are read from T's own `facts.sqlite` for the same corpus, until the typing programs have their own
-//! ingestion (list step 29): the planner's statistics (`stats.py build`'s tables, atomized as the program is:
-//! `atomized_statistics`), and each document's first node id, which maps a node `d << 32 | index` to T's global id.
-//! T's documents (`doc`) name the files, in T's order.
+//! With T's own `facts.sqlite` for the same corpus (to reproduce T), two things are read from it: the planner's
+//! statistics (`stats.py build`'s tables, atomized as the program is: `atomized_statistics`), and each document's
+//! first node id, which maps a node `d << 32 | index` to T's global id. T's documents (`doc`) name the files, in
+//! T's order.
+//!
+//! Without it, the typing programs' own ingestion (list step 29): the files are the corpus's `.py` (or `.rs`)
+//! files in path order, and every chunk measures its base relations' statistics as it binds them, the tree's
+//! included (per kind its nodes and sizes, per parent kind its children, the postings of the program's constants:
+//! `Own`). The cross-file part plans with the chunks' sums. Nodes are written as `path:index`.
 
 use super::{Error, Outcome, Result, lower};
 
@@ -165,7 +170,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// the base columns the cross-file part names are appended in memory, and the chunk is dropped. The cross-file part
 /// runs once, over the base relations held in memory and the exports read once from `x`, all bound in `main`. Memory
 /// is two chunks', the held base columns, and the cross-file part's own.
-pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
+pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     // The main thread's CPU (the chunk builder's is its own, below) and the process's peak RSS.
     let main_usage = || { let (u, s) = thread_usage(); (u, s, usage().2) };
@@ -187,10 +192,22 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         last = now;
     };
     let prog = front::parse(program)?;
-    let t = Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let docs: Vec<(i64, String)> = t.prepare("SELECT d, path FROM doc ORDER BY d")?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-    let first: HashMap<i64, i64> = t.prepare("SELECT d, min(n) FROM node GROUP BY d")?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-    let rust = docs.first().is_some_and(|(_, p)| p.ends_with(".rs"));
+    let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
+    let (docs, first, rust): (Vec<(i64, String)>, HashMap<i64, i64>, bool) = match &t {
+        Some(t) => {
+            let docs: Vec<(i64, String)> = t.prepare("SELECT d, path FROM doc ORDER BY d")?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            let first = t.prepare("SELECT d, min(n) FROM node GROUP BY d")?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            let rust = docs.first().is_some_and(|(_, p)| p.ends_with(".rs"));
+            (docs, first, rust)
+        }
+        None => {
+            let (python, rs) = corpus_files(root)?;
+            let rust = rs.len() > python.len();
+            let files = if rust { rs } else { python };
+            (files.into_iter().enumerate().map(|(i, path)| (i as i64 + 1, path)).collect(), HashMap::new(), rust)
+        }
+    };
+    let paths: HashMap<i64, String> = docs.iter().cloned().collect();
     let (label, dialect) = if rust { ("rust", "rust") } else { ("python", "python") };
     let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
@@ -211,10 +228,24 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
     let (local, cross) = (part(split.local), part(split.cross));
-    atomized_statistics(&t, &db, &store, &first, dialect)?;
     // T's corpus statistics, read once: each chunk plans with them and its sources' own, measured in memory, and the
-    // cross-file part with them and the chunks' totals.
-    let t_stats = super::Stats::of_schema(&db, &lowered.program, "s")?;
+    // cross-file part with them and the chunks' totals. Without T, every chunk measures its own (`Own`).
+    let t_stats = match &t {
+        Some(t) => {
+            atomized_statistics(t, &db, &store, &first, dialect)?;
+            super::Stats::of_schema(&db, &lowered.program, "s")?
+        }
+        None => {
+            // A document's nodes are `d << 32 | index`: its interval, for the SQL strata's range reads.
+            db.execute_batch("ATTACH ':memory:' AS s; CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER);")?;
+            let ranges = docs.iter().map(|(d, _)| vec![SqlValue::Integer(*d), SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect();
+            super::insert_many(&db, "INSERT INTO s.stat_docrange", ranges)?;
+            super::Stats::empty(&lowered.program)
+        }
+    };
+    let own = t.is_none();
+    let constants = Own::constants(&lowered.program);
+    let mut own_totals = Own::default();
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
@@ -329,6 +360,11 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
         nodes += chunk_nodes_built;
         chunks += 1;
         let mut stats = t_stats.clone();
+        if own {
+            let chunk = Own::measure(&sources, &constants);
+            chunk.apply(&mut stats);
+            own_totals.add(&chunk);
+        }
         for (rel, source) in sources {
             // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
             // family's first read makes them (decision 0029).
@@ -347,7 +383,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
                 }
             }
             let measured = syntax::statistics(source.as_ref());
-            if split.base.contains(&rel) && rel.starts_with("nearest_") {
+            if split.base.contains(&rel) && (own || rel.starts_with("nearest_")) {
                 totals.add(&rel, source.len(), &measured);
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
@@ -392,6 +428,9 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
     statements.enter("stats");
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
     let mut cross_stats = t_stats;
+    if own {
+        own_totals.apply(&mut cross_stats);
+    }
     totals.apply(&mut cross_stats);
 
     // The cross-file part reads every input in place from `main`: the base relations held in memory, and the
@@ -420,6 +459,7 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: &Path, out: &Path, modes:
                 row.split('\t')
                     .enumerate()
                     .map(|(i, v)| match v.parse::<i64>() {
+                        Ok(v) if node_columns.contains(&i) && own => format!("{}:{}", paths[&(v >> 32)], v & 0xffff_ffff),
                         Ok(v) if node_columns.contains(&i) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
                         _ => v.to_owned(),
                     })
@@ -633,5 +673,134 @@ impl crate::code_rule_dsl::facts::vtab::Source for Rows {
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         self.values[column][row]
+    }
+}
+
+
+/// The corpus's files under `root`, relative and in path order: Python's (`.py`) and Rust's (`.rs`), skipping
+/// hidden directories and `target`.
+fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
+    let (mut python, mut rust) = (Vec::new(), Vec::new());
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| Error::Plan(format!("{}: {e}", dir.display())))? {
+            let path = entry.map_err(|e| Error::Plan(e.to_string()))?.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if path.is_dir() {
+                if !name.starts_with('.') && name != "target" {
+                    pending.push(path);
+                }
+                continue;
+            }
+            let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("py") => python.push(relative),
+                Some("rs") => rust.push(relative),
+                _ => {}
+            }
+        }
+    }
+    python.sort();
+    rust.sort();
+    Ok((python, rust))
+}
+
+/// The base relations' statistics a chunk measures as it binds them, beyond each column's moments
+/// (`syntax::statistics`), which T's `stats.py` made at ingestion: per kind atom its nodes and summed subtree sizes
+/// (`stat_kind`), per (parent kind, child kind) its edges (`stat_edge`), the documents, and per (relation, column,
+/// constant) of the program's constants its rows (`stat_val`'s `n`). Summed over the chunks for the cross-file part:
+/// a document is in one chunk, so every count adds exactly.
+#[derive(Default)]
+struct Own {
+    kinds: BTreeMap<i64, (i64, i64)>,
+    edges: BTreeMap<(i64, i64), i64>,
+    docs: i64,
+    postings: BTreeMap<(String, String, i64), i64>,
+}
+
+impl Own {
+    /// The program's integer constants by (input relation, column name) they are compared at.
+    fn constants(prog: &front::Program) -> BTreeMap<(String, String), BTreeSet<i64>> {
+        let mut out: BTreeMap<(String, String), BTreeSet<i64>> = BTreeMap::new();
+        for literal in prog.rules.iter().flat_map(|r| &r.body) {
+            let Some(atom) = literal.atom() else { continue };
+            if !prog.inputs.contains(&atom.rel) {
+                continue;
+            }
+            for (i, arg) in atom.args.iter().enumerate() {
+                if let front::Term::Int(v) = arg {
+                    out.entry((atom.rel.clone(), super::sql_col(&atom.rel, i))).or_default().insert(*v);
+                }
+            }
+        }
+        out
+    }
+
+    fn measure(sources: &[(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)], constants: &BTreeMap<(String, String), BTreeSet<i64>>) -> Self {
+        let mut own = Own::default();
+        let of = |rel: &str| sources.iter().find(|(r, _)| r == rel).map(|(_, s)| s.as_ref());
+        let column = |source: &dyn crate::code_rule_dsl::facts::vtab::Source, name: &str| source.columns().iter().position(|c| c == name);
+        // Kinds by node id, then the tape's sizes and parents against them.
+        let mut kind_of = HashMap::new();
+        if let Some(node) = of("node")
+            && let (Some(n), Some(k), Some(d)) = (column(node, "n"), column(node, "kind"), column(node, "d"))
+        {
+            let mut docs = BTreeSet::new();
+            for r in 0..node.len() {
+                let kind = node.value(r, k);
+                kind_of.insert(node.value(r, n), kind);
+                own.kinds.entry(kind).or_default().0 += 1;
+                docs.insert(node.value(r, d));
+            }
+            own.docs = docs.len() as i64;
+        }
+        if let Some(tape) = of("tape")
+            && let (Some(n), Some(par), Some(size)) = (column(tape, "n"), column(tape, "par"), column(tape, "size"))
+        {
+            for r in 0..tape.len() {
+                let Some(&kind) = kind_of.get(&tape.value(r, n)) else { continue };
+                own.kinds.entry(kind).or_default().1 += tape.value(r, size);
+                if let Some(&parent) = kind_of.get(&tape.value(r, par)) {
+                    *own.edges.entry((parent, kind)).or_default() += 1;
+                }
+            }
+        }
+        for ((rel, col), values) in constants {
+            let Some(source) = of(rel) else { continue };
+            let Some(c) = column(source, col) else { continue };
+            for r in 0..source.len() {
+                let v = source.value(r, c);
+                if values.contains(&v) {
+                    *own.postings.entry((rel.clone(), col.clone(), v)).or_default() += 1;
+                }
+            }
+        }
+        own
+    }
+
+    fn add(&mut self, other: &Own) {
+        for (k, (n, size)) in &other.kinds {
+            let e = self.kinds.entry(*k).or_default();
+            e.0 += n;
+            e.1 += size;
+        }
+        for (e, n) in &other.edges {
+            *self.edges.entry(*e).or_default() += n;
+        }
+        self.docs += other.docs;
+        for (key, n) in &other.postings {
+            *self.postings.entry(key.clone()).or_default() += n;
+        }
+    }
+
+    fn apply(&self, stats: &mut super::Stats) {
+        stats.tree(&self.kinds, &self.edges, self.docs);
+        let mut by: BTreeMap<&str, Vec<(String, i64, i64)>> = BTreeMap::new();
+        for ((rel, col, v), n) in &self.postings {
+            by.entry(rel.as_str()).or_default().push((col.clone(), *v, *n));
+        }
+        for (rel, vals) in by {
+            stats.measured(rel, [], vals);
+        }
     }
 }

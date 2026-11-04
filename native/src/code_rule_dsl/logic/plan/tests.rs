@@ -419,3 +419,52 @@ fn product_programs_derive_t_outputs() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// The typing programs' own ingestion (list step 29: no T facts file, every chunk's statistics measured as it is
+/// bound) derives what the run on T's facts derives, on T's fixture corpus, as one chunk and as several. Node ids
+/// differ only in how they are written (`path:index` against T's global ids), so the own outputs are mapped to T's.
+#[test]
+fn own_ingestion_derives_what_t_facts_do() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let raw = zstd::decode_all(std::fs::File::open(root().join("../facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
+    let corpus: Vec<(String, String)> = serde_json::from_slice(&raw).unwrap();
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("corpus");
+    for (path, source) in &corpus {
+        let file = dir.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, source).unwrap();
+    }
+    let facts = facts();
+    let t = Connection::open(&facts).unwrap();
+    let first: HashMap<String, i64> =
+        t.prepare("SELECT path, min(n) FROM doc JOIN node USING (d) GROUP BY d").unwrap().query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).unwrap().map(|row| row.unwrap()).collect();
+    let to_t = |line: &str| -> String {
+        line.split('\t')
+            .map(|field| match field.rsplit_once(':') {
+                Some((path, index)) if first.contains_key(path) => (first[path] + index.parse::<i64>().unwrap()).to_string(),
+                _ => field.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("\t")
+    };
+    let read = |out: &std::path::Path, rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    for name in ["workload", "calls"] {
+        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rdl"))).unwrap();
+        let with_t = dir.join(format!("out-{name}-t"));
+        let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
+        assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
+        for chunk in [1_usize << 18, 1 << 12] {
+            let own = dir.join(format!("out-{name}-own-{chunk}"));
+            let got = corpus::run(&src, &dir, None, &own, "program", Binding::Cpu, chunk).unwrap();
+            assert_eq!(got.files, corpus.len(), "{name}");
+            for rel in report.rows.keys() {
+                let mut mapped: Vec<String> = read(&own, rel).lines().map(to_t).collect();
+                mapped.sort();
+                let expected: Vec<String> = read(&with_t, rel).lines().map(str::to_owned).collect();
+                assert_eq!(mapped.len(), expected.len(), "{name} {rel} at {chunk}-node chunks: rows");
+                assert!(mapped == expected, "{name} {rel} at {chunk}-node chunks: rows differ");
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

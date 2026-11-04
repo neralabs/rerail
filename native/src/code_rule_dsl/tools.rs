@@ -30,7 +30,7 @@ pub fn assemble(text: &str) -> Result<String, String> {
 
 /// `program` (`.rdl` text) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS.
-pub fn logic(program: &str, root: &std::path::Path, t_facts: &std::path::Path, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize) -> Result<String, String> {
+pub fn logic(program: &str, root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize) -> Result<String, String> {
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
     let report = super::logic::plan::corpus::run(program, root, t_facts, out, modes, binding, chunk_nodes).map_err(|error| error.to_string())?;
@@ -41,6 +41,8 @@ pub fn logic(program: &str, root: &std::path::Path, t_facts: &std::path::Path, o
     for (rel, rows) in &report.rows {
         text += &format!("  {rel}: {rows} rows\n");
     }
-    text += "  (planner statistics and node ids read from the T facts file, until the typing programs' ingestion)\n";
+    if t_facts.is_some() {
+        text += "  (planner statistics and node ids read from the T facts file)\n";
+    }
     Ok(text)
 }

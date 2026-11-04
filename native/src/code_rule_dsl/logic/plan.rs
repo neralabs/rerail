@@ -249,6 +249,50 @@ impl Stats {
         Self::read(db, prog, &inputs, false)
     }
 
+    /// No statistics but the program's kindsets: the caller measures every input (`measured`, `tree`), as the
+    /// typing programs' own ingestion does (`corpus::run` without T's facts, list step 29).
+    pub(in crate::code_rule_dsl) fn empty(prog: &Program) -> Self {
+        Stats {
+            col: HashMap::new(),
+            kfreq: IndexMap::new(),
+            size: HashMap::new(),
+            nodes: 0.0,
+            parents: IndexMap::new(),
+            card: HashMap::new(),
+            fan: HashMap::new(),
+            dfreq: HashMap::new(),
+            obs: HashMap::new(),
+            solving: BTreeSet::new(),
+            indexes: HashMap::new(),
+            docs: None,
+            memo: HashMap::new(),
+            steps_cache: RefCell::new(HashMap::new()),
+            kindsets: prog.kindsets.clone(),
+        }
+    }
+
+    /// The tree's statistics measured in memory, replacing what was read (T's `stat_kind`, `stat_edge` and
+    /// `stat_docrange`'s count): per kind atom its nodes and their summed subtree sizes, per (parent kind, child
+    /// kind) its edges, and the documents.
+    pub(in crate::code_rule_dsl) fn tree(&mut self, kinds: &BTreeMap<i64, (i64, i64)>, edges: &BTreeMap<(i64, i64), i64>, docs: i64) {
+        self.kfreq = kinds.iter().map(|(k, (n, _))| (k.to_string(), *n)).collect();
+        self.size = kinds.iter().filter(|(_, (n, _))| *n != 0).map(|(k, (n, size))| (k.to_string(), *size as f64 / *n as f64)).collect();
+        self.nodes = kinds.values().map(|(n, _)| n).sum::<i64>() as f64;
+        let mut parents: IndexMap<String, IndexMap<String, i64>> = IndexMap::new();
+        for ((p, c), n) in edges {
+            *parents.entry(c.to_string()).or_default().entry(p.to_string()).or_default() += n;
+        }
+        self.parents = parents
+            .into_iter()
+            .map(|(c, ps)| {
+                let total = ps.values().sum::<i64>() as f64;
+                (c, ps.into_iter().map(|(p, n)| (p, n as f64 / total)).collect())
+            })
+            .collect();
+        self.docs = Some(docs);
+        self.steps_cache.borrow_mut().clear();
+    }
+
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
     /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
     pub(in crate::code_rule_dsl) fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
@@ -2421,8 +2465,10 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) 
     super::native::forget_inputs(db);
     super::native::hold_symbols(db, true)?;
     let out = run(&lowered.program, db, inputs, Some(lowered));
+    // Flushed while still held: the run's symbols are the table's next rows.
+    let flushed = super::native::flush_symbols(db);
     super::native::hold_symbols(db, false)?;
-    super::native::flush_symbols(db)?;
+    flushed?;
     out
 }
 
