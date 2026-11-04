@@ -50,11 +50,13 @@ class Program:
         self.untranslated = 0
         self.helpers = 0
         self.names = set()
+        self.notes = {}  # name -> comment lines printed above its .decl
 
-    def helper(self, base):
+    def helper(self, base, note):
         self.helpers += 1
         name = f"{base}_{self.helpers}"
         self.decls[name] = f".decl {name}(n: node)"
+        self.notes[name] = [f"// {name}(n): {note}"]
         return name
 
     def use(self, module):
@@ -215,7 +217,7 @@ def nth_child(prog, c, v, vs):
     p, s, k = vs.fresh("p"), vs.fresh("s"), vs.fresh("k")
     order = f"precedes({v}, {s})" if c.get("reverse") else f"precedes({s}, {v})"
     if "ofRule" in c:
-        rel = prog.helper("counted")
+        rel = prog.helper("counted", "the siblings the JSON `nthChild.ofRule` counts")
         prog.rules.append((f"{rel}($n)", lower(prog, c["ofRule"], "$n", Vars())))
         return [f"child({p}, {v}, _), {rel}({v})",
                 f"{k} = count {{ child({p}, {s}, _), {order}, {rel}({s}) }}", f"{k} = {c['position'] - 1}"]
@@ -256,7 +258,7 @@ def site_filters(prog, filters, s, vs):
 
 
 def option_cases(prog, name, rule, v):
-    rel = prog.helper("option")
+    rel = prog.helper("option", f"the JSON `$option` on {q(name)}: one rule per configured value, plus the default")
     keys = []
     for case, body in (rule.get("cases") or {}).items():
         keys.append(case)
@@ -303,9 +305,7 @@ def alternatives(prog, alts, v, vs):
     bodies = grouped(prog, alts, v, vs)
     if len(bodies) == 1:
         return bodies[0]
-    name = prog.helper("alt")
-    for alt in alts:
-        pass
+    name = prog.helper("alt", "the JSON `any`: n matches if any one of these rules does")
     for body in grouped(prog, alts, "$n", Vars()):
         prog.rules.append((f"{name}($n)", body))
     return [f"{name}({v})"]
@@ -316,7 +316,7 @@ def stop_set(prog, stop):
         return "{" + q(stop["kind"]) + "}"
     if isinstance(stop, dict) and set(stop) == {"any"} and kinds_only(stop["any"]):
         return "{" + ", ".join(q(a["kind"]) for a in stop["any"]) + "}"
-    name = prog.helper("stop")
+    name = prog.helper("stop", "the JSON `stopBy` rule: the tree search stops at these nodes")
     if isinstance(stop, dict) and set(stop) == {"any"}:
         for body in grouped(prog, stop["any"], "$n", Vars()):
             prog.rules.append((f"{name}($n)", body))
@@ -418,9 +418,11 @@ def render_util(prog, name, rule, out):
         rule = rule["rule"] if "rule" in rule else {k: v for k, v in rule.items() if k != "params"}
         args = ", ".join("$" + p for p in params)
         prog.decls[rel] = f".decl {rel}(n: node, {', '.join(p.lower() + ': node' for p in params)})"
+        prog.notes[rel] = [f"// {rel}(n, …): the JSON util `{name}`, called with `matches` and arguments {', '.join(params)}"]
         out.append((f"{rel}($n, {args})", lower(prog, rule, "$n", Vars())))
         return
     prog.decls[rel] = f".decl {rel}(n: node)"
+    prog.notes[rel] = [f"// {rel}(n): the JSON util `{name}`, used where the JSON says `matches: {q(name)}`"]
     if isinstance(rule, dict) and set(rule) == {"any"} and isinstance(rule["any"], list):
         for body in grouped(prog, rule["any"], "$n", Vars()):
             out.append((f"{rel}($n)", body))
@@ -493,6 +495,7 @@ def translate(doc):
             rel = f"{rel}_{snake(cid)}"
         seen_rel.add(rel)
         if "ast" not in forbid:
+            body.append(("note", [f"// {rel}: a finding from a text rule. It has no AST pattern, so it stays as JSON."]))
             body.append(("viol", violation_lines(viol, rel)))
             body.append(("raw", f"{rel}($d) :- text_rule($d, {compact(forbid)})."))
             prog.untranslated += 1
@@ -505,6 +508,13 @@ def translate(doc):
         vl = violation_lines(viol, rel)
         if opts:
             vl.append(f"    options {compact(opts)}")
+        note = [f"// {rel}(n): a finding at node n, from clause `{cid}`.",
+                "// Each rule below is one way the JSON `rule` can match."]
+        if a.get("constraints"):
+            note.append(f"// The JSON `constraints` on {', '.join('$' + k for k in a['constraints'])} are added to every rule.")
+        if opts:
+            note.append("// `options` carries JSON settings that have no .rr form yet.")
+        body.append(("note", note))
         body.append(("viol", vl))
         rule = a.get("rule", {})
         vs = Vars()
@@ -520,7 +530,7 @@ def translate(doc):
         for h, lits in local:
             body.append(("rule", (h, lits)))
 
-    out = head + [""]
+    out = head + ["// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.", ""]
     if prog.uses:
         out += [f".use {u}" for u in sorted(prog.uses)] + [""]
     declared = set()
@@ -530,12 +540,17 @@ def translate(doc):
             h, lits = item
             name = h.split("(")[0]
             if name in prog.decls and name not in declared:
+                if out[-1] != "":
+                    out.append("")
+                out.extend(prog.notes.get(name, []))
                 out.append(prog.decls[name])
                 declared.add(name)
             out.append(wrap(h, lits))
-        elif kind == "viol":
+        elif kind == "note":
             if out[-1] != "":
                 out.append("")
+            out.extend(item)
+        elif kind == "viol":
             out.extend(item)
         else:
             out.append(item)
@@ -544,8 +559,14 @@ def translate(doc):
         for h, lits in pending_helpers:
             name = h.split("(")[0]
             if name not in declared:
+                if out[-1] != "":
+                    out.append("")
+                out.extend(prog.notes.get(name, []))
                 out.append(prog.decls[name])
                 declared.add(name)
             out.append(wrap(h, lits))
+    if any("ast(" in l for l in out if not l.lstrip().startswith("//")):
+        i = out.index("") if "" in out else len(out)
+        out.insert(i, "// ast($n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.")
     text = "\n".join(out).rstrip() + "\n"
     return text, prog.untranslated

@@ -84,7 +84,7 @@ def main():
             rules.append({"id": doc.get("id", os.path.basename(f)), "d": doc.get("description", ""), "m": doc.get("mode", "log"),
                           "j": compact(doc), "r": rr, "u": u, "jl": pretty.count("\n") + 1, "rl": rr.count("\n")})
             total_json += len(pretty)
-            total_rr += len(rr)
+            total_rr += len("\n".join(l for l in rr.split("\n") if not l.lstrip().startswith("//")))  # code only
             atom_rules += bool(u)
         if not rules:
             continue
