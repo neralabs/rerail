@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
 import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
@@ -92,8 +91,8 @@ interface PackageManifest {
   version: string;
 }
 
-async function packageManifest(root: string): Promise<PackageManifest> {
-  const value = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as Record<string, unknown>;
+function packageManifest(root: string): PackageManifest {
+  const value = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as Record<string, unknown>;
   if (typeof value.name !== "string" || typeof value.version !== "string") {
     throw new TypeError(`Invalid Rerail package manifest: ${join(root, "package.json")}`);
   }
@@ -186,7 +185,7 @@ function usage(): string {
     "  rerail update status",
     "  rerail update --channel <tag>",
     "",
-    internalTesting("Not part of the latest release:"),
+    internalTesting(`Not part of the ${packageManifest(packageRoot).version} release:`),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
     "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
     "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]",
@@ -645,7 +644,7 @@ function refuseUnsupportedNode(args: readonly string[]): number | undefined {
 }
 
 async function main(): Promise<number> {
-  const manifest = await packageManifest(packageRoot);
+  const manifest = packageManifest(packageRoot);
   const home = defaultRerailHome();
   const updater = new ManagedUpdater({
     home,
