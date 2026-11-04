@@ -71,3 +71,18 @@ it("identifies incomplete relational input tables and source files", () => {
   expect(result.failures[0].message).toContain("functions");
   expect(result.failures[0].message).toContain("a.py");
 });
+
+it("returns canonical annotation spelling and Python repr as typed facts", () => {
+  const authored = policy();
+  authored.clauses[0]!.relational.syntax.columns.push("kind");
+  Object.assign(authored.clauses[0]!.relational.stages[0]!.pythonAst, {
+    roots: "SELECT __path,id FROM nodes WHERE kind='type'", fields: ["unparse", "repr_unparse"],
+  });
+  authored.clauses[0]!.relational.query = "SELECT n.__path path,n.__start start_byte,n.__end end_byte,n.id,h.unparse,h.repr_unparse FROM fingerprints h JOIN nodes n ON n.__path=h.__path AND n.id=h.id";
+  const rule = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(authored)), "json", capabilities);
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
+    files: [{ path: "a.py", language: "python", source: 'def f(cache: "OptimizerRunCache"):\n    return cache\n' }] }), "report"));
+  expect(result.failures).toEqual([]);
+  expect(result.violations).toHaveLength(1);
+  expect(result.violations[0].variables.row).toMatchObject({ unparse: "'OptimizerRunCache'", repr_unparse: '"\'OptimizerRunCache\'"' });
+});
