@@ -696,7 +696,7 @@ If nothing matches, the edit reports its whole file, as `touched-files` does, un
 - a file that now holds exactly its `HEAD` blob after anything but a commit moved `HEAD` (a checkout, switch, pull, merge, rebase, reset), or with `HEAD` where it was (`git restore`, `git stash`);
 - a file that now holds exactly the blob a branch or remote-tracking branch has at its path (`git show origin/main:path > path`, `git checkout main -- path`, `git restore --source main path`), unless that branch's tip is a commit made since Rerail last looked;
 - a file a move removed;
-- the files of a merge or rebase stopped on a conflict;
+- the files a merge or rebase wrote when it stopped on a conflict (a later edit to one is an edit, even if the file still holds its side of the conflict);
 - a new linked worktree's files.
 
 A file written and committed in one command stays an edit, measured from the tree before the commit. One written in the command that moved `HEAD` is measured from what Git wrote. Rerail goes by bytes: any write that leaves a file exactly as a branch has it counts as a restore, and a restore from a tag, a stash or another commit (`git show HEAD~3:path > path`) is an edit.
