@@ -314,17 +314,16 @@ pub(super) fn compile(
                         ));
                     }
                     let shape = object(value, &format!("{at}/pythonAst"))?;
-                    reject_unknown(shape, &["roots", "syntax", "fields"], &at)?;
+                    reject_unknown(shape, &["roots", "syntax", "fields", "expand"], &at)?;
                     let source = non_empty_str(shape.get("syntax"), &at)?.to_owned();
                     if syntax.as_ref().is_none_or(|s| s.name != source) {
                         return Err(invalid("pythonAst must name the declared syntax source"));
                     }
-                    let fields = names(
-                        shape
-                            .get("fields")
-                            .ok_or_else(|| invalid("pythonAst requires fields"))?,
-                        &at,
-                    )?;
+                    let fields:Vec<String> = shape.get("fields").and_then(Value::as_array)
+                        .filter(|items| !items.is_empty() && items.len()<=64)
+                        .ok_or_else(||invalid("pythonAst requires 1 to 64 field names"))?
+                        .iter().map(|v|non_empty_str(Some(v),&at).map(str::to_owned)).collect::<Result<_>>()?;
+                    if fields.iter().collect::<BTreeSet<_>>().len()!=fields.len() {return Err(invalid("Python AST fields must be distinct"));}
                     if fields.is_empty()
                         || fields
                             .iter()
@@ -349,7 +348,14 @@ pub(super) fn compile(
                         input_fields.entry(name.clone()).or_default().extend(fields);
                         last_uses.insert(name, index);
                     }
+                    let expand=shape.get("expand").map(|value| non_empty_str(Some(value),&at).map(str::to_owned)).transpose()?;
+                    match expand.as_deref() {
+                        None=>{},Some("annotation_names"|"annotations") if fields==["annotation_names"]=>{},
+                        Some("nodes") if fields.iter().all(|f|f.starts_with("ast_"))=>{},
+                        _=>return Err(invalid("pythonAst expansion requires canonical node columns or annotation_names")),
+                    }
                     Ok(relational::python_ast::Spec {
+                        expand,
                         roots,
                         syntax: source,
                         fields,
@@ -466,7 +472,7 @@ pub(super) fn compile(
                 })
                 .transpose()?;
             let query = if let Some(spec) = &python_ast {
-                relational::python_ast::shape(&spec.fields)
+                relational::python_ast::shape(spec)
             } else if reachability
                 .as_ref()
                 .is_some_and(|spec| spec.ordered_first.is_some())

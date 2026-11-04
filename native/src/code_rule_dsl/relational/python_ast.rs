@@ -12,6 +12,12 @@ pub(in crate::code_rule_dsl) struct Spec {
     pub roots: String,
     pub syntax: String,
     pub fields: Vec<String>,
+    pub expand: Option<String>,
+}
+#[derive(Clone)]
+pub(super) struct DemandSpec {
+    pub fields: Vec<String>,
+    pub expand: Option<String>,
 }
 pub(in crate::code_rule_dsl) const FIELDS: &[&str] = &[
     "dump",
@@ -23,8 +29,43 @@ pub(in crate::code_rule_dsl) const FIELDS: &[&str] = &[
     "dump_sha256",
     "column",
     "repr_unparse",
+    "ast_kind",
+    "ast_name",
+    "ast_alias",
+    "ast_module",
+    "ast_value",
+    "ast_value_kind",
+    "ast_preorder",
+    "ast_breadth_order",
+    "ast_depth",
+    "ast_parent",
+    "ast_parent_kind",
+    "ast_field",
+    "ast_index",
+    "ast_end",
+    "ast_function",
+    "ast_class",
+    "ast_op",
+    "ast_op_count",
+    "ast_start",
+    "ast_stop",
+    "ast_line",
+    "ast_context",
+    "source_lines",
+    "source_line",
+    "previous_line",
+    "annotation_names",
+    "ast_name_repr",
+    "ast_value_repr",
+    "ast_annotation",
+    "ast_annotation_repr",
 ];
-pub(in crate::code_rule_dsl) fn shape(fields: &[String]) -> String {
+pub(in crate::code_rule_dsl) fn shape(spec: &Spec) -> String {
+    let fields = match spec.expand.as_deref() {
+        Some("annotations") => vec!["annotation".into(), "name".into()],
+        Some("annotation_names") => vec!["name".into()],
+        _ => spec.fields.clone(),
+    };
     let mut columns = vec![
         "CAST(NULL AS TEXT) AS __path".to_owned(),
         "CAST(NULL AS INTEGER) AS id".to_owned(),
@@ -49,7 +90,10 @@ pub(super) fn demand(
         expand: false,
     };
     let mut demand = syntax::demand(db, &request, trees, files, work)?;
-    demand.python_ast = Some(spec.fields.clone());
+    demand.python_ast = Some(DemandSpec {
+        fields: spec.fields.clone(),
+        expand: spec.expand.clone(),
+    });
     Ok(demand)
 }
 /// Column storage, not a JSON property bag or a vector of complete syntax rows.
@@ -85,7 +129,7 @@ pub(super) fn execute(
     let mut by_document = HashMap::new();
     let mut mappings = Vec::new();
     for (index, demand) in &pending {
-        let fields = demand.python_ast.as_ref().expect("Python demand");
+        let fields = &demand.python_ast.as_ref().expect("Python demand").fields;
         let mut mapping = Vec::new();
         let prepared = contexts[*index].run(|| -> Result<()> {
             for root in &demand.roots {
@@ -100,7 +144,12 @@ pub(super) fn execute(
                     });
                     i
                 });
-                let request = facts.python_ast_request(root.node, fields.clone())?;
+                let requested = match demand.python_ast.as_ref().unwrap().expand.as_deref() {
+                    Some("nodes") => vec!["ast_nodes".into()],
+                    Some("annotations") => vec!["ast_annotations".into()],
+                    _ => fields.clone(),
+                };
+                let request = facts.python_ast_request(root.node, requested)?;
                 let row = documents[document].requests.len();
                 documents[document].requests.push(request);
                 mapping.push((document, row));
@@ -131,13 +180,65 @@ pub(super) fn execute(
         .zip(mappings)
         .map(|((index, demand), mapping)| {
             contexts[index].run(|| {
-                let fields = demand.python_ast.clone().expect("Python demand");
-                let mut output = Output::new(fields.clone());
+                let request = demand.python_ast.clone().expect("Python demand");
+                let fields = request.fields;
+                let mut output = Output::new(match request.expand.as_deref() {
+                    Some("annotations") => vec!["annotation".into(), "name".into()],
+                    Some("annotation_names") => vec!["name".into()],
+                    _ => fields.clone(),
+                });
                 let mut bytes = 0usize;
                 for (root, (document, row)) in demand.roots.iter().zip(mapping) {
                     let mut row = rows[document][row]
                         .take()
                         .expect("one consumer per requested row");
+                    if matches!(request.expand.as_deref(), Some("nodes" | "annotations")) {
+                        let encoded = row
+                            .remove(if request.expand.as_deref() == Some("nodes") {
+                                "ast_nodes"
+                            } else {
+                                "ast_annotations"
+                            })
+                            .expect("expanded canonical relation");
+                        let expanded: Vec<BTreeMap<String, String>> =
+                            serde_json::from_str(&encoded).map_err(|e| invalid(e.to_string()))?;
+                        for expanded_row in expanded {
+                            source::charge(&demand.work, 1)?;
+                            output.files.push(root.file);
+                            output.nodes.push(root.node);
+                            for (column, field) in output.fields.iter().enumerate() {
+                                let value = expanded_row
+                                    .get(field)
+                                    .ok_or_else(|| invalid("missing expanded canonical column"))?
+                                    .clone();
+                                bytes = bytes.saturating_add(value.len());
+                                if bytes > 64 * 1024 * 1024 {
+                                    return Err(invalid("Python AST output capacity"));
+                                }
+                                source::charge(&demand.work, value.len().div_ceil(256))?;
+                                output.values[column].push(value);
+                            }
+                        }
+                        continue;
+                    }
+                    if request.expand.is_some() {
+                        let encoded = row
+                            .remove("annotation_names")
+                            .expect("validated annotation field");
+                        let names: Vec<String> =
+                            serde_json::from_str(&encoded).map_err(|e| invalid(e.to_string()))?;
+                        for name in names {
+                            bytes = bytes.saturating_add(name.len());
+                            if bytes > 64 * 1024 * 1024 {
+                                return Err(invalid("Python AST output capacity"));
+                            }
+                            source::charge(&demand.work, 1)?;
+                            output.files.push(root.file);
+                            output.nodes.push(root.node);
+                            output.values[0].push(name);
+                        }
+                        continue;
+                    }
                     output.files.push(root.file);
                     output.nodes.push(root.node);
                     for (column, field) in fields.iter().enumerate() {

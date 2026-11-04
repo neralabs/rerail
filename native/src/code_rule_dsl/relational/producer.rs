@@ -82,7 +82,7 @@ pub(super) struct Demand {
     pub trees: Vec<Tree>,
     pub paths: Vec<String>,
     pub work: Arc<AtomicUsize>,
-    pub python_ast: Option<Vec<String>>,
+    pub python_ast: Option<super::python_ast::DemandSpec>,
 }
 struct Output {
     roots: Vec<u32>,

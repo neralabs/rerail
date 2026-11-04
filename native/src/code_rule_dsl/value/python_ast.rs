@@ -59,7 +59,16 @@ pub(crate) fn batch_with_metrics(documents: &[Document]) -> Result<Response, Err
         "python3.13"
     };
     let mut child = Command::new(executable)
-        .args(["-I", "-S", "-c", include_str!("python_ast/worker.py")])
+        .args([
+            "-I",
+            "-S",
+            "-c",
+            &format!(
+                "{}\n{}",
+                include_str!("python_ast/metadata.py"),
+                include_str!("python_ast/worker.py")
+            ),
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
