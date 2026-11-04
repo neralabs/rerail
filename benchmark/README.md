@@ -196,6 +196,38 @@ Fixed before any agent runs on `--split confirm`, and not changed after.
 - **Analysis.** `node --import tsx benchmark/merge-assist-stats.ts --analyze <look reports...> --arms focus-pool,posthoc`.
   Runs with errors count as failures for their arm and are reported.
 
+## Merge Assist large-task comparison: pre-registration
+
+Fixed before any agent runs on `--split heldout-large`, and not changed after. The `confirm` comparison above is
+finished, so its large tasks joined `size` as tuning data for this one.
+
+- **Question.** On large tasks (3–4 decisions at stake across at least 3 areas), does aligning the agent with the
+  team's decisions area by area, before it writes there, beat fixing after the fact, and beat today's session focus?
+- **Tuning that fixed the arm** (9 large tasks in `size` and `confirm`, 27 runs per arm): the session ranker's 12
+  picks delivered 48 of 102 target decisions, and none of those delivered were broken; ranking each area at its first
+  touch with 5 picks delivered 88 of 102 (first pass clean 20/27 against 13/27); delivering every decision covering the
+  area delivered all 102 but more were broken (15/27 clean). Delivering exactly the targets (diagnostic) was clean
+  25/27.
+- **Arms.** `focus-area5` (treatment: at an area's first touch, a background ranking of the decisions covering that
+  area, 5 picks), `posthoc` (no injection), `focus-pool` (today's session focus), and `oracle-area` (diagnostic
+  ceiling: delivers exactly the task's target decisions; it measures the headroom and decides nothing). Every arm
+  then gets the same fix rounds (at most 3) from a reviewer message naming every violating line.
+- **Fixed settings.** Index `/tmp/ma-ctx/index-v3.json` (210 distractors), seed 1, Codex 0.158 with its default
+  model, `--timeout-min 20`, the 16 `heldout-large` tasks.
+- **Primary hypotheses** (one-sided, stratified by task, Holm across the four):
+  - L1: first pass clean is higher with `focus-area5` than with `posthoc`.
+  - L2: total tokens to completion are lower with `focus-area5` than with `posthoc`.
+  - L3: time to completion with `focus-area5` is not worse than ×1.10 that of `posthoc`.
+  - L4: first pass clean is higher with `focus-area5` than with `focus-pool`.
+- **Secondary** (reported, not used for stopping): `focus-area5` against `focus-pool` on tokens and time, runs
+  needing a fix round, uncached tokens and churn; the ceiling's headroom over `focus-area5`.
+- **Looks.** Look 1: 2 trials per task and arm. Looks 2 and 3 add 2 trials each. Stop for success when all four
+  primaries reject at Holm-adjusted p ≤ 0.0221 (Pocock, three looks). Stop after look 3 whatever the result, and
+  report every primary's effect and CI.
+- **Analysis.** `node --import tsx benchmark/merge-assist-stats.ts --analyze <look reports...> --family large --arms
+  focus-area5,posthoc,focus-pool` (add `oracle-area` as a fourth arm with `--diagnostic` for the headroom lines). Runs
+  with errors count as failures for their arm and are reported.
+
 ## Steer strategies
 
 ```sh
