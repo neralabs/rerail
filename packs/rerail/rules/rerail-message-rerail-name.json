@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "rerail-message-rerail-name",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Leave the name Rerail out of rule pack messages, since the block around each one already shows it; quoted code may hold it.",
   "scope": {
@@ -9,7 +9,9 @@
       "packs/*/rules/*.json",
       "packs/*/candidates/rules/*.json"
     ],
-    "exclude": []
+    "exclude": [
+      "packs/rerail/**"
+    ]
   },
   "clauses": [
     {

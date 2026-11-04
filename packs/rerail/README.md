@@ -5,7 +5,7 @@ written down (REVIEW.md, CONTEXT.md, `src/README.md`, `docs/`) and has broken be
 repository with a `packs/*/pack.json`; it is a `repository` pack, added for the whole repository (see
 `docs/rule-packs.md`).
 
-The pack ships 34 rules: 14 in Steer mode, which steer the coding agent in the session, and 20 in Log mode, which only
+The pack ships 36 rules: 16 in Steer mode, which steer the coding agent in the session, and 20 in Log mode, which only
 record. A Steer rule matches nothing on `main` today. A rule is in Log when code the maintainers merged still breaks
 it, when the place the code should use does not exist yet, or when it should run a while before it steers. Each Log
 rule's Gaps say which, and what has to land before it can steer. Every rule is a code rule but
@@ -57,6 +57,8 @@ rules, whose files are under `.github/`, come from a copy of the tree. Live chec
 | Native engine | `rerail-origin-ranges` | Ranges mapped by `host_range`/`host_span` instead of `Origin` | Log |
 | Native engine | `rerail-store-reads-in-documents` | Content-store source or tape reads outside `workspace/documents.rs` | Log |
 | Native engine | `rerail-walk-limits-native` | A Rust repository walk's skipped folders or limits restated | Log |
+| Rule messages | `rerail-message-rerail-name` | A rule pack's violation message that names Rerail outside quoted code | Steer |
+| Rule messages | `rerail-message-tool-names` | A rule pack's violation message that names an upstream tool outside quoted code | Steer |
 
 ## Rule details
 
@@ -628,3 +630,45 @@ Gaps: Log because the options do not reach the module graph walk yet, and thread
 matches today, `MAX_GRAPH_BYTES`, `MAX_GRAPH_ENTRIES` and `IGNORED_DIRECTORIES` in `module_graph.rs`. Misses
 dependency checks such as `part == "node_modules" || part.starts_with('.')`, classifier arms, inline test loaders
 written as `==` chains or bare `matches!`, and names in doc comments. The graph's 1 MiB per-file limit is not flagged.
+
+### `rerail-message-rerail-name`
+
+Flags a violation message that names Rerail, in any case and outside quoted code: the block around every message
+already shows where the finding came from. The steer says to write "this rule" where the message says what was checked
+("this rule found no write to `$V`") and to leave the name out otherwise; it may stay in quoted code, such as
+`` `// rerail-ignore` ``. It has the scope and pattern of `rerail-message-tool-names`, below, with one word to look for.
+
+History: Part of message criterion 5, as for `rerail-message-tool-names`; quiet on every other pack's messages.
+
+Gaps: Backticks hide the name, as they do a tool's. The quoting limits are under `rerail-message-tool-names`.
+
+### `rerail-message-tool-names`
+
+Flags a violation message that names an upstream tool outside quoted code: eslint, oxlint, biome, ruff, bandit, pylint,
+flake8, clippy, sqlfluff, phpstan, psalm, phpcs (PHP_CodeSniffer), tlint, bladestan, lizard, blade-parser or unicorn, in
+any case and as a whole word (so also `typescript-eslint`). That catches the old bare messages, such as
+`Bandit B113 (request_without_timeout)`, and a pasted rule id that starts with a tool's name. The steer says to name the
+change instead, and to write "this rule" where the message says what was checked, so a hedge such as "this rule can't
+see your target version" stays. It runs on `packs/*/rules/*.json` and `packs/*/candidates/rules/*.json`, leaving out
+this pack, whose messages are about Rerail and its own files (`scripts/pack-data/eslint-expected.mjs`), and the probes
+under `candidates/probes/`.
+
+It reads a message as text, since no language parses JSON: one regex finds a violation's `message` key, in the violation
+or in the object an option chooses, skipping whole objects up to seven deep, and reads the string as tokens: words,
+`$metavariables` and `${…}`, JSON escapes, backtick spans and single-quoted spans. A word counts only outside every span,
+and also right after a JSON escape (`\nESLint`). An option's name, a case key and the rest of the document are never
+read. To add a tool, add it to the word list at the end of the pattern; the rest is shared with
+`rerail-message-rerail-name` and changes in both.
+
+History: Part of message criterion 5 (`docs/pack-format.md`, "Message"), the part that takes no judgement. #162 rewrote
+the bare messages, #173 left the wording to review and named rule ids and tool names as the problems a rule could catch,
+and #176 is that rule. Quiet on the other packs' 3,661 `message` keys across 1,058 documents; its one near miss is
+`Unexpected 'eslint' comment`, an option value in quotes.
+
+Gaps: A rule id or code is flagged only beside a tool name: 945 of the 1,058 ids contain one, the `n-`, `next-`, `react-`,
+`vitest-` and `complexity-` ones don't, and a bare code such as `B113` doesn't. Comparing a message with the document's
+`id` needs more than a regex. Backticks hide any word, so backticking a tool name silences it without fixing the message.
+An apostrophe that pairs with no quote (a Rust lifetime `'a`, `print()'s`) ends what the rule reads of a message, unless a
+later quote pairs with it: then what that quote opened counts as unquoted. Double quotes are not quoting. One report per
+violation, at its first offending word. The rest of criterion 5 (a location, "fix it or explain", a tool version, a
+matcher term) and the other criteria are left to review.

@@ -5,7 +5,8 @@ pack's [README](../README.md) covers the rules it ships, and [candidates/README.
 that were not approved.
 
 The candidates were drafted, checked and shipped: 34 rule documents in [`../rules/`](../rules/), 14 in Steer and 20 in
-Log, where a candidate whose parts needed different modes became two. Every document passes `rerail rules test`
+Log, where a candidate whose parts needed different modes became two. Two more, both Steer, came later from #176: see
+[Rule messages](#rule-messages). Every document passes `rerail rules test`
 (valid, every case right, none unchecked) and was run against the history below. Two drafts were not approved and are
 listed under [Considered and not proposed](#considered-and-not-proposed). This pull request also fixed most of the
 code the candidates found; each section's "Today" says what was fixed and what is left.
@@ -494,6 +495,23 @@ The rest of the second round, each shipped as its own rule:
 | `sqlite_master` table probes stay in storage | `rerail-table-probes-in-storage`, Log | 6 | 3 at `719a600d0`: `src/engine/catalog/setup-review.ts:30`, `src/engine/audit/audit-store.ts:42`, `src/runtime/repository-start.ts:40`; 6 on `main` now, one more from #413. Reviews asked for local probes as often as central ones |
 | The dashboard's pure modules import no I/O module | `rerail-ui-pure-modules`, Log | 2 | `ui/repo-rules.js:7-8`. The README that lists it as pure came in the same pull request as the import |
 
+## Rule messages
+
+`rerail-message-tool-names` and `rerail-message-rerail-name` came from the review of #173, not from this study: Jeff
+suggested catching the cheap message problems with a Rerail rule, so whoever edits a rule file is steered while writing
+it. They check the part of message criterion 5 that takes no judgement.
+
+- **What they guard**: #162 rewrote bare messages such as `Bandit B113 (request_without_timeout)`, so they match nothing
+  in the other packs (3,661 `message` keys across 1,058 documents as of 2026-11-04). They are there for regressions and
+  new ports.
+- **How they were checked** (on the 595 documents of the time): a probe with the same scope read all 1,312 message keys;
+  `Rerail` put at the start of every message was caught in all 1,311 violations with one, and at the end in 1,299 (the 12
+  missed are unpaired apostrophes); `ESLint Rerail NEVER` inside 267 backtick and 382 single-quoted spans gave 0 matches.
+  Two independent reviews followed, about 80 probes and 2,988 mutants, then `/rerail-create`'s gates; each fix has a case.
+- **This pack is out of their scope.** On this pack's own rules they matched 7 messages across 5 documents, none a break:
+  "whether Rerail runs here" and "Build Rerail's own pack name" have Rerail as their subject, not as the tool reporting,
+  and the tool word is in the path `scripts/pack-data/eslint-expected.mjs`.
+
 ## Considered and not proposed
 
 | Rule | Main | Today | Branch | Review | Why not |
@@ -565,8 +583,6 @@ Still open:
 - **`rerail-grammar-node-kinds` to Steer.** #400 moved the 3 in `suppress/rerail.rs`; it switches once the 11 shared
   matches in `compile/resolve.rs`, `matcher/arguments.rs`, `matcher/compare.rs` and `matcher/util.rs` move onto the
   adapter.
-- **#176.** The open #176 also adds `packs/rerail`, with two rules on pack message wording; it has to be rebased onto
-  this pack.
 - **Per-file limits.** The bridge reads at most 1 MB per file (`src/engine/code-rule/code-rule-bridge.ts:24`), the
   enforcer 32 MB. `rerail-walk-limits` does not cover it.
 - **Session paths.** The helper in `src/runtime/session-paths.ts` changed behaviour to confirm: an empty variable now

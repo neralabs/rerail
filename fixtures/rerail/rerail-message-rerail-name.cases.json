@@ -1,0 +1,50 @@
+{
+  "caught": [
+    {
+      "path": "packs/python/rules/ruff-s113-request-without-timeout.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-s113-request-without-timeout\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Rerail found a request without a timeout; pass `timeout=`.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/python/rules/bandit-b602-subprocess-popen-with-shell-equals-true.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b602-subprocess-popen-with-shell-equals-true\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": {\n          \"$option\": \"strict\",\n          \"cases\": {\n            \"true\": \"Pass the command as a list of arguments instead of `shell=True`.\"\n          },\n          \"default\": \"Pass a list of arguments instead of `shell=True`, so rerail stops reporting it.\"\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/php/candidates/rules/php-count-in-loop-condition.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"php-count-in-loop-condition\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Rerail found no write to `$V` in this loop; if `$V` grows inside it, keep the call here, otherwise hoist it.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/php/rules/phpcs-no-silenced-errors.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"phpcs-no-silenced-errors\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Add a rerail-ignore comment with a reason where the silenced call is intended.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/python/rules/bandit-b310-urllib-urlopen.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b310-urllib-urlopen\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Pass a timeout to this call.\"\n      }\n    },\n    {\n      \"id\": \"second\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"urllib\\\\.urlopen\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"Y\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Rerail found a call without a timeout.\"\n      }\n    }\n  ]\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "packs/php/candidates/rules/php-count-in-loop-condition.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"php-count-in-loop-condition\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"This rule found no write to `$V` in this loop; if `$V` grows inside it, keep the call here, otherwise hoist it.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/php/rules/phpcs-no-silenced-errors.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"phpcs-no-silenced-errors\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Add a `// rerail-ignore <id> -- <reason>` comment only where silencing is intended.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/complexity/rules/complexity-cyclomatic-python.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"complexity-cyclomatic-python\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Keep Python functions at cyclomatic complexity 6 or lower; Rerail counts a match once.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"options\",\n      \"define\": {\n        \"options\": {\n          \"notes\": {\n            \"type\": \"array\",\n            \"default\": [\n              {\n                \"message\": \"Rerail counts each match once.\"\n              }\n            ]\n          }\n        }\n      }\n    },\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Split `$NAME` into smaller functions, each with one job.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/python/candidates/probes/rules/ruff-s113-request-without-timeout.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-s113-request-without-timeout\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Rerail found a request without a timeout.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/javascript/rules/eslint-no-alert.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"eslint-no-alert\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Show this in the page instead of an alert.\"\n      }\n    },\n    {\n      \"id\": \"notes\",\n      \"define\": {\n        \"options\": {\n          \"notes\": {\n            \"type\": \"array\",\n            \"default\": [\n              {\n                \"message\": \"Rerail counts each match once.\"\n              }\n            ]\n          }\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/rerail/rules/rerail-start-state.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"rerail-start-state\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Ask isRerailStarted in src/runtime/repository-start.ts whether Rerail runs here.\"\n      }\n    }\n  ]\n}\n"
+    }
+  ]
+}
