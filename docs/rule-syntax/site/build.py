@@ -17,6 +17,7 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 RS = os.path.join(ROOT, "docs", "rule-syntax")
 sys.path.insert(0, HERE)
 import translate  # noqa: E402
+import runpy  # noqa: E402
 
 LIBS = [
     ("core", "native", "What the binary provides: tape relations, tree arithmetic, value builtins, repository readers."),
@@ -66,6 +67,7 @@ def main():
     ap.add_argument("--ndl", default=os.path.join(os.path.dirname(os.path.dirname(ROOT)), "nera-data-layer-ner1131-base-audit"))
     ap.add_argument("--out", default=os.path.join(HERE, "out"))
     a = ap.parse_args()
+    runpy.run_path(os.path.join(HERE, "pages.py"))   # writes intro.html and syntax.html
     os.makedirs(os.path.join(a.out, "data"), exist_ok=True)
 
     libs = {}
