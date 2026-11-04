@@ -200,17 +200,19 @@ base($c, $b) :- basex($c, $e), pv($e, "cls", $b).
 .decl sub(c: node, s: node)
 sub($c, $c) :- kind($c, "class_definition").
 sub($c, $s) :- sub($c, $m), base($s, $m).
-// Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance), on demand.
+// The attribute lookups the program makes: a class and the attribute read from it (or from a `super()`).
 .decl need_attr(c: node, a: sym)
 need_attr($c, $a) :- attr_of($n, $o, $a), pv($o, "cls", $c).
 need_attr($c, $a) :- attr_of($n, $o, $a), pv($o, "inst", $c).
 need_attr($b, $a) :- attr_of($n, $o, $a), pv($o, "super", $c), base($c, $b).
 need_attr($c, "__init__") :- callee($k, $e), pv($e, "cls", $c).
 need_attr($c, "__call__") :- callee($k, $e), pv($e, "inst", $c).
-need_attr($b, $a) :- need_attr($c, $a), !bound_in($c, $a), base($c, $b).
+// Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance). Computed only
+// where it is read: the demand is the magic-set relation (`.demand found`), not written by hand.
 .decl found(c: node, a: sym, at: node)
-found($c, $a, $c) :- need_attr($c, $a), bound_in($c, $a).
-found($c, $a, $x) :- need_attr($c, $a), !bound_in($c, $a), base($c, $b), found($b, $a, $x).
+found($c, $a, $c) :- bound_in($c, $a).
+found($c, $a, $x) :- base($c, $b), !bound_in($c, $a), found($b, $a, $x).
+.demand found
 .decl anc(c: node, b: node)
 anc($c, $c) :- kind($c, "class_definition").
 anc($c, $b) :- anc($c, $m), base($m, $b).
@@ -297,7 +299,7 @@ extb($e) :- basex(_, $e), builtin_ref($e, _).
 base_open($c) :- basex($c, $e), vopen($e).
 base_open($c) :- basex($c, $e), !pv($e, "cls", _), !extb($e).
 .decl attr_open(c: node, a: sym)
-attr_open($c, $a) :- found($c, $a, $at), bopen($at, $a).
+attr_open($c, $a) :- need_attr($c, $a), found($c, $a, $at), bopen($at, $a).
 attr_open($c, $a) :- need_attr($c, $a), anc($c, $b), base_open($b).
 attr_open($c, $a) :- need_attr($c, $a), anc($c, $b), iattr($b, $a).
 // Neither bound by a workspace class nor reachable through an external base: set dynamically, or an AttributeError.

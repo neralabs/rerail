@@ -18,7 +18,7 @@ fn facts() -> std::path::PathBuf {
 
 /// T's `rdl.py sql` front: prune, demand (adornment for `.demand *`), prune.
 fn program(name: &str) -> Program {
-    let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rdl"))).unwrap();
+    let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rdl"))).unwrap();
     let p = prune(parse(&src).unwrap());
     let options = Options::default();
     prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap())
@@ -389,4 +389,33 @@ fn t_programs_run_natively_over_atoms_like_t() {
     for mode in ["fixpoint", "setfix", "program"] {
         assert!(ran.iter().any(|c| c.starts_with(mode)), "no component ran natively under {mode}: {ran:?}");
     }
+}
+
+/// The product's programs (`typing/programs/`, mutated from T's: no hand-written demand, list step 29) derive
+/// T's outputs on T's facts, through the same front (prune, magic sets, prune). Their plans may differ from
+/// T's; their outputs may not.
+#[test]
+fn product_programs_derive_t_outputs() {
+    let facts = facts();
+    let mut failures = Vec::new();
+    for name in ["workload", "workload_demand", "calls"] {
+        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rdl"))).unwrap();
+        let p = prune(parse(&src).unwrap());
+        let options = Options::default();
+        let p = prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap());
+        // `found`'s demand is the magic-set relation, not a hand-written one.
+        if name == "calls" {
+            assert!(p.decls.keys().any(|rel| rel.starts_with("magic_found")), "calls: no magic relation for `found`");
+        }
+        let golden = root().join(format!("plan/golden/{name}"));
+        let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
+        for (rel, rows) in &got.outputs {
+            let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
+            let expected: Vec<&str> = expected.lines().collect();
+            if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
+                failures.push(format!("{name} {rel}: {} rows, expected {}", rows.len(), expected.len()));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
