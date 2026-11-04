@@ -1,0 +1,100 @@
+// python/imports: what each import statement binds and loads, the import-time module graph, and exports.
+// The statement parsing is lifted from calls.rdl; multi-dot relative imports use @pkg_up (native string builtin).
+.kindset scope = "module" | "function_definition" | "class_definition" | "lambda"
+.kindset fdef  = "function_definition" | "lambda"
+
+.decl impmod(i: node, m: sym)
+impmod($i, $m) :- kind($i, "import_from_statement"), field($i, "module_name", $mn), kind($mn, "dotted_name"), text($mn, $m).
+impmod($i, $p) :- kind($i, "import_from_statement"), field($i, "module_name", $mn), kind($mn, "relative_import"),
+    child($mn, $pre, 0), text($pre, "."), !child($mn, _, 1), docof($i, $d), pkg($d, $p), $p != "".
+impmod($i, @cat($p, $m)) :- kind($i, "import_from_statement"), field($i, "module_name", $mn), kind($mn, "relative_import"),
+    child($mn, $pre, 0), text($pre, "."), child($mn, $dn, 1), text($dn, $m), docof($i, $d), pkg($d, $p), $p != "".
+.decl rifrom(s: node, x: sym, m: sym, y: sym)
+rifrom($s, $y, $m, $y) :- impmod($i, $m), field($i, "name", $n), kind($n, "dotted_name"), text($n, $y), nearest($i, $s, scope).
+rifrom($s, $a, $m, $y) :- impmod($i, $m), field($i, "name", $x), kind($x, "aliased_import"), field($x, "name", $n), text($n, $y),
+    field($x, "alias", $al), text($al, $a), nearest($i, $s, scope).
+.decl ribind(s: node, x: sym, q: sym)
+ribind($s, $x, @cat($m, $y)) :- rifrom($s, $x, $m, $y).
+ribind($s, $t, $t) :- kind($i, "import_statement"), field($i, "name", $n), kind($n, "dotted_name"), child($n, $c, 0), text($c, $t), nearest($i, $s, scope).
+ribind($s, $a, $m) :- kind($i, "import_statement"), field($i, "name", $x), kind($x, "aliased_import"), field($x, "name", $n), text($n, $m),
+    field($x, "alias", $al), text($al, $a), nearest($i, $s, scope).
+// A relative import the facts cannot place (two or more dots, or outside a package): what it binds is unknown.
+.decl irel_open(i: node)
+irel_open($i) :- kind($i, "import_from_statement"), field($i, "module_name", $mn), kind($mn, "relative_import"), !impmod($i, _).
+rotgt($s, $y) :- irel_open($i), field($i, "name", $n), kind($n, "dotted_name"), text($n, $y), nearest($i, $s, scope).
+rotgt($s, $a) :- irel_open($i), field($i, "name", $x), kind($x, "aliased_import"), field($x, "alias", $al), text($al, $a), nearest($i, $s, scope).
+.decl star(s: node)
+
+// ==== interface ===================================================================================================
+.decl import_stmt(i: node)
+import_stmt($i) :- kind($i, $k), $k in {"import_statement", "import_from_statement"}.
+
+// Relative imports at any depth: `from ..a import b` in package p resolves against @pkg_up(p, 1).
+.decl rel_base(i: node, p: sym)
+rel_base($i, @pkg_up($p, $k)) :- kind($i, "import_from_statement"), field($i, "module_name", $mn),
+    kind($mn, "relative_import"), child($mn, $pre, 0), text($pre, $dots), $k = @len($dots) - 1, docof($i, $d), pkg($d, $p).
+.decl module_text(i: node, m: sym)
+module_text($i, $m) :- impmod($i, $m).
+module_text($i, $m) :- rel_base($i, $p), field($i, "module_name", $mn), !some { child($mn, $x, 1) }, $m = $p.
+module_text($i, @cat($p, $s)) :- rel_base($i, $p), field($i, "module_name", $mn), child($mn, $dn, 1), text($dn, $s).
+module_text($i, $m) :- kind($i, "import_statement"), field($i, "name", $n), dotted($n, $m).
+
+// import_alias(i, alias node, module, name, local): one row per alias; name is "" for `import m`.
+.decl import_alias(i: node, a: node, m: sym, x: sym, local: sym)
+import_alias($i, $n, $m, "", @head($m)) :- kind($i, "import_statement"), field($i, "name", $n), kind($n, "dotted_name"), text($n, $m).
+import_alias($i, $n, $m, "", $l) :- kind($i, "import_statement"), field($i, "name", $n), kind($n, "aliased_import"),
+    field($n, "name", $d), text($d, $m), field($n, "alias", $al), text($al, $l).
+import_alias($i, $n, $m, $x, $x) :- kind($i, "import_from_statement"), module_text($i, $m), field($i, "name", $n),
+    kind($n, "dotted_name"), text($n, $x).
+import_alias($i, $n, $m, $x, $l) :- kind($i, "import_from_statement"), module_text($i, $m), field($i, "name", $n),
+    kind($n, "aliased_import"), field($n, "name", $d), text($d, $x), field($n, "alias", $al), text($al, $l).
+.decl dotted(n: node, s: sym)
+dotted($n, $s) :- kind($n, "dotted_name"), text($n, $s).
+dotted($n, $s) :- kind($n, "aliased_import"), field($n, "name", $d), text($d, $s).
+.decl import_site(a: node, local: sym)
+import_site($a, $l) :- import_alias(_, $a, _, _, $l).
+.decl binds(i: node, site: node)
+binds($i, $a) :- import_alias($i, $a, _, _, _).
+
+// Modules of the workspace, and what loading one runs.
+.decl module_of(n: node, q: sym)
+module_of($n, $q) :- docof($n, $d), doc($d, _, $q).
+.decl module_path(q: sym, path: sym)
+module_path($q, $p) :- doc(_, $p, $q).
+.decl workspace_module(q: sym)
+workspace_module($q) :- doc(_, _, $q).
+.decl loads(i: node, q: sym)                  // the module and each package above it
+loads($i, $m) :- module_text($i, $m), workspace_module($m).
+loads($i, @cat($m, $x)) :- import_alias($i, _, $m, $x, _), $x != "", workspace_module(@cat($m, $x)).
+loads($i, $p) :- loads($i, $q), $p = @pkg_up($q, 1), $p != "", workspace_module($p).
+.decl pkg_above(a: sym, q: sym)
+pkg_above($a, $p) :- workspace_module($a), $p = @pkg_up($a, 1), $p != "".
+pkg_above($a, $p) :- pkg_above($a, $q), $p = @pkg_up($q, 1), $p != "".
+
+.decl import_time(i: node)                    // runs when its module is imported
+import_time($i) :- import_stmt($i), !nearest($i, _, fdef), !some { within($i, $b), type_checking_block($b) }.
+.decl runs(a: sym, b: sym)
+runs($a, $b) :- import_time($i), module_of($i, $a), loads($i, $b).
+.decl reaches(a: sym, b: sym)
+.demand reaches(bound, _)
+reaches($a, $b) :- runs($a, $b).
+reaches($a, $c) :- reaches($a, $b), runs($b, $c).
+
+// exports(m, x, q): module m exposes x, which denotes q (definitions, imports, re-export chains, star imports).
+.decl exports(m: sym, x: sym, q: sym)
+exports($m, $x, $q) :- module_of($f, $m), def_name($f, $x), nearest($f, $s, scope), kind($s, "module"), qualname($f, $q).
+exports($m, $l, $q) :- import_alias($i, _, $m2, $x, $l), import_time($i), module_of($i, $m), $x != "",
+    resolve_export(@cat($m2, $x), $q).
+exports($m, $x, $q) :- star_from($m, $m2), exports($m2, $x, $q), public_name($m2, $x).
+.decl star_from(m: sym, m2: sym)
+star_from($m, $m2) :- kind($i, "import_from_statement"), child($i, $w, _), kind($w, "wildcard_import"),
+    module_text($i, $m2), module_of($i, $m).
+.decl resolve_export(q: sym, r: sym)           // follow re-exports to the definition; outside the workspace, q itself
+resolve_export($q, $r) :- $q = @cat($m, $x), exports($m, $x, $r), $r != $q.
+resolve_export($q, $q) :- !some { $q = @cat($m, $x), exports($m, $x, _) }.
+.decl dunder_all(m: sym, x: sym)
+dunder_all($m, $x) :- kind($a, "assignment"), field($a, "left", $l), text($l, "__all__"), field($a, "right", $r),
+    child($r, $s, _), value($s, $x), module_of($a, $m), nearest($a, $sc, scope), kind($sc, "module").
+.decl public_name(m: sym, x: sym)
+public_name($m, $x) :- dunder_all($m, $x).
+public_name($m, $x) :- exports($m, $x, _), !some { dunder_all($m, _) }, !($x =~ "^_").

@@ -1,16 +1,13 @@
----
-id: data-layer:function-level-imports
-revision: 2
-mode: block
-language: python
-description: Each function-level import, classified by the evidence for why it is deferred.
-scope: {dirs: public, tests: false}
-budget:
-  by: code
-  max: {total: 7844}        # B2 splits the codes; per-code budgets are re-baselined on the first signed run
-allow:                      # header rows become allow(path, scope) facts
-  - {path: _internal/dynamic_import.py, scope: load_python_module, reason: closed deferred-import registry}
----
+.policy "data-layer:function-level-imports" revision 2
+.description "Each function-level import, classified by the evidence for why it is deferred."
+.language python
+.mode block
+.scope dirs "public"
+.scope tests false
+.budget FUNCTION_IMPORT by code { "total": 7844 }   // per-code budgets re-baselined on the first signed run
+
+.decl allow(path: sym, scope: sym)
+allow("_internal/dynamic_import.py", "load_python_module").   // closed deferred-import registry
 // B2: classifies from evidence, not from module names.
 //   typing-only          under `if TYPE_CHECKING:`, or every name it binds is read only in annotations
 //   unread               it binds nothing that is read: unused, or imported for its side effects

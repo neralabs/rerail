@@ -1,14 +1,10 @@
----
-id: data-layer:function-level-imports
-revision: 1
-mode: block            # enforcement: ratchet. A code blocks only when its count passes its budget.
-language: python
-description: Function-level imports, classified by reason.
-scope: {dirs: public, tests: false}       # the checker's `directories` and include_tests
-budget:
-  by: code
-  max: {circular-avoidance: 7615, other: 223, typing-only: 6, total: 7844}
----
+.policy "data-layer:function-level-imports" revision 1
+.description "Function-level imports, classified by reason."
+.language python
+.mode block                      // ratchet: a code blocks only when its count passes its budget
+.scope dirs "public"
+.scope tests false
+.budget FUNCTION_IMPORT by code { "circular-avoidance": 7615, "other": 223, "typing-only": 6, "total": 7844 }
 // B1: scripts/lint_function_level_imports.py at 2b1504ad, unchanged in meaning, quirks included:
 //   - the dots of a relative import are dropped (`from .x import y` classifies "x");
 //   - an import in a nested def counts against the outermost def;

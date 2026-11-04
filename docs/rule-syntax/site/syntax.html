@@ -1,0 +1,150 @@
+<div class="col">
+  <div style="display:grid;gap:14px">
+    <h1>Rerail logic: rules as Datalog</h1>
+    <p class="lede">A proposal to replace the <code>rerail.policy/v1</code> JSON with one text format. Each rule file is a small Datalog program over facts the parser provides. The name resolution, import and call libraries that rules depend on are Datalog too, so they ship as data instead of as binary code.</p>
+    <div class="stats">
+      <div class="stat"><b>{{rules}}</b><span>pack rules translated</span></div>
+      <div class="stat"><b>{{json_mb}} → {{rr_mb}}</b><span>pretty JSON → .rr</span></div>
+      <div class="stat"><b>{{atom_rules}}</b><span>rules keeping a matcher atom</span></div>
+      <div class="stat"><b>{{lib_datalog}} / {{lib_native}}</b><span>library relations: Datalog / native</span></div>
+    </div>
+  </div>
+
+  <section class="sect">
+    <div class="txt">
+      <h2>A rule file</h2>
+      <p>Directives first, then the program. A rule defines relations with <code>:-</code> and declares the findings it reports with <code>.violation</code>.</p>
+      <p>Relation names in a code view are links. Click one to see its definition. Blue names come from a Datalog library and orange names are native.</p>
+    </div>
+    <div class="code"><div data-rr>
+.policy "bandit-b102-exec-used" revision 3
+.description "Avoid exec() calls, including through import aliases."
+.language python
+.mode steer
+.scope include "**/*.py"
+
+.use python/names
+
+.violation B102(at: node) "Replace this exec call with code that performs the operation directly."
+    suppress nosec "B102"
+B102($c) :- kind($c, "call"), field($c, "function", $f), sym_of($f, "builtins.exec").
+B102($c) :- kind($c, "call"), field($c, "function", $f), kind($f, "parenthesized_expression"),
+    child($f, $g, 0), sym_of($g, "builtins.exec").
+</div></div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h2>Directives</h2>
+      <p>Directives are one per line, so tools can rewrite one without touching the logic. Approving a rule changes <code>.mode</code>, and a ratchet changes <code>.budget</code>.</p>
+    </div>
+    <div class="tablewrap"><table class="map">
+      <tr><th>Directive</th><th>Meaning</th></tr>
+      <tr><td><code>.policy "id" revision N</code></td><td>Identity. Starts the file.</td></tr>
+      <tr><td><code>.description "…"</code></td><td>One line, shown to people.</td></tr>
+      <tr><td><code>.language python</code></td><td>Grammar of the matcher atoms and the default libraries.</td></tr>
+      <tr><td><code>.mode log | steer | block</code></td><td>What Rerail does with a finding.</td></tr>
+      <tr><td><code>.possible log</code></td><td>Mode for findings that rest on unknown facts.</td></tr>
+      <tr><td><code>.scope include "glob", …</code><br><code>.scope exclude …</code></td><td>Files the rule reads.</td></tr>
+      <tr><td><code>.budget REL by code { "a": 12, "total": 40 }</code></td><td>Ratchet: block only past these counts.</td></tr>
+      <tr><td><code>.use python/names</code></td><td>Import a library's relations.</td></tr>
+      <tr><td><code>.decl r(a: node, b: sym)</code></td><td>Declare a relation. Types: <code>node</code>, <code>sym</code>, <code>int</code>.</td></tr>
+      <tr><td><code>.set name = "a" | "b"</code><br><code>.kindset name = …</code></td><td>Named constant sets, for <code>$x in name</code> and tree builtins.</td></tr>
+      <tr><td><code>.violation CODE(at: node, …) "message {col}"</code></td><td>A finding relation. Continuation lines: <code>suppress</code>, <code>fix</code>, <code>anchor</code>.</td></tr>
+      <tr><td><code>.input r(…)</code></td><td>Facts from a policy file: allowlists, baselines, registries.</td></tr>
+    </table></div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h2>Bodies</h2>
+      <p>A body is a comma-separated conjunction. Each alternative is its own rule. Negation is stratified. Values come from <code>@</code> builtins and are never used as body atoms.</p>
+    </div>
+    <div class="code"><div data-rr>
+host_tag($t)    :- kind($t, "identifier"), $t =~ "^[a-z]".             // regex on a node's text
+stop($n)        :- kind($n, $k), $k in barrier.                         // set membership
+stop($e)        :- kind($e, "jsx_element"), !router_el($e).             // negation
+stop($e)        :- kind($e, "jsx_element"), !(field($e, "open_tag", $o), host($o)).   // negated conjunction
+narrow($i)      :- import_stmt($i), !some { within($i, $b), type_checking_block($b) }.
+single($b)      :- kind($b, "block"), $k = count { child($b, _, _) }, $k = 1.
+qualname($f, @cat($m, $x)) :- def_name($f, $x), nearest($f, $s, scope), modname($s, $m).
+FUNCTION_IMPORT($i, $c) :- local_import($i),
+    $c = first { "typing-only" if !value_read($i); "test-helper" if test_fn($i); "other" }.
+</div></div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h2>From JSON to .rr</h2>
+      <p>Every JSON construct has a fixed lowering. The tree axes become native tree builtins: <code>within</code> is "below", and with a stop set it is "below, with no stop node in between". Utilities become relations. Anything without a lowering stays as a matcher atom, <code>ast($n, {…})</code>, and runs as it does today.</p>
+    </div>
+    <div class="tablewrap"><table class="map">
+      <tr><th>JSON</th><th>.rr</th></tr>
+      <tr><td><code>"kind": "call"</code></td><td><code>kind($n, "call")</code></td></tr>
+      <tr><td><code>"regex": "^exec$"</code></td><td><code>$n =~ "^exec$"</code></td></tr>
+      <tr><td><code>"pattern": "$F($$$)"</code></td><td><code>$n ~ `$F($$$)`</code>. Pattern variables are Datalog variables.</td></tr>
+      <tr><td><code>"has": {"field": "f", …}</code></td><td><code>field($n, "f", $c), …</code></td></tr>
+      <tr><td><code>"has": {…}</code></td><td><code>child($n, $c, _), …</code></td></tr>
+      <tr><td><code>"has": {"stopBy": "end", …}</code></td><td><code>within($c, $n), …</code></td></tr>
+      <tr><td><code>"inside": {"stopBy": "end", …}</code></td><td><code>within($n, $p), …</code></td></tr>
+      <tr><td><code>"inside": {"stopBy": R, …}</code></td><td><code>within($n, $p, R), …</code></td></tr>
+      <tr><td><code>"precedes"</code> / <code>"follows"</code></td><td><code>next_sibling</code>, <code>precedes</code></td></tr>
+      <tr><td><code>"all": […]</code></td><td>Commas</td></tr>
+      <tr><td><code>"any": […]</code></td><td>One rule per alternative; kinds fold into <code>$k in {…}</code></td></tr>
+      <tr><td><code>"not": …</code></td><td><code>!r($n)</code> or <code>!( … )</code></td></tr>
+      <tr><td><code>"utils": {"u": …}</code>, <code>"matches": "u"</code></td><td><code>.decl u(n: node)</code> and its rules; <code>u($n)</code></td></tr>
+      <tr><td><code>"constraints": {"F": …}</code></td><td>Literals on <code>$F</code></td></tr>
+      <tr><td><code>"value": {"eq": "x"}</code></td><td><code>value($n, "x")</code></td></tr>
+      <tr><td><code>"nthChild": 2</code></td><td><code>child(_, $n, 1)</code></td></tr>
+      <tr><td><code>"count": {…, "min": 1}</code></td><td><code>$k = count { … }, $k >= 1</code></td></tr>
+      <tr><td><code>"resolves": {"import": […]}</code></td><td><code>sym_of($n, $q), $q in {…}</code></td></tr>
+      <tr><td><code>"resolves": {"binding": {"site": …}}</code></td><td><code>ref_site($n, $s), …</code></td></tr>
+      <tr><td><code>"$option": "name"</code></td><td><code>option("name", $v)</code></td></tr>
+      <tr><td><code>mode</code>, <code>scope</code>, <code>violation</code></td><td>Directives</td></tr>
+    </table></div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h2>Native or Datalog</h2>
+      <p>The binary provides the parse tape, tree arithmetic, value builtins and file readers. Name resolution, imports, call targets, JSX structure and typing are Datalog libraries over those. A library update ships without a new binary.</p>
+      <ul class="tight">
+        <li><code>core</code>: native. Tape relations, <code>within</code>, <code>nearest</code>, config readers.</li>
+        <li><code>python/names</code>, <code>python/imports</code>, <code>python/calls</code>: lifted from Typing-support's <code>calls.rdl</code>.</li>
+        <li><code>tsx/names</code>, <code>tsx/jsx</code>: drafted for this page.</li>
+      </ul>
+    </div>
+    <div class="code"><div data-rr>
+.use python/names       // scope_node, binding, ref_site, sym_of, annotation, catches, …
+.use python/imports     // import_alias, loads, runs, reaches, exports, public_name, …
+.use python/calls       // call_target, call_open, reach, call_arg, awaited, …
+
+// core (native): kind, field, child, text, value, within, nearest, line, doc, file, tsconfig_path, …
+</div></div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h2>Unknown is not false</h2>
+      <p>A relation declared <code>must, may</code> has two sides. In a definite derivation, a negation reads the <code>may</code> side, so a definite finding never rests on an unknown. Findings reached only through <code>may</code> keep their code, carry a <code>possible</code> tag, and use <code>.possible</code>'s mode.</p>
+    </div>
+    <div class="code"><div data-rr>
+.decl passes(e: node)  must, may
+must passes($e) :- tag($e, $t), host_tag($t).
+must passes($e) :- tag($e, $t), sym_of($t, $q), component($q, $f), children_slot($f, _).
+may  passes($e) :- tag($e, $t), sym_of($t, $q), !component($q, _).   // a package with no summary
+</div></div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h2>Where to look next</h2>
+      <ul class="tight">
+        <li><a href="#packs">Pack rules</a>: every shipped rule, today's JSON beside the generated .rr.</li>
+        <li><a href="#data-layer">Data-layer rules</a>: hand-written final forms of complex data-layer checks, and the router example in four forms.</li>
+        <li><a href="#library">Library</a>: the Datalog libraries and the native core they stand on.</li>
+      </ul>
+      <p class="note" style="padding:0">Generated .rr is a display translation from today's JSON. It shows the shape; nothing here has been compiled or run against the engine.</p>
+    </div>
+  </section>
+</div>

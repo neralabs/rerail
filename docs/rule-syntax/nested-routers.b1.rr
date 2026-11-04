@@ -1,13 +1,9 @@
----
-id: local:no-explicitly-nested-routers
-revision: 1
-mode: log
-language: typescript
-description: Avoid explicitly nesting imported routers through host JSX elements and fragments.
-scope:
-  include: [src/**/*.tsx, src/**/*.jsx]
-  exclude: ["**/*.test.*", "**/*.spec.*", "**/fixtures/**"]
----
+.policy "local:no-explicitly-nested-routers" revision 1
+.description "Avoid explicitly nesting imported routers through host JSX elements and fragments."
+.language typescript
+.mode log
+.scope include "src/**/*.tsx", "src/**/*.jsx"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/fixtures/**"
 // B1: the JSON rule's meaning, unchanged.
 // Inputs: the tape relations (kind, field, text, string_value), plus ref_site(ref, site) from the
 // TypeScript scope table (the fact behind resolves.binding.site).

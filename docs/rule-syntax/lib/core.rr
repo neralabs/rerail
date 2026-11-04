@@ -1,0 +1,55 @@
+// core: what the binary provides. Everything here is native; every other library is Datalog over these.
+// Tape relations are read in place from the parse tape (decision 0026); none is a table of rows per node.
+
+// ---- the tape ----------------------------------------------------------------------------------------------------
+.native doc(d: int, path: sym, module: sym)          // one row per document; module is the dotted module name, or ""
+.native pkg(d: int, p: sym)                          // the package a document belongs to (Python)
+.native node(d: int, n: node, kind: sym, start: int, end: int)
+.native kind(n: node, k: sym)                        // a node's grammar kind
+.native field(p: node, f: sym, c: node)              // c is p's child in field f
+.native child(p: node, c: node, i: int)              // c is p's i-th named child, from 0
+.native text(n: node, s: sym)                        // source text, interned
+.native op(n: node, s: sym)                          // an anonymous token child: operators, `async`
+.native docof(n: node, d: int)
+.native line(n: node, l: int)                        // 1-based start line
+.native value(n: node, v: sym)                       // static value of a literal: strings unescaped, numbers normalised
+.native string_value(n: node, v: sym)                // a string literal's contents
+.native static_value(n: node, v: sym)                // value after following file-local constant bindings
+.native value_type(v: sym, t: sym)                   // "str", "int", "string", "number", …
+
+// ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
+.native within(n: node, a: node)                     // n is strictly below a
+.native within(n: node, a: node, stop: set)          // ... and no node of `stop` lies strictly between them
+.native nearest(n: node, a: node, set: set)          // a is n's nearest strict ancestor in `set` (a .kindset or unary relation)
+.native precedes(a: node, b: node)                   // a ends before b starts, same parent
+.native next_sibling(a: node, b: node)               // b is the named sibling right after a
+.native parsed(s: node, grammar: sym, root: node)    // root of the sub-grammar parse of string s ("annotation", embedded code)
+.native spread(n: node)                              // a spread element or argument (`*args`, `...xs`)
+
+// ---- matcher atoms ---------------------------------------------------------------------------------------------
+// text_rule(d, {…}) a document-level regex rule (forbid.regex)
+// $n ~ `pattern`      the node matches a code pattern of the clause's language; $X in the pattern binds Datalog $X
+// ast($n, { … })     a matcher term with no Datalog lowering on this page; compiled to a transducer program
+
+// ---- value builtins ($v = @f(...), never a body atom) ---------------------------------------------------------
+// @cat(a, b)       "a.b" (a == "" gives b); invertible: $q = @cat($m, $x) splits at the last dot
+// @qname(m, x)     "m#x", a symbol in module m (TypeScript)
+// @pkg_up(q, k)    q with its last k dotted segments removed ("" past the root)
+// @head(q)         the first dotted segment
+// @len(s)          length in characters
+// @dir(p), @join(dir, rel)    path parent; join and normalise (".." resolved)
+// @concat(a, b)    raw concatenation
+// @glob_sub(pat, to, s)   tsconfig `paths`: s matched against pat ("@/*"), its * substituted into to; "" if no match
+// @package_of(spec)        "react-router-dom/server" -> "react-router-dom/server" (subpath kept), "@a/b/c" -> "@a/b/c"
+// $s =~ "re"       regex test (on a node: its text); runs on the vocabulary, so it is cheap to filter by
+
+// ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
+.native file(path: sym)                              // a file in the scanned tree (Git tree facts)
+.native tsconfig(dir: sym, base_url: sym)            // tsconfig.json / jsconfig.json, `extends` followed
+.native tsconfig_for(path: sym, dir: sym)            // the tsconfig directory that governs a file
+.native tsconfig_path(dir: sym, pattern: sym, target: sym)
+.native package(dir: sym, name: sym)                 // package.json name
+.native package_export(name: sym, subpath: sym, target: sym)
+.native string_annotation(s: node)                   // a string Ruff reads as a type definition
+.native option(name: sym, v: sym)                    // a rule option's configured value (rerail.policy/v1 `options`)
+.native signed_list(path: sym, entry: sym)           // entries of a signed allowlist; refused if the signature fails

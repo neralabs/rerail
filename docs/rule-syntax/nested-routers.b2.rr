@@ -1,14 +1,10 @@
----
-id: local:no-nested-routers
-revision: 2
-mode: log
-possible: log          # findings reached only through components whose behaviour is unknown
-language: typescript
-description: A router rendered inside another router, directly or through components.
-scope:
-  include: [src/**/*.tsx, src/**/*.jsx]
-  exclude: ["**/*.test.*", "**/*.spec.*", "**/fixtures/**"]
----
+.policy "local:no-nested-routers" revision 2
+.description "A router rendered inside another router, directly or through components."
+.language typescript
+.mode log
+.possible log                    // findings reached only through components whose behaviour is unknown
+.scope include "src/**/*.tsx", "src/**/*.jsx"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/fixtures/**"
 // B2: also catches nesting through components (across files), router wrappers, re-exports,
 // namespace imports, composites that render {children}, Fragment, and <Route element={…}>.
 

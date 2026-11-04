@@ -1,0 +1,63 @@
+// tsx/jsx: JSX structure: tags, components, and what renders under what. Within one file this is tree
+// arithmetic (nearest over derived sets); across files it joins on symbols from tsx/names.
+.use tsx/names
+
+// The tag name of an element. Fragments (<>…</>) have none.
+.decl tag(e: node, t: node)
+tag($e, $t) :- kind($e, "jsx_element"), field($e, "open_tag", $o), field($o, "name", $t).
+tag($e, $t) :- kind($e, "jsx_self_closing_element"), field($e, "name", $t).
+.decl jsx_el(e: node)
+jsx_el($e) :- kind($e, $k), $k in {"jsx_element", "jsx_self_closing_element"}.
+.decl host_tag(t: node)                      // a lowercase intrinsic: div, span, svg
+host_tag($t) :- kind($t, "identifier"), $t =~ "^[a-z]".
+.decl fragment(e: node)                      // <>…</>, <Fragment>, <React.Fragment>
+fragment($e) :- kind($e, "jsx_element"), !tag($e, _).
+fragment($e) :- tag($e, $t), sym_of($t, $q), $q in {"react#Fragment"}.
+
+// component(q, f): function f defines component q (a capitalised function, or a const holding an arrow,
+// function expression, memo(...) or forwardRef(...) of one).
+.decl component(q: sym, f: node)
+component(@qname($m, $x), $f) :- kind($f, "function_declaration"), field($f, "name", $n), text($n, $x), $x =~ "^[A-Z]",
+    docof($f, $d), doc($d, _, $m).
+component(@qname($m, $x), $f) :- kind($v, "variable_declarator"), field($v, "name", $n), text($n, $x), $x =~ "^[A-Z]",
+    field($v, "value", $e), component_fn($e, $f), docof($v, $d), doc($d, _, $m).
+.decl component_fn(e: node, f: node)
+component_fn($e, $e) :- kind($e, $k), $k in {"arrow_function", "function_expression"}.
+component_fn($e, $f) :- kind($e, "call_expression"), field($e, "function", $c), sym_of($c, $q),
+    $q in {"react#memo", "react#forwardRef"}, field($e, "arguments", $as), child($as, $a, 0), component_fn($a, $f).
+
+// ---- render position ---------------------------------------------------------------------------------------------
+// Forms a rendered child passes through on its way up: {…}, && and ?:, parentheses, fragments, and callbacks in child
+// position (xs.map(x => <X/>)). Attributes, other functions and statements end the climb.
+.decl child_callback(f: node)
+child_callback($f) :- kind($f, "arrow_function"), nearest($f, $c, {"call_expression"}), field($c, "arguments", $as),
+    child($as, $f, _), nearest($c, $j, {"jsx_expression"}), !nearest($c, _, {"jsx_attribute"}).
+.decl render_stop(n: node)
+render_stop($e) :- jsx_el($e), !fragment($e).
+render_stop($n) :- kind($n, $k), $k in {"jsx_attribute", "function_declaration", "function_expression", "method_definition",
+    "class_body", "statement_block"}.
+render_stop($f) :- kind($f, "arrow_function"), !child_callback($f).
+.decl render_up(c: node, p: node)
+render_up($c, $p) :- jsx_el($c), nearest($c, $p, render_stop), jsx_el($p).
+render_up($c, $p) :- kind($c, "jsx_expression"), nearest($c, $p, render_stop), jsx_el($p).
+.decl render_attr(c: node, e: node, a: sym)  // c is the value of attribute a ("module#Tag.prop") of element e
+render_attr($c, $e, @cat($q, $x)) :- jsx_el($c), nearest($c, $at, {"jsx_attribute"}), child($at, $pn, 0), text($pn, $x),
+    nearest($at, $e, render_stop), tag($e, $t), sym_of($t, $q).
+
+// render_root(f, e): e is a top element of what component f returns.
+.decl returned(f: node, x: node)
+returned($f, $x) :- kind($r, "return_statement"), nearest($r, $f, {"function_declaration", "function_expression", "arrow_function"}),
+    child($r, $x, 0).
+returned($f, $x) :- kind($f, "arrow_function"), field($f, "body", $x), !kind($x, "statement_block").
+.decl render_root(f: node, e: node)
+render_root($f, $x) :- returned($f, $x), jsx_el($x).
+render_root($f, $e) :- returned($f, $x), jsx_el($e), within($e, $x), !some { render_up($e, $p), within($p, $x) },
+    !some { render_up($e, $x) }.
+
+// children_slot(f, s): s renders the component's children: {children} or {props.children}.
+.decl children_slot(f: node, s: node)
+children_slot($f, $s) :- kind($s, "jsx_expression"), child($s, $i, 0), text($i, "children"), ref_site($i, $site),
+    within($site, $ps), field($f, "parameters", $ps), render_root($f, $r), within($s, $r).
+children_slot($f, $s) :- kind($s, "jsx_expression"), child($s, $m, 0), kind($m, "member_expression"),
+    field($m, "property", $p), text($p, "children"), field($m, "object", $o), ref_site($o, $site),
+    field($f, "parameters", $ps), within($site, $ps), render_root($f, $r), within($s, $r).
