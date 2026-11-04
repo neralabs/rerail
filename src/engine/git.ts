@@ -1,7 +1,8 @@
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
-import { posix, win32 } from "node:path";
+import { posix, resolve, win32 } from "node:path";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -273,6 +274,66 @@ export async function headMovedOnlyByCommits(cwd: string, from: string | undefin
   const entries = reflog.split("\n");
   const moves = from === undefined ? 1 : entries.findIndex(entry => entry.startsWith(`${from} `));
   return moves > 0 && entries.slice(0, moves).every(entry => COMMIT_SUBJECT.test(entry.slice(entry.indexOf(" ") + 1)));
+}
+
+/**
+ * The index's unmerged entries under `cwd`, by path relative to it. Each value holds the path's modes, blobs and stages,
+ * so a later conflict on the same path reads differently. Empty outside a repository, and undefined when Git cannot say.
+ */
+async function unmergedEntries(cwd: string): Promise<ReadonlyMap<string, string> | undefined> {
+  const listed = await gitOutput(cwd, ["ls-files", "--unmerged", "-z"]);
+  if (listed === undefined) return undefined;
+  const entries = new Map<string, string>();
+  for (const record of listed.split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab < 0) continue;
+    const path = record.slice(tab + 1);
+    entries.set(path, `${entries.get(path) ?? ""}${record.slice(0, tab)}\n`);
+  }
+  return entries;
+}
+
+/** The file `cwd`'s checkout keeps its index in (a linked worktree's is under the main `.git`); undefined when Git cannot say. */
+async function gitIndexPath(cwd: string): Promise<string | undefined> {
+  const path = await gitOutput(cwd, ["rev-parse", "--git-path", "index"]);
+  return path === undefined ? undefined : resolve(cwd, path);
+}
+
+async function fileStamp(path: string): Promise<string | undefined> {
+  try {
+    const info = await stat(path);
+    return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Reads the index's unmerged entries under a folder ({@link unmergedEntries}, empty when Git cannot say), for a caller
+ * that asks every pass: it starts a Git process only when the folder's index file changed since the last read, and
+ * otherwise costs one `stat` (plus one Git process the first time, to find the file). Git replaces that file with a new
+ * one on every write, so a write changes its inode even inside one clock tick. A folder whose file cannot be found or
+ * stamped is read every time, so this can cost more, never miss a conflict.
+ */
+export function gitUnmergedReader(): (cwd: string) => Promise<ReadonlyMap<string, string>> {
+  const indexes = new Map<string, string>();
+  const held = new Map<string, { readonly stamp: string; readonly entries: ReadonlyMap<string, string> }>();
+  return async cwd => {
+    let index = indexes.get(cwd);
+    if (index === undefined) {
+      index = await gitIndexPath(cwd);
+      if (index !== undefined) indexes.set(cwd, index);
+    }
+    // Stamped before the read: an index written between the two reads as changed next time.
+    const stamp = index === undefined ? undefined : await fileStamp(index);
+    const last = held.get(cwd);
+    if (last !== undefined && last.stamp === stamp) return last.entries;
+    held.delete(cwd);
+    const entries = await unmergedEntries(cwd);
+    if (entries === undefined) return new Map<string, string>();
+    if (stamp !== undefined) held.set(cwd, { stamp, entries });
+    return entries;
+  };
 }
 
 /** One object body of `git cat-file --batch` output being read: kept, or skipped as it streams past. */

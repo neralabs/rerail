@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { gitCandidates, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobs, runGit } from "../../src/engine/git.js";
+import { gitCandidates, gitHead, gitInstalled, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobs, runGit } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
 const roots: string[] = [];
@@ -87,6 +87,114 @@ describe("gitHead and headMovedOnlyByCommits", () => {
     git(root, "switch", "--quiet", "-c", "other");
     expect(await headMovedOnlyByCommits(root, undefined)).toBe(false);
     expect(await headMovedOnlyByCommits(root, "0".repeat(40))).toBe(false);
+  });
+});
+
+describe("gitUnmergedReader", () => {
+  const gitUnmerged = async (cwd: string) => await gitUnmergedReader()(cwd);
+  /** A repository stopped on a conflict over `a.py`, on branch `first`, merging `second`. */
+  async function conflicted(): Promise<string> {
+    const root = await repository({ "a.py": "1\n" });
+    git(root, "branch", "first");
+    git(root, "branch", "second");
+    for (const branch of ["second", "first"]) {
+      git(root, "checkout", "--quiet", branch);
+      await writeFile(join(root, "a.py"), `${branch}\n`);
+      git(root, "commit", "--quiet", "-am", branch);
+    }
+    expect(() => git(root, "merge", "--quiet", "second")).toThrow();
+    return root;
+  }
+
+  it("has nothing outside a repository, or where nothing is unmerged", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "rerail-git-unmerged-"));
+    roots.push(outside);
+    expect(await gitUnmerged(outside)).toEqual(new Map());
+    expect(await gitUnmerged(await repository({ "a.py": "1\n" }))).toEqual(new Map());
+  });
+
+  it("names each unmerged path relative to the folder, and reads differently for a different conflict on it", async () => {
+    const root = await repository({ "seed.py": "1\n" });
+    await mkdir(join(root, "src"));
+    await writeFile(join(root, "src", "a.py"), "1\n");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "source");
+    git(root, "branch", "first");
+    git(root, "branch", "second");
+    const commitOn = async (branch: string, text: string) => {
+      git(root, "checkout", "--quiet", branch);
+      await writeFile(join(root, "src", "a.py"), text);
+      git(root, "commit", "--quiet", "-am", branch);
+    };
+    await commitOn("first", "first\n");
+    await commitOn("second", "second\n");
+    git(root, "checkout", "--quiet", "first");
+    expect(() => git(root, "merge", "--quiet", "second")).toThrow();
+    const conflict = await gitUnmerged(join(root, "src"));
+    expect([...conflict.keys()]).toEqual(["a.py"]);
+    expect(await gitUnmerged(root)).toEqual(new Map([["src/a.py", conflict.get("a.py")]]));
+    git(root, "merge", "--abort");
+    await commitOn("first", "first again\n");
+    expect(() => git(root, "merge", "--quiet", "second")).toThrow();
+    expect((await gitUnmerged(root)).get("src/a.py")).not.toBe(conflict.get("a.py"));
+  });
+
+  it("holds its read while the index file is unchanged, and reads again once Git has written it", async () => {
+    const root = await conflicted();
+    const read = gitUnmergedReader();
+    const first = await read(root);
+    expect([...first.keys()]).toEqual(["a.py"]);
+    expect(await read(root)).toBe(first);
+    await writeFile(join(root, "a.py"), "edited\n");
+    expect(await read(root)).toBe(first);
+    git(root, "add", "a.py");
+    expect(await read(root)).toEqual(new Map());
+  });
+
+  it("does not take its own reads, or Git's other reads, for a change to the index", async () => {
+    const root = await conflicted();
+    const read = gitUnmergedReader();
+    const first = await read(root);
+    await gitHead(root);
+    await readGitBlobs(root, [":2:./a.py", ":3:./a.py", "HEAD:./a.py"], { maxBlobBytes: 1024 });
+    await headMovedOnlyByCommits(root, undefined);
+    expect(await read(root)).toBe(first);
+  });
+
+  it("follows a linked worktree's own index, from a folder inside it too", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    await mkdir(join(root, "src"));
+    await writeFile(join(root, "src", "b.py"), "1\n");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "source");
+    git(root, "branch", "first");
+    git(root, "branch", "second");
+    const worktree = `${root}-worktree`;
+    roots.push(worktree);
+    git(root, "worktree", "add", "--quiet", worktree, "first");
+    const read = gitUnmergedReader();
+    const inside = join(worktree, "src");
+    expect(await read(worktree)).toEqual(new Map());
+    expect(await read(inside)).toEqual(new Map());
+    git(root, "checkout", "--quiet", "second");
+    await writeFile(join(root, "src", "b.py"), "second\n");
+    git(root, "commit", "--quiet", "-am", "second");
+    await writeFile(join(inside, "b.py"), "first\n");
+    git(worktree, "commit", "--quiet", "-am", "first");
+    expect(() => git(worktree, "merge", "--quiet", "second")).toThrow();
+    expect([...(await read(worktree)).keys()]).toEqual(["src/b.py"]);
+    expect([...(await read(inside)).keys()]).toEqual(["b.py"]);
+    expect(await read(root)).toEqual(new Map());
+  });
+
+  it("reads every time, and still answers, once the index file is gone", async () => {
+    const root = await conflicted();
+    const read = gitUnmergedReader();
+    expect([...(await read(root)).keys()]).toEqual(["a.py"]);
+    await rm(join(root, ".git", "index"));
+    const gone = await read(root);
+    expect(gone).toEqual(new Map());
+    expect(await read(root)).not.toBe(gone);
   });
 });
 
