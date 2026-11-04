@@ -1,0 +1,1 @@
+`rerail update rollback` is removed, with the database restore it ran. `rerail update` still copies the database to `rerail.sqlite.pre-update` first: to put it back, stop Rerail and copy it over `rerail.sqlite`. `rerail update status` names the previous version, which stays under `versions/`.

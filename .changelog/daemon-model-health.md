@@ -1,0 +1,1 @@
+`/healthz`, `rerail status` and the dashboard check the bundled model's files against its manifest and name the one that fails, instead of reporting a daemon healthy with a broken model. The build refuses a Git LFS pointer in the model's place.
