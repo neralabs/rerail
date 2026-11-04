@@ -34,3 +34,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0033 | A label pass's roots are a rule over each document's codes, not a node list | accepted |
 | 0034 | The device keeps no per-thread memory (the driver's scratch, sized for every thread in flight and kept): walks run in pools with device stacks, pattern equality walks preorder runs, pattern kernels hold 8 patterns each | accepted |
 | 0035 | Cross-file rounds bound file crossings: a recursive atom whose node may be in another file reads the previous round (`@doc` split); digest cutoff; k = 2 | accepted |
+| 0036 | Rules are Datalog (joins, negation, recursion through facts, name sets, string tests, types, options); tree axes are built-ins computed as tapes in the transducer, as `nearest` is; the NFA is optimized and an optimizer may lower tape-shaped rules to tapes | accepted |
