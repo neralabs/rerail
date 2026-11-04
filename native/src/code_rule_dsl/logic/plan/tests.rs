@@ -563,6 +563,43 @@ async_in_fts($s) :- doc($d, $p, _), @glob($p, "impl/*/fts/**"), node($d, $n, "id
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The tree axes (decision 0036): `inside($n, $a, set)` holds every ancestor of `$n` whose kind is in the set, not
+/// only the nearest; `has($a, $n, set)` is the same pairs read from the ancestor; both negate.
+#[test]
+fn rules_read_inside_and_has_as_tape_relations() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("axes");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def outer():\n    def inner():\n        g()\n    f()\nh()\n").unwrap();
+    let program = r#"
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.input node, field, text
+.kindset fn = "function_definition"
+.decl callee(c: node, s: sym)
+callee($c, $s) :- node(_, $c, "call", _, _), field($c, "function", $x), text($x, $s).
+.decl fname(f: node, s: sym)
+fname($f, $s) :- node(_, $f, "function_definition", _, _), field($f, "name", $x), text($x, $s).
+// Every function a call is inside.
+.decl call_in(c: sym, f: sym)
+call_in($c, $f) :- callee($n, $c), inside($n, $a, fn), fname($a, $f).
+// Functions that have a call to g somewhere below them.
+.decl calls_g(f: sym)
+calls_g($f) :- fname($a, $f), has($a, $n, fn), callee($n, "g").
+// Calls inside no function.
+.decl top(c: sym)
+top($c) :- callee($n, $c), !inside($n, _, fn).
+.output call_in, calls_g, top
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("call_in"), "f\touter\ng\tinner\ng\touter\n");
+    assert_eq!(read("calls_g"), "inner\nouter\n");
+    assert_eq!(read("top"), "h\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A measurement, not a check: "calls inside a function" asked three ways over a corpus (`RERAIL_MEASURE_CORPUS`),
 /// one way per run (`RERAIL_MEASURE` = `tape`, `interval` or `recursive`), each through the corpus runner. Prints the
 /// rows and each phase's CPU (user + system).

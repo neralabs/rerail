@@ -100,8 +100,8 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "op" => &["n", "s"],
         "pkg" => &["d", "p"],
         "tape" => &["n", "par", "size", "depth"],
-        // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`).
-        rel if rel.starts_with("nearest_") => &["n", "a"],
+        // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).
+        rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &["n", "a"],
         // The `py.*` families (`facts::vtab::syntax::PY`).
         rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::PY.iter().position(|&p| p == rel).map(|i| crate::code_rule_dsl::facts::vtab::syntax::PY_COLUMNS[i])?,
         _ => return None,

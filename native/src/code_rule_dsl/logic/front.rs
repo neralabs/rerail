@@ -443,6 +443,19 @@ impl Parser<'_> {
     fn atom(&mut self, neg: bool) -> Result<Atom, Error> {
         let rel = self.id()?;
         self.p("(")?;
+        // Tree axes (decision 0036): `inside($n, $a, set)`, $a a strict ancestor of $n whose kind is in the set, and
+        // `has($a, $n, set)`, the same pairs read from the ancestor. Both are the input relation `inside_<set>(n, a)`,
+        // which the transducer makes (`Lowered::transduce_nearest`).
+        if (rel == "inside" || rel == "has") && matches!(self.peek_at(4), Tok::Id(_)) {
+            let x = self.term()?;
+            self.p(",")?;
+            let y = self.term()?;
+            self.p(",")?;
+            let set = self.id()?;
+            self.p(")")?;
+            let args = if rel == "inside" { vec![x, y] } else { vec![y, x] };
+            return Ok(Atom { rel: format!("{AXIS}{set}"), args, neg, gated: false });
+        }
         let args = self.list(Self::term)?;
         self.p(")")?;
         Ok(Atom { rel, args, neg, gated: false })
@@ -653,9 +666,20 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
             return Err(Error::UnboundedLattice { relation: relation.clone() });
         }
     }
+    // The tree axes' relations are inputs, made by the transducer.
+    let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).filter(|r| r.starts_with(AXIS)).collect();
+    for rel in axes {
+        if !prog.decls.contains_key(&rel) {
+            prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+            prog.inputs.push(rel);
+        }
+    }
     cycles::check(&prog)?;
     Ok(prog)
 }
+
+/// The prefix of a tree axis's relation: `inside_<set>(n, a)` (decision 0036).
+pub(in crate::code_rule_dsl) const AXIS: &str = "inside_";
 
 /// Dependency edges: head → {(dependency, negative)}; an aggregate's is negative, a gated negation's is not.
 pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, bool)>>;

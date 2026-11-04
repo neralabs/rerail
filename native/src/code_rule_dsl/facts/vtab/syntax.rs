@@ -677,7 +677,7 @@ impl Batch {
 }
 
 /// `nearest_<set>(n, a)`: `a` is `n`'s nearest strict ancestor of a kind in the set, a row per node that has
-/// one, by `n` and by `a`. Made by the transducer's file-local FIX (`typing::file_local::nearest`). Rows are node rows
+/// one, by `n` and by `a`; or `inside_<set>(n, a)`, a row per such ancestor (decision 0036). Made by the transducer's file-local FIX (`typing::file_local::nearest`). Rows are node rows
 /// of the batch (`u32`), ids made on read.
 struct Nearest {
     batch: Arc<Batch>,
@@ -705,7 +705,7 @@ impl Source for Nearest {
         self.node.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
-        let per = if column == 0 { 1 } else { 16 };
+        let per = if column == 0 { 2 } else { 16 };
         if batch { per * 8 } else { per }
     }
     fn indexed(&self, column: usize) -> bool {
@@ -716,7 +716,9 @@ impl Source for Nearest {
         for &v in values {
             let Some(at) = self.row_of(v) else { continue };
             if column == 0 {
-                out.extend(self.node.binary_search(&at).ok());
+                // One row per node for `nearest_<set>`, a run of them for `inside_<set>`.
+                let start = self.node.partition_point(|&r| r < at);
+                out.extend((start..self.node.len()).take_while(|&r| self.node[r] == at));
             } else {
                 let by_ancestor = self.by_ancestor.get_or_init(|| {
                     let mut rows: Vec<u32> = (0..self.node.len() as u32).collect();
@@ -734,8 +736,9 @@ impl Source for Nearest {
     }
 }
 
-/// T's base relations over `documents` (`sources`), and `nearest_<set>(n, a)` for each of `sets` (a name
-/// and its kind atoms), made by the transducer's file-local FIX bound as `binding`.
+/// T's base relations over `documents` (`sources`), and each of `sets` (a relation and its set's kind atoms),
+/// made by the transducer's file-local FIX bound as `binding`: `nearest_<set>(n, a)`, the nearest ancestor in the
+/// set, or `inside_<set>(n, a)`, every one (decision 0036).
 pub(crate) fn with_nearest(
     store: &ContentStore,
     documents: Vec<Document>,
@@ -751,11 +754,20 @@ pub(crate) fn with_nearest(
     let found = file_local::nearest(&file_local::Trees { parent: &parent, kind: &kind }, &kinds, binding)?;
     for ((name, _), ancestors) in sets.iter().zip(found) {
         let (mut node, mut ancestor) = (Vec::new(), Vec::new());
-        for (row, &a) in ancestors.iter().enumerate().filter(|(_, a)| **a != file_local::NONE) {
-            node.push(row as u32);
-            ancestor.push(a);
+        // `inside_<set>` (decision 0036): every ancestor in the set, the chain of nearest ones.
+        let all = name.starts_with(crate::code_rule_dsl::logic::front::AXIS);
+        for (row, &first) in ancestors.iter().enumerate() {
+            let mut a = first;
+            while a != file_local::NONE {
+                node.push(row as u32);
+                ancestor.push(a);
+                if !all {
+                    break;
+                }
+                a = ancestors[a as usize];
+            }
         }
-        out.push((format!("nearest_{name}"), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
+        out.push((name.clone(), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
     }
     Ok(out)
 }

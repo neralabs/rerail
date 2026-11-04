@@ -877,7 +877,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "intval" | "op" | "tape" | "line" => &[&["n"]],
         "doc" | "pkg" => &[&["d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
-        rel if rel.starts_with("nearest_") => &[&["n"], &["a"]],
+        rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &[&["n"], &["a"]],
         _ => &[],
     };
     lists.iter().map(|l| l.iter().map(|c| (*c).to_owned()).collect()).collect()
