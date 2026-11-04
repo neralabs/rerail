@@ -77,7 +77,7 @@ The user chose the full §20 scope: the kernels on the wave's path read the v9np
      `label_passes::drop_pipelines`). The pipeline caches are now process-wide so that they can
      be dropped.
 3. **The device view** (`metal_tape.metal`):
-   - `DocView` (64 B) holds a document's offsets in its slab and its `nodeBase` in the batch's
+   - `DocView` (96 B) holds a document's offsets in its slab and its `nodeBase` in the batch's
      numbering. Labels are still bit rows over that numbering.
    - The accessors read kind, field, flags, classes, start and end, size, parent, next sibling (any
      or named), first child, k-th child and child count. They also read source bytes and line
@@ -94,7 +94,17 @@ The user chose the full §20 scope: the kernels on the wave's path read the v9np
      local index. Children are followed by link, not by a children table; the pattern kernel's
      child scans keep their last child (`Kids`), so a scan in order hops once a child. Grammar
      classes come from the code table, derived classes from the prefix.
-   - The interpreter, the sweep and the JIT still read the packed batch until stage 5.
+   - **Landed (stage 5):** `run_batch` compiles resident (`RERAIL_RESIDENT`) for the label passes
+     and the sweep. Per task, node, child, line and file tables over the task's document answer in
+     the batch's numbering, so the opcode bodies are unchanged. A node record is made from the
+     tape when read; children come from child lists built at admission (8 bytes a node); `source`
+     is the document's bytes at the batch's offsets. The packed variant stays for the general
+     backend and the JIT, which are not on the wave's path, until step 31.
+   - **Label output is bits:** a label program marks its route as it publishes (its root or its
+     captured nodes, into its scratch row, tally or a sweep's label; `packed_batch::MARKS`). It
+     keeps no result records or final captures; those were reserved per task at their worst case
+     and summed past the budget (O38). Scratch rows and tallies are parts of the label state
+     buffer, which `run_batch` already binds as `supertypes`; the header names their words.
 5. **In-memory admission (`admit_docs`):** a batch whose tapes were restored before it ran (every
    caller but the wave, and every test) is admitted from its documents: a `TapeDoc` keeps the
    `TapeImage` it was restored from and its stored bytes' SHA-256 (computed once). The image is

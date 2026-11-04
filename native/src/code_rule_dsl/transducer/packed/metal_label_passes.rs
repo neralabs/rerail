@@ -234,8 +234,6 @@ struct Kept {
     /// The batch's files and (node, class) pairs, before the label prefix.
     files: Vec<BatchFile>,
     supertypes: Vec<MetalSupertype>,
-    scratch: MappedBuffer,
-    counts: MappedBuffer,
     stacks: Option<MappedBuffer>,
 }
 
@@ -708,8 +706,13 @@ struct Tapes {
     children: MappedBuffer,
     source: MappedBuffer,
     line_starts: MappedBuffer,
-    /// The label prefix, then the grammar's (node, class) pairs.
+    /// The label state: the prefix (head, labels, the sweeps' words), the scratch rows and the
+    /// tallies (at `scratch_at`, `counts_at`, bytes), then the grammar's (node, class) pairs. One
+    /// buffer, so a marking program (`packed_batch::MARKS`) reaches its rows from `run_batch`'s
+    /// `supertypes`.
     supertypes: MappedBuffer,
+    scratch_at: u64,
+    counts_at: u64,
     /// Elements in `supertypes`: a label batch's header says so, which `run_batch` reads as
     /// "the prefix head is there".
     supertype_count: u32,
@@ -780,8 +783,6 @@ struct Runner<'a> {
     label_rows: Option<Vec<u32>>,
     words: usize,
     nodes: usize,
-    scratch: MappedBuffer,
-    counts: MappedBuffer,
     flags: MappedBuffer,
     workspace: Option<Workspace>,
     command: CommandBuffer,
@@ -1055,11 +1056,8 @@ fn encode(
         .buffers
         .and_then(|buffers| buffers.0.lock().ok()?.take())
         .filter(|kept| kept.key == key);
-    if let Some(kept) = kept.as_mut() {
+    if kept.is_some() {
         crate::code_rule_dsl::prof::count("gpu.kept", 1);
-        for buffer in [&kept.scratch, &kept.counts] {
-            unsafe { std::ptr::write_bytes(buffer.buffer.contents().cast::<u8>(), 0, buffer.buffer.length() as usize) };
-        }
     }
     mark("before pipelines");
     let queue = device.new_command_queue();
@@ -1080,19 +1078,11 @@ fn encode(
         command,
         queue,
         files,
-        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, kept.as_mut(), rows.as_ref()))?,
+        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, kept.as_mut(), rows.as_ref(), [scratch_rows(plan) * words, tally_rows(plan) * nodes]))?,
         plan_labels: prefix_labels,
         label_rows: rows.as_ref().map(|(_, row_of)| row_of.clone()),
         words,
         nodes,
-        scratch: match kept.as_mut().filter(|kept| kept.scratch.buffer.length() as usize >= 4 * scratch_rows(plan) * words) {
-            Some(kept) => MappedBuffer::wrap(kept.scratch.buffer.clone()),
-            None => MappedBuffer::zeroed::<u32>(device, scratch_rows(plan) * words)?,
-        },
-        counts: match kept.as_mut().filter(|kept| kept.counts.buffer.length() as usize >= 4 * tally_rows(plan) * nodes) {
-            Some(kept) => MappedBuffer::wrap(kept.counts.buffer.clone()),
-            None => MappedBuffer::zeroed::<u32>(device, (tally_rows(plan) * nodes).max(1))?,
-        },
         flags: MappedBuffer::zeroed::<u32>(device, 6)?,
         workspace: None,
         retained: Vec::new(),
@@ -1202,8 +1192,6 @@ fn encode(
             line_starts: MappedBuffer::wrap(runner.tapes.line_starts.buffer.clone()),
             files,
             supertypes,
-            scratch: MappedBuffer::wrap(runner.scratch.buffer.clone()),
-            counts: MappedBuffer::wrap(runner.counts.buffer.clone()),
             stacks: runner.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone())),
         };
         if let Ok(mut slot) = buffers.0.lock() {
@@ -1250,6 +1238,7 @@ fn tapes(
     words: usize,
     kept: Option<&mut Kept>,
     rows: Option<&(Vec<u32>, Vec<u32>)>,
+    [scratch_words, count_words]: [usize; 2],
 ) -> Result<Tapes, Error> {
     let prefix_labels = rows.map_or(plan.labels, |(present, _)| present.len());
     // The batch's own parts: kept from an earlier run (moved out, and back with `base`), or built.
@@ -1278,7 +1267,12 @@ fn tapes(
     };
     // The labels, then the sweeps' round, failure and per group (by step) changes (`label_sweep`),
     // then the batch's (node, class) pairs: written in place, with no host copy of the labels.
-    let prefix = 1 + (prefix_labels * words + 2 + 2 * plan.steps.len()).div_ceil(2);
+    // The scratch rows and tallies after it, each at 256 bytes (32 pairs), as a buffer offset is
+    // bound; the pairs after them.
+    let at = |pairs: usize| pairs.div_ceil(32) * 32;
+    let scratch_pair = at(1 + (prefix_labels * words + 2 + 2 * plan.steps.len()).div_ceil(2));
+    let counts_pair = at(scratch_pair + scratch_words.div_ceil(2));
+    let prefix = at(counts_pair + count_words.max(1).div_ceil(2));
     let count = prefix + base_supertypes.len();
     let supertypes = MappedBuffer::zeroed::<MetalSupertype>(device, count)?;
     unsafe {
@@ -1321,6 +1315,8 @@ fn tapes(
         MappedBuffer::from_slice(device, &table.views)?
     };
     Ok(Tapes {
+        scratch_at: 8 * scratch_pair as u64,
+        counts_at: 8 * counts_pair as u64,
         table,
         docs,
         files: MappedBuffer::from_slice(device, &batch_files)?,
@@ -1687,18 +1683,32 @@ impl Runner<'_> {
                 self.prepared.insert(key, None);
                 continue;
             }
-            // A program that marks its roots (mode 0, `label_sink`) reads one result per task, not a
-            // page of them: its tasks keep their first and size their results by it (O35).
-            for (program, (_, _, mode, _)) in batch.programs.iter_mut().zip(&passes) {
+            // A label pass's output is bits, not records: each program marks its route as it
+            // publishes (`packed_batch::MARKS`, `label_mark` in `run_task_in`): its root or its
+            // captured nodes, into its scratch row or its tally slot (a sweep's: its label), so it
+            // keeps no results or final captures. (Kept as records, both were reserved per task
+            // at their worst case and summed: 4.2 M results and 8.4 M captures on eight files,
+            // over the buffer budget.) A program that marks its roots keeps its first (O35).
+            use super::super::packed_batch::{MARKS, MARKS_CAPTURED, ONE_RESULT, TALLY};
+            for (program, (_, _, mode, slot)) in batch.programs.iter_mut().zip(&passes) {
+                if *slot >= 1 << 22 {
+                    return Err(Error::BackendCapacity);
+                }
+                program.flags |= MARKS | (slot << 8);
+                if matches!(*mode, 1 | 3) {
+                    program.flags |= MARKS_CAPTURED;
+                }
+                if matches!(*mode, 2 | 3) {
+                    program.flags |= TALLY;
+                }
                 if *mode == 0 {
-                    program.flags |= super::super::packed_batch::ONE_RESULT;
+                    program.flags |= ONE_RESULT;
                 }
             }
+            // A sweep's rows are its labels (after the prefix's head); a level's, its scratch rows.
+            (batch.header.mark_scratch, batch.header.mark_counts) =
+                if sweep.is_some() { (2, 0) } else { ((self.tapes.scratch_at / 4) as u32, (self.tapes.counts_at / 4) as u32) };
             if let Some(levels) = sweep {
-                // The route in the program's flags marks its label as it publishes (`label_sweep`).
-                for (program, (_, _, mode, target)) in batch.programs.iter_mut().zip(&passes) {
-                    program.flags |= 0x8000_0000 | (u32::from(*mode == 1) << 30) | (target << 8);
-                }
                 // Each program's and complement's place among a node's work: the group's order.
                 let (mut positions, mut ops) = (Vec::new(), Vec::new());
                 for (at, pass) in levels.iter().flatten().enumerate() {
@@ -1862,8 +1872,8 @@ impl Runner<'_> {
             self.walk(passes.as_ptr() as usize)?;
         }
         let labels = self.tapes.supertypes.buffer.clone();
-        let (scratch, counts, flags) =
-            (self.scratch.buffer.clone(), self.counts.buffer.clone(), self.flags.buffer.clone());
+        let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
+        let (scratch, counts) = ((&state, self.tapes.scratch_at), (&state, self.tapes.counts_at));
         if !matches.is_empty() {
             let item_count = (matches.len() / 5) as u32;
             let (items, constraints) = (self.upload(&matches)?, self.upload(&constraints)?);
@@ -1876,7 +1886,7 @@ impl Runner<'_> {
                 &[
                     (&docs, 0),
                     (&labels, 8),
-                    (&scratch, 0),
+                    scratch,
                     (&flags, 0),
                     (&items, 0),
                     (&constraints, 0),
@@ -1895,7 +1905,7 @@ impl Runner<'_> {
         };
         self.kernel(
             1,
-            &[(&labels, 8), (&scratch, 0), (&flags, 0), (&settles, 0), (&counts, 0)],
+            &[(&labels, 8), scratch, (&flags, 0), (&settles, 0), counts],
             shape,
             target_count * self.words,
         );
@@ -2100,10 +2110,10 @@ impl Runner<'_> {
             passes,
             words,
             items,
-            self.scratch.buffer.clone(),
+            tapes.supertypes.buffer.clone(),
             self.flags.buffer.clone(),
             texts,
-            self.counts.buffer.clone(),
+            tapes.supertypes.buffer.clone(),
             group_levels,
             ops,
         ];
@@ -2121,8 +2131,15 @@ impl Runner<'_> {
         encoder.set_label(KERNELS[pipeline]);
         crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[pipeline]), 1);
         encoder.set_compute_pipeline_state(&state);
+        // Scratch (5) and the tallies (8) are parts of the label state.
+        let (scratch_at, counts_at) = (self.tapes.scratch_at, self.tapes.counts_at);
         for (index, buffer) in buffers.iter().take(11).enumerate() {
-            encoder.set_buffer(index as u64, Some(buffer), 0);
+            let offset = match index {
+                5 => scratch_at,
+                8 => counts_at,
+                _ => 0,
+            };
+            encoder.set_buffer(index as u64, Some(buffer), offset);
         }
         encoder.set_bytes(11, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
         if let Some(stacks) = buffers.get(11) {
@@ -2342,17 +2359,17 @@ impl Runner<'_> {
         let shape = Shape { item_count: threads as u32, target_count: count as u32, steps, ..self.shape() };
         let tapes = &self.tapes;
         let (docs, head) = (tapes.docs.buffer.clone(), tapes.supertypes.buffer.clone());
-        let (scratch, flags, counts) = (self.scratch.buffer.clone(), self.flags.buffer.clone(), self.counts.buffer.clone());
+        let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
         let buffers = [
             (&docs, 0),
             (&head, 0),
             (&passes, 0),
             (&words, 0),
             (&items, 0),
-            (&scratch, 0),
+            (&state, self.tapes.scratch_at),
             (&flags, 0),
             (&texts, 0),
-            (&counts, 0),
+            (&state, self.tapes.counts_at),
             (&stacks, 0),
         ];
         if crate::code_rule_dsl::prof::on() {
@@ -2399,8 +2416,7 @@ impl Runner<'_> {
             lease.statuses.buffer.clone(),
         );
         self.split("programs");
-        let (scratch, counts, flags) =
-            (self.scratch.buffer.clone(), self.counts.buffer.clone(), self.flags.buffer.clone());
+        let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
         let shape = Shape {
             result_arena: ArenaKind::Result as u32,
             task_count: tasks as u32,
@@ -2414,8 +2430,8 @@ impl Runner<'_> {
                 (&captures, 0),
                 (&statuses, 0),
                 (&routes, 0),
-                (&scratch, 0),
-                (&counts, 0),
+                (&state, self.tapes.scratch_at),
+                (&state, self.tapes.counts_at),
                 (&flags, 0),
             ],
             shape,

@@ -27,6 +27,10 @@ pub(super) struct MetalBatchHeader {
     pub query_member_byte_start: u32,
     pub queued_state_byte_start: u32,
     pub greedy_entry_byte_start: u32,
+    /// A label pass's marking programs (flag bit 31): the words of its bit rows (scratch, or a
+    /// sweep's labels) and of its tallies in the label state buffer (`supertypes`).
+    pub mark_scratch: u32,
+    pub mark_counts: u32,
 }
 
 #[repr(C)]
@@ -375,7 +379,7 @@ pub(super) struct MetalTask {
     pub workspace_work_estimate: u32,
 }
 
-const _: [(); 80] = [(); size_of::<MetalBatchHeader>()];
+const _: [(); 88] = [(); size_of::<MetalBatchHeader>()];
 const _: [(); 44] = [(); size_of::<MetalNode>()];
 const _: [(); 32] = [(); size_of::<MetalFile>()];
 const _: [(); 68] = [(); size_of::<MetalProgram>()];
@@ -414,7 +418,7 @@ mod tests {
 
     #[test]
     fn metal_batch_abi_has_stable_sizes_and_alignment() {
-        assert_eq!(size_of::<MetalBatchHeader>(), 80);
+        assert_eq!(size_of::<MetalBatchHeader>(), 88);
         assert_eq!(size_of::<MetalNode>(), 44);
         assert_eq!(size_of::<MetalFile>(), 32);
         assert_eq!(size_of::<MetalProgram>(), 68);

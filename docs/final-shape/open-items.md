@@ -37,6 +37,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O35 | Phase 4 / 9 | The Metal label run's interpreter workspace against the 256 MB buffer budget: S7's real files (results arena) | closed (2026-11-03): groups single-dispatch (O34); S7's 250 files agree on all four backends |
 | O36 | Phase 4 / 10 | Semantic leaves still refused as fact labels: shared bindings, binding predicates, multi-target sub-rules, `parse`, under-`not` unknowns (decision 0030) | open |
 | O37 | Phase 4 / 8 | The lowered B006 clause reports 4 mutable defaults on S7's `f010.py` that W does not (`Optional[…]`, `Annotated[…]` annotations); `the_slice_finds_ws_findings_on_real_files` ignored | open |
+| O38 | Phase 9 | The interpreter's per-lane transient workspace (lanes × states, sized before any task runs) exceeds the buffer budget for 5 of 39 interpreted S2 clauses and for 70 of 158 under `RERAIL_HOST_SWEEPS` | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -1076,3 +1077,22 @@ ours, none only W's, all on `f010.py` lines 267–272. Those are parameters anno
 - **Likely cause:** B006's annotation test is a fact label (decision 0030), and W's verdict on
   these annotations' `resolves` differs from the lowered one.
 - **Test:** ignored with this item as the reason, until the lowered clause agrees.
+
+## O38. The interpreter's per-lane workspace is sized before any task runs
+
+Found at list step 28, stage 5 (2026-11-04). The label passes' interpreter (the fallback for walks
+that outgrow their frames, and every program under `RERAIL_HOST_SWEEPS`) leases its workspace
+before it runs.
+- **Fixed on the way:** durable outputs. A label program's results and final captures were
+  records reserved per task at their worst case and summed (4.2 M results and 8.4 M captures on
+  eight files, over the 256 MB budget). Label programs now mark their bits as they publish
+  (`packed_batch::MARKS`), so they reserve neither. The interpreted S2 went from 15 to 34 of 39
+  clauses, all equal to the CPU's.
+- **Still wrong:** the transient arenas (pending, captures, cursors, candidates) are lanes × states
+  per lane, fixed before the run (1,024 × 4,096 narrow; the sweeps' wide lanes unbounded, ~200 MB of
+  pending alone). The host halves the states on a refusal, which is a ladder, not a size.
+- **Shape to take:** size lanes from the workspace share and a task's measured need, not a fixed
+  lane count with states guessed and halved.
+- **Tests:** `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` counts the 5 refused
+  clauses; the packed batch refuses the same ones (`RERAIL_PACKED_INTERPRETER`).
+

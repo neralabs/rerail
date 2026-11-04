@@ -21,6 +21,12 @@ const MAX_PROPERTIES_PER_TASK: u32 = 4_096;
 /// A program flag (`Program::flags`): a task keeps its first accepted result only, and its result
 /// capacity is one. A label pass that marks its roots reads no more (`metal_label_passes`).
 pub(super) const ONE_RESULT: u32 = 4;
+/// A label pass's program that marks its route as it publishes (bit 31; bits 8..30 the row, bit 30
+/// its captured nodes, `TALLY` a count): its results are bits, so its tasks reserve no results and
+/// no final captures.
+pub(super) const MARKS: u32 = 0x8000_0000;
+pub(super) const MARKS_CAPTURED: u32 = 0x4000_0000;
+pub(super) const TALLY: u32 = 32;
 
 pub(super) fn program_flags(program: &Program) -> u32 {
     u32::from(program.tree_sitter_query)
@@ -849,7 +855,8 @@ impl PackedBatch {
                     .iter()
                     .any(|instruction| matches!(instruction, output::OutputInstruction::LanguageFromMime { .. }));
                 let one_result = packed_program.flags & ONE_RESULT != 0;
-                Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result))
+                let marks = packed_program.flags & MARKS != 0;
+                Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result, marks))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let capacities = self
@@ -857,7 +864,7 @@ impl PackedBatch {
             .iter()
             .map(|task| {
                 let facts = facts[task.program as usize];
-                let (program_values, strip_states, source_transform, mime_transform, one_result) = per_program[task.program as usize];
+                let (program_values, strip_states, source_transform, mime_transform, one_result, marks) = per_program[task.program as usize];
                 let file = &self.files[task.file as usize];
                 let root = self.nodes[task.root as usize];
                 let work_capacity = |operations: u32| {
@@ -875,7 +882,7 @@ impl PackedBatch {
                 let greedy_states = work_capacity(facts.greedy_operations);
                 let result_states = work_capacity(facts.emit_operations);
                 // Candidates are still every path's; only the first accepted is kept.
-                let (candidate_states, result_states) = (result_states, if one_result { result_states.min(1) } else { result_states });
+                let (candidate_states, result_states) = (result_states, if marks { 0 } else if one_result { result_states.min(1) } else { result_states });
                 let node_source_length = root.source_end.saturating_sub(root.source_start);
                 let value_states = program_values.iter().try_fold(0_u32, |maximum, value| {
                     let needed = if value.kind == 2 {
