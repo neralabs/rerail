@@ -6,7 +6,7 @@ from data_layer_six.common import S,q
 def apply(stages, final, vals):
     get=lambda name:next(stage for stage in stages if stage['name']==name)
     events=get('function_events')
-    events['query']="""SELECT e.__path,e.fn,e.id,e.__start,e.__end,e.category,e.uses_conn,
+    events['query']="""SELECT e.__path,e.fn,e.id,e.__start,e.__end,e.category,e.uses_conn,e.channel,coalesce((SELECT owned.visit_key FROM owned_nodes owned WHERE owned.__path=e.__path AND owned.fn=e.fn AND owned.__start=e.__start AND owned.__end=e.__end LIMIT 1),'') visit_key,
       CASE e.category
       WHEN 'forbidden_pure' THEN 'forbidden @pure_lazy operation '||e.detail
       WHEN 'bootstrap' THEN CASE WHEN a.id IS NOT NULL THEN CASE WHEN a.target_kind='attribute' THEN 'attribute' ELSE 'subscript' END||' assignment to '||a.target_text ELSE 'mutating call '||coalesce(c.callee,e.detail)||'(...)' END
@@ -23,30 +23,16 @@ def apply(stages, final, vals):
     intrinsic['query']="""SELECT __path,id,location,reason FROM (
       SELECT f.__path,f.id,e.__start location,
         CASE e.category WHEN 'context' THEN 'ExecutionContext terminal ' WHEN 'internal' THEN 'reads LazyResult internals ' WHEN 'state' THEN 'writes execution-derived planner state ' WHEN 'private' THEN 'reaches through private runtime state via ' WHEN 'plan' THEN 'direct eager sink ' ELSE 'imperative native call ' END||e.detail reason,
-        row_number() OVER(PARTITION BY f.__path,f.id ORDER BY CASE e.category WHEN 'context' THEN 0 WHEN 'internal' THEN 1 WHEN 'state' THEN 2 WHEN 'private' THEN 3 WHEN 'plan' THEN 4 ELSE 5 END,e.__start,e.__end DESC) chosen
+        row_number() OVER(PARTITION BY f.__path,f.id ORDER BY CASE e.category WHEN 'context' THEN 0 WHEN 'internal' THEN 1 WHEN 'state' THEN 2 WHEN 'private' THEN 3 WHEN 'plan' THEN 4 ELSE 5 END,e.visit_key,e.channel) chosen
       FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category IN ('plan','native') OR f.sensitive AND e.category IN ('context','state','private') OR f.sensitive AND e.category='internal' AND f.name NOT IN """+vals('SANCTIONED_LAZY_INTERNAL_READ_HELPERS')+"""
       ) WHERE chosen=1 UNION ALL SELECT f.__path,f.id,f.__start,CASE WHEN f.legacy THEN 'legacy eager wrapper' WHEN rx_matches(f.text,'^async\\b') AND NOT f.pure THEN 'async function' ELSE 'name ends with _async' END FROM function_flags f
       WHERE (f.legacy OR rx_matches(f.text,'^async\\b') AND NOT f.pure OR f.name GLOB '*_async') AND NOT EXISTS(SELECT 1 FROM function_events e WHERE e.__path=f.__path AND e.fn=f.id AND (e.category IN ('plan','native') OR f.sensitive AND e.category IN ('context','state','private') OR f.sensitive AND e.category='internal' AND f.name NOT IN """+vals('SANCTIONED_LAZY_INTERNAL_READ_HELPERS')+"))"
-    # The displayed target follows source call order, including ties beneath
-    # one first hop. Limit ordered walks to roots with an actual diagnostic
-    # demand. Stop at matching sinks and guard cycles with numeric node IDs.
-    index=stages.index(get('transitive_matches'))
-    stages[index:index]=[
-      S('graph_nodes',"SELECT f.__path,f.id,f.symbol,row_number() OVER(ORDER BY f.__path,f.__start,f.id) token FROM function_flags f",('__path','id')),
-      S('ordered_demands',"SELECT f.__path,f.id,'eager' mode FROM function_flags f WHERE f.pure AND EXISTS(SELECT 1 FROM reachable r JOIN intrinsic i ON i.__path=r.path AND i.id=r.node WHERE r.__path=f.__path AND r.root=f.id) UNION ALL SELECT f.__path,f.id,'nonlazy' FROM function_flags f WHERE (f.pure OR f.name GLOB '*_lazy') AND EXISTS(SELECT 1 FROM reachable r JOIN function_flags target ON target.__path=r.path AND target.id=r.node WHERE r.__path=f.__path AND r.root=f.id AND r.first IS NOT NULL AND NOT target.pure AND target.name NOT GLOB '*_lazy' AND target.symbol NOT IN "+vals('SANCTIONED_PURE_HELPER_SYMBOLS')+")",('__path','id','mode')),
-      S('ordered_reach',"""WITH RECURSIVE walk(__path,root,mode,path,node,first,order_,seen) AS (
-        SELECT d.__path,d.id,d.mode,d.__path,d.id,NULL,'',','||n.token||',' FROM ordered_demands d JOIN graph_nodes n ON n.__path=d.__path AND n.id=d.id
-        UNION ALL SELECT r.__path,r.root,r.mode,e.target_path,e.target,coalesce(r.first,e.__start),r.order_||printf('%020d.',e.__start),r.seen||next.token||','
-        FROM walk r JOIN function_flags current ON current.__path=r.path AND current.id=r.node
-        LEFT JOIN intrinsic sink ON sink.__path=r.path AND sink.id=r.node
-        JOIN architecture_edges e ON e.__path=r.path AND e.fn=r.node JOIN graph_nodes next ON next.__path=e.target_path AND next.id=e.target
-        WHERE r.path=r.__path AND instr(r.seen,','||next.token||',')=0
-          AND (r.mode='eager' AND sink.id IS NULL OR r.mode='nonlazy' AND (r.first IS NULL OR current.pure OR current.name GLOB '*_lazy'))
-          AND (r.mode!='nonlazy' OR next.symbol NOT IN """+vals('SANCTIONED_PURE_HELPER_SYMBOLS')+")) SELECT * FROM walk",('__path','root','mode')),
-    ]
-    get('transitive_matches')['query']="""SELECT __path,root,eager,target,reason FROM (SELECT r.__path,r.root,CASE WHEN r.first IS NULL THEN -1000000000+i.location ELSE r.first END eager,f.symbol target,i.reason,
-      row_number() OVER(PARTITION BY r.__path,r.root ORDER BY r.order_) chosen FROM ordered_reach r JOIN intrinsic i ON i.__path=r.path AND i.id=r.node JOIN function_flags f ON f.__path=r.path AND f.id=r.node WHERE r.mode='eager') WHERE chosen=1"""
-    get('non_lazy_matches')['query']="""SELECT __path,root,location,target FROM (SELECT r.__path,r.root,r.first location,f.symbol target,row_number() OVER(PARTITION BY r.__path,r.root ORDER BY r.order_) chosen FROM ordered_reach r JOIN function_flags f ON f.__path=r.path AND f.id=r.node WHERE r.mode='nonlazy' AND r.first IS NOT NULL AND NOT f.pure AND f.name NOT GLOB '*_lazy') WHERE chosen=1"""
+    from data_layer_eight.lazy_graph import apply as graph
+    graph(stages, vals)
+    return project(final, vals)
+
+
+def project(final, vals):
     # This projection is the actual diagnostic, not a Python-side message map.
     templates={
       'LA-001':'is lazy but performs eager plan/grammar I/O',
@@ -82,4 +68,16 @@ def apply(stages, final, vals):
         WHEN 'plan' THEN ' terminates a LazyResult inside reconciliation/schema code; only the wrapper may resolve observation or execution handles'
         ELSE ' restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts' END
       END"""
-    return "SELECT d.path,d.start_byte,d.end_byte,d.issue,d.identity,coalesce(d.symbol,f.symbol) symbol,"+message+" message FROM ("+final+") d LEFT JOIN function_flags f ON f.__path=d.path AND f.id=d.fn LEFT JOIN transitive_matches taint ON taint.__path=d.path AND taint.root=d.fn LEFT JOIN non_lazy_matches nonlazy ON nonlazy.__path=d.path AND nonlazy.root=d.fn"
+    order="""CASE WHEN d.issue='LA-001' THEN 0 WHEN d.issue='LA-010' THEN 1
+      WHEN d.issue='LA-009' AND d.origin='context' THEN 2 WHEN d.issue='LA-009' AND d.origin='internal' THEN 3
+      WHEN d.issue='LA-009' AND d.origin='state' THEN 4 WHEN d.issue='LA-009' AND d.origin='private' THEN 5
+      WHEN d.issue='LA-011' AND d.origin!='hydration' THEN 6 WHEN d.issue='LA-011' THEN 7
+      WHEN d.issue='LA-012' THEN 8 WHEN d.origin='delegate' THEN 9
+      WHEN d.issue='LA-002' THEN 10 WHEN d.issue='LA-003' THEN 11 WHEN d.issue='LA-004' THEN 12 WHEN d.issue='LA-005' THEN 13
+      WHEN d.issue='LA-006' THEN 14 WHEN d.issue='LA-007' THEN 15
+      WHEN d.issue='LA-013' AND d.origin='forbidden_pure' THEN 16 WHEN d.issue='LA-013' AND d.origin='legacy' THEN 17
+      WHEN d.issue='LA-009' THEN 18 WHEN d.issue='LA-013' THEN 19 WHEN d.issue='LA-015' THEN 20 WHEN d.issue='LA-016' THEN 21
+      WHEN d.issue='LA-017' AND d.origin='' THEN 22 WHEN d.issue='LA-017' AND d.origin='reconciliation' THEN 23
+      WHEN d.issue='LA-017' AND d.origin='absence' THEN 24 WHEN d.issue='LA-017' THEN 25
+      WHEN d.origin='payload' THEN 26 WHEN d.origin='dynamic' THEN 27 ELSE 28 END"""
+    return "SELECT d.path,d.start_byte,d.end_byte,d.issue,d.identity,coalesce(d.symbol,f.symbol) symbol,CASE WHEN d.issue='LA-008' THEN 3 WHEN d.fn IS NULL AND d.origin!='sidequeue' THEN 0 ELSE 2 END producer_phase,coalesce(f.fact_order,printf('%020d',d.start_byte)) fact_order,"+order+" diagnostic_order,"+message+" message FROM ("+final+") d LEFT JOIN function_flags f ON f.__path=d.path AND f.id=d.fn LEFT JOIN transitive_matches taint ON taint.__path=d.path AND taint.root=d.fn LEFT JOIN non_lazy_matches nonlazy ON nonlazy.__path=d.path AND nonlazy.root=d.fn WHERE NOT(f.pure AND d.issue!='LA-008' AND ("+order+")>17 AND EXISTS(SELECT 1 FROM graph_legacy legacy WHERE legacy.__path=f.__path AND legacy.root=f.symbol))"

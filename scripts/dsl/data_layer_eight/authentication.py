@@ -8,7 +8,7 @@ from data_layer_eight.authority import source_paths
 def candidate(source,policy):
     module=source/'scripts/lint_authentication_plan_purity.py'
     p=policy('authentication_plan_purity',source_paths(module,'DEFAULT_SOURCES'))
-    p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'scan_sources'}}}})
+    p['clauses'].append({'id':'entry','define':{'options':{'entryPoint':{'type':'string','default':'scan_sources'}}}})
     # Breadth-first CPython class selection: statement body/decorator wrappers
     # do not contribute AST depth. Class names are a file-wide namespace here.
     stages=[

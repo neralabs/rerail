@@ -8,7 +8,7 @@ def candidate(source,policy):
     module=source/'scripts/lint_lazy_adapter_ownership.py'
     p=policy('lazy_adapter_ownership',[directory+'/**/*.py' for directory in ('data_layer','impl/common','l9750_graphql','l9900_auto_api','l3200_metadata','l2000_connection')])
     p['clauses'].append({'id':'invalid-source','forbid':{'ast':{'language':'python','syntax':'invalid','rule':{'kind':'module'}}},'violation':{'code':'LAO000','message':'Cannot inspect Python source','anchor':'witness.span'}})
-    p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'scan_source'}}}})
+    p['clauses'].append({'id':'entry','define':{'options':{'entryPoint':{'type':'string','default':'scan_source'}}}})
     legacy=literals(constant(module,'LEGACY_DECORATORS'));external=literals(constant(module,'EXTERNAL_BOUNDARY_DECORATORS'));eager=literals(constant(module,'EAGER_TERMINALS'))
     stages=[
       S('declaration_parents',"SELECT n.__path,n.id,CASE WHEN p.kind='decorated_definition' THEN p.parent ELSE n.parent END parent,CASE WHEN p.kind='decorated_definition' THEN p.__start ELSE n.__start END region_start FROM nodes n LEFT JOIN nodes p ON p.__path=n.__path AND p.id=n.parent WHERE n.kind IN ('function_definition','class_definition')",('__path','id')),

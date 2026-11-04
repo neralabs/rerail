@@ -34,9 +34,10 @@ def install(backend):
         self.module_name=logical(path,module.ROOT)[:-3].replace('/','.')
         self.imported_names, self.imported_modules, self.module_rhs_bindings, self.class_method_aliases = {}, {}, {}, {}
         self.facts, by_id = [], {}
+        records=sorted(records,key=lambda row:json.loads(row['payload']).get('order',''))
         for row in records:
             if row['relation'] != 'function': continue
-            values = json.loads(row['payload']); identity = values.pop('id'); values['scope'] = tuple(values['scope'].split('.')) if values['scope'] else ()
+            values = json.loads(row['payload']); identity = values.pop('id'); values.pop('order',None); values['scope'] = tuple(values['scope'].split('.')) if values['scope'] else ()
             for field in ('is_async','is_lazy','has_pure_lazy_decorator','has_legacy_boundary_decorator','is_public','is_tombstone','is_execution_context_method'):
                 values[field] = bool(values[field])
             fact = module.FunctionFacts(file=path, **values)

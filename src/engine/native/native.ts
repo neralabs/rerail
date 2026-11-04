@@ -237,6 +237,8 @@ export interface NativeCodeRuleDslExecution {
 export type NativeCodeRuleDslExecutionConstructor = new () => NativeCodeRuleDslExecution;
 
 export interface NativeCodeRuleDslRuntimeConstructor {
+  /** Canonical CPython facts for a whole document demand batch; source is never executed. */
+  pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
 }
 

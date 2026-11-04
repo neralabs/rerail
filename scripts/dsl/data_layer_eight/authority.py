@@ -25,9 +25,9 @@ def source_paths(source,name):
 def candidate(source,policy):
     module=source/'scripts/lint_readthrough_authority_architecture.py'
     p=policy('readthrough_authority_architecture',source_paths(module,'DEFAULT_SOURCES'))
-    p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'scan_sources'}}}})
+    p['clauses'].append({'id':'entry','define':{'options':{'entryPoint':{'type':'string','default':'scan_sources'}}}})
     trigger=O(A(K('module'),RX('ReadThrough|readthrough|overlay|authority')),I(A(K('module'),RX('ReadThrough|readthrough|overlay|authority'))))
-    gate={'$option':'oracleAnalyzer','cases':{'true':ANY,'false':trigger}}
+    gate=ANY
     messages={}
     for node in sorted(ast.walk(ast.parse(module.read_text())),key=lambda node:getattr(node,'lineno',0)):
         if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id=='Finding' and len(node.args)==4 and isinstance(node.args[2],ast.Constant) and isinstance(node.args[3],ast.Constant):

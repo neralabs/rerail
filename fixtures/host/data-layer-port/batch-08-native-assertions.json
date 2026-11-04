@@ -1,43 +1,80 @@
 {
   "format": "rerail.data-layer-native-assertions/v1",
   "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-  "engineCommit": "ebcfefa0a4b52a966cb664d72340a4ddc884a5d5",
-  "engineSha256": "a22a3cc134b84b9c954f4afdbaad686e039a232d404526c946993014028aa0f7",
-  "contractsSha256": "91ef0399622311c1ef6a1b1105a1697edc68ec5c3bf6df4fbbff8013c233165e",
+  "engineCommit": "29cbf425b0f26081ce0bfa2304817511f47027e4",
+  "engineSha256": "34b553e63d5b8277d488fba591816bfbb6c7a7554509c3ea63a1566dbdc6871b",
+  "contractsSha256": "4f8e79958a01ecdef9b6b66fb45a6f8933a6d38ff3a84b987d576e66a2348a52",
   "policySha256": {
-    "eager_resolve": "4e76f9deee4fd7c8d1a6cc50371c4c409da32743eef34047e3bfb2a1cff6822b",
-    "lazy_architecture": "6b4aef0e330e7cf336452395747633df29da15fc0fbca65596101c61837389f2",
-    "pure_lazy_runtime_purity": "bafeebf4a7c18f08eaa789f1fc6e412079a0233dcce1dcd40a1318d0bfd5cccc",
-    "cached_pure_lazy_allowlist": "127d88f22b0aed330b114961e2913218b9c868f41244239f1a4a3c0223ca3078",
-    "lazy_sql_surface": "3a04b3740038c15e546784a50e82940ff4b474ad71a5141d18b86a7e6130ecb7",
-    "plan_helpers_allowlist": "5d4376f6484aca6e5de44ec461a5c65fdc509c4df1c7d5ead33afba64f7e7724",
-    "legacy_callback_quarantine": "67422352979e0e70cc7365b492b0b31c14a0d95a86c8384226496212cdfe02a1",
-    "readthrough_authority_architecture": "60619ddc014fc190de69bfc33704b03217ef1f3773c9aba6679d7afff60f807a",
-    "authentication_plan_purity": "9d285312c8f85b73b49fb827a6a128e09b19fa73c440fcb0b515fd586bfb3a9b",
-    "lazy_adapter_ownership": "1c0978db512def0038be39f9b254ecf21a9636002a7dbae000c543da182fc06f"
+    "eager_resolve": "ea04fb60a27b8cb60c48f426b38bebf06a76e62a46629fb06d37c609ba325e3d",
+    "lazy_architecture": "0dfc40a6f547a637ff07897f38532d786641d1176eab02486b52928f20338ecc",
+    "pure_lazy_runtime_purity": "22f55291149ed4afaddc84f7dd1819dfd31a11f5f0a4e3d61e036e939d814eaf",
+    "cached_pure_lazy_allowlist": "30a298621259d10251e0591993b11d45d28a8b7df8fee8b40e7ebec7fb95fe46",
+    "lazy_sql_surface": "8899e4d9de0ce78a4f5f225c93fc8179dd15b9321f68b6489ac7f500b2e04d9a",
+    "plan_helpers_allowlist": "05214cca095b138864bce6adaee900e5c8711aa2148250f025ec66954d5e33ec",
+    "legacy_callback_quarantine": "6a33622ad5fb04f0ebbe0965a1ceb7358213d63f8f3551e4e3d08b0e701e1f6a",
+    "readthrough_authority_architecture": "c05024235f75cee789b0153dea8145b107afd0d3896259b4136e09b25b96b04c",
+    "authentication_plan_purity": "ccfc568bc6a298bb64a553cadb0f094ae723a6da3610adcd57464e0cc6235dd5",
+    "lazy_adapter_ownership": "09d019e2deb70ea8478e0f86d72cfc416d69b995ca764ce14a6ff6ddd554120f"
+  },
+  "factPolicySha256": {
+    "cached-policy-comparison.json": "eac7057b25bb4eb45874c199039f028d9a5afeba16f9bce3c0794ca72c4b48a1",
+    "lazy-analyzed.json": "930a4728d1a38ff817328bd42761a2e406da870a296d9ad801f904e7bc3509ed",
+    "memoized-policy-comparison.json": "85c25e3d8d948eb7423cef848b17479a98c2756409f13519ff18783d46ea4921"
   },
   "implementationSha256": {
-    "conformance/data-layer/native-worker.ts": "519ac4629d02180350f46a37df04cb1989dfbbd55b31b96d26214e12830ab7ca",
-    "scripts/dsl/data_layer_audit/native_cached.py": "6f39281266f0f7c6d6720d1b93c1534651ba4c18dfcdadbe6f0d77fd0ea2fc1d",
-    "scripts/dsl/data_layer_audit/native_contracts.py": "53388e289e5302129162c2a1d7d9e10f09543f99f344e676ecb0f4d2ff0e08c1",
-    "scripts/dsl/data_layer_audit/native_evidence.py": "ecc0d0fc9ca5b51fdefb3a5645362586694d15f36e7c8c9c13386d8397c54cd3",
+    "conformance/data-layer/cached-discovery.ts": "991132ff8a2bdb33d02f6b9b095e09cfd9d7a21a37b17babac4100da82c662a0",
+    "conformance/data-layer/fact-api.ts": "af59e373f1ddd87d9c017cc304a179656b371fc050432223c2c2cbc68521466f",
+    "conformance/data-layer/native-worker.ts": "79f2c4b4516dfd09cec2483f151ff1ef43072631bcc0a70c88ec3165b30c4ed1",
+    "scripts/dsl/data_layer_audit/api_observations.py": "312d46788b535a044015d7566262ff3eb39d4a03d3a7f68cc9d64544b484b2e0",
+    "scripts/dsl/data_layer_audit/api_parity.py": "5d1b1f913f6ebf7caf588e8a04ea0c0637cee805bb1ee8dfda49bf32b696d987",
+    "scripts/dsl/data_layer_audit/fact_api_record.py": "dbb6bea71faa7994bb7b2dd6dedf23c6b2ff978aaf3ae398b2328da22ca54faf",
+    "scripts/dsl/data_layer_audit/facts_parity.py": "e24c99ad82643d101fab5624c6635098e0ee756a7fa5ceb2a0e02ab41582d905",
+    "scripts/dsl/data_layer_audit/native_cached.py": "04f1f4957fa9edd5e23164e803c383d74277ff5c364f30bec1e33da6abf60106",
+    "scripts/dsl/data_layer_audit/native_contracts.py": "161155a68e83703e927a1b144d29820bd7cb87f99e8ffbb14d049bc8b0b3ce52",
+    "scripts/dsl/data_layer_audit/native_evidence.py": "b8f5b3f0ac195ed00170af1ab9e37d80d2e4d3571dea39a94097448c9fcea1e4",
     "scripts/dsl/data_layer_audit/native_guard.py": "48e435e514b02bb082e2df8007d929ea8e7cb72a726230e1cc5028a8a42c99c0",
     "scripts/dsl/data_layer_audit/native_helpers.py": "d17e8fb60bd3cedcd747d7f5f3b513203da86127079a91b043c594f2fb94278a",
     "scripts/dsl/data_layer_audit/native_instrumentation.py": "935131484b1d3e1958f3a95f26429496a214017f0be1907d8c5517a54e7d48ca",
-    "scripts/dsl/data_layer_audit/native_lazy.py": "4e600e6ab0bd48a17759dfeef4eafa8aff8ff4b8a861a1a76b6d05ccdbd3151f",
-    "scripts/dsl/data_layer_audit/native_scanners.py": "8469ccdf68f2ba4357be221231c81f0539490d8cb928b2b2e04c48827914c049",
-    "scripts/dsl/data_layer_audit/native_suite.py": "11ecaf741282e7644602f538778ab5a7b5818e09716cd6584a91bc77a10fd715"
+    "scripts/dsl/data_layer_audit/native_lazy.py": "5de4bdc58ac3195bb482c250fe502633089b35022079b1a23eb6be4cceb51f6c",
+    "scripts/dsl/data_layer_audit/native_mutation.py": "0bf84226ab11667ba8a9a70195c5ec3d624b840c81d39dcebd023d5bc5d490d1",
+    "scripts/dsl/data_layer_audit/native_scanners.py": "9053fdd7bdb103d9fe1a216d65f8fe7a63d464cecb4ec65df906b86c12fe7638",
+    "scripts/dsl/data_layer_audit/native_suite.py": "392b87056d87dc96452a40d6c286f37bea2304de90ffeb1cc0e68159b39a0836",
+    "scripts/dsl/data_layer_eight/__init__.py": "c0132dd8cf13b62e20975b3d239485a175b776a9b3f05d15e4916c41b7801ee7",
+    "scripts/dsl/data_layer_eight/adapters.py": "21ffad8c3d4ed7368518db4275003ef428d9fcd9a6908681cb297a5ad563d4a8",
+    "scripts/dsl/data_layer_eight/analyzed_facts.py": "e6f448d1a12f3950c73524fad1643258bb559867447d2fa9731230e18605f4a4",
+    "scripts/dsl/data_layer_eight/authentication.py": "233e88d96edecdf2e12e1d5996474cdf43ae54099bf9a93ca699dae01968707d",
+    "scripts/dsl/data_layer_eight/authority.py": "745bb18199aee18760e0a5157112bb9d7cbc349b149e21d409a05c9c7876f5b5",
+    "scripts/dsl/data_layer_eight/cached.py": "e6ee5f746079bef23fd4488bbc7710c20e352c459fae5a3c786a5700dc9c82b4",
+    "scripts/dsl/data_layer_eight/callbacks.py": "397f53612a38cacae4d6a85c9f5d20e544aac1bfce7809e0f17fd1cebba0b53b",
+    "scripts/dsl/data_layer_eight/contracts.py": "c83ce4d708827cc89d0142549319beaee9216fc42855ea933b96f981adcfead6",
+    "scripts/dsl/data_layer_eight/eager.py": "b6fed24ff024c699a90ce296fadc8e11f4c269af169259f8e2c97dd5273e8773",
+    "scripts/dsl/data_layer_eight/eager_contracts.py": "1f504668444d4b7413627956d51d0ddb3218dcaee7316bb5a68f603034e4dddf",
+    "scripts/dsl/data_layer_eight/lazy.py": "df29b69749a04f80a1fa842db27669cbecfc7e7f12693a3000319c0a485b4179",
+    "scripts/dsl/data_layer_eight/lazy_bindings.py": "db9d35c0de3a95a4e0c60b34d284c9bf94a5bb84b242336a1e362f30f0b9cbbe",
+    "scripts/dsl/data_layer_eight/lazy_graph.py": "5dccd8ac299a9d213de48f8e9ce5ff955ef4eb79479e97dc635d509ae536f076",
+    "scripts/dsl/data_layer_eight/lazy_messages.py": "705ba5633876fbbc21e5633d7f064ae9f7d0b6ff34cb68496e203c3d6ede49c9",
+    "scripts/dsl/data_layer_eight/lazy_paths.py": "c9be431563bdab60d80e5a97376c8b452f31822a26aa39ee3ec71739d447897d",
+    "scripts/dsl/data_layer_eight/model.py": "0eb03f9b5474f890ef043638967ecfa1d102c6b7b1b90f8bb14ab70fab3451e3",
+    "scripts/dsl/data_layer_eight/plan_helpers.py": "a6e47f541bbd480419580ae5f41ec8f27f66a2ace5f896005e84e722dd6f917e",
+    "scripts/dsl/data_layer_eight/plan_names.py": "8238693000211bc34bad3c51d4be5ccefa0e3131872ebb0d1c723df66cea69e1",
+    "scripts/dsl/data_layer_eight/policy_comparison.py": "1074e60976aeddb6bd9a89f4be438d61f7d07ad0c2c39f6925c0f2331d4b6829",
+    "scripts/dsl/data_layer_eight/purity.py": "fb8c23f345a5452ea1e9523587f2fccb39b753f5a2fbb44fcd7ca1d4f82e4c14",
+    "scripts/dsl/data_layer_eight/purity_graph.py": "51ab14ca92b80bc5454378b0878c07abe9c04f9503e123fce9521c3b5bc7f88b",
+    "scripts/dsl/data_layer_eight/purity_messages.py": "fd545a832d5c6f0116f041fb4589f9940f1185ee3a0899f3280981271b0e9eb3",
+    "scripts/dsl/data_layer_eight/python_repr.py": "22226120c2e042f4ca67d18b745aa7585d5700b3f120b85c7b44bc0107eff313",
+    "scripts/dsl/data_layer_eight/relations.py": "8e37a03cfc4263d99975da7e883764192e27e9af76d8d355409e36cffe9e1555",
+    "scripts/dsl/data_layer_eight/sql_surface.py": "1bd17d5d653275655806e82dd7d7721180d114fc5613d58ca45d102b5c397336"
   },
   "executionPaths": {
     "snapshot": {
-      "reportSha256": "d332dfb7c1765a82f86d36f2d746954f1686861e4c91b36c02b410edbe4407ff",
+      "reportSha256": "d58b7143d75305b3274c1f897dabbad20951254f2186b94aaf9715ec0c907aa9",
       "collected": 456,
       "passed": 456,
       "failed": 0,
       "skipped": 0,
       "sourceFilesChecked": 1495,
       "semanticFallbacks": [],
-      "nativeCalls": 480,
+      "nativeCalls": 523,
       "casesWithNativeCalls": 336,
       "originalHostCalls": {
         "eager_resolve:Violation.__init__": 66,
@@ -802,7 +839,7 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_calling_legacy_wrapper_triggers_la013": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -813,69 +850,70 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_calling_non_lazy_helper_triggers_la013": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_dynamic_import_is_allowed": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_internal_raw_access_triggers_la013": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_bootstrap_lazy_result_of_return_triggers_la015": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_ddl_lazy_result_of_return_triggers_la015": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_non_bootstrap_lazy_result_of_return_does_not_trigger_la015": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_bootstrap_pure_lazy_state_assignment_triggers_la016": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_ddl_pure_lazy_sidecar_append_triggers_la016": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
-          "nativePositiveDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
+          "nativePositiveDiagnosticCalls": 2,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_ddl_side_queue_field_declaration_triggers_la016": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
-          "nativePositiveDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
+          "nativePositiveDiagnosticCalls": 2,
           "nativeHelperCalls": 0,
           "contracts": []
         },
@@ -888,119 +926,119 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_deleted_cold_bootstrap_surface_triggers_la018": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_bootstrap_pure_lazy_plan_add_step_does_not_trigger_la016": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_schema_discovery_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_direct_ddl_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_lazy_callback_trampoline_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_internal_resolve_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_deleted_surface_implementation_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_deleted_surface_tombstone_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_fact_check_default_empty_snapshot_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_fact_check_default_false_result_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_model_metadata_false_result_does_not_trigger_schema_fact_absence_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_computed_drop_state_false_result_does_not_trigger_schema_fact_absence_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_schema_batch_default_empty_set_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_restored_schema_ensure_cutover_surface_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_deleted_schema_reconciliation_cutover_surface_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_schema_reconciliation_tombstone_surface_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_callchain_allows_lazy_helpers": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -1016,70 +1054,70 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_reaching_async_helper_inside_lambda_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_reaching_sync_helper_with_resolve_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_async_pure_lazy_composer_without_runtime_operations_is_allowed": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_reaching_sync_wrapper_of_async_function_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_execution_context_terminal_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_internal_peeking_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_execution_derived_state_write_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_private_runtime_reachthrough_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_importing_defer_lazy_result_triggers_la013": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_calling_defer_lazy_result_triggers_la013": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -1095,7 +1133,7 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_undecorated_lazy_name_is_not_itself_a_violation": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -1118,7 +1156,7 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_calling_provably_non_eager_helper_is_not_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -1397,6 +1435,7 @@
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
@@ -1653,28 +1692,28 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_la006_applies_outside_transaction_modules": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_la014_flags_dynamic_behavior_lookup_in_materializer": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_la014_flags_callable_payload_into_runtime_builder_service": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_la014_allows_closed_enum_dispatch_table_in_materializer": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -1823,6 +1862,7 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
@@ -1832,6 +1872,7 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
@@ -1841,6 +1882,7 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
@@ -1850,6 +1892,7 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
@@ -2087,6 +2130,7 @@
           "nativeHelperCalls": 17,
           "contracts": [
             "cached-discovery",
+            "cached-policy-comparison",
             "runtime-fingerprint"
           ]
         },
@@ -2229,7 +2273,8 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
-            "memoized-discovery"
+            "memoized-discovery",
+            "memoized-policy-comparison"
           ]
         },
         "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_source_drift": {
@@ -2238,7 +2283,8 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
-            "memoized-discovery"
+            "memoized-discovery",
+            "memoized-policy-comparison"
           ]
         },
         "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_dynamic_bound": {
@@ -2247,7 +2293,8 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
-            "memoized-discovery"
+            "memoized-discovery",
+            "memoized-policy-comparison"
           ]
         },
         "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_alias": {
@@ -2256,7 +2303,8 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
-            "memoized-discovery"
+            "memoized-discovery",
+            "memoized-policy-comparison"
           ]
         },
         "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_private_storage_access": {
@@ -2265,7 +2313,8 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
-            "memoized-discovery"
+            "memoized-discovery",
+            "memoized-policy-comparison"
           ]
         },
         "scripts/tests/test_lint_plan_helpers_allowlist.py::test_target_helpers_is_frozenset": {
@@ -3617,14 +3666,14 @@
       }
     },
     "workspace": {
-      "reportSha256": "4aa3a0fcd39260cfa970c97b870b349c7bd31244b63cb49bcf54cdfe5f408f79",
+      "reportSha256": "018380875481d072e1fbfeab36cdef99f197f86b344279e3578439044f2d4193",
       "collected": 456,
       "passed": 456,
       "failed": 0,
       "skipped": 0,
       "sourceFilesChecked": 1495,
       "semanticFallbacks": [],
-      "nativeCalls": 480,
+      "nativeCalls": 523,
       "casesWithNativeCalls": 336,
       "originalHostCalls": {
         "eager_resolve:Violation.__init__": 66,
@@ -4389,7 +4438,7 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_calling_legacy_wrapper_triggers_la013": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -4400,69 +4449,70 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_calling_non_lazy_helper_triggers_la013": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_dynamic_import_is_allowed": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_internal_raw_access_triggers_la013": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_bootstrap_lazy_result_of_return_triggers_la015": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_ddl_lazy_result_of_return_triggers_la015": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_non_bootstrap_lazy_result_of_return_does_not_trigger_la015": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_bootstrap_pure_lazy_state_assignment_triggers_la016": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_ddl_pure_lazy_sidecar_append_triggers_la016": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
-          "nativePositiveDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
+          "nativePositiveDiagnosticCalls": 2,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_ddl_side_queue_field_declaration_triggers_la016": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
-          "nativePositiveDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
+          "nativePositiveDiagnosticCalls": 2,
           "nativeHelperCalls": 0,
           "contracts": []
         },
@@ -4475,119 +4525,119 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_deleted_cold_bootstrap_surface_triggers_la018": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_bootstrap_pure_lazy_plan_add_step_does_not_trigger_la016": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_schema_discovery_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_direct_ddl_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_lazy_callback_trampoline_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_internal_resolve_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_deleted_surface_implementation_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_reconciliation_deleted_surface_tombstone_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_fact_check_default_empty_snapshot_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_fact_check_default_false_result_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_model_metadata_false_result_does_not_trigger_schema_fact_absence_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_computed_drop_state_false_result_does_not_trigger_schema_fact_absence_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_schema_batch_default_empty_set_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_restored_schema_ensure_cutover_surface_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_deleted_schema_reconciliation_cutover_surface_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_schema_reconciliation_tombstone_surface_triggers_la017": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_callchain_allows_lazy_helpers": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -4603,70 +4653,70 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_reaching_async_helper_inside_lambda_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_reaching_sync_helper_with_resolve_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_async_pure_lazy_composer_without_runtime_operations_is_allowed": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_reaching_sync_wrapper_of_async_function_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_execution_context_terminal_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_lazy_internal_peeking_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_execution_derived_state_write_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_private_runtime_reachthrough_triggers_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_importing_defer_lazy_result_triggers_la013": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_calling_defer_lazy_result_triggers_la013": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -4682,7 +4732,7 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_undecorated_lazy_name_is_not_itself_a_violation": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -4705,7 +4755,7 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_calling_provably_non_eager_helper_is_not_la009": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -4984,6 +5034,7 @@
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
@@ -5240,28 +5291,28 @@
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_la006_applies_outside_transaction_modules": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_la014_flags_dynamic_behavior_lookup_in_materializer": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_la014_flags_callable_payload_into_runtime_builder_service": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 0,
           "contracts": []
         },
         "scripts/tests/test_lint_lazy_architecture.py::test_la014_allows_closed_enum_dispatch_table_in_materializer": {
           "outcome": "passed",
-          "nativeDiagnosticCalls": 1,
+          "nativeDiagnosticCalls": 2,
           "nativePositiveDiagnosticCalls": 0,
           "nativeHelperCalls": 0,
           "contracts": []
@@ -5410,6 +5461,7 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
@@ -5419,6 +5471,7 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
@@ -5428,6 +5481,7 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
@@ -5437,6 +5491,7 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
+            "lazy-analyzed",
             "lazy-facts"
           ]
         },
@@ -5674,6 +5729,7 @@
           "nativeHelperCalls": 17,
           "contracts": [
             "cached-discovery",
+            "cached-policy-comparison",
             "runtime-fingerprint"
           ]
         },
@@ -5816,7 +5872,8 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
-            "memoized-discovery"
+            "memoized-discovery",
+            "memoized-policy-comparison"
           ]
         },
         "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_source_drift": {
@@ -5825,7 +5882,8 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
-            "memoized-discovery"
+            "memoized-discovery",
+            "memoized-policy-comparison"
           ]
         },
         "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_dynamic_bound": {
@@ -5834,7 +5892,8 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
-            "memoized-discovery"
+            "memoized-discovery",
+            "memoized-policy-comparison"
           ]
         },
         "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_alias": {
@@ -5843,7 +5902,8 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
-            "memoized-discovery"
+            "memoized-discovery",
+            "memoized-policy-comparison"
           ]
         },
         "scripts/tests/test_verify_cached_pure_lazy_allowlist.py::test_memoized_policy_rejects_private_storage_access": {
@@ -5852,7 +5912,8 @@
           "nativePositiveDiagnosticCalls": 1,
           "nativeHelperCalls": 1,
           "contracts": [
-            "memoized-discovery"
+            "memoized-discovery",
+            "memoized-policy-comparison"
           ]
         },
         "scripts/tests/test_lint_plan_helpers_allowlist.py::test_target_helpers_is_frozenset": {
@@ -7204,8 +7265,30 @@
       }
     }
   },
+  "completeComparisons": {
+    "snapshot": {
+      "apiObservations": 305,
+      "analyzerInputs": 85,
+      "differences": 0,
+      "semanticFallbacks": [],
+      "apiReportSha256": "58828abea83531b7e984bd7ce30cac22421ff7b71a9418d4720b1ab7f6135e24",
+      "factsReportSha256": "71c44431d982d18faa04b95179274b4bf5d655ec09e3d8294087d9b0613cdf4b"
+    },
+    "workspace": {
+      "apiObservations": 305,
+      "analyzerInputs": 85,
+      "differences": 0,
+      "semanticFallbacks": [],
+      "apiReportSha256": "f84e06ea20e5882dbd9f0c2a600370927aefb38ded6b33f0ad33ca40a5b2f748",
+      "factsReportSha256": "ab259bf34cb9f45ef9470a9221d7659539ae850ae7d5e5dbfab92420d71a0563"
+    }
+  },
+  "oracleSha256": {
+    "batch-08-complete-api.json": "05806bdc498ae50f2b9c4bda531b879e7f404ac846689cbf71b6adc495ee3230",
+    "batch-08-complete-facts.json": "9a621595e251cdc7f0e3a699ec7839290a1b077c5000e06362c78d88fcd7eca3"
+  },
   "positiveControls": {
-    "reportSha256": "49bffb20f72cf06715de9b543416f32f97850cd2a76439cc7e7a3fa8134a9d7b",
+    "reportSha256": "9edcdaf488753fda626f4182a24dd190aa7f4f3566f0fa40c9986e953919366b",
     "exitCode": 1,
     "failedCases": 183,
     "rejectedByCheck": {

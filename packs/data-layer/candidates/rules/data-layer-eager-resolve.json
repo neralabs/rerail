@@ -29,10 +29,6 @@
       "id": "entry",
       "define": {
         "options": {
-          "oracleAnalyzer": {
-            "type": "boolean",
-            "default": false
-          },
           "entryPoint": {
             "type": "string",
             "default": "_scan_source"
@@ -40,42 +36,8 @@
           "externalIoBoundaries": {
             "type": "array",
             "items": "string",
-            "default": [
-              "l6500_evidence.blob_migration.migrate_blob_to_external SxVBqPVb9KxkaYdUj/l97y+Rpx7uyR7kQrlNMnCxmlqEV6rWn7k1TawVXskANwmi3z6K8A1oKmVitQVRo0V/DQ==",
-              "l6500_evidence.blob_migration.migrate_blob_to_external_async ZijivhYt9hPMIzRAPBVZdFUirXyY5rVlqQPN62XQ3E+/FaJTlZp8M/HKsboWYvnWeJNlW7IS/Wcpet8+4csxBw==",
-              "l6500_evidence.blob_migration.migrate_blob_to_internal x2BpGG1GHDMP8Nm+VzYXI9uk1t7r4H6dmchXWRsHO43fwxw/ViwXHrldNzfUR+ujYpzXXlXSyiE+sawIOHKYAQ==",
-              "l6500_evidence.blob_migration.migrate_blob_to_internal_async FFyel3rEwEppb6RV378cyla4xTjPIpUeU9hFWWWdnfOOcHqR3kRtrKQEU+mB0HhylaalrNW8BjRalknjOgViDA==",
-              "l6500_evidence.blob_migration.migrate_blobs_batch ReAFoGUDI8BFAeJroSsY/2fcX9njavvwOPDLZdR6ePlF01CJ+UAPcnfLae4PlZCkA8pii/ZPlWz5TVQ1oS3oCA==",
-              "l6500_evidence.blob_migration.migrate_blobs_batch_async 9PdwDGHbMp4SvHIODp0Ue/HfA+qGwocDtzqVXUbBIFdIunB/kFpNvI1Fg8y6btjOj7BNFWvRDgZx2iQqHAyyCw==",
-              "l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob 8PbZXPairL4eX0ShonEI9QRzz2NDxjJjv71ezKEqMJEDjgDsj0FOqIeX9jlCEdrhmekub3IAIm+0mY3adx7MCg==",
-              "l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob_async dXES+mySa6cTtDJRLdXjyEcKcMQ9aHoWUjaDJQDWpyCRQ4sFZWTewv5GoTGPTmXt5MAf27ODB01JHGYiYyddCQ==",
-              "l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key OAQRMC57tWGD3TVnK7c4SoNMzWGBuXAVWaAoG9gKBwUxQo3WZIWo2QdW9SEKWAZF8NUmug2aoUayE/oWptigCg==",
-              "l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key_async bFwGkxEX8VWMjn9TK3U7gTz6CxLLT3Oen+PCfxzk0bJfvQkxJtgey7fP2G3AFeXuDqcl9kJlwGa+z1XcO/jHDg==",
-              "l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob 8bedG9GYmwKQurZvg8xkGsvSyqK6rtK2FNtDVsEHw5DIxRH8kjjWGACD198QfvZlPUlOvzNKzoaC3E7/pTOmBg==",
-              "l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob_async Sps4LNefn4qNGle93W+WSj2Db/gu9KdlFmVrJ8dGM9MDGY2dQQRYWIJRLfNLgyQO4zJ8LxhXoMGQYTRf/aiGDg==",
-              "l6500_evidence.blob_service.EncryptedBlobService.store_blob iaaqVCxgFsPXe7hjci5k9m5wwxajavmOLqpnB8atS/rXZCfMbKH5V4CNTq+pqNv5JetiHsMIxFy+EmRCRQKqAg==",
-              "l6500_evidence.blob_service.EncryptedBlobService.store_blob_async 0xre2ed+OMC+n+zyS2l/WwF7szoPTUdkLS9n9plkSPFs3POuusXTiwIk/bhJoQDmOfDhVHnfMXlYhsi1P3N8Cw==",
-              "l6500_evidence.blob_service.EncryptedBlobService.update_blob 95XWP+nq9n+Wh8a2FyjcotT6aMUq/v/5syUgjh7IZTRNek9pmvgX/V+oPeJP5t5xwD1ikDQKyuzpIVIeKECkDg==",
-              "l6500_evidence.blob_service.EncryptedBlobService.update_blob_async bzrXSkqU9391El5po6H4F57AAplUb5l0whRLYZIEQrViMA84TVzsfyHL+9+q1nOGRpvQoDcJzk/1bOdEfciDAA==",
-              "l6500_evidence.sas_http.handle_sas_download N/erEChqtYJafCH8ZlIn3YHQb69WLbiXkbSj1yyyCndkxJNcHOlsybGyK3r6MK0D94Fn5wrlY1OfhSQxzINGBw==",
-              "l6500_evidence.sas_http.handle_sas_download_async beXjaIVGVQ+YeffcQexHq2m1k5G9qx7Az+TE8LwXZU3YUkCe3LIaXnhfegL1fWPF6S+ag984muFlG3vaOV6SDg==",
-              "l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob wh78V3IwKiUjGA+MLGRQ+OtusQzuJxr18qxjSYKv64vKLWod6YTv8JL6Q95bk4X3gaF1fmDxvoSBKagj3+NwAA==",
-              "l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob_async kbzUVWiTCLB0ZI/HAHlA64ICBS60eFyh45dYJiL7BKHBAOAxoMgRq6DqEfTEMDgWDNXrEr+jgkR13/p547LhBg==",
-              "l6500_evidence.sas_service.SasUrlService.generate_token_for_blob IIUH3stpPr/HdGlUXMGhht8nSmVE5okrXKrYIecNKEqLZ1CJn3I0nc/treF0/fZ7rgx8Jw8+LJYjxoH5VDRjAg==",
-              "l6500_evidence.sas_service.SasUrlService.generate_token_for_blob_async BMjtTQxGUyK0FTnSrdt3Lr41/HIZGf8rH1OYF0IhJNocU6zQfVTXUyv8hp6VfPuuD/5PZ2Z3Zta5Fyig22EgAg==",
-              "l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob GQSgzK6hQ/rZIhOSroWjZCpH6yQBWmC0dspVZNZWWlyyG6JKEITgHwVz8nfF7Y0aTQVTBAKdywhhJYZdAngRBA==",
-              "l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob_async 3W/o1vc9dJsEY56KMth/UfpzDr4f/pq3/ioP9zQKx+TMos9knFH88meh9VU/3ZsRj9vRXJryOayYjTZMq2tGBw==",
-              "l6500_evidence.sas_service.SasUrlService.resolve_access X1dLOHxDnX3PwdTArn8hgGes2Kpku2lsLsGOh+lFbk1A1rfqaGB/+c/zdzZiyllnhobyrpC3KIYG3yY5jqraCA==",
-              "l6500_evidence.sas_service.SasUrlService.resolve_access_async OA6q+NrjCc2h0vzUC93gkvxs8Edr2z4cMUsisWxxt1Lg2HXcrQ5UV2AAKrgT4dwFSSaaR0r06w+aTMMCaFsvCg==",
-              "l6500_evidence.sas_service.SasUrlService.resolve_and_serve GjQ0RwiUr6aLWiBBoxEuDZ+C3HInHoEuxgZKaIewVJ1x4wJ7hcmbTxiXd2j45PDU24K6jtmZKu+pgR/JJZP/CQ==",
-              "l6500_evidence.sas_service.SasUrlService.resolve_and_serve_async ijb8tgNmebcvTQZg1u0j2J2ScNqiTYYZu1ebSBhgSZ59RMAauIbdLLOYOuMtUlqyQRMJpOOpU3zntUy2C2SxBg==",
-              "l6500_evidence.sas_service.SasUrlService.validate_and_serve wYzZYNSb+CsK658aYDbgnZxQUZuFtceuOLRwguGzxC+mWoIHsC7Df1WPhx7qNNKmcIcBQhPVcVK4GEt8KfrgCw==",
-              "l6500_evidence.sas_service.SasUrlService.validate_and_serve_async oAYmZ/jJcMb+/5kFW57Q0EC6vMEFpBub2OXFUnOiE/wgCOkXfG1ypN5uOmS8GESKj386tH5I4HWcFCpIiMRQCQ==",
-              "l6530_managed_secrets.service._resolve_managed_secret_candidate 5JjmhYeHUK7c6EFlODoRZitt7jDcBKrDYiF/gpXa7UxbGZccmLLXx77z4MUXudVqC8nrY3O6fidjqfeUQyo/AQ==",
-              "l6530_managed_secrets.service.create_managed_secret_async NiWtDaqhmV+co/9GQP96AkgDAHPJA1dgC0jwUzJBLsiuY/moDaLKMM46sXsJNXDhhVBFv3Y/JaXRd9tT3cxNAw==",
-              "l6530_managed_secrets.service.delete_managed_secret_async ZGPbLZxGELL3JbHbkIDaccknMm1yroIn9LPDh/QErOSwXxwKW+CVsBKoyPMN1s7Kk1UhUJbmfnb5S/6gVg1HCA==",
-              "l6530_managed_secrets.service.rotate_managed_secret_async KW677DkqIRmanQeWsxMP9o6a4oK0EmZQmXanKf+JsE7AwjAm7B6l5STi665WSRHcYqC4ySQAiWu32N74enwmAA=="
-            ]
+            "nullable": true,
+            "default": null
           }
         }
       }
@@ -399,10 +361,16 @@
             "name": "approved_external",
             "query": {
               "$option": "externalIoBoundaries",
-              "escape": "sql",
-              "map": " UNION ALL SELECT {} symbol",
-              "join": "",
-              "template": "SELECT '' symbol WHERE 0{}"
+              "cases": {
+                "null": "SELECT \"symbol\" FROM (SELECT json_extract(value,'$.symbol') symbol FROM json_each('[{\"symbol\": \"l6500_evidence.blob_migration.migrate_blob_to_external\", \"signature\": \"SxVBqPVb9KxkaYdUj/l97y+Rpx7uyR7kQrlNMnCxmlqEV6rWn7k1TawVXskANwmi3z6K8A1oKmVitQVRo0V/DQ==\"}, {\"symbol\": \"l6500_evidence.blob_migration.migrate_blob_to_external_async\", \"signature\": \"ZijivhYt9hPMIzRAPBVZdFUirXyY5rVlqQPN62XQ3E+/FaJTlZp8M/HKsboWYvnWeJNlW7IS/Wcpet8+4csxBw==\"}, {\"symbol\": \"l6500_evidence.blob_migration.migrate_blob_to_internal\", \"signature\": \"x2BpGG1GHDMP8Nm+VzYXI9uk1t7r4H6dmchXWRsHO43fwxw/ViwXHrldNzfUR+ujYpzXXlXSyiE+sawIOHKYAQ==\"}, {\"symbol\": \"l6500_evidence.blob_migration.migrate_blob_to_internal_async\", \"signature\": \"FFyel3rEwEppb6RV378cyla4xTjPIpUeU9hFWWWdnfOOcHqR3kRtrKQEU+mB0HhylaalrNW8BjRalknjOgViDA==\"}, {\"symbol\": \"l6500_evidence.blob_migration.migrate_blobs_batch\", \"signature\": \"ReAFoGUDI8BFAeJroSsY/2fcX9njavvwOPDLZdR6ePlF01CJ+UAPcnfLae4PlZCkA8pii/ZPlWz5TVQ1oS3oCA==\"}, {\"symbol\": \"l6500_evidence.blob_migration.migrate_blobs_batch_async\", \"signature\": \"9PdwDGHbMp4SvHIODp0Ue/HfA+qGwocDtzqVXUbBIFdIunB/kFpNvI1Fg8y6btjOj7BNFWvRDgZx2iQqHAyyCw==\"}, {\"symbol\": \"l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob\", \"signature\": \"8PbZXPairL4eX0ShonEI9QRzz2NDxjJjv71ezKEqMJEDjgDsj0FOqIeX9jlCEdrhmekub3IAIm+0mY3adx7MCg==\"}, {\"symbol\": \"l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob_async\", \"signature\": \"dXES+mySa6cTtDJRLdXjyEcKcMQ9aHoWUjaDJQDWpyCRQ4sFZWTewv5GoTGPTmXt5MAf27ODB01JHGYiYyddCQ==\"}, {\"symbol\": \"l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key\", \"signature\": \"OAQRMC57tWGD3TVnK7c4SoNMzWGBuXAVWaAoG9gKBwUxQo3WZIWo2QdW9SEKWAZF8NUmug2aoUayE/oWptigCg==\"}, {\"symbol\": \"l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key_async\", \"signature\": \"bFwGkxEX8VWMjn9TK3U7gTz6CxLLT3Oen+PCfxzk0bJfvQkxJtgey7fP2G3AFeXuDqcl9kJlwGa+z1XcO/jHDg==\"}, {\"symbol\": \"l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob\", \"signature\": \"8bedG9GYmwKQurZvg8xkGsvSyqK6rtK2FNtDVsEHw5DIxRH8kjjWGACD198QfvZlPUlOvzNKzoaC3E7/pTOmBg==\"}, {\"symbol\": \"l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob_async\", \"signature\": \"Sps4LNefn4qNGle93W+WSj2Db/gu9KdlFmVrJ8dGM9MDGY2dQQRYWIJRLfNLgyQO4zJ8LxhXoMGQYTRf/aiGDg==\"}, {\"symbol\": \"l6500_evidence.blob_service.EncryptedBlobService.store_blob\", \"signature\": \"iaaqVCxgFsPXe7hjci5k9m5wwxajavmOLqpnB8atS/rXZCfMbKH5V4CNTq+pqNv5JetiHsMIxFy+EmRCRQKqAg==\"}, {\"symbol\": \"l6500_evidence.blob_service.EncryptedBlobService.store_blob_async\", \"signature\": \"0xre2ed+OMC+n+zyS2l/WwF7szoPTUdkLS9n9plkSPFs3POuusXTiwIk/bhJoQDmOfDhVHnfMXlYhsi1P3N8Cw==\"}, {\"symbol\": \"l6500_evidence.blob_service.EncryptedBlobService.update_blob\", \"signature\": \"95XWP+nq9n+Wh8a2FyjcotT6aMUq/v/5syUgjh7IZTRNek9pmvgX/V+oPeJP5t5xwD1ikDQKyuzpIVIeKECkDg==\"}, {\"symbol\": \"l6500_evidence.blob_service.EncryptedBlobService.update_blob_async\", \"signature\": \"bzrXSkqU9391El5po6H4F57AAplUb5l0whRLYZIEQrViMA84TVzsfyHL+9+q1nOGRpvQoDcJzk/1bOdEfciDAA==\"}, {\"symbol\": \"l6500_evidence.sas_http.handle_sas_download\", \"signature\": \"N/erEChqtYJafCH8ZlIn3YHQb69WLbiXkbSj1yyyCndkxJNcHOlsybGyK3r6MK0D94Fn5wrlY1OfhSQxzINGBw==\"}, {\"symbol\": \"l6500_evidence.sas_http.handle_sas_download_async\", \"signature\": \"beXjaIVGVQ+YeffcQexHq2m1k5G9qx7Az+TE8LwXZU3YUkCe3LIaXnhfegL1fWPF6S+ag984muFlG3vaOV6SDg==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob\", \"signature\": \"wh78V3IwKiUjGA+MLGRQ+OtusQzuJxr18qxjSYKv64vKLWod6YTv8JL6Q95bk4X3gaF1fmDxvoSBKagj3+NwAA==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob_async\", \"signature\": \"kbzUVWiTCLB0ZI/HAHlA64ICBS60eFyh45dYJiL7BKHBAOAxoMgRq6DqEfTEMDgWDNXrEr+jgkR13/p547LhBg==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.generate_token_for_blob\", \"signature\": \"IIUH3stpPr/HdGlUXMGhht8nSmVE5okrXKrYIecNKEqLZ1CJn3I0nc/treF0/fZ7rgx8Jw8+LJYjxoH5VDRjAg==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.generate_token_for_blob_async\", \"signature\": \"BMjtTQxGUyK0FTnSrdt3Lr41/HIZGf8rH1OYF0IhJNocU6zQfVTXUyv8hp6VfPuuD/5PZ2Z3Zta5Fyig22EgAg==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob\", \"signature\": \"GQSgzK6hQ/rZIhOSroWjZCpH6yQBWmC0dspVZNZWWlyyG6JKEITgHwVz8nfF7Y0aTQVTBAKdywhhJYZdAngRBA==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob_async\", \"signature\": \"3W/o1vc9dJsEY56KMth/UfpzDr4f/pq3/ioP9zQKx+TMos9knFH88meh9VU/3ZsRj9vRXJryOayYjTZMq2tGBw==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.resolve_access\", \"signature\": \"X1dLOHxDnX3PwdTArn8hgGes2Kpku2lsLsGOh+lFbk1A1rfqaGB/+c/zdzZiyllnhobyrpC3KIYG3yY5jqraCA==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.resolve_access_async\", \"signature\": \"OA6q+NrjCc2h0vzUC93gkvxs8Edr2z4cMUsisWxxt1Lg2HXcrQ5UV2AAKrgT4dwFSSaaR0r06w+aTMMCaFsvCg==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.resolve_and_serve\", \"signature\": \"GjQ0RwiUr6aLWiBBoxEuDZ+C3HInHoEuxgZKaIewVJ1x4wJ7hcmbTxiXd2j45PDU24K6jtmZKu+pgR/JJZP/CQ==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.resolve_and_serve_async\", \"signature\": \"ijb8tgNmebcvTQZg1u0j2J2ScNqiTYYZu1ebSBhgSZ59RMAauIbdLLOYOuMtUlqyQRMJpOOpU3zntUy2C2SxBg==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.validate_and_serve\", \"signature\": \"wYzZYNSb+CsK658aYDbgnZxQUZuFtceuOLRwguGzxC+mWoIHsC7Df1WPhx7qNNKmcIcBQhPVcVK4GEt8KfrgCw==\"}, {\"symbol\": \"l6500_evidence.sas_service.SasUrlService.validate_and_serve_async\", \"signature\": \"oAYmZ/jJcMb+/5kFW57Q0EC6vMEFpBub2OXFUnOiE/wgCOkXfG1ypN5uOmS8GESKj386tH5I4HWcFCpIiMRQCQ==\"}, {\"symbol\": \"l6530_managed_secrets.service._resolve_managed_secret_candidate\", \"signature\": \"5JjmhYeHUK7c6EFlODoRZitt7jDcBKrDYiF/gpXa7UxbGZccmLLXx77z4MUXudVqC8nrY3O6fidjqfeUQyo/AQ==\"}, {\"symbol\": \"l6530_managed_secrets.service.create_managed_secret_async\", \"signature\": \"NiWtDaqhmV+co/9GQP96AkgDAHPJA1dgC0jwUzJBLsiuY/moDaLKMM46sXsJNXDhhVBFv3Y/JaXRd9tT3cxNAw==\"}, {\"symbol\": \"l6530_managed_secrets.service.delete_managed_secret_async\", \"signature\": \"ZGPbLZxGELL3JbHbkIDaccknMm1yroIn9LPDh/QErOSwXxwKW+CVsBKoyPMN1s7Kk1UhUJbmfnb5S/6gVg1HCA==\"}, {\"symbol\": \"l6530_managed_secrets.service.rotate_managed_secret_async\", \"signature\": \"KW677DkqIRmanQeWsxMP9o6a4oK0EmZQmXanKf+JsE7AwjAm7B6l5STi665WSRHcYqC4ySQAiWu32N74enwmAA==\"}]') WHERE verify_ed25519('7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6',json_object('allowlist',json_array(json_extract(value,'$.symbol')),'linter','lint_eager_resolve:external_io_boundary','version',1),json_extract(value,'$.signature')))"
+              },
+              "default": {
+                "$option": "externalIoBoundaries",
+                "escape": "sql",
+                "map": " UNION ALL SELECT {} symbol",
+                "join": "",
+                "template": "SELECT '' symbol WHERE 0{}"
+              }
             },
             "indexes": [
               [
@@ -663,18 +631,49 @@
           {
             "name": "direct_patterns",
             "query": "SELECT \"__path\",\"__start\",\"__end\",\"issue\",\"identity\",\"symbol\" FROM (SELECT l.__path,l.__start,l.__end,l.issue,l.__start||':'||l.issue identity,l.symbol FROM direct_sites l WHERE NOT ((l.__path IN ('l2055_lazy_result/lazy_result.py','l2055_lazy_result/lazy_seq.py') AND (l.symbol IN ('l2055_lazy_result.lazy_result.NoneResultError.__init__') OR rx_matches(l.symbol,'^(?:l2055_lazy_result\\.lazy_result\\.LazyFieldRef\\.|l2055_lazy_result\\.lazy_result\\.LazyResult\\.|l2055_lazy_result\\.lazy_seq\\.LazySeq\\.)')))\n      OR (l.__path='l2070_batching/server_ref.py' AND l.issue IN ('transitive:*._deleted_state_slot','transitive:*._ref_id'))\n      OR (l.__path='l2070_batching/step.py' AND l.issue='transitive:*._ref_id' AND l.symbol GLOB 'l2070_batching.step.StepRef.*')\n      OR (l.__path='l2055_lazy_result/lazy_result.py' AND l.issue='.resolve()' AND l.symbol='l2055_lazy_result.lazy_result.LazyResult.result')\n      OR (NOT rx_matches(l.__path,'^(?:impl/common/l2070_server_plan/|impl/common/l7300_sql_versioned_transactions/|l2050_transaction/|l2055_lazy_result/|l2070_batching/|l5100_fts/|l5200_vector_index/|l7200_versioned_transactions/)') AND (instr(l.issue,'__dict__')>0 OR instr(l.issue,'getattr_static(')>0 OR l.issue GLOB 'transitive:peek_*' OR l.issue GLOB 'peek_*'))\n      OR (l.issue='.resolve()' AND rx_matches(l.symbol,'^(?:impl\\.common\\.l2550_storage_backend\\.local_backend\\.|impl\\.l1570_llm_client\\.client\\.LLMClient\\._resolve_debug_dir|impl\\.sqlite\\.connection\\.SyncSqliteConnection\\.database_identity|l1000_schema\\.path_validation\\.|l1100_exceptions\\.safe_file_ops\\.|l8000_admin\\.tools\\.docs_search\\.|l8000_admin\\.tools\\.validation\\.|l8100_ops_analytics\\.connection\\.|l9600_graphs\\.dynamic_vector\\.resolve_dynamic_embedding_handler)'))\n      OR (l.issue='.result()' AND l.symbol IN ('impl.l1570_llm_client.client._run_sync','l5000_subscriptions.deferred_dispatch._run_async_callback_sync'))\n      OR (l.symbol IN (SELECT symbol FROM approved_external) AND (replace(l.issue,'transitive:','') IN ('*.resolve()','*.resolve_async()','*.result()','.resolve()','.resolve_async()','.result()') OR replace(l.issue,'transitive:','') GLOB 'non-lazy-call:*'))\n      OR (l.issue='.resolve()' AND instr(l.text,'ResolveVersionedForeignKeyTargetIntent(')>0)))"
+          },
+          {
+            "name": "display_nodes",
+            "query": "SELECT \"__path\",\"family\",\"identity\",\"id\" FROM (SELECT d.__path,'transitive_patterns' family,d.identity,n.id FROM transitive_patterns d JOIN function_info n ON n.__path=d.__path AND n.symbol=d.symbol UNION ALL SELECT d.__path,'external_definitions' family,d.identity,n.id FROM external_definitions d JOIN function_info n ON n.__path=d.__path AND n.symbol=d.symbol UNION ALL SELECT d.__path,'phase_patterns' family,d.identity,n.id FROM phase_patterns d JOIN nodes n ON n.__path=d.__path AND n.__start=d.__start AND n.__end=d.__end AND n.kind IN ('call','attribute') UNION ALL SELECT d.__path,'preprocess_patterns' family,d.identity,n.id FROM preprocess_patterns d JOIN nodes n ON n.__path=d.__path AND n.__start=d.__start AND n.__end=d.__end AND n.kind IN ('call','attribute'))",
+            "indexes": [
+              [
+                "__path",
+                "family",
+                "identity"
+              ]
+            ]
+          },
+          {
+            "name": "display_roots",
+            "query": "SELECT \"__path\",\"id\" FROM (SELECT DISTINCT __path,id FROM display_nodes)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "display_values",
+            "pythonAst": {
+              "syntax": "nodes",
+              "roots": "SELECT __path,id FROM display_roots",
+              "fields": [
+                "unparse"
+              ]
+            }
           }
         ],
         "query": {
           "$option": "entryPoint",
           "cases": {
-            "_scan_transitive_eager_ast": "SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM transitive_patterns",
-            "_scan_lower_compile_ast": "SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM phase_patterns WHERE issue GLOB 'lower:*' OR issue GLOB 'compile:*'",
-            "_scan_preprocess_ast": "SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM preprocess_patterns",
-            "_scan_external_io_boundary_definition_ast": "SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM external_definitions",
-            "_scan_legacy_boundary_definition_ast": "SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM external_definitions WHERE 0"
+            "_scan_transitive_eager_ast": "SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,rx_extract(value.unparse,'^[^\\n]*',0) text FROM transitive_patterns d JOIN display_nodes selected ON selected.__path=d.__path AND selected.family='transitive_patterns' AND selected.identity=d.identity JOIN display_values value ON value.__path=selected.__path AND value.id=selected.id",
+            "_scan_lower_compile_ast": "SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,value.unparse text FROM phase_patterns d JOIN display_nodes selected ON selected.__path=d.__path AND selected.family='phase_patterns' AND selected.identity=d.identity JOIN display_values value ON value.__path=selected.__path AND value.id=selected.id WHERE d.issue GLOB 'lower:*' OR d.issue GLOB 'compile:*'",
+            "_scan_preprocess_ast": "SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,value.unparse text FROM preprocess_patterns d JOIN display_nodes selected ON selected.__path=d.__path AND selected.family='preprocess_patterns' AND selected.identity=d.identity JOIN display_values value ON value.__path=selected.__path AND value.id=selected.id",
+            "_scan_external_io_boundary_definition_ast": "SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,rx_extract(value.unparse,'^[^\\n]*',0) text FROM external_definitions d JOIN display_nodes selected ON selected.__path=d.__path AND selected.family='external_definitions' AND selected.identity=d.identity JOIN display_values value ON value.__path=selected.__path AND value.id=selected.id",
+            "_scan_legacy_boundary_definition_ast": "SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,rx_extract(value.unparse,'^[^\\n]*',0) text FROM external_definitions d JOIN display_nodes selected ON selected.__path=d.__path AND selected.family='external_definitions' AND selected.identity=d.identity JOIN display_values value ON value.__path=selected.__path AND value.id=selected.id WHERE 0"
           },
-          "default": "SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM transitive_patterns UNION ALL SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM phase_patterns UNION ALL SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM external_definitions UNION ALL SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM preprocess_patterns UNION ALL SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM direct_patterns"
+          "default": "SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,rx_extract(value.unparse,'^[^\\n]*',0) text FROM transitive_patterns d JOIN display_nodes selected ON selected.__path=d.__path AND selected.family='transitive_patterns' AND selected.identity=d.identity JOIN display_values value ON value.__path=selected.__path AND value.id=selected.id UNION ALL SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,value.unparse text FROM phase_patterns d JOIN display_nodes selected ON selected.__path=d.__path AND selected.family='phase_patterns' AND selected.identity=d.identity JOIN display_values value ON value.__path=selected.__path AND value.id=selected.id UNION ALL SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,rx_extract(value.unparse,'^[^\\n]*',0) text FROM external_definitions d JOIN display_nodes selected ON selected.__path=d.__path AND selected.family='external_definitions' AND selected.identity=d.identity JOIN display_values value ON value.__path=selected.__path AND value.id=selected.id UNION ALL SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,value.unparse text FROM preprocess_patterns d JOIN display_nodes selected ON selected.__path=d.__path AND selected.family='preprocess_patterns' AND selected.identity=d.identity JOIN display_values value ON value.__path=selected.__path AND value.id=selected.id UNION ALL SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,trim(line.text) text FROM direct_patterns d JOIN direct_sites line ON line.__path=d.__path AND line.__start=d.__start AND line.issue=d.issue"
         },
         "key": [
           "issue",

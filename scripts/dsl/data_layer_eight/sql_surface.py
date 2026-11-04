@@ -9,7 +9,7 @@ from data_layer_eight.relations import clause
 def candidate(source,policy):
     module=source/'scripts/lint_lazy_sql_surface.py';value=lambda name:constant(module,name)
     p=policy('lazy_sql_surface',['impl/**/*.py','data_layer/**/*.py','_internal/**/*.py','l[0-9][0-9][0-9][0-9]_*/**/*.py'])
-    p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'scan_repo'}}}})
+    p['clauses'].append({'id':'entry','define':{'options':{'entryPoint':{'type':'string','default':'scan_repo'}}}})
     stages=[
       S('terminal_names',"""WITH RECURSIVE head(__path,root,node) AS (
         SELECT __path,id,id FROM nodes WHERE kind IN ('call','attribute','identifier','as_pattern','parenthesized_expression')
@@ -31,5 +31,4 @@ def candidate(source,policy):
     trigger='LazyResult|SyncSqlConnection|compile|execute|execute_async|explicit_execution_authority|grammar_lazy|legacy_async|legacy_sync'
     where=" FROM diagnostics d WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=d.__path AND n.kind='module' AND rx_matches(n.text,"+q(trigger)+")) AND NOT rx_matches(__path,'(?:^|/)(?:tests|conform)(?:/|$)')"
     item=clause('sql-surface',stages,'SELECT __path path,__start start_byte,__end end_byte,message issue,id identity,message'+where)
-    item['relational']['query']={'$option':'oracleAnalyzer','cases':{'true':item['relational']['query'],'false':"SELECT __path path,__start start_byte,__end end_byte,'LSS-001' issue,id identity,message"+where}}
     item['relational']['message']='message';p['clauses'].append(item);return p

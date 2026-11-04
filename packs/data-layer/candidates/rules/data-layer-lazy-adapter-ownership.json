@@ -48,10 +48,6 @@
       "id": "entry",
       "define": {
         "options": {
-          "oracleAnalyzer": {
-            "type": "boolean",
-            "default": false
-          },
           "entryPoint": {
             "type": "string",
             "default": "scan_source"

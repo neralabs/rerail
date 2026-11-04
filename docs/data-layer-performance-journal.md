@@ -6196,3 +6196,62 @@ No complete-repository cold benchmark ran. Historical CPU and RSS measurements r
 
 Root TDD commits `aac633d9f` and `e364ead20` capture the assertion and ordered-target regressions.
 Companion engine commit `ebcfefa0a` supplies diagnostic payloads and native work counters.
+
+
+## 2026-11-04 — Correct the incomplete batch-eight translation
+
+The preceding completion claim was premature. Original partial assertions missed complete field and ordering differences.
+Some adapters rescanned source instead of consuming supplied facts. Test-only configuration also changed rule behavior.
+
+The new comparison records complete upstream API results before installing native adapters.
+It checks every returned field, list position, count and syntax-error attribute.
+Complete analyzer comparison initially found differences in 25 of 85 inputs.
+The fixes preserve declaration order, CPython visitation order, future imports and private-runtime events.
+The shared predicates now consume supplied function and policy facts without source files.
+All ten rules have no `oracleAnalyzer` option.
+
+Actual porting exposed another engine requirement: ordered first-match traversal with memo reuse across roots.
+Independent reachability chose different call sites and returned extra findings through cycles.
+The generic native producer now reads whole typed SQL batches of roots, edges and sinks.
+It preserves negative memo entries and keeps each file's callable map separate.
+Shared sinks use one relation, without a file-by-sink cross product.
+The producer returns indexed columns and contains no linter symbols.
+The companion also exposes canonical syntax-error facts through the existing isolated CPython worker.
+
+Additional fixes retain separate raw-text and AST coordinates, canonical eager expression text and exact policy comparison order.
+The cached verifier checks nested immutable globals and keeps duplicate-declaration errors separate.
+Policy annotation formatting now preserves Python quoting.
+The final corpus caught a missing sync/async grammar lookup; the original expected finding remains in the gate.
+Nine unused comparator definitions were removed. Regeneration produced identical rule and fact-policy bytes.
+
+Final correctness evidence, through both snapshot and workspace APIs:
+
+| Gate | Result |
+| --- | --- |
+| Original upstream suite | 456 passed, zero skipped, zero semantic fallbacks |
+| Complete API results | 305 observations, zero differences |
+| Complete analyzer facts | 85 inputs, zero differences |
+| Recorded scanner corpus | 558 observations: 351 positive, 207 clean; zero differences |
+| Supplied-fact batches without source | 16 inputs through each API |
+| Native calls in the original suite | 523 across 336 cases: 326 diagnostic calls and 197 helper calls |
+
+Of the 326 diagnostic calls, 201 contain findings.
+The other 120 original cases test host behavior; they are not native detector coverage.
+Always-clean mutations disable both source and supplied-fact diagnostic consumers.
+The original positive tests reject those mutations across all nine suites that have pytest modules.
+The control run has 173 assertion failures and ten positive-fixture setup errors, without semantic fallback.
+The SQL-surface rule has separate positive and clean oracle probes and a native mutation control.
+
+The selected engine commit is `29cbf425b`, on `jeremy/data-layer-integrated-compat-20261103`.
+Its addon SHA-256 is `34b553e63d5b8277d488fba591816bfbb6c7a7554509c3ea63a1566dbdc6871b`.
+The final addon build took 50.70 seconds. The test-binary build took 218 seconds.
+Those build times are separate from test execution.
+The canonical producer tests pass ten cases. The relational suite passes 38 cases, including the ordered-graph tests.
+The final TypeScript gate passes 70 tests. The integrated compiler accepts all 80 candidate rules.
+Typechecking, boundary checks and Windows path checks pass.
+The structure check retains its three existing directory-size findings.
+
+The native assertion receipt binds the engine, rule programs, fact programs, adapters and complete-result oracles by hash.
+Root red commits `5cb371089`, `0a5f86198` and `992350ca5` capture the stronger comparisons and positive regressions.
+Companion red commit `bc138befc` captures the syntax-error contract.
+No full-repository cold benchmark ran. This correctness work makes no new CPU or RSS claim.

@@ -10,7 +10,7 @@ from data_layer_eight.model import stages as model
 def candidate(source,policy):
     module=source/'scripts/lint_pure_lazy_runtime_purity.py';value=lambda n:constant(module,n)
     p=policy('pure_lazy_runtime_purity',['impl/**/*.py','data_layer/**/*.py','_internal/**/*.py','l[0-9][0-9][0-9][0-9]_*/**/*.py'])
-    p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'scan_paths'},'primaryPaths':{'type':'array','items':'string','default':[]}}}})
+    p['clauses'].append({'id':'entry','define':{'options':{'entryPoint':{'type':'string','default':'scan_paths'},'primaryPaths':{'type':'array','items':'string','default':[]}}}})
     protected=literals(value('PROTECTED_RUNTIME_ATTRS'));handles=literals(value('RUNTIME_HANDLE_TYPE_NAMES'));helpers=literals(value('PURE_SURFACE_HELPER_CALLS'));opaque=literals(value('OPAQUE_PURE_LAZY_HELPER_CALLS'))
     stages=[*model(),
       S('primary_paths',{'$option':'primaryPaths','escape':'sql','map':' UNION ALL SELECT {} path','join':'','template':"SELECT '' path WHERE 0{}"},('path',)),

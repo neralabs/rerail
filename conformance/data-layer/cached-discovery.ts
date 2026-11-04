@@ -38,7 +38,7 @@ export function cachedDiscoveryPolicy(moduleName?: string) {
     `SELECT __path,'${moduleName.replaceAll("'", "''")}' module FROM nodes WHERE kind='module'`;
   policy.clauses.push({ id: "native-syntax", forbid: { ast: { language: "python", syntax: "invalid", rule: { kind: "module" } } },
     violation: { code: "NATIVE-SYNTAX", message: "Invalid Python syntax", anchor: "witness.span" } });
-  plan.query = projection; plan.key = ["identity"]; delete plan.code;
+  plan.query = projection; plan.key = ["identity"]; delete plan.code; delete plan.message;
   return policy;
 }
 

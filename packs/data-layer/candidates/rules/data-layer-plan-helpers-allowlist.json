@@ -26,10 +26,6 @@
       "id": "entry",
       "define": {
         "options": {
-          "oracleAnalyzer": {
-            "type": "boolean",
-            "default": false
-          },
           "entryPoint": {
             "type": "string",
             "default": "scan_repo"
@@ -242,17 +238,11 @@
           }
         ],
         "query": {
-          "$option": "oracleAnalyzer",
+          "$option": "entryPoint",
           "cases": {
-            "true": {
-              "$option": "entryPoint",
-              "cases": {
-                "scan_repo": "SELECT __path path,__start start_byte,__end end_byte,reason issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows') AND substr(__path,-3)='.py' AND NOT rx_matches(__path,'(?:^|/)\\.py$') AND rx_matches(__path,'(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_') AND NOT rx_matches(__path,'(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$)')"
-              },
-              "default": "SELECT __path path,__start start_byte,__end end_byte,reason issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows')"
-            },
-            "false": "SELECT __path path,__start start_byte,__end end_byte,'PHA001' issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows') AND substr(__path,-3)='.py' AND NOT rx_matches(__path,'(?:^|/)\\.py$') AND rx_matches(__path,'(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_') AND NOT rx_matches(__path,'(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$)')"
-          }
+            "scan_repo": "SELECT __path path,__start start_byte,__end end_byte,reason issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows') AND substr(__path,-3)='.py' AND NOT rx_matches(__path,'(?:^|/)\\.py$') AND rx_matches(__path,'(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_') AND NOT rx_matches(__path,'(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$)')"
+          },
+          "default": "SELECT __path path,__start start_byte,__end end_byte,reason issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN ('impl.common.l2070_server_plan.plan_helpers::ddl_via_plan','impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async','impl.common.l2070_server_plan.plan_helpers::scalar_via_plan','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.execute_grammar_with_params','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute','impl.common.l2200_sql_dialect.sql_connection::SqlConnection.raw_execute_async','impl.doltdb.versioned_operations_read::check_doltdb_branch_exists','l8000_admin.tools.sql_execution::execute_sql_command','l8000_admin.tools.sql_execution::execute_sql_query','l8000_admin.tools.sql_execution::explain_query','l8000_admin.tools.versioning_tools::_fetch_plan_rows')"
         },
         "key": [
           "issue",

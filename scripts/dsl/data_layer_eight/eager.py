@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Eager terminal patterns and directed phase propagation over shared syntax."""
-import ast,re
+import ast,re,json
 from data_layer_six.common import A,O,K,P,E,S,q,literals
 from data_layer_eight.contracts import constants
 from data_layer_eight.model import stages as model
@@ -11,11 +11,18 @@ def candidate(source,policy):
     v=constants(source/'scripts/lint_eager_resolve.py')
     vals=lambda *names:literals(set().union(*(v[n] for n in names)))
     prefixes=lambda name:q('^(?:'+'|'.join(map(re.escape,sorted(v[name])))+')')
-    external=[line.strip() for line in (source/'scripts/allowlists/lint_eager_resolve_external_io_boundaries.txt').read_text().splitlines() if line.strip() and not line.startswith('#')]
+    external=[]
+    for line in (source/'scripts/allowlists/lint_eager_resolve_external_io_boundaries.txt').read_text().splitlines():
+        line=line.strip()
+        if not line or line.startswith('#'):continue
+        parts=line.split(maxsplit=1);external.append({'symbol':parts[0],'signature':parts[1].strip() if len(parts)>1 else ''})
+    public=constants(source/'l2070_batching/allowlist_signing.py')['PUBLIC_KEY_HEX']
+    signed="SELECT json_extract(value,'$.symbol') symbol FROM json_each("+q(json.dumps(external))+") WHERE verify_ed25519("+q(public)+",json_object('allowlist',json_array(json_extract(value,'$.symbol')),'linter',"+q(v['EXTERNAL_IO_BOUNDARY_ITEM_LINTER_NAME'])+",'version',1),json_extract(value,'$.signature'))"
+
     p=policy('eager_resolve',['impl/**/*.py','api/**/*.py','l[0-9][0-9][0-9][0-9]_*/**/*.py'])
-    p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'_scan_source'},'externalIoBoundaries':{'type':'array','items':'string','default':external}}}})
+    p['clauses'].append({'id':'entry','define':{'options':{'entryPoint':{'type':'string','default':'_scan_source'},'externalIoBoundaries':{'type':'array','items':'string','nullable':True,'default':None}}}})
     stages=[*model(),
-      S('approved_external',{'$option':'externalIoBoundaries','escape':'sql','map':' UNION ALL SELECT {} symbol','join':'','template':"SELECT '' symbol WHERE 0{}"},('symbol',)),
+      S('approved_external',{'$option':'externalIoBoundaries','cases':{'null':signed},'default':{'$option':'externalIoBoundaries','escape':'sql','map':' UNION ALL SELECT {} symbol','join':'','template':"SELECT '' symbol WHERE 0{}"}},('symbol',)),
       S('function_info',"SELECT f.*,replace(substr(f.__path,1,length(f.__path)-3),'/','.')||'.'||f.qualname symbol,rx_matches(f.__path,"+prefixes('SERVERPLAN_LAZY_REL_PREFIXES')+") serverplan,own.cls function_cls FROM declaration_contexts f JOIN ownership own ON own.__path=f.__path AND own.id=f.id WHERE f.kind='function_definition'",('__path','id')),
       S('nested_regions',"SELECT __path,__start,__end,kind FROM nodes WHERE kind IN ('lambda','class_definition')",('__path','kind','__start','__end')),
       S('body_calls',"SELECT c.*,f.id fn,f.symbol,f.serverplan FROM calls c JOIN ownership o ON o.__path=c.__path AND o.id=c.id JOIN function_info f ON f.__path=o.__path AND f.id=o.fn AND o.cls IS f.function_cls WHERE c.__start>=f.body_start AND c.__end<=f.body_end AND NOT EXISTS(SELECT 1 FROM nested_regions l WHERE l.__path=c.__path AND l.kind='lambda' AND l.__start<c.__start AND l.__end>=c.__end)",('__path','fn'),('__path','id')),
@@ -90,12 +97,28 @@ def candidate(source,policy):
       S('direct_sites',"SELECT l.*,p.issue,coalesce((SELECT f.symbol FROM function_info f WHERE f.__path=l.__path AND f.line<=l.line AND l.line<=f.line+length(f.text)-length(replace(f.text,char(10),'')) ORDER BY length(f.qualname)-length(replace(f.qualname,'.','')) DESC,length(f.text) LIMIT 1),replace(substr(l.__path,1,length(l.__path)-3),'/','.')||'::<module>') symbol FROM source_lines l CROSS JOIN line_patterns p WHERE rx_matches(l.text,p.pattern) AND NOT rx_matches(l.text,'^\\s*#') AND NOT rx_matches(l.__path,'^conform/|(?:^|/)(?:tests|test_[^/]*)/') AND NOT rx_matches(l.__path,'(?:^|/)test_[^/]*$') AND NOT EXISTS(SELECT 1 FROM nodes s WHERE s.__path=l.__path AND s.kind IN ('string','concatenated_string') AND s.line<=l.line AND l.line<=s.line+length(s.text)-length(replace(s.text,char(10),'')) AND instr(s.text,char(10))>0 AND NOT rx_matches(s.text,'^[rRuUbB]*[fF]'))"),
       S('direct_patterns',"SELECT l.__path,l.__start,l.__end,l.issue,l.__start||':'||l.issue identity,l.symbol FROM direct_sites l WHERE NOT (l.__path IN ('l2055_lazy_result/lazy_result.py','l2055_lazy_result/lazy_seq.py') AND (l.symbol IN "+vals('LOCKED_PUBLIC_LAZY_FACADE_SYMBOLS')+" OR rx_matches(l.symbol,"+prefixes('LOCKED_PUBLIC_LAZY_FACADE_SYMBOL_PREFIXES')+"))) AND NOT(l.__path='l2070_batching/server_ref.py' AND l.issue IN "+vals('SERVER_REF_CORE_SLOT_PATTERN_NAMES')+") AND NOT(l.issue='.resolve()' AND rx_matches(l.symbol,"+prefixes('NON_LAZY_RESOLVE_SYMBOL_PREFIXES')+")) AND NOT(l.issue='.result()' AND l.symbol IN "+vals('NON_LAZY_RESULT_SYMBOLS')+") AND NOT(l.issue IN ('.resolve()','.resolve_async()','.result()') AND l.symbol IN (SELECT symbol FROM approved_external)) AND NOT(l.issue='.resolve()' AND instr(l.text,'ResolveVersionedForeignKeyTargetIntent(')>0)")
     ])
-    base=lambda relation:'SELECT __path path,__start start_byte,__end end_byte,issue,identity,symbol FROM '+relation
     from data_layer_eight.eager_contracts import apply
     apply(stages,vals,prefixes)
+    # The original API returns canonical node text for AST diagnostics and
+    # the first canonical declaration line for definition diagnostics.
+    mappings=[]
+    for relation in ('transitive_patterns','external_definitions'):
+        mappings.append("SELECT d.__path,"+q(relation)+" family,d.identity,n.id FROM "+relation+" d JOIN function_info n ON n.__path=d.__path AND n.symbol=d.symbol")
+    for relation in ('phase_patterns','preprocess_patterns'):
+        mappings.append("SELECT d.__path,"+q(relation)+" family,d.identity,n.id FROM "+relation+" d JOIN nodes n ON n.__path=d.__path AND n.__start=d.__start AND n.__end=d.__end AND n.kind IN ('call','attribute')")
+    stages.extend([S('display_nodes',' UNION ALL '.join(mappings),('__path','family','identity')),
+      S('display_roots','SELECT DISTINCT __path,id FROM display_nodes',('__path','id')),
+      S('display_values',"SELECT __path,id,'' unparse FROM display_roots",('__path','id'))])
+    def base(relation):
+        if relation=='direct_patterns':
+            return "SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,trim(line.text) text FROM direct_patterns d JOIN direct_sites line ON line.__path=d.__path AND line.__start=d.__start AND line.issue=d.issue"
+        text="value.unparse" if relation in ('phase_patterns','preprocess_patterns') else "rx_extract(value.unparse,'^[^\\n]*',0)"
+        return "SELECT d.__path path,d.__start start_byte,d.__end end_byte,d.issue,d.identity,d.symbol,"+text+" text FROM "+relation+" d JOIN display_nodes selected ON selected.__path=d.__path AND selected.family="+q(relation)+" AND selected.identity=d.identity JOIN display_values value ON value.__path=selected.__path AND value.id=selected.id"
     full=' UNION ALL '.join(base(relation) for relation in ['transitive_patterns','phase_patterns','external_definitions','preprocess_patterns','direct_patterns'])
-    item=clause('eager-resolution',stages,full,{'source_lines':raw,'strings':E(A(O(K('string'),K('concatenated_string')),P('STRING'),{'regex':r'''(?i)^[ru]*["']'''}),{'value':'capture.DECODED.text'},transform={'DECODED':{'substring':{'source':'$STRING','value':True,'startChar':0}}})})
-    item['relational']['query']={'$option':'entryPoint','cases':{'_scan_transitive_eager_ast':base('transitive_patterns'),'_scan_lower_compile_ast':base('phase_patterns')+" WHERE issue GLOB 'lower:*' OR issue GLOB 'compile:*'",'_scan_preprocess_ast':base('preprocess_patterns'),'_scan_external_io_boundary_definition_ast':base('external_definitions'),'_scan_legacy_boundary_definition_ast':base('external_definitions')+' WHERE 0'},'default':base('transitive_patterns')+' UNION ALL '+base('phase_patterns')+' UNION ALL '+base('external_definitions')+' UNION ALL '+base('preprocess_patterns')+' UNION ALL '+base('direct_patterns')}
+    item=clause('eager-resolution',stages,full,{'source_lines':raw,'strings':E(A(O(K('string'),K('concatenated_string')),P('STRING'),{'regex':r'''(?i)^[ru]*["']''' }),{'value':'capture.DECODED.text'},transform={'DECODED':{'substring':{'source':'$STRING','value':True,'startChar':0}}})})
+    display=next(stage for stage in item['relational']['stages'] if stage['name']=='display_values')
+    display.clear();display.update(name='display_values',pythonAst={'syntax':'nodes','roots':'SELECT __path,id FROM display_roots','fields':['unparse']})
+    item['relational']['query']={'$option':'entryPoint','cases':{'_scan_transitive_eager_ast':base('transitive_patterns'),'_scan_lower_compile_ast':base('phase_patterns')+" WHERE d.issue GLOB 'lower:*' OR d.issue GLOB 'compile:*'",'_scan_preprocess_ast':base('preprocess_patterns'),'_scan_external_io_boundary_definition_ast':base('external_definitions'),'_scan_legacy_boundary_definition_ast':base('external_definitions')+' WHERE 0'},'default':full}
     strings=item['relational']['inputs']['raw_strings']['evidence']['query']['ast']['rule']
     strings['all'].append(O({'inside':{'kind':'call','has':{'field':'function','any':[{'kind':'identifier','regex':'^(getattr|hasattr)$'},{'kind':'attribute','has':{'field':'attribute','regex':'^(__getattribute__|getattr_static)$'}}]},'stopBy':'end'}},{'inside':{'kind':'subscript','stopBy':'neighbor'}}))
     p['clauses'].append(item);return p

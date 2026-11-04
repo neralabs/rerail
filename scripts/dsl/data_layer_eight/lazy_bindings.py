@@ -74,8 +74,10 @@ def apply(stages):
       EXISTS(SELECT 1 FROM execution_context_classes ctx JOIN declaration_contexts cls ON cls.__path=ctx.__path AND cls.id=ctx.cls WHERE cls.__path=f.__path AND cls.region_start<f.region_start AND cls.__end>=f.__end) AND f.name IN ('execute_sync','execute_async') execution_context,
       EXISTS(SELECT 1 FROM nodes stmt LEFT JOIN nodes value ON value.__path=stmt.__path AND value.parent=stmt.id AND value.ordinal=0 LEFT JOIN calls call ON call.__path=value.__path AND call.id=value.id WHERE stmt.__path=f.__path AND stmt.parent=f.body_kind||':'||f.body_start||':'||f.body_end AND stmt.kind='raise_statement' AND (CASE WHEN value.kind='call' THEN call.callee WHEN value.kind='attribute' THEN value.attribute_source WHEN value.kind='identifier' THEN value.text END GLOB '*NotImplementedError' OR CASE WHEN value.kind='call' THEN call.callee WHEN value.kind='attribute' THEN value.attribute_source WHEN value.kind='identifier' THEN value.text END GLOB '*LazyPurityError')
         AND NOT EXISTS(SELECT 1 FROM nodes prior WHERE prior.__path=stmt.__path AND prior.parent=stmt.parent AND prior.__start<stmt.__start AND prior.kind!='comment' AND NOT(prior.kind='expression_statement' AND EXISTS(SELECT 1 FROM nodes doc WHERE doc.__path=prior.__path AND doc.parent=prior.id AND doc.kind IN ('string','concatenated_string'))))) tombstone,""",1)
+    from data_layer_eight.lazy_paths import function_order
+    flags['query']="SELECT base.*,(base.pure OR base.name GLOB '*_lazy') is_lazy,base.name NOT GLOB '_*' is_public FROM ("+flags['query'].replace('SELECT f.*,','SELECT f.*,'+function_order('f')+' fact_order,',1)+") base"
     targets = next(s for s in stages if s['name']=='call_targets')
-    targets['query'] = "SELECT c.__path,c.fn,c.__start,c.id,"+callable_target_sql()+" target FROM owned_calls c JOIN function_flags f ON f.__path=c.__path AND f.id=c.fn LEFT JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver"
+    targets['query'] = "SELECT c.__path,c.fn,c.__start,c.id,c.visit_key,"+callable_target_sql()+" target FROM owned_calls c JOIN function_flags f ON f.__path=c.__path AND f.id=c.fn LEFT JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver"
     index=stages.index(targets)+1
     stages[index:index]=[
       S('delegate_values',"SELECT source.__path,source.fn,source.id,source.__start,source.__end,k.__start keyword_start,node.kind callee_kind,CASE WHEN node.kind='identifier' THEN node.text ELSE node.attribute_source END callee,node.id callee_id,node.object_kind||':'||node.object_start||':'||node.object_end receiver FROM owned_calls source JOIN keywords k ON k.__path=source.__path AND k.call=source.id AND k.name IN ('sync_resolve','async_resolve') JOIN nodes node ON node.__path=k.__path AND node.id=k.value WHERE (source.resolved='defer_lazy_result' OR source.resolved GLOB '*.defer_lazy_result') AND node.kind IN ('identifier','attribute')",('__path','fn')),
@@ -86,7 +88,7 @@ def apply(stages):
     stages.insert(index,S('assignment_targets','SELECT __path,target id FROM assignments',('__path','id')))
     owned['query'] = owned['query'].replace("WHERE n.kind!='class_definition'", "WHERE n.kind!='class_definition' AND NOT EXISTS(SELECT 1 FROM assignment_targets target WHERE target.__path=n.__path AND target.id=n.id)")
     events = next(s for s in stages if s['name']=='function_events')
-    events['query'] = """SELECT e.__path,e.fn,e.id,e.__start,e.__end,e.category,
+    events['query'] = """SELECT e.__path,e.fn,e.id,e.__start,e.__end,e.category,e.channel,
       CASE WHEN e.category='plan' AND EXISTS(SELECT 1 FROM classified_calls c
         JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver AND receiver.kind='identifier'
         JOIN native_cursor_parameters p ON p.__path=c.__path AND p.fn=c.fn AND p.name=receiver.text

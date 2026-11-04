@@ -36,20 +36,20 @@ def source_contract(source, name, projection):
 
 def lazy_facts(source):
     query="""SELECT f.__path path,f.__start start_byte,f.__end end_byte,'function:'||f.id identity,'function' relation,
-      json_object('id',f.id,'symbol',f.symbol,'qualname',f.qualname,'name',f.name,'line',f.line+1,
+      json_object('order',coalesce((SELECT group_concat(piece,'') FROM (SELECT printf('%020d/1/',d.region_start) piece FROM declarations d WHERE d.__path=f.__path AND d.kind='class_definition' AND d.region_start<f.region_start AND d.__end>=f.__end ORDER BY d.region_start)),'')||printf('%020d',f.region_start),'id',f.id,'symbol',f.symbol,'qualname',f.qualname,'name',f.name,'line',f.line+1,
         'scope',coalesce(cls.qualname,''),'is_async',rx_matches(f.text,'^async\\b'),
         'is_lazy',f.pure OR f.name GLOB '*_lazy','has_pure_lazy_decorator',f.pure,
         'has_legacy_boundary_decorator',f.legacy,'is_public',f.name NOT GLOB '_*','is_tombstone',f.tombstone,'is_execution_context_method',f.execution_context) payload
       FROM function_flags f LEFT JOIN declaration_contexts cls ON cls.__path=f.__path AND cls.id=f.lexical_parent
       UNION ALL SELECT f.__path,f.__start,f.__end,'field:'||f.id,'function',
-      json_object('id',f.id,'symbol',replace(substr(f.__path,1,length(f.__path)-3),'/','.')||'.'||f.qualname,'qualname',f.qualname,'name',f.name,'line',f.line+1,'scope',f.scope,'is_async',0,'is_lazy',1,'has_pure_lazy_decorator',1,'has_legacy_boundary_decorator',0,'is_public',0,'is_tombstone',0,'is_execution_context_method',0) FROM side_queue_fields f
-      UNION ALL SELECT f.__path,f.__start,f.__end,'field-event:'||f.id,'event',json_object('fn',f.id,'category','bootstrap','detail','forbidden side-queue declaration '||f.name,'line',f.line+1) FROM side_queue_fields f
+      json_object('order',coalesce((SELECT group_concat(piece,'') FROM (SELECT printf('%020d/',d.region_start)||CASE WHEN d.qualname=f.scope THEN '0/' ELSE '1/' END piece FROM declaration_contexts d WHERE d.__path=f.__path AND d.kind='class_definition' AND d.region_start<f.__start AND d.__end>=f.__end ORDER BY d.region_start)),'')||printf('%020d',f.__start),'id',f.id,'symbol',replace(substr(f.__path,1,length(f.__path)-3),'/','.')||'.'||f.qualname,'qualname',f.qualname,'name',f.name,'line',f.line+1,'scope',f.scope,'is_async',0,'is_lazy',1,'has_pure_lazy_decorator',1,'has_legacy_boundary_decorator',0,'is_public',0,'is_tombstone',0,'is_execution_context_method',0) FROM side_queue_fields f
+      UNION ALL SELECT f.__path,f.__start,f.__end,'field-event:'||f.id,'event',json_object('order',printf('%020d',f.__start),'fn',f.id,'category','bootstrap','detail','forbidden side-queue declaration '||f.name,'line',f.line+1) FROM side_queue_fields f
       UNION ALL SELECT e.__path,e.__start,e.__end,'event:'||row_number() OVER(ORDER BY e.__path,e.__start,e.__end DESC,e.category),
-      'event',json_object('fn',e.fn,'category',e.category,'detail',e.detail,'event_kind',e.event_kind,'uses_conn',e.uses_conn,
+      'event',json_object('order',coalesce((SELECT o.visit_key FROM owned_nodes o WHERE o.__path=e.__path AND o.fn=e.fn AND o.__start=e.__start AND o.__end=e.__end LIMIT 1),printf('%020d/%020d',e.__start,2147483647-e.__end)),'fn',e.fn,'category',e.category,'detail',e.detail,'event_kind',e.event_kind,'uses_conn',e.uses_conn,
         'line',(SELECT min(n.line)+1 FROM nodes n WHERE n.__path=e.__path AND n.__start=e.__start)) FROM function_events e
-      UNION ALL SELECT t.__path,t.__start,t.__start,'call:'||t.id,'callee',json_object('fn',t.fn,'target',t.target,
+      UNION ALL SELECT t.__path,t.__start,t.__start,'call:'||t.id,'callee',json_object('order',t.visit_key,'fn',t.fn,'target',t.target,
         'line',(SELECT min(n.line)+1 FROM nodes n WHERE n.__path=t.__path AND n.__start=t.__start)) FROM call_targets t WHERE target IS NOT NULL
-      UNION ALL SELECT t.__path,t.__start,t.__end,'delegate:'||row_number() OVER(ORDER BY t.__path,t.__start,t.keyword_start),'delegate',json_object('fn',t.fn,'target',t.target,'line',(SELECT min(n.line)+1 FROM nodes n WHERE n.__path=t.__path AND n.__start=t.__start)) FROM delegate_targets t WHERE target IS NOT NULL
+      UNION ALL SELECT t.__path,t.__start,t.__end,'delegate:'||row_number() OVER(ORDER BY t.__path,t.__start,t.keyword_start),'delegate',json_object('order',printf('%020d',t.keyword_start),'fn',t.fn,'target',t.target,'line',(SELECT min(n.line)+1 FROM nodes n WHERE n.__path=t.__path AND n.__start=t.__start)) FROM delegate_targets t WHERE target IS NOT NULL
       UNION ALL SELECT i.__path,i.__start,i.__end,'import:'||row_number() OVER(ORDER BY i.__path,i.__start,i.local),'import',json_object('kind',i.kind,'module',i.module,'name',i.name,'local',i.local)
       FROM imports i JOIN nodes n ON n.__path=i.__path AND n.id=i.id JOIN nodes p ON p.__path=n.__path AND p.id=n.parent AND p.kind='module'
       UNION ALL SELECT a.__path,a.__start,a.__end,'binding:'||a.id,'binding',json_object('name',a.target_text,'source',a.expr_text)
@@ -83,7 +83,7 @@ def memoized_facts(source):
     query="""SELECT n.__path path,n.__start start_byte,n.__end end_byte,f.function identity,
       json_object('function',f.function,'path',f.__path,'line',n.line+1,'max_entries',b.max_entries,
         'body_hash',f.body_sha256,'signature_hash',f.signature_sha256,
-        'errors',(SELECT json_group_array(error) FROM (SELECT error FROM memoized_errors e WHERE e.function=f.function ORDER BY error))) payload
+        'errors',(SELECT json_group_array(error) FROM (SELECT error FROM memoized_errors e WHERE e.__path=f.__path AND e.fn=f.id ORDER BY error))) payload
       FROM actual_functions f JOIN nodes n ON n.__path=f.__path AND n.id=f.id JOIN memoized_bounds b ON b.__path=f.__path AND b.id=f.id
       UNION ALL SELECT n.__path,n.__start,n.__end,a.function,
       json_object('function',a.function,'path',a.__path,'line',n.line+1,'max_entries',NULL,'body_hash',h.dump_sha256,'signature_hash',h.dump_sha256,'errors',json_array(a.error))
@@ -96,6 +96,7 @@ def runtime_facts(source):
     from data_layer_eight.cached import runtime_contract
     item=runtime_contract(source)
     item['relational']['query']="SELECT 'l2055_lazy_result/cached_pure_lazy_policy.py' path,0 start_byte,0 end_byte,'runtime' identity,actual hash,(SELECT json_group_array(name) FROM (SELECT name FROM protected_names EXCEPT SELECT name FROM runtime_nodes ORDER BY name)) missing FROM runtime_hash"
+    item['relational'].pop('message',None)
     item['relational'].pop('code',None);item['relational']['key']=['identity']
     return {'format':'rerail.policy/v1','id':'native-runtime-fingerprint','revision':1,'mode':'log','clauses':[item]}
 
@@ -143,11 +144,19 @@ def lazy_graph():
     return metadata(stages,"(SELECT json_group_object(symbol,json(calls)) FROM target_rows) targets,(SELECT first FROM reach,request r WHERE first IS NOT NULL AND EXISTS(SELECT 1 FROM json_each(r.data,'$.targets') WHERE value=reach.node) ORDER BY order_ LIMIT 1) line FROM request")
 
 
+def lazy_analyzed(source):
+    from data_layer_eight.analyzed_facts import program
+    stages,query=program(source)
+    result=metadata(stages,"0 unused")
+    result['clauses'][1]['relational']['query']=query
+    return result
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args();args.output.parent.mkdir(parents=True,exist_ok=True)
-    args.output.write_text(json.dumps({'plan-metadata':plan_metadata(args.source),'lazy-facts':lazy_facts(args.source),'memoized-discovery':memoized_facts(args.source),'runtime-fingerprint':runtime_facts(args.source),'adapter-facts':adapter_facts(args.source),'eager-facts':eager_facts(args.source),'eager-metadata':eager_metadata(args.source),'lazy-graph':lazy_graph()},indent=2)+'\n')
+    args.output.write_text(json.dumps({'plan-metadata':plan_metadata(args.source),'lazy-facts':lazy_facts(args.source),'memoized-discovery':memoized_facts(args.source),'runtime-fingerprint':runtime_facts(args.source),'adapter-facts':adapter_facts(args.source),'eager-facts':eager_facts(args.source),'eager-metadata':eager_metadata(args.source),'lazy-graph':lazy_graph(),'lazy-analyzed':lazy_analyzed(args.source)},indent=2)+'\n')
 
 
 if __name__=='__main__':main()

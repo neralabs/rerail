@@ -130,6 +130,8 @@ it("binds the completed native assertion suites to the current rules and adapter
     expect(createHash("sha256").update(readFileSync(`packs/data-layer/candidates/facts/${path}`)).digest("hex")).toBe(digest);
   for (const comparison of Object.values(receipt.completeComparisons))
     expect(comparison).toMatchObject({ apiObservations: 305, analyzerInputs: 85, differences: 0, semanticFallbacks: [] });
+  for (const [path, digest] of Object.entries(receipt.oracleSha256))
+    expect(createHash("sha256").update(readFileSync(fixturesPath("host", "data-layer-port", path))).digest("hex")).toBe(digest);
   expect(Object.keys(receipt.positiveControls.rejectedByCheck)).toHaveLength(9);
   expect(receipt.positiveControls.failedCases).toBeGreaterThan(100);
 });
@@ -137,7 +139,7 @@ it("binds the completed native assertion suites to the current rules and adapter
 it("uses one production graph contract for source and supplied facts without an oracle mode", () => {
   for (const check of checks) {
     const policy = JSON.parse(readFileSync(`packs/data-layer/candidates/rules/data-layer-${check.replaceAll("_", "-")}.json`, "utf8"));
-    for (const clause of policy.clauses) expect(clause.define?.options).not.toHaveProperty("oracleAnalyzer");
+    for (const clause of policy.clauses) expect(clause.define?.options ?? {}).not.toHaveProperty("oracleAnalyzer");
   }
   const source = JSON.parse(readFileSync("packs/data-layer/candidates/rules/data-layer-lazy-architecture.json", "utf8"));
   const supplied = JSON.parse(readFileSync("packs/data-layer/candidates/facts/lazy-analyzed.json", "utf8"));

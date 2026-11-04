@@ -23,4 +23,10 @@ def main():
         if item['id'] not in ('data-layer-plan-helpers-allowlist','data-layer-lazy-adapter-ownership'):
             item['scope']['exclude'].append('**/test_*.py')
         path=args.output/(item['id']+'.json');path.write_text(json.dumps(item,indent=2)+'\n');print(path)
+    from data_layer_eight.analyzed_facts import candidate as analyzed_facts
+    facts=args.output.parent/'facts';facts.mkdir(parents=True,exist_ok=True)
+    (facts/'lazy-analyzed.json').write_text(json.dumps(analyzed_facts(args.source),indent=2)+'\n')
+    from data_layer_eight.policy_comparison import supplied_candidate
+    for kind in ('cached','memoized'):
+        (facts/(kind+'-policy-comparison.json')).write_text(json.dumps(supplied_candidate(kind),indent=2)+'\n')
 if __name__=='__main__':main()

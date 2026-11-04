@@ -33,6 +33,30 @@ def install(backend):
         @wraps(original)
         def execute(*args, **kwargs):
             arguments = dict(signature.bind_partial(*args, **kwargs).arguments)
+            if check=='cached_pure_lazy_allowlist':
+                functions=arguments.get('functions',arguments.get('discovered',()))
+                entries=arguments.get('entries',arguments.get('policy_entries',()))
+                records=[]
+                for function in functions:
+                    value=asdict(function);value['path']=str(value['path']);records.append(value)
+                kind='memoized' if entry=='memoized_policy_violations' else 'cached'
+                rows=backend.execute(check,entry,[],contract=kind+'-policy-comparison',parameters=dict(functions=records,entries=[asdict(entry) for entry in entries]))
+                return tuple(row['code'] for row in rows)
+            if check=='lazy_architecture' and entry=='_scan_analyzed_files':
+                files=[];original_paths={}
+                for file,analyzed in arguments['by_file'].items():
+                    name=logical(file,module.ROOT);original_paths[name]=file
+                    functions=[]
+                    for fact in analyzed.facts:
+                        value=asdict(fact);value['file']=logical(value['file'],module.ROOT);functions.append(value)
+                    files.append(dict(path=name,module=analyzed.module_name,functions=functions))
+                native=backend.execute(check,entry,[],contract='lazy-analyzed',parameters=dict(files=files))
+                result=list(arguments.get('extra_violations',[]))
+                for row in native:
+                    value=json.loads(row['variables']['row']['payload']);value['file']=original_paths[value['file']]
+                    result.append(module.Violation(**value))
+                counts=Counter(row.rule for row in result)
+                return {rule:counts[rule] for rule in module.RULES},result
             root = Path(arguments.get('root', getattr(module, 'ROOT', getattr(module, 'REPO_ROOT', backend.root))))
             path = arguments.get('path', arguments.get('file_path', arguments.get('rel_path')))
             source = arguments.get('source', arguments.get('content'))
@@ -60,9 +84,19 @@ def install(backend):
                 if arguments.get('directories') is not None:
                     paths = sorted(set(paths) | {p for directory in arguments['directories'] for p in (root/directory).rglob('*.py') if 'tests' not in p.parts})
             overrides = arguments.get('source_overrides', {}) or {}
-            files, originals = [], {}
+            files, originals, raw_files = [], {}, []
+            distinct_raw=False
             for current in paths:
                 current = Path(current)
+                raw_text=None
+                if check=='lazy_architecture' and module._parse_file is not module._FRAMEWORK_ONLY_PARSE_FILE:
+                    parsed=module._parse_file(current)
+                    if parsed is None:continue
+                    source_tree=tree_source(parsed,backend.trees)
+                    if source_tree is None:raise AssertionError('Missing original AST source')
+                    try:raw_text=current.read_text()
+                    except OSError:raw_text=ast.unparse(parsed)
+                    source=source_tree;path=current
                 if source is not None and path is not None and current == Path(path): text = source
                 elif current in overrides: text = overrides[current]
                 elif current in backend.fact_sources: text = backend.fact_sources[current]
@@ -76,7 +110,18 @@ def install(backend):
                     except (OSError, UnicodeError): continue
                 name = logical(current, root)
                 files.append(dict(path=name, source=text)); originals[name] = current
+                raw_files.append(dict(path=name,source=text if raw_text is None else raw_text))
+                distinct_raw |= raw_text is not None and raw_text!=text
             native_entry = 'analyzed-functions' if check=='lazy_architecture' and entry=='_scan_analyzed_files' else 'scan_file' if entry == '_violations_for_files' else entry
+            if check=='lazy_architecture' and distinct_raw:
+                core=backend.execute(check,'scan_files.ast-component',files,options)
+                raw=backend.execute(check,'_scan_deleted_cold_bootstrap_surfaces',raw_files,options)
+                # Preserve the linter's collector, raw-text, then function phases.
+                extras=[row for row in core if row['variables']['row']['producer_phase']==0]
+                functions=[row for row in core if row['variables']['row']['producer_phase']!=0]
+                result=[dto(check,module,row,files if row in core else raw_files,originals,root) for row in [*extras,*raw,*functions]]
+                counts=Counter(row.rule for row in result)
+                return {rule:counts[rule] for rule in module.RULES},result
             findings = backend.execute(check, native_entry, files, options)
             if check == 'cached_pure_lazy_allowlist': return tuple(sorted(finding['code'] for finding in findings))
             result = [dto(check, module, finding, files, originals, root) for finding in findings]
@@ -147,7 +192,7 @@ def dto(check, module, finding, files, originals, root):
                   line=line, line_num=line, line_number=line, message=message,
                   reason=finding['code'], text=row.get('text', text), pattern_name=finding['code'],
                   symbol=row.get('symbol', source.encode('utf-8')[finding['span']['startByte']:finding['span']['endByte']].decode('utf-8') if 'SURFACE' in finding.get('captures',{}) else ''), qualname=row.get('qualname', ''), callsite=row.get('callsite', ''),
-                  linter_name=check, severity='hard-fail', stable_scope=row.get('stable_scope'))
+                  linter_name=check, severity='error', stable_scope=row.get('stable_scope'))
     if check == 'plan_helpers_allowlist': values.update(file=Path(finding['path']), line=text, reason=finding['code'])
     if check == 'legacy_callback_quarantine': values['file_path'] = finding['path']
     return cls(**{field.name:values[field.name] for field in fields(cls) if field.name in values})

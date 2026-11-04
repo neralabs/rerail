@@ -6,6 +6,38 @@ const capabilities = readFileSync(new URL("../../../native/src/code_rule_dsl/cap
 const body = "7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced";
 const signature = "ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd";
 
+it("returns canonical syntax errors for a complete batch without executing source", () => {
+  const sources = ["def invalid(\n", "raise RuntimeError('never execute')\n"];
+  const documents = sources.map(source => ({ source, requests: [{ start: 0, end: Buffer.byteLength(source), kind: "module", fields: ["syntax_error"] }] }));
+  const response = JSON.parse(loadNativeBinding().CodeRuleDslRuntime.pythonAstBatch(JSON.stringify(documents)));
+  expect(response.parses).toBe(2); expect(response.module_walks).toBe(0);
+  expect(JSON.parse(response.documents[0][0].syntax_error)).toEqual({ msg: "'(' was never closed", lineno: 1,
+    offset: 12, text: "def invalid(\n", end_lineno: 1, end_offset: 0 });
+  expect(JSON.parse(response.documents[1][0].syntax_error)).toBeNull();
+  documents[0]!.requests[0]!.fields.push("dump");
+  expect(() => loadNativeBinding().CodeRuleDslRuntime.pythonAstBatch(JSON.stringify(documents))).toThrow(/CPython AST batch failed/);
+});
+
+it("shares ordered graph memo entries across demanded roots and isolates their scopes", () => {
+  const authored = { format: "rerail.policy/v1", id: "ordered-graph", revision: 1, mode: "log", clauses: [{
+    id: "diagnostic", relational: {
+      inputs: { empty: { evidence: { as: "f", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } } },
+      locations: ["metadata"], stages: [{ name: "matches", reachability: {
+        selection: "memoized-first", roots: "SELECT 'one' __path,'a' id,0 ordinal UNION ALL SELECT 'one','b',1 UNION ALL SELECT 'two','b',0",
+        edges: "SELECT 'one' __path,'a' src,'b' dst,0 ordinal,90 location UNION ALL SELECT 'one','a','sink',1,12 UNION ALL SELECT 'one','b','a',0,11 UNION ALL SELECT 'two','b','sink',0,7",
+        sinks: "SELECT NULL __path,'sink' id,100 location",
+      } }, { name: "consumed", query: "SELECT * FROM matches" }], query: "SELECT 'metadata' path,0 start_byte,0 end_byte,__path||':'||root identity,__path scope,root,node,location FROM consumed", key: ["identity"],
+    }, violation: { code: "GRAPH", message: "Ordered match", anchor: "witness.span" },
+  }] };
+  const rule = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(authored)), "json", capabilities);
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: [] }), "report"));
+  expect(result.failures).toEqual([]);
+  expect(result.violations.map((row: { variables: { row: unknown } }) => row.variables.row)).toEqual([
+    { path: "metadata", start_byte: 0, end_byte: 0, identity: "one:a", scope: "one", root: "a", node: "sink", location: 12 },
+    { path: "metadata", start_byte: 0, end_byte: 0, identity: "two:b", scope: "two", root: "b", node: "sink", location: 7 },
+  ]);
+});
+
 it("uses the SQL row's exact diagnostic message", () => {
   const authored = { format: "rerail.policy/v1", id: "diagnostic-payload", revision: 1, mode: "log", clauses: [{
     id: "diagnostic", relational: {

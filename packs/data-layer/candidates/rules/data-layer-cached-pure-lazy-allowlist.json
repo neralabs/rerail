@@ -30,10 +30,6 @@
       "id": "entry",
       "define": {
         "options": {
-          "oracleAnalyzer": {
-            "type": "boolean",
-            "default": false
-          },
           "entryPoint": {
             "type": "string",
             "default": "all"
@@ -243,7 +239,7 @@
           },
           {
             "name": "assignments",
-            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",\"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",\"right_start\",\"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_source\",\"target\",\"target_kind\",\"target_text\",\"value\",\"expr_kind\",\"expr_text\",\"fn\" FROM (SELECT n.*,l.id AS target,l.kind AS target_kind,l.text AS target_text,r.id AS value,r.kind AS expr_kind,r.text AS expr_text,o.fn FROM nodes n JOIN nodes l ON l.__path=n.__path AND l.id=n.left_id LEFT JOIN nodes r ON r.__path=n.__path AND r.id=n.right_id LEFT JOIN ownership o ON o.__path=n.__path AND o.id=n.id WHERE n.kind='assignment')",
+            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",\"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_start\",NULL AS \"name_end\",NULL AS \"name_kind\",NULL AS \"name_source\",NULL AS \"left_id\",NULL AS \"left_start\",NULL AS \"left_end\",NULL AS \"left_kind\",NULL AS \"right_id\",NULL AS \"right_start\",NULL AS \"right_end\",NULL AS \"right_kind\",NULL AS \"value_id\",NULL AS \"value_start\",NULL AS \"value_end\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"arguments_id\",NULL AS \"arguments_start\",NULL AS \"arguments_end\",NULL AS \"arguments_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_start\",NULL AS \"attribute_end\",NULL AS \"attribute_kind\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"alias_id\",\"alias_source\",\"module_name_id\",\"module_name_source\",\"target\",\"target_kind\",\"target_text\",\"value\",\"expr_kind\",\"expr_text\",\"fn\" FROM (SELECT n.*,l.id AS target,l.kind AS target_kind,l.text AS target_text,r.id AS value,r.kind AS expr_kind,r.text AS expr_text,o.fn FROM nodes n JOIN nodes l ON l.__path=n.__path AND l.id=n.left_id LEFT JOIN nodes r ON r.__path=n.__path AND r.id=n.right_id LEFT JOIN ownership o ON o.__path=n.__path AND o.id=n.id WHERE n.kind='assignment')",
             "indexes": [
               [
                 "__path",
@@ -540,8 +536,18 @@
             ]
           },
           {
+            "name": "global_value_walk",
+            "query": "SELECT \"__path\",\"assignment\",\"node\" FROM (WITH RECURSIVE walk(__path,assignment,node) AS (\n        SELECT a.__path,a.id,a.value FROM assignments a JOIN nodes stmt ON stmt.__path=a.__path AND stmt.id=a.parent JOIN nodes parent ON parent.__path=stmt.__path AND parent.id=stmt.parent WHERE parent.kind='module'\n        UNION ALL SELECT w.__path,w.assignment,child.id FROM walk w JOIN nodes n ON n.__path=w.__path AND n.id=w.node JOIN nodes child ON child.__path=n.__path AND (n.kind IN ('tuple','parenthesized_expression') AND child.parent=n.id OR n.kind='call' AND child.parent=n.arguments_id) WHERE child.kind!='comment') SELECT * FROM walk)",
+            "indexes": [
+              [
+                "__path",
+                "assignment"
+              ]
+            ]
+          },
+          {
             "name": "mutable_globals",
-            "query": "SELECT \"__path\",\"name\" FROM (SELECT a.__path,b.name FROM assignments a JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id JOIN nodes stmt ON stmt.__path=a.__path AND stmt.id=a.parent JOIN nodes parent ON parent.__path=stmt.__path AND parent.id=stmt.parent WHERE parent.kind='module' AND a.expr_kind NOT IN ('string','concatenated_string','integer','float','true','false','none') AND NOT (a.expr_kind='tuple' AND NOT EXISTS(SELECT 1 FROM nodes n WHERE n.__path=a.__path AND n.__start>a.right_start AND n.__end<a.right_end AND n.kind IN ('identifier','call','list','dictionary','set'))) AND NOT (a.expr_kind='call' AND EXISTS(SELECT 1 FROM calls c WHERE c.__path=a.__path AND c.id=a.value AND c.callee_kind='identifier' AND c.callee='frozenset') AND NOT EXISTS(SELECT 1 FROM keywords k WHERE k.__path=a.__path AND k.call=a.value)))",
+            "query": "SELECT \"__path\",\"name\" FROM (SELECT a.__path,b.name FROM assignments a JOIN nodes target ON target.__path=a.__path AND target.id=a.target AND target.kind='identifier' JOIN bound_names b ON b.__path=a.__path AND b.assignment=a.id\n        WHERE EXISTS(SELECT 1 FROM global_value_walk w JOIN nodes n ON n.__path=w.__path AND n.id=w.node WHERE w.__path=a.__path AND w.assignment=a.id AND NOT (\n          n.kind IN ('integer','float','true','false','none','ellipsis','tuple','parenthesized_expression')\n          OR n.kind IN ('string','concatenated_string') AND NOT rx_matches(n.text,'(?i)^f|^rf|^fr')\n          OR n.kind='call' AND EXISTS(SELECT 1 FROM calls c WHERE c.__path=n.__path AND c.id=n.id AND c.callee_kind='identifier' AND c.callee='frozenset') AND NOT EXISTS(SELECT 1 FROM keywords k WHERE k.__path=n.__path AND k.call=n.id)\n        )))",
             "indexes": [
               [
                 "__path",
@@ -551,49 +557,11 @@
           },
           {
             "name": "extra_cached_errors",
-            "query": "SELECT \"__path\",\"fn\",\"error\" FROM (SELECT arg.__path,arg.fn,'cache argument '||quote(arg.name)||' cannot have a default' error FROM cache_arguments arg JOIN parameters p ON p.__path=arg.__path AND p.fn=arg.fn AND p.name=arg.name WHERE p.kind IN ('default_parameter','typed_default_parameter') UNION ALL SELECT arg.__path,arg.fn,'cache argument '||quote(arg.name)||' must be keyword-only' FROM cache_arguments arg JOIN parameters p ON p.__path=arg.__path AND p.fn=arg.fn AND p.name=arg.name JOIN nodes param ON param.__path=p.__path AND param.id=p.id JOIN selected_functions f ON f.__path=p.__path AND f.id=p.fn WHERE arg.name!='self' AND NOT EXISTS(SELECT 1 FROM nodes star WHERE star.__path=f.__path AND star.parent=f.parameters_id AND star.__start<param.__start AND star.kind IN ('keyword_separator','list_splat_pattern')) UNION ALL SELECT f.__path,f.id,'a cache argument cannot be captured by a closure' FROM selected_functions f JOIN nodes closure ON closure.__path=f.__path AND closure.__start>=f.body_start AND closure.__end<=f.body_end AND closure.kind IN ('function_definition','lambda','generator_expression') WHERE EXISTS(SELECT 1 FROM cache_names n WHERE n.__path=f.__path AND n.fn=f.id AND n.__start>=closure.__start AND n.__end<=closure.__end) UNION ALL SELECT f.__path,f.id,c.callee||'() on a cache argument is forbidden' FROM selected_functions f JOIN calls c ON c.__path=f.__path AND c.__start>=f.body_start AND c.__end<=f.body_end AND c.callee_kind='identifier' AND c.callee IN ('delattr','getattr','hasattr','setattr','vars') WHERE EXISTS(SELECT 1 FROM arguments a JOIN cache_names n ON n.__path=a.__path AND n.__start>=a.__start AND n.__end<=a.__end AND n.fn=f.id WHERE a.__path=c.__path AND a.call=c.id) UNION ALL SELECT f.__path,f.id,'cached pure-lazy functions cannot read mutable global state '||quote(g.name) FROM selected_functions f JOIN mutable_globals g ON g.__path=f.__path JOIN nodes n ON n.__path=f.__path AND n.__start>=f.body_start AND n.__end<=f.body_end AND n.kind='identifier' AND n.text=g.name JOIN nodes par ON par.__path=n.__path AND par.id=n.parent WHERE par.kind NOT IN ('global_statement','nonlocal_statement') AND NOT(par.kind='attribute' AND par.attribute_id=n.id) AND NOT EXISTS(SELECT 1 FROM assignments a WHERE a.__path=n.__path AND a.target=n.id) UNION ALL SELECT __path,id,error FROM pseudo_cached)"
+            "query": "SELECT \"__path\",\"fn\",\"error\" FROM (SELECT arg.__path,arg.fn,'cache argument '||quote(arg.name)||' cannot have a default' error FROM cache_arguments arg JOIN parameters p ON p.__path=arg.__path AND p.fn=arg.fn AND p.name=arg.name WHERE p.kind IN ('default_parameter','typed_default_parameter') UNION ALL SELECT arg.__path,arg.fn,'cache argument '||quote(arg.name)||' must be keyword-only' FROM cache_arguments arg JOIN parameters p ON p.__path=arg.__path AND p.fn=arg.fn AND p.name=arg.name JOIN nodes param ON param.__path=p.__path AND param.id=p.id JOIN selected_functions f ON f.__path=p.__path AND f.id=p.fn WHERE arg.name!='self' AND NOT EXISTS(SELECT 1 FROM nodes star WHERE star.__path=f.__path AND star.parent=f.parameters_id AND star.__start<param.__start AND star.kind IN ('keyword_separator','list_splat_pattern')) UNION ALL SELECT f.__path,f.id,'a cache argument cannot be captured by a closure' FROM selected_functions f JOIN nodes closure ON closure.__path=f.__path AND closure.__start>=f.body_start AND closure.__end<=f.body_end AND closure.kind IN ('function_definition','lambda','generator_expression') WHERE EXISTS(SELECT 1 FROM cache_names n WHERE n.__path=f.__path AND n.fn=f.id AND n.__start>=closure.__start AND n.__end<=closure.__end) UNION ALL SELECT f.__path,f.id,c.callee||'() on a cache argument is forbidden' FROM selected_functions f JOIN calls c ON c.__path=f.__path AND c.__start>=f.body_start AND c.__end<=f.body_end AND c.callee_kind='identifier' AND c.callee IN ('delattr','getattr','hasattr','setattr','vars') WHERE EXISTS(SELECT 1 FROM arguments a JOIN cache_names n ON n.__path=a.__path AND n.__start>=a.__start AND n.__end<=a.__end AND n.fn=f.id WHERE a.__path=c.__path AND a.call=c.id) UNION ALL SELECT f.__path,f.id,'cached pure-lazy functions cannot read mutable global state '||quote(g.name) FROM selected_functions f JOIN mutable_globals g ON g.__path=f.__path JOIN nodes n ON n.__path=f.__path AND n.__start>=f.region_start AND n.__end<=f.body_end AND n.kind='identifier' AND n.text=g.name JOIN nodes par ON par.__path=n.__path AND par.id=n.parent WHERE par.kind NOT IN ('global_statement','nonlocal_statement') AND NOT(par.kind='attribute' AND par.attribute_id=n.id) AND NOT EXISTS(SELECT 1 FROM assignments a WHERE a.__path=n.__path AND a.target=n.id) UNION ALL SELECT __path,id,error FROM pseudo_cached)"
           },
           {
             "name": "cached_errors",
             "query": "SELECT \"__path\",\"fn\",\"error\" FROM (SELECT f.__path,f.id fn,'cached pure-lazy functions must be synchronous' error FROM selected_functions f WHERE rx_matches(f.text,'^async\\s') UNION ALL SELECT f.__path,f.id,'cached pure-lazy functions cannot use variadic arguments' FROM selected_functions f WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=f.__path AND n.__start>=f.parameters_start AND n.__end<=f.parameters_end AND n.kind IN ('list_splat_pattern','dictionary_splat_pattern')) UNION ALL SELECT f.__path,f.id,'cached pure-lazy functions cannot be generators' FROM selected_functions f WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=f.__path AND n.__start>=f.body_start AND n.__end<=f.body_end AND n.kind='yield') UNION ALL SELECT n.__path,n.fn,'a cache argument can only be used through signed member access' FROM cache_names n JOIN nodes par ON par.__path=n.__path AND par.id=n.parent WHERE NOT(par.kind='attribute' AND par.object_id=n.id) UNION ALL SELECT f.__path,f.id,'a cache argument cannot escape through return' FROM selected_functions f JOIN returns r ON r.__path=f.__path AND r.__start>=f.body_start AND r.__end<=f.body_end WHERE EXISTS(SELECT 1 FROM cache_names n WHERE n.__path=f.__path AND n.fn=f.id AND n.__start>=r.__start AND n.__end<=r.__end) UNION ALL SELECT f.__path,f.id,'cached pure-lazy functions cannot write mutable global state' FROM selected_functions f WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=f.__path AND n.__start>=f.body_start AND n.__end<=f.body_end AND n.kind IN ('global_statement','nonlocal_statement')) UNION ALL SELECT a.__path,a.fn,'direct cache attribute mutation '||quote(a.member)||' is forbidden' FROM cache_attributes a JOIN mutations x ON x.__path=a.__path AND x.id=a.id UNION ALL SELECT a.__path,a.fn,'cache member alias '||quote(a.member)||' is forbidden' FROM cache_attributes a JOIN member_aliases x ON x.__path=a.__path AND x.id=a.id UNION ALL SELECT a.__path,a.fn,'cache subscript '||CASE WHEN EXISTS(SELECT 1 FROM assignments x WHERE x.__path=n.__path AND x.target=n.id) OR par.kind='delete_statement' THEN 'mutation' ELSE 'access' END||' through '||quote(a.member)||' is forbidden' FROM cache_attributes a JOIN nodes n ON n.__path=a.__path AND n.id=a.parent_id AND n.kind='subscript' JOIN nodes par ON par.__path=n.__path AND par.id=n.parent UNION ALL SELECT a.__path,a.fn,'dynamic cache access '||quote(a.member)||' is forbidden' FROM cache_attributes a WHERE a.member IN ('__class__','__delattr__','__dict__','__getattribute__','__setattr__') UNION ALL SELECT arg.__path,arg.fn,'cache argument '||quote(arg.name)||' requires an exact annotation' FROM cache_arguments arg WHERE NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=arg.__path AND p.fn=arg.fn AND p.name=arg.name AND p.annotation IS NOT NULL))"
-          },
-          {
-            "name": "policy_args",
-            "query": "SELECT \"function\",\"ordinal\",\"name\" FROM (SELECT p.function,x.key ordinal,x.value name FROM policy_entries p,json_each(p.data,'$.cache_args') x)",
-            "indexes": [
-              [
-                "function",
-                "name"
-              ]
-            ]
-          },
-          {
-            "name": "policy_types",
-            "query": "SELECT \"function\",NULL AS \"ordinal\",\"name\",\"type\" FROM (SELECT p.function,x.key ordinal,json_extract(x.value,'$[0]') name,json_extract(x.value,'$[1]') type FROM policy_entries p,json_each(p.data,'$.cache_types') x)",
-            "indexes": [
-              [
-                "function",
-                "name"
-              ]
-            ]
-          },
-          {
-            "name": "policy_members",
-            "query": "SELECT \"function\",\"ordinal\",\"member\",\"mode\" FROM (SELECT p.function,x.key ordinal,json_extract(x.value,'$[0]') member,json_extract(x.value,'$[1]') mode FROM policy_entries p,json_each(p.data,'$.allowed_cache_members') x)",
-            "indexes": [
-              [
-                "function"
-              ]
-            ]
-          },
-          {
-            "name": "member_reprs",
-            "query": "SELECT \"function\",\"actual\",\"policy\" FROM (SELECT f.function,coalesce((SELECT '('||group_concat(pair,', ')||CASE WHEN count(*)=1 THEN ',' ELSE '' END||')' FROM (SELECT '('||quote(member)||', '||quote(mode)||')' pair FROM cache_members m WHERE m.__path=f.__path AND m.fn=f.id ORDER BY member,mode)),'()') actual,coalesce((SELECT '('||group_concat(pair,', ')||CASE WHEN count(*)=1 THEN ',' ELSE '' END||')' FROM (SELECT '('||quote(member)||', '||quote(mode)||')' pair FROM policy_members m WHERE m.function=f.function ORDER BY ordinal)),'()') policy FROM actual_functions f)",
-            "indexes": [
-              [
-                "function"
-              ]
-            ]
           },
           {
             "name": "annotation_values",
@@ -607,12 +575,112 @@
             }
           },
           {
-            "name": "cached_comparisons",
-            "query": "SELECT \"function\",\"error\" FROM (SELECT f.function,e.error FROM actual_functions f JOIN policy_entries p ON p.function=f.function JOIN (SELECT * FROM cached_errors UNION SELECT * FROM extra_cached_errors) e ON e.__path=f.__path AND e.fn=f.id UNION SELECT f.function,'decorator cache arguments changed' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE EXISTS(SELECT ordinal,name FROM cache_arguments a WHERE a.__path=f.__path AND a.fn=f.id EXCEPT SELECT ordinal,name FROM policy_args a WHERE a.function=f.function) OR EXISTS(SELECT ordinal,name FROM policy_args a WHERE a.function=f.function EXCEPT SELECT ordinal,name FROM cache_arguments a WHERE a.__path=f.__path AND a.fn=f.id) UNION SELECT f.function,'cache type metadata must name each cache argument exactly once' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE EXISTS(SELECT name FROM policy_types t WHERE t.function=f.function GROUP BY name HAVING count(*)>1) OR EXISTS(SELECT name FROM policy_args a WHERE a.function=f.function EXCEPT SELECT name FROM policy_types t WHERE t.function=f.function) OR EXISTS(SELECT name FROM policy_types t WHERE t.function=f.function EXCEPT SELECT name FROM policy_args a WHERE a.function=f.function) UNION SELECT f.function,'cache type '||quote(t.type)||' is not approved' FROM actual_functions f JOIN policy_types t ON t.function=f.function WHERE t.type!='l2070_batching.optimizer_run_cache.OptimizerRunCache' UNION SELECT f.function,'cache argument '||quote(t.name)||' annotation '||coalesce(annotation.repr_unparse,'None')||' does not match cache type '||quote(t.type) FROM actual_functions f JOIN policy_types t ON t.function=f.function LEFT JOIN parameters a ON a.__path=f.__path AND a.fn=f.id AND a.name=t.name LEFT JOIN annotation_values annotation ON annotation.__path=a.__path AND annotation.id=a.annotation WHERE annotation.unparse IS NOT rx_replace(t.type,'^.*\\.','') UNION SELECT f.function,'owner scope '||quote(json_extract(p.data,'$.owner_scope'))||' is not approved' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE json_extract(p.data,'$.owner_scope')!='optimizer_run' UNION SELECT f.function,'review rationale is required' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE trim(p.rationale)='' UNION SELECT f.function,'cache member access modes are invalid: ['||(SELECT group_concat(quote(mode),', ') FROM (SELECT DISTINCT mode FROM policy_members m WHERE m.function=f.function AND mode NOT IN ('call','read','resolver') ORDER BY mode))||']' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE EXISTS(SELECT 1 FROM policy_members m WHERE m.function=f.function AND mode NOT IN ('call','read','resolver')) UNION SELECT f.function,'function body hash changed' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE f.body_sha256!=p.body_hash UNION SELECT f.function,'function signature hash changed' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE f.signature_sha256!=p.signature_hash UNION SELECT f.function,'cache member access changed: actual='||r.actual||' policy='||r.policy FROM actual_functions f JOIN policy_entries p ON p.function=f.function JOIN member_reprs r ON r.function=f.function WHERE r.actual!=r.policy)"
+            "name": "actual_records",
+            "query": "SELECT \"record_id\",\"ordinal\",\"function\",\"body_hash\",\"signature_hash\",NULL AS \"max_entries\" FROM (SELECT f.__path||':'||f.id record_id,row_number() OVER(ORDER BY f.__path,n.__start)-1 ordinal,f.function,f.body_sha256 body_hash,f.signature_sha256 signature_hash,NULL max_entries FROM actual_functions f JOIN nodes n ON n.__path=f.__path AND n.id=f.id)",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "actual_args",
+            "query": "SELECT \"record_id\",\"ordinal\",\"name\" FROM (SELECT a.__path||':'||a.fn record_id,a.ordinal,a.name FROM cache_arguments a)",
+            "indexes": [
+              [
+                "record_id"
+              ]
+            ]
+          },
+          {
+            "name": "actual_annotations",
+            "query": "SELECT \"record_id\",\"ordinal\",\"name\",\"annotation\" FROM (SELECT p.__path||':'||p.fn record_id,row_number() OVER(PARTITION BY p.__path,p.fn ORDER BY p.name)-1 ordinal,p.name,v.unparse annotation FROM parameters p JOIN cache_arguments a ON a.__path=p.__path AND a.fn=p.fn AND a.name=p.name JOIN annotation_values v ON v.__path=p.__path AND v.id=p.annotation)",
+            "indexes": [
+              [
+                "record_id"
+              ]
+            ]
+          },
+          {
+            "name": "actual_members",
+            "query": "SELECT \"record_id\",\"ordinal\",\"member\",\"mode\" FROM (SELECT m.__path||':'||m.fn record_id,row_number() OVER(PARTITION BY m.__path,m.fn ORDER BY member,mode)-1 ordinal,member,mode FROM cache_members m)",
+            "indexes": [
+              [
+                "record_id"
+              ]
+            ]
+          },
+          {
+            "name": "actual_errors",
+            "query": "SELECT \"record_id\",\"ordinal\",\"error\" FROM (SELECT __path||':'||fn record_id,row_number() OVER(PARTITION BY __path,fn ORDER BY error)-1 ordinal,error FROM (SELECT __path,fn,error FROM cached_errors UNION SELECT __path,fn,error FROM extra_cached_errors))",
+            "indexes": [
+              [
+                "record_id"
+              ]
+            ]
+          },
+          {
+            "name": "effective_actual",
+            "query": "SELECT \"record_id\",NULL AS \"ordinal\",\"function\",\"body_hash\",\"signature_hash\",NULL AS \"max_entries\" FROM (SELECT * FROM actual_records a WHERE NOT EXISTS(SELECT 1 FROM actual_records later WHERE later.function=a.function AND later.ordinal>a.ordinal))",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "policy_args",
+            "query": "SELECT \"function\",\"ordinal\",\"name\" FROM (SELECT p.function,CAST(x.key AS INTEGER) ordinal,x.value name FROM policy_entries p,json_each(p.data,'$.cache_args') x)",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "policy_types",
+            "query": "SELECT \"function\",\"ordinal\",\"name\",\"type\" FROM (SELECT p.function,CAST(x.key AS INTEGER) ordinal,json_extract(x.value,'$[0]') name,json_extract(x.value,'$[1]') type FROM policy_entries p,json_each(p.data,'$.cache_types') x)",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "policy_members",
+            "query": "SELECT \"function\",\"ordinal\",\"member\",\"mode\" FROM (SELECT p.function,CAST(x.key AS INTEGER) ordinal,json_extract(x.value,'$[0]') member,json_extract(x.value,'$[1]') mode FROM policy_entries p,json_each(p.data,'$.allowed_cache_members') x)",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "member_reprs",
+            "query": "SELECT \"function\",\"actual\",\"policy\" FROM (SELECT f.function,coalesce((SELECT '('||group_concat(pair,', ')||CASE WHEN count(*)=1 THEN ',' ELSE '' END||')' FROM (SELECT '('||quote(member)||', '||quote(mode)||')' pair FROM actual_members m WHERE m.record_id=f.record_id ORDER BY ordinal)),'()') actual,coalesce((SELECT '('||group_concat(pair,', ')||CASE WHEN count(*)=1 THEN ',' ELSE '' END||')' FROM (SELECT '('||quote(member)||', '||quote(mode)||')' pair FROM policy_members m WHERE m.function=f.function ORDER BY ordinal)),'()') policy FROM effective_actual f)",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "annotation_reprs",
+            "query": "SELECT \"record_id\",\"ordinal\",\"repr\" FROM (WITH RECURSIVE chars(record_id,ordinal,value,delimiter,position,piece) AS (\n      SELECT record_id,ordinal,annotation,CASE WHEN instr(annotation,'''')>0 AND instr(annotation,'\"')=0 THEN '\"' ELSE '''' END,0,'' FROM actual_annotations\n      UNION ALL SELECT record_id,ordinal,value,delimiter,position+1,\n        CASE WHEN substr(value,position+1,1)='\\' THEN '\\\\'\n          WHEN substr(value,position+1,1)=delimiter THEN '\\'||delimiter\n          WHEN unicode(substr(value,position+1,1))=9 THEN '\\t'\n          WHEN unicode(substr(value,position+1,1))=10 THEN '\\n'\n          WHEN unicode(substr(value,position+1,1))=13 THEN '\\r'\n          WHEN substr(value,position+1,1)!=' ' AND rx_matches(substr(value,position+1,1),'^[\\p{C}\\p{Z}]$') THEN\n            CASE WHEN unicode(substr(value,position+1,1))<256 THEN printf('\\x%02x',unicode(substr(value,position+1,1)))\n                 WHEN unicode(substr(value,position+1,1))<65536 THEN printf('\\u%04x',unicode(substr(value,position+1,1)))\n                 ELSE printf('\\U%08x',unicode(substr(value,position+1,1))) END\n          ELSE substr(value,position+1,1) END\n      FROM chars WHERE position<length(value))\n      SELECT record_id,ordinal,delimiter||group_concat(piece,'')||delimiter repr FROM\n        (SELECT * FROM chars ORDER BY record_id,ordinal,position) GROUP BY record_id,ordinal,delimiter)",
+            "indexes": [
+              [
+                "record_id",
+                "ordinal"
+              ]
+            ]
+          },
+          {
+            "name": "ordered_policy_issues",
+            "query": "SELECT \"phase\",\"step\",\"ordinal\",\"function\",\"issue\" FROM (SELECT * FROM (SELECT 0 phase,0 step,0 ordinal,x.* FROM (SELECT function,'duplicate decorator entry: '||function issue FROM actual_records GROUP BY function HAVING count(*)>1) x) UNION ALL SELECT * FROM (SELECT 0 phase,1 step,0 ordinal,x.* FROM (SELECT function,'duplicate policy entry: '||function issue FROM policy_records GROUP BY function HAVING count(*)>1) x) UNION ALL SELECT * FROM (SELECT 1 phase,0 step,0 ordinal,x.* FROM (SELECT a.function,'unsigned cached pure-lazy function: '||a.function issue FROM effective_actual a WHERE NOT EXISTS(SELECT 1 FROM policy_entries p WHERE p.function=a.function)) x) UNION ALL SELECT * FROM (SELECT 2 phase,0 step,0 ordinal,x.* FROM (SELECT p.function,'stale cached pure-lazy policy entry: '||p.function issue FROM policy_entries p WHERE NOT EXISTS(SELECT 1 FROM effective_actual a WHERE a.function=p.function)) x) UNION ALL SELECT * FROM (SELECT 3 phase,0 step,x.error_ordinal ordinal,x.function,x.issue FROM (SELECT a.function,a.function||': '||e.error issue,e.ordinal error_ordinal FROM effective_actual a JOIN policy_entries p ON p.function=a.function JOIN actual_errors e ON e.record_id=a.record_id) x) UNION ALL SELECT * FROM (SELECT 3 phase,1 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('decorator cache arguments changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE EXISTS(SELECT ordinal,name FROM actual_args WHERE record_id=a.record_id EXCEPT SELECT ordinal,name FROM policy_args WHERE function=a.function) OR EXISTS(SELECT ordinal,name FROM policy_args WHERE function=a.function EXCEPT SELECT ordinal,name FROM actual_args WHERE record_id=a.record_id)) x) UNION ALL SELECT * FROM (SELECT 3 phase,2 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('cache type metadata must name each cache argument exactly once') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE EXISTS(SELECT name FROM policy_types WHERE function=a.function GROUP BY name HAVING count(*)>1) OR EXISTS(SELECT name FROM policy_args WHERE function=a.function EXCEPT SELECT name FROM policy_types WHERE function=a.function) OR EXISTS(SELECT name FROM policy_types WHERE function=a.function EXCEPT SELECT name FROM policy_args WHERE function=a.function)) x) UNION ALL SELECT * FROM (SELECT 3 phase,3 step,x.order_ordinal ordinal,x.function,x.issue FROM (SELECT a.function,a.function||': '||('cache type '||quote(t.type)||' is not approved') issue ,t.ordinal*2 order_ordinal FROM effective_actual a JOIN policy_entries p ON p.function=a.function JOIN policy_types t ON t.function=a.function WHERE t.type!='l2070_batching.optimizer_run_cache.OptimizerRunCache') x) UNION ALL SELECT * FROM (SELECT 3 phase,3 step,x.order_ordinal ordinal,x.function,x.issue FROM (SELECT a.function,a.function||': '||('cache argument '||quote(t.name)||' annotation '||CASE WHEN (SELECT annotation FROM actual_annotations annotation WHERE annotation.record_id=a.record_id AND annotation.name=t.name ORDER BY annotation.ordinal DESC LIMIT 1) IS NULL THEN 'None' ELSE (SELECT repr FROM annotation_reprs repr WHERE repr.record_id=a.record_id AND repr.ordinal=(SELECT annotation.ordinal FROM actual_annotations annotation WHERE annotation.record_id=a.record_id AND annotation.name=t.name ORDER BY annotation.ordinal DESC LIMIT 1)) END||' does not match cache type '||quote(t.type)) issue ,t.ordinal*2+1 order_ordinal FROM effective_actual a JOIN policy_entries p ON p.function=a.function JOIN policy_types t ON t.function=a.function WHERE (SELECT annotation FROM actual_annotations annotation WHERE annotation.record_id=a.record_id AND annotation.name=t.name ORDER BY annotation.ordinal DESC LIMIT 1) IS NOT rx_replace(t.type,'^.*\\.','')) x) UNION ALL SELECT * FROM (SELECT 3 phase,4 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('owner scope '||quote(json_extract(p.data,'$.owner_scope'))||' is not approved') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE json_extract(p.data,'$.owner_scope')!='optimizer_run') x) UNION ALL SELECT * FROM (SELECT 3 phase,5 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('review rationale is required') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE trim(p.rationale)='') x) UNION ALL SELECT * FROM (SELECT 3 phase,6 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('cache member access modes are invalid: ['||(SELECT group_concat(quote(mode),', ') FROM (SELECT DISTINCT mode FROM policy_members m WHERE m.function=a.function AND mode NOT IN ('call','read','resolver') ORDER BY mode))||']') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE EXISTS(SELECT 1 FROM policy_members m WHERE m.function=a.function AND mode NOT IN ('call','read','resolver'))) x) UNION ALL SELECT * FROM (SELECT 3 phase,7 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('function body hash changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE a.body_hash!=p.body_hash) x) UNION ALL SELECT * FROM (SELECT 3 phase,8 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('function signature hash changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE a.signature_hash!=p.signature_hash) x) UNION ALL SELECT * FROM (SELECT 3 phase,9 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('cache member access changed: actual='||r.actual||' policy='||r.policy) issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function JOIN member_reprs r ON r.function=a.function WHERE r.actual!=r.policy) x))"
           },
           {
             "name": "diagnostics",
-            "query": "SELECT \"issue\" FROM (SELECT 'unsigned cached pure-lazy function: '||f.function issue FROM actual_functions f WHERE NOT EXISTS(SELECT 1 FROM policy_entries p WHERE p.function=f.function) UNION ALL SELECT 'stale cached pure-lazy policy entry: '||p.function FROM policy_entries p WHERE NOT EXISTS(SELECT 1 FROM actual_functions f WHERE f.function=p.function) UNION ALL SELECT function||': '||error FROM cached_comparisons UNION ALL SELECT 'duplicate decorator entry: '||function FROM actual_functions GROUP BY function HAVING count(*)>1 UNION ALL SELECT 'duplicate policy entry: '||function FROM policy_records GROUP BY function HAVING count(*)>1)"
+            "query": "SELECT \"issue\" FROM (SELECT issue FROM ordered_policy_issues ORDER BY phase,CASE WHEN phase=1 AND 0 THEN '' ELSE function END,step,ordinal)"
           }
         ],
         "query": {
@@ -739,7 +807,8 @@
         },
         "locations": [
           "l2055_lazy_result/cached_pure_lazy_policy.py"
-        ]
+        ],
+        "message": "issue"
       },
       "violation": {
         "code": "architecture",
@@ -998,7 +1067,7 @@
           },
           {
             "name": "memoized_errors",
-            "query": "SELECT \"function\",\"error\" FROM (SELECT f.function,'memoized_pure_lazy requires the canonical pure_lazy marker' error FROM selected_functions f WHERE NOT EXISTS(SELECT 1 FROM decorator_names d JOIN nodes n ON n.__path=d.__path AND n.id=d.node JOIN nodes par ON par.__path=n.__path AND par.id=n.parent WHERE d.__path=f.__path AND d.fn=f.id AND d.name='pure_lazy' AND n.kind='identifier' AND par.kind='decorator') UNION ALL SELECT f.function,'memoized_pure_lazy requires one literal max_entries keyword' FROM selected_functions f WHERE (SELECT count(*) FROM keywords k WHERE k.__path=f.__path AND k.call=f.decorator)!=1 OR NOT EXISTS(SELECT 1 FROM keywords k WHERE k.__path=f.__path AND k.call=f.decorator AND k.name='max_entries') OR EXISTS(SELECT 1 FROM arguments a WHERE a.__path=f.__path AND a.call=f.decorator) UNION ALL SELECT f.function,'memoized_pure_lazy max_entries must be a literal integer' FROM selected_functions f JOIN memoized_bounds b ON b.__path=f.__path AND b.id=f.id WHERE b.max_entries IS NULL AND b.value IS NOT NULL UNION ALL SELECT f.function,'memoized_pure_lazy max_entries must be positive' FROM selected_functions f JOIN memoized_bounds b ON b.__path=f.__path AND b.id=f.id WHERE b.max_entries<1 UNION ALL SELECT function,'memoized pure-lazy functions must be synchronous' FROM selected_functions WHERE rx_matches(text,'^async\\s') UNION ALL SELECT f.function,'memoized pure-lazy functions cannot use variadic arguments' FROM selected_functions f WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=f.__path AND n.__start>=f.parameters_start AND n.__end<=f.parameters_end AND n.kind IN ('list_splat_pattern','dictionary_splat_pattern')) UNION ALL SELECT f.function,'memoized pure-lazy functions cannot be generators' FROM selected_functions f WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=f.__path AND n.__start>=f.body_start AND n.__end<=f.body_end AND n.kind='yield'))"
+            "query": "SELECT \"__path\",\"fn\",NULL AS \"function\",\"error\" FROM (SELECT f.__path,f.id fn,f.function,'memoized_pure_lazy requires the canonical pure_lazy marker' error FROM selected_functions f WHERE NOT EXISTS(SELECT 1 FROM decorator_names d JOIN nodes n ON n.__path=d.__path AND n.id=d.node JOIN nodes par ON par.__path=n.__path AND par.id=n.parent WHERE d.__path=f.__path AND d.fn=f.id AND d.name='pure_lazy' AND n.kind='identifier' AND par.kind='decorator') UNION ALL SELECT f.__path,f.id fn,f.function,'memoized_pure_lazy requires one literal max_entries keyword' FROM selected_functions f WHERE (SELECT count(*) FROM keywords k WHERE k.__path=f.__path AND k.call=f.decorator)!=1 OR NOT EXISTS(SELECT 1 FROM keywords k WHERE k.__path=f.__path AND k.call=f.decorator AND k.name='max_entries') OR EXISTS(SELECT 1 FROM arguments a WHERE a.__path=f.__path AND a.call=f.decorator) UNION ALL SELECT f.__path,f.id fn,f.function,'memoized_pure_lazy max_entries must be a literal integer' FROM selected_functions f JOIN memoized_bounds b ON b.__path=f.__path AND b.id=f.id WHERE b.max_entries IS NULL AND b.value IS NOT NULL UNION ALL SELECT f.__path,f.id fn,f.function,'memoized_pure_lazy max_entries must be positive' FROM selected_functions f JOIN memoized_bounds b ON b.__path=f.__path AND b.id=f.id WHERE b.max_entries<1 UNION ALL SELECT __path,id fn,function,'memoized pure-lazy functions must be synchronous' FROM selected_functions WHERE rx_matches(text,'^async\\s') UNION ALL SELECT f.__path,f.id fn,f.function,'memoized pure-lazy functions cannot use variadic arguments' FROM selected_functions f WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=f.__path AND n.__start>=f.parameters_start AND n.__end<=f.parameters_end AND n.kind IN ('list_splat_pattern','dictionary_splat_pattern')) UNION ALL SELECT f.__path,f.id fn,f.function,'memoized pure-lazy functions cannot be generators' FROM selected_functions f WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=f.__path AND n.__start>=f.body_start AND n.__end<=f.body_end AND n.kind='yield'))"
           },
           {
             "name": "coordinate_roots",
@@ -1031,8 +1100,18 @@
             ]
           },
           {
-            "name": "all_memoized",
-            "query": "SELECT \"function\" FROM (SELECT function FROM actual_functions UNION ALL SELECT function FROM memoized_aliases)",
+            "name": "alias_fingerprints",
+            "pythonAst": {
+              "syntax": "syntax_nodes",
+              "roots": "SELECT __path,id FROM memoized_aliases",
+              "fields": [
+                "dump_sha256"
+              ]
+            }
+          },
+          {
+            "name": "actual_records",
+            "query": "SELECT \"record_id\",\"function\",\"body_hash\",\"signature_hash\",\"max_entries\",\"ordinal\" FROM (SELECT r.*,row_number() OVER(ORDER BY function)-1 ordinal FROM (SELECT f.__path||':'||f.id record_id,f.function,f.body_sha256 body_hash,f.signature_sha256 signature_hash,b.max_entries FROM actual_functions f JOIN memoized_bounds b ON b.__path=f.__path AND b.id=f.id UNION ALL SELECT a.__path||':'||a.id,a.function,h.dump_sha256,h.dump_sha256,NULL FROM memoized_aliases a JOIN alias_fingerprints h ON h.__path=a.__path AND h.id=a.id) r)",
             "indexes": [
               [
                 "function"
@@ -1040,12 +1119,30 @@
             ]
           },
           {
-            "name": "memoized_comparisons",
-            "query": "SELECT \"function\",\"error\" FROM (SELECT a.function,'memoization bound changed' error FROM actual_functions a JOIN policy_entries e ON e.function=a.function JOIN memoized_bounds b ON b.__path=a.__path AND b.id=a.id WHERE b.max_entries IS NOT json_extract(e.data,'$.max_entries') UNION ALL SELECT a.function,'cache lifetime is not approved' error FROM actual_functions a JOIN policy_entries e ON e.function=a.function WHERE json_extract(e.data,'$.cache_lifetime') IS NOT 'process' UNION ALL SELECT a.function,'key policy is not approved' error FROM actual_functions a JOIN policy_entries e ON e.function=a.function WHERE json_extract(e.data,'$.key_policy') IS NOT 'bound_explicit_immutable_v1' UNION ALL SELECT a.function,'return policy is not approved' error FROM actual_functions a JOIN policy_entries e ON e.function=a.function WHERE json_extract(e.data,'$.return_policy') IS NOT 'immutable_no_alias_v1' UNION ALL SELECT a.function,'exception policy is not approved' error FROM actual_functions a JOIN policy_entries e ON e.function=a.function WHERE json_extract(e.data,'$.exception_policy') IS NOT 'successful_results_only_v1' UNION ALL SELECT a.function,'review rationale is required' FROM actual_functions a JOIN policy_entries e ON e.function=a.function WHERE trim(e.rationale)='' UNION ALL SELECT a.function,'function body hash changed' FROM actual_functions a JOIN policy_entries e ON e.function=a.function WHERE a.body_sha256!=e.body_hash UNION ALL SELECT a.function,'function signature hash changed' FROM actual_functions a JOIN policy_entries e ON e.function=a.function WHERE a.signature_sha256!=e.signature_hash)"
+            "name": "actual_errors",
+            "query": "SELECT \"record_id\",\"ordinal\",\"error\" FROM (SELECT record_id,row_number() OVER(PARTITION BY record_id ORDER BY error)-1 ordinal,error FROM (SELECT f.__path||':'||f.id record_id,e.error FROM actual_functions f JOIN memoized_errors e ON e.__path=f.__path AND e.fn=f.id UNION SELECT a.__path||':'||a.id,a.error FROM memoized_aliases a))",
+            "indexes": [
+              [
+                "record_id"
+              ]
+            ]
+          },
+          {
+            "name": "effective_actual",
+            "query": "SELECT NULL AS \"record_id\",\"function\",\"body_hash\",\"signature_hash\",\"max_entries\",NULL AS \"ordinal\" FROM (SELECT * FROM actual_records a WHERE NOT EXISTS(SELECT 1 FROM actual_records later WHERE later.function=a.function AND later.ordinal>a.ordinal))",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "ordered_policy_issues",
+            "query": "SELECT \"phase\",\"step\",\"ordinal\",\"function\",\"issue\" FROM (SELECT * FROM (SELECT 0 phase,0 step,0 ordinal,x.* FROM (SELECT function,'duplicate memoized decorator entry: '||function issue FROM actual_records GROUP BY function HAVING count(*)>1) x) UNION ALL SELECT * FROM (SELECT 0 phase,1 step,0 ordinal,x.* FROM (SELECT function,'duplicate memoized policy entry: '||function issue FROM policy_records GROUP BY function HAVING count(*)>1) x) UNION ALL SELECT * FROM (SELECT 1 phase,0 step,printf('%020d/%020d',a.ordinal,e.ordinal) ordinal,a.function,a.function||': '||e.error issue FROM actual_errors e JOIN actual_records a ON a.record_id=e.record_id ORDER BY a.ordinal,e.ordinal) UNION ALL SELECT * FROM (SELECT 2 phase,0 step,0 ordinal,x.* FROM (SELECT a.function,'unsigned memoized pure-lazy function: '||a.function issue FROM effective_actual a WHERE NOT EXISTS(SELECT 1 FROM policy_entries p WHERE p.function=a.function)) x) UNION ALL SELECT * FROM (SELECT 3 phase,0 step,0 ordinal,x.* FROM (SELECT p.function,'stale memoized pure-lazy policy entry: '||p.function issue FROM policy_entries p WHERE NOT EXISTS(SELECT 1 FROM effective_actual a WHERE a.function=p.function)) x) UNION ALL SELECT * FROM (SELECT 4 phase,0 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('memoization bound changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE a.max_entries IS NOT json_extract(p.data,'$.max_entries')) x) UNION ALL SELECT * FROM (SELECT 4 phase,1 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('cache lifetime is not approved') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE json_extract(p.data,'$.cache_lifetime') IS NOT 'process') x) UNION ALL SELECT * FROM (SELECT 4 phase,2 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('key policy is not approved') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE json_extract(p.data,'$.key_policy') IS NOT 'bound_explicit_immutable_v1') x) UNION ALL SELECT * FROM (SELECT 4 phase,3 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('return policy is not approved') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE json_extract(p.data,'$.return_policy') IS NOT 'immutable_no_alias_v1') x) UNION ALL SELECT * FROM (SELECT 4 phase,4 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('exception policy is not approved') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE json_extract(p.data,'$.exception_policy') IS NOT 'successful_results_only_v1') x) UNION ALL SELECT * FROM (SELECT 4 phase,5 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('review rationale is required') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE trim(p.rationale)='') x) UNION ALL SELECT * FROM (SELECT 4 phase,7 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('function body hash changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE a.body_hash!=p.body_hash) x) UNION ALL SELECT * FROM (SELECT 4 phase,8 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('function signature hash changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE a.signature_hash!=p.signature_hash) x))"
           },
           {
             "name": "diagnostics",
-            "query": "SELECT \"issue\" FROM (SELECT 'unsigned memoized pure-lazy function: '||a.function issue FROM all_memoized a WHERE NOT EXISTS(SELECT 1 FROM policy_entries p WHERE p.function=a.function) UNION ALL SELECT 'stale memoized pure-lazy policy entry: '||p.function FROM policy_entries p WHERE NOT EXISTS(SELECT 1 FROM all_memoized a WHERE a.function=p.function) UNION ALL SELECT function||': '||error FROM memoized_errors UNION ALL SELECT function||': '||error FROM memoized_aliases UNION ALL SELECT function||': '||error FROM memoized_comparisons UNION ALL SELECT 'duplicate memoized decorator entry: '||function FROM all_memoized GROUP BY function HAVING count(*)>1 UNION ALL SELECT 'duplicate memoized policy entry: '||function FROM policy_records GROUP BY function HAVING count(*)>1)"
+            "query": "SELECT \"issue\" FROM (SELECT issue FROM ordered_policy_issues ORDER BY phase,CASE WHEN phase=1 AND 1 THEN '' ELSE function END,step,ordinal)"
           }
         ],
         "query": {
@@ -1150,7 +1247,8 @@
         },
         "locations": [
           "l2055_lazy_result/cached_pure_lazy_policy.py"
-        ]
+        ],
+        "message": "issue"
       },
       "violation": {
         "code": "architecture",
@@ -1453,7 +1551,8 @@
         },
         "locations": [
           "l2055_lazy_result/cached_pure_lazy_policy.py"
-        ]
+        ],
+        "message": "issue"
       },
       "violation": {
         "code": "architecture",

@@ -132,7 +132,7 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     }
     for (const clause of authored.clauses) {
       if (clause.define?.options !== undefined && event.oracle_config?.options !== undefined) {
-        clause.define.config = { ...clause.define.config, ...event.oracle_config.options };
+        clause.define.config = { ...clause.define.config, ...Object.fromEntries(Object.entries(event.oracle_config.options).filter(([name]) => Object.hasOwn(clause.define!.options!, name))) };
       }
     }
     const authoredKey = JSON.stringify(authored);

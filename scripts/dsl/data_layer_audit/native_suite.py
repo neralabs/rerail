@@ -92,6 +92,15 @@ class NativeSuite:
         except subprocess.TimeoutExpired: self.worker.kill(); self.worker.wait()
 
 
+def receipt(backend,code,policies,checked):
+    sha=lambda path:hashlib.sha256(path.read_bytes()).hexdigest()
+    return dict(engineSha256=sha(Path(os.environ['RERAIL_ENGINE_PATH'])),contractsSha256=sha(Path(os.environ['RERAIL_NATIVE_CONTRACTS'])),
+      policySha256={check:sha(policies/('data-layer-'+check.replace('_','-')+'.json')) for check in BATCH_EIGHT},
+      factPolicySha256={path.name:sha(path) for path in sorted((policies.parent/'facts').glob('*.json'))},
+      format='rerail.data-layer-native-pytest/v1',mode=backend.mode,exitCode=int(code),instrumentationTranslations=backend.instrumentation_translations,
+      sourceFilesChecked=checked,semanticFallbacks=backend.semantic_fallbacks,originalCalls=backend.original_calls,cases=backend.outcomes,calls=backend.calls)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
@@ -112,11 +121,7 @@ def main():
                         *[str(root/path) for path in tests]], plugins=[backend])
     if backend.semantic_fallbacks:code=pytest.ExitCode.TESTS_FAILED
     checked = verify_sources(root, args.repo.resolve(), '2b1504adc4291daaf080b2e932962b134da1a69a')
-    engine=Path(os.environ['RERAIL_ENGINE_PATH'])
-    sha=lambda path:hashlib.sha256(path.read_bytes()).hexdigest()
-    report = dict(engineSha256=sha(engine),contractsSha256=sha(Path(os.environ['RERAIL_NATIVE_CONTRACTS'])),
-                  policySha256={check:sha(policies/('data-layer-'+check.replace('_','-')+'.json')) for check in BATCH_EIGHT},format='rerail.data-layer-native-pytest/v1', mode=args.mode, exitCode=int(code),
-                  instrumentationTranslations=backend.instrumentation_translations, sourceFilesChecked=checked, semanticFallbacks=backend.semantic_fallbacks, originalCalls=backend.original_calls, cases=backend.outcomes, calls=backend.calls)
+    report=receipt(backend,code,policies,checked)
     output.write_text(json.dumps(report, indent=2) + '\n')
     raise SystemExit(code)
 

@@ -35,6 +35,7 @@ class Oracle:
 
 
 def main():
+    if os.environ.get('PYTHONHASHSEED')!='0':raise SystemExit('Set PYTHONHASHSEED=0 to preserve upstream set iteration order in both runs.')
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',choices=['record','compare'])
     for name in ('source','repo','output'):p.add_argument('--'+name,type=Path,required=True)
     p.add_argument('--oracle',type=Path);p.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot')

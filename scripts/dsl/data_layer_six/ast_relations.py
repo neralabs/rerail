@@ -111,7 +111,7 @@ def grouped_relations(prefix,stages,rows,full_entries,extra_inputs=None,producti
   import copy
   clause['relational']['stages']=[copy.deepcopy(s) for s in all_stages if s['name'] in group['names']]+outputs
   clause['relational']['inputs']['raw_nodes']['evidence']['query']['ast']['rule']['all'].append(gate([*entries,*full_entries]))
-  reads=set(re.findall(r'(?i)\b(?:FROM|JOIN)\s+([a-z_]\w*)',json.dumps(query)+' '+' '.join(s['query'] if isinstance(s['query'],str) else json.dumps(s['query']) for s in clause['relational']['stages'])))
+  reads=set(re.findall(r'(?i)\b(?:FROM|JOIN)\s+([a-z_]\w*)',json.dumps(query)+' '+' '.join(json.dumps(s.get('query',s.get('reachability'))) for s in clause['relational']['stages'])))
   clause['relational']['inputs'].update({name:copy.deepcopy(value) for name,value in (extra_inputs or {}).items() if name in reads})
   if row_groups is not None:clause['_authoring_group']=group['tag']
   result.append(clause)
@@ -122,12 +122,12 @@ def trim_ast_projection(clause):
  plan=clause['relational']
  raw=plan['inputs'].get('raw_nodes')
  if raw is None:return
- other_sql=json.dumps(plan['query'])+' '+' '.join(s['query'] if isinstance(s['query'],str) else json.dumps(s['query']) for s in plan['stages'] if s['name']!='fields')
+ other_sql=json.dumps(plan['query'])+' '+' '.join(json.dumps(s.get('query',s.get('reachability'))) for s in plan['stages'] if s['name']!='fields')
  used_roles=set(re.findall(r"\brole\s*=\s*'([a-z_]+)'",other_sql))
  if used_roles:
   for stage in plan['stages']:
    if stage['name']=='fields':stage['query']=' UNION ALL '.join(f"SELECT __path,id AS owner,{q(f)} AS role,{f}_kind||':'||{f}_start||':'||{f}_end AS child FROM nodes WHERE {f}_start IS NOT NULL" for f in FIELDS if f in used_roles)
- sql=json.dumps(plan['query'])+' '+' '.join(s['query'] if isinstance(s['query'],str) else json.dumps(s['query']) for s in plan['stages'])
+ sql=json.dumps(plan['query'])+' '+' '.join(json.dumps(s.get('query',s.get('reachability'))) for s in plan['stages'])
  fields={f for f in FIELDS if any(re.search(r'\b'+re.escape(f+'_'+suffix)+r'\b',sql) for suffix in ['kind','start','end','source'])}
  ast=raw['evidence']['query']['ast']
  def trim(rule):
@@ -313,7 +313,8 @@ def whole_file_syntax_relations(clause):
  plan['query']=lower(plan['query'])
  for stage in plan['stages']:
   if 'reachability' in stage:
-   stage['reachability']={'roots':lower(stage['reachability']['roots']),'syntax':'nodes'}
+   if stage['reachability'].get('selection')=='memoized-first':stage['reachability']=lower(stage['reachability'])
+   else:stage['reachability']={'roots':lower(stage['reachability']['roots']),'syntax':'nodes'}
  native_import_identifiers(plan)
  return True
 

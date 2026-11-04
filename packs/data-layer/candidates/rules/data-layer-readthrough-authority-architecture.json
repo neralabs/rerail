@@ -31,10 +31,6 @@
       "id": "entry",
       "define": {
         "options": {
-          "oracleAnalyzer": {
-            "type": "boolean",
-            "default": false
-          },
           "entryPoint": {
             "type": "string",
             "default": "scan_sources"
@@ -51,39 +47,7 @@
           "rule": {
             "all": [
               {
-                "$option": "oracleAnalyzer",
-                "cases": {
-                  "true": {
-                    "regex": "(?s).*"
-                  },
-                  "false": {
-                    "any": [
-                      {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "regex": "ReadThrough|readthrough|overlay|authority"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "ReadThrough|readthrough|overlay|authority"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
+                "regex": "(?s).*"
               },
               {
                 "all": [
@@ -150,39 +114,7 @@
           "rule": {
             "all": [
               {
-                "$option": "oracleAnalyzer",
-                "cases": {
-                  "true": {
-                    "regex": "(?s).*"
-                  },
-                  "false": {
-                    "any": [
-                      {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "regex": "ReadThrough|readthrough|overlay|authority"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "ReadThrough|readthrough|overlay|authority"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
+                "regex": "(?s).*"
               },
               {
                 "all": [
@@ -222,39 +154,7 @@
           "rule": {
             "all": [
               {
-                "$option": "oracleAnalyzer",
-                "cases": {
-                  "true": {
-                    "regex": "(?s).*"
-                  },
-                  "false": {
-                    "any": [
-                      {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "regex": "ReadThrough|readthrough|overlay|authority"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "ReadThrough|readthrough|overlay|authority"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
+                "regex": "(?s).*"
               },
               {
                 "all": [
@@ -345,39 +245,7 @@
           "rule": {
             "all": [
               {
-                "$option": "oracleAnalyzer",
-                "cases": {
-                  "true": {
-                    "regex": "(?s).*"
-                  },
-                  "false": {
-                    "any": [
-                      {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "regex": "ReadThrough|readthrough|overlay|authority"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "ReadThrough|readthrough|overlay|authority"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
+                "regex": "(?s).*"
               },
               {
                 "all": [
@@ -486,39 +354,7 @@
           "rule": {
             "all": [
               {
-                "$option": "oracleAnalyzer",
-                "cases": {
-                  "true": {
-                    "regex": "(?s).*"
-                  },
-                  "false": {
-                    "any": [
-                      {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "regex": "ReadThrough|readthrough|overlay|authority"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "ReadThrough|readthrough|overlay|authority"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
+                "regex": "(?s).*"
               },
               {
                 "all": [
@@ -611,39 +447,7 @@
           "rule": {
             "all": [
               {
-                "$option": "oracleAnalyzer",
-                "cases": {
-                  "true": {
-                    "regex": "(?s).*"
-                  },
-                  "false": {
-                    "any": [
-                      {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "regex": "ReadThrough|readthrough|overlay|authority"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "ReadThrough|readthrough|overlay|authority"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
+                "regex": "(?s).*"
               },
               {
                 "all": [
@@ -850,39 +654,7 @@
           "rule": {
             "all": [
               {
-                "$option": "oracleAnalyzer",
-                "cases": {
-                  "true": {
-                    "regex": "(?s).*"
-                  },
-                  "false": {
-                    "any": [
-                      {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "regex": "ReadThrough|readthrough|overlay|authority"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "ReadThrough|readthrough|overlay|authority"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
+                "regex": "(?s).*"
               },
               {
                 "all": [
@@ -1198,39 +970,7 @@
           "rule": {
             "all": [
               {
-                "$option": "oracleAnalyzer",
-                "cases": {
-                  "true": {
-                    "regex": "(?s).*"
-                  },
-                  "false": {
-                    "any": [
-                      {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "regex": "ReadThrough|readthrough|overlay|authority"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "ReadThrough|readthrough|overlay|authority"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
+                "regex": "(?s).*"
               },
               {
                 "all": [
@@ -1684,39 +1424,7 @@
           "rule": {
             "all": [
               {
-                "$option": "oracleAnalyzer",
-                "cases": {
-                  "true": {
-                    "regex": "(?s).*"
-                  },
-                  "false": {
-                    "any": [
-                      {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "regex": "ReadThrough|readthrough|overlay|authority"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "ReadThrough|readthrough|overlay|authority"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
+                "regex": "(?s).*"
               },
               {
                 "all": [
@@ -1940,39 +1648,7 @@
           "rule": {
             "all": [
               {
-                "$option": "oracleAnalyzer",
-                "cases": {
-                  "true": {
-                    "regex": "(?s).*"
-                  },
-                  "false": {
-                    "any": [
-                      {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "regex": "ReadThrough|readthrough|overlay|authority"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "ReadThrough|readthrough|overlay|authority"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
+                "regex": "(?s).*"
               },
               {
                 "all": [

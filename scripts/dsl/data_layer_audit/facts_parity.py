@@ -7,6 +7,7 @@ from dataclasses import asdict
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -71,7 +72,9 @@ def main():
                 if mismatch:mismatches.append(dict(test=case['test'],path=file['path'],differences=mismatch))
         finally:backend.pytest_unconfigure()
         result=dict(format='rerail.complete-function-facts-parity/v1',mode=args.mode,cases=len(raw['cases']),differences=mismatches,
-          semanticFallbacks=backend.semantic_fallbacks,oracleSha256=hashlib.sha256(args.input.read_bytes()).hexdigest())
+          semanticFallbacks=backend.semantic_fallbacks,oracleSha256=hashlib.sha256(args.input.read_bytes()).hexdigest(),
+          engineSha256=hashlib.sha256(Path(os.environ['RERAIL_ENGINE_PATH']).read_bytes()).hexdigest(),
+          contractsSha256=hashlib.sha256(Path(os.environ['RERAIL_NATIVE_CONTRACTS']).read_bytes()).hexdigest())
     result['sourceFilesChecked']=verify_sources(root,args.repo.resolve(),'2b1504adc4291daaf080b2e932962b134da1a69a')
     output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps({key:value for key,value in result.items() if key not in ('cases','differences')}|dict(cases=len(result['cases']) if isinstance(result['cases'],list) else result['cases'],differences=len(result.get('differences',[])))))

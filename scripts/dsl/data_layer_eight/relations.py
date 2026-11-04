@@ -24,7 +24,7 @@ def clause(name,stages,query,inputs=None):
     while pending:
         for table in re.findall(r'(?i)\b(?:FROM|JOIN)\s+([a-z_]\w*)',json.dumps(pending.pop())):
             if table in catalog and table not in needed:
-                needed.add(table);pending.append(catalog[table]['query'])
+                needed.add(table);pending.append(catalog[table].get('query',catalog[table].get('reachability')))
     plan['stages']=[s for s in plan['stages'] if s['name'] in needed]
     trim_ast_projection(item);whole_file_syntax_relations(item);plan['requireNonemptyInput']='syntax_gate'
     narrow_columns(plan)

@@ -16,85 +16,107 @@ Status: all ten candidates pass native-backed upstream assertions and positive c
 | `authentication_plan_purity` | Authentication state, reachable helpers and compatibility forwarding |
 | `lazy_adapter_ownership` | Shared lazy bodies, direct adapters and legacy ownership |
 
-## Native assertion completion
+## Complete native comparisons
 
-The earlier audit left semantic helper assertions on the original Python implementation. That was incomplete validation.
-The [native assertion receipt](../fixtures/host/data-layer-port/batch-08-native-assertions.json) supersedes that audit.
+The previous completion claim was premature. Partial assertions missed complete-result differences.
+The adapters also rescanned source when callers supplied facts.
+This delivery replaces those paths and removes the `oracleAnalyzer` option from all ten rules.
 
-All 456 original upstream cases now pass through both native execution APIs. No case is skipped.
-The harness leaves upstream files unchanged and verifies their Git blob identities.
-It substitutes native scanner and helper APIs before pytest imports the test modules.
-A guard rejects original detector, analyzer, collector and graph-helper execution.
+All 456 upstream cases pass through both native APIs, with no skips or original semantic fallback.
+The harness checks upstream source files against their Git blob identities.
+Four instrumentation cases replace Python implementation hooks with actual native counters.
+Their behavior assertions remain intact.
 
-| Evidence, per execution API | Count |
+| Evidence, per native API | Count |
 | --- | ---: |
 | Original cases passed | 456 |
 | Cases that directly invoke native execution | 336 |
-| Native API calls | 480 |
-| Diagnostic calls | 283 |
-| Positive diagnostic calls | 199 |
-| Native helper and fact calls | 197 |
+| Native API calls | 523 |
+| Diagnostic calls | 326 |
+| Positive diagnostic calls | 201 |
+| Helper and fact calls | 197 |
 | Original semantic fallbacks | 0 |
 
-The other 120 cases check constants, DTOs, file handling, signing orchestration or CLI scaffolding.
-These host assertions remain in Python. They do not run an original detector.
-Native helper calls now cover function facts, graph targets, eager exemptions, wrapper signatures, cached discovery and runtime fingerprints.
-Plugin tests materialize the complete source demand through native SQL before invoking the original host reporter.
+The other 120 cases check host constants, DTOs, file handling, signing or CLI orchestration.
+These are host assertions, not additional native detector coverage.
 
-Three instrumentation functions contain four parametrized cases.
-Their mechanical translations replace Python implementation hooks with actual native work counters.
-They check one candidate module walk, one syntax load, and one shared legacy relation for two consumers.
-Their behavior assertions remain intact. The receipt records both source hashes for each translation.
+The [complete API oracle](../fixtures/host/data-layer-port/batch-08-complete-api.json) records 305 results from the unchanged upstream implementations.
+Comparison checks every DTO field, list order, count and exception detail.
+The [complete analyzer oracle](../fixtures/host/data-layer-port/batch-08-complete-facts.json) checks every field for 85 distinct upstream inputs.
+Both comparisons have zero differences through both APIs.
+The first complete analyzer comparison found differences in 25 inputs.
 
-Disabling the nine detectors with original pytest modules causes 173 assertion failures and ten positive-fixture setup failures.
-There are no semantic fallbacks in that control run.
-The source pin has no dedicated lazy-SQL-surface pytest module.
-Its native coverage uses independent positive and clean oracle probes, including an always-clean mutation control.
+The [supplied-fact oracle](../fixtures/host/data-layer-port/batch-08-fact-api.json) adds 16 batches, each tested through both APIs without source files.
+These tests check fact consumption, declared flags, event order, graph cycles, policy ordering and annotation formatting.
+Source and fact consumers use the same comparison and graph definitions.
+The adapters no longer reconstruct supplied facts from source.
 
-The original and supplemental recordings provide 534 observations: 335 positive and 199 clean.
-Another 18 [exact-message probes](../fixtures/host/data-layer-port/batch-08-exact-probes.json) provide 12 positive and six clean observations.
-All 552 observations match both APIs without finding differences or engine failures.
-The new probes compare diagnostic prose too.
-They cover ordered eager targets, cycles, first matching connection-owner calls, nested classes, compatibility imports and deferred delegates.
+All 558 recorded scanner observations match both native APIs: 351 positive and 207 clean.
+This includes complete coverage of the 18 lazy-architecture diagnostic families.
+The [assertion receipt](../fixtures/host/data-layer-port/batch-08-native-assertions.json) binds the results to the rules, adapters and engine.
 
-The work fixes a real graph-selection error: alphabetical target selection differed from Python's call order beneath a shared first hop.
-SQL now orders demanded walks by source call order, stops at matching sinks and guards cycles.
-It limits these walks to roots with diagnostic demand.
-The shared producers also retain class method aliases, pseudo-function fields, exact diagnostic details and stable purity scopes.
+Always-clean mutations reject positives for all ten rules.
+The original suites also reject mutations of the supplied-fact consumers.
+That control run has 173 failed assertions and ten positive-fixture setup errors, with no semantic fallback.
+The source pin has no dedicated lazy-SQL-surface pytest module; independent oracle probes cover that rule.
 
-The engine now accepts a relational message column and rejects missing or nontext payloads.
-Its profile reports actual canonical parses, module walks, syntax loads and relation materializations.
-Snapshot merging and workspace apply reporting retain those counters.
-Text-only canonical identifier and byte-column requests avoid parsing and walking an AST.
-Unused module literals no longer trigger immutable-container classification.
+## Shared implementation
+
+The fixes preserve CPython visitation order, including conditional tests, dictionary keys and call arguments.
+Raw deleted-surface checks retain their own text coordinates.
+Canonical unparsed text supplies eager diagnostic expressions.
+Policy comparisons preserve error order and keep declaration-specific errors separate.
+Recursive global-value classification checks every nested tuple and `frozenset` argument.
+The default eager allowlist verifies the pinned signatures.
+
+Independent reachability did not preserve the linter's memoized traversal through cycles.
+The generic native first-match producer now consumes three typed SQL queries:
+
+| Input | Columns |
+| --- | --- |
+| Roots | `__path`, `id`, `ordinal` |
+| Edges | `__path`, `src`, `dst`, `ordinal`, `location` |
+| Sinks | `__path`, `id`, `location` |
+
+`selection: "memoized-first"` preserves root order, edge order and cached negative results within each scope.
+`match: "node"` includes the root; `match: "edge"` checks called targets.
+A null sink scope shares a sink without copying it across file scopes.
+The output contains `__path`, `root`, `node` and `location` as indexed virtual-table columns.
+The algorithm contains no data-layer symbols or Python detection logic.
+It performs no per-node SQL submission or scalar callback.
 
 ## Reproduce native assertions
 
-Use the [selected engine receipt](../fixtures/host/data-layer-port/batch-08-engine.json) to build the companion branch.
-Set `RERAIL_ENGINE_PATH` to that addon.
-Generate shared helper contracts, then run each execution API:
+Build the companion engine from the [engine receipt](../fixtures/host/data-layer-port/batch-08-engine.json).
+Set `RERAIL_ENGINE_PATH` to that addon and use CPython 3.13 with the upstream test dependencies.
 
 ```sh
 python3 scripts/dsl/data_layer_audit/native_contracts.py \
   --source .rerail/data-layer-testsuite-positives/upstream-git \
   --output .rerail/data-layer-batch-eight/native-contracts.json
 export RERAIL_NATIVE_CONTRACTS="$PWD/.rerail/data-layer-batch-eight/native-contracts.json"
-env -u GIT_PAGER /path/to/python3.13 scripts/dsl/data_layer_audit/native_suite.py \
+env -u GIT_PAGER PYTHONHASHSEED=0 /path/to/python3.13 \
+  scripts/dsl/data_layer_audit/api_parity.py compare \
   --source .rerail/data-layer-testsuite-positives/upstream-git \
   --repo /path/to/nera-data-layer-git-repository \
+  --oracle fixtures/host/data-layer-port/batch-08-complete-api.json \
   --mode snapshot \
-  --output .rerail/data-layer-batch-eight/native-pytest-final-snapshot.json
+  --output .rerail/data-layer-batch-eight/full-api-final-snapshot.json
 ```
 
 Repeat with `--mode workspace` and its corresponding output name.
-The `--policies` argument selects a test policy directory for detector mutation controls.
-It does not select a production execution backend.
+This command runs the original assertions and the additional complete-result comparison.
+The fixed hash seed preserves iteration order in original tests that use sets.
+Use `facts_parity.py compare` with `batch-08-complete-facts.json` to check the complete analyzer fields.
 
-The final focused TypeScript run passes 35 tests. Canonical producer tests pass nine; relational tests pass 94.
-The integrated compiler accepts all 80 current candidates.
+`native_mutation.py --output <directory>` creates always-clean rule and fact consumers.
+Run `native_suite.py --policies <directory>/rules` to check that upstream positives reject those mutations.
+The helper producers remain active, so the control tests receive real input facts.
+
+The integrated compiler accepts all 80 candidates.
 Typechecking, boundary checks and Windows path checks pass.
-The structure check retains its three previously recorded directory-size failures.
-No complete repository cold execution ran for this delivery.
+The structure check retains its three existing directory-size findings.
+No complete-repository cold benchmark ran for this delivery.
 
 ## Full repository result
 
@@ -137,7 +159,6 @@ The worker parses source without importing or executing it.
 It runs with `-I -S`, using only the standard library.
 Missing CPython 3.13 causes an explicit engine failure.
 There is no alternative backend or configuration switch.
-A self-contained serializer prototype remains outside Git and is not a production path.
 
 The producer returns typed columns through the existing indexed virtual-table interface.
 SQL callbacks read completed columns; they do not parse source or invoke Python per node.
@@ -181,7 +202,7 @@ The profiling build profile supplies debug symbols. The receipt enables no extra
 The following commands reproduce the macOS build shape in a separate checkout:
 
 ```sh
-git worktree add --detach .rerail/data-layer-batch-eight/reproduce-engine ebcfefa0a
+git worktree add --detach .rerail/data-layer-batch-eight/reproduce-engine 29cbf425b
 CARGO_TARGET_DIR="$PWD/.rerail/data-layer-batch-eight/reproduce-target" \
   cargo build --profile profiling --locked --offline \
   --manifest-path .rerail/data-layer-batch-eight/reproduce-engine/Cargo.toml \
@@ -194,6 +215,7 @@ Set `RERAIL_ENGINE_PATH` to that addon before each command:
 
 ```sh
 npx vitest run test/conformance/data-layer/batch-eight.test.ts \
+  test/conformance/data-layer/batch-eight-fact-api.test.ts \
   test/engine/native/data-layer-batch-eight-capabilities.test.ts
 node --import tsx conformance/data-layer/compile-integrated.ts \
   --source .rerail/data-layer-batch-eight/reproduce-engine --through 8 \
@@ -201,6 +223,8 @@ node --import tsx conformance/data-layer/compile-integrated.ts \
 node --import tsx conformance/data-layer/replay.ts \
   --recording fixtures/host/data-layer-port/batch-08-recording.json \
   --recording fixtures/host/data-layer-port/batch-08-probes.json \
+  --recording fixtures/host/data-layer-port/batch-08-exact-probes.json \
+  --recording fixtures/host/data-layer-port/batch-08-edge-probes.json \
   --output .rerail/data-layer-batch-eight/reproduce-parity.json
 ```
 

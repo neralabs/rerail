@@ -90,7 +90,7 @@ def schema(plan):
     for stage in plan['stages']:
         name = stage['name']
         if 'reachability' in stage:
-            create(name, ['__path','root','node'])
+            create(name, ['__path','root','node',*(['location'] if stage['reachability'].get('selection')=='memoized-first' else [])])
         else:
             try:
                 db.execute(f'CREATE TABLE {quote(name)} AS SELECT * FROM ({next(sql_strings(stage["query"]))}) LIMIT 0')
@@ -126,7 +126,8 @@ def _project_columns(plan, compact):
     for stage in reversed(plan['stages']):
         name = stage['name']
         if 'reachability' in stage:
-            collect(stage['reachability']['roots'])
+            for field in ('roots','edges','sinks'):
+                if field in stage['reachability']:collect(stage['reachability'][field])
             continue
         original = next(sql_strings(stage['query']))
         selected = [c[0] for c in db.execute(f'SELECT * FROM ({original}) LIMIT 0').description]

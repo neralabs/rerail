@@ -9,7 +9,7 @@ def candidate(source,policy):
     module=source/'scripts/lint_legacy_callback_quarantine.py'
     values=lambda name:constant(module,name)
     p=policy('legacy_callback_quarantine',['impl/**/*.py','l*/**/*.py','data_layer/**/*.py','services/**/*.py'])
-    p['clauses'].append({'id':'entry','define':{'language':'python','utils':{},'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'scan_repo'}}}})
+    p['clauses'].append({'id':'entry','define':{'language':'python','utils':{},'options':{'entryPoint':{'type':'string','default':'scan_repo'}}}})
     utils=p['clauses'][0]['define']['utils']
     def decorators(symbols):
         term=O(names(symbols),A(K('attribute'),F('attribute',names(symbols))),A(K('call'),F('function',{'matches':'callback-decorator-name'})))

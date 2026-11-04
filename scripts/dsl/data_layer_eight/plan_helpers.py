@@ -12,7 +12,7 @@ def candidate(source,policy):
     public=set(value('PUBLIC_TARGET_HELPERS'));private=set(value('PRIVATE_TERMINAL_HELPERS'));lazy=set(value('ALLOWED_LAZY_TERMINALS'));legacy=set(value('LEGACY_PRIVATE_TERMINAL_HELPERS'))
     tracked=public|private|lazy|legacy
     p=policy('plan_helpers_allowlist',['**/*.py'])
-    p['clauses'].append({'id':'entry','define':{'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'scan_repo'}}}})
+    p['clauses'].append({'id':'entry','define':{'options':{'entryPoint':{'type':'string','default':'scan_repo'}}}})
     stages=[
       S('helper_names',' UNION ALL '.join('SELECT '+q(n)+' name,'+str(int(n in public))+' public,'+str(int(n in lazy))+' lazy,'+str(int(n in legacy))+' legacy' for n in sorted(tracked)),('name',)),
       S('imports',"""SELECT n.__path,n.id,n.__start,n.__end,n.module_name_source module,x.id alias_id,coalesce(x.name_source,x.text) name,coalesce(x.alias_source,x.name_source,x.text) local FROM nodes n JOIN nodes x ON x.__path=n.__path AND x.parent=n.id WHERE n.kind IN ('import_statement','import_from_statement') AND x.kind IN ('aliased_import','dotted_name') AND x.id IS NOT n.module_name_kind||':'||n.module_name_start||':'||n.module_name_end""",('__path','local')),
@@ -48,7 +48,7 @@ def candidate(source,policy):
     base="SELECT __path path,__start start_byte,__end end_byte,{code} issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN "+literals(value('ALLOWLISTED_CALLSITES'))
     discovery=' AND '+path_scope('__path',value('SKIP_PARTS'))
     direct=base.format(code='reason')
-    query={'$option':'oracleAnalyzer','cases':{'true':{'$option':'entryPoint','cases':{'scan_repo':direct+discovery},'default':direct},'false':base.format(code="'PHA001'")+discovery}}
+    query={'$option':'entryPoint','cases':{'scan_repo':direct+discovery},'default':direct}
     # The generic builder needs string SQL for dependency and column analysis.
     item=clause('plan-helper-aliases',stages,direct)
     item['relational']['query']=query;p['clauses'].append(item)

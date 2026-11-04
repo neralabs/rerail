@@ -8,10 +8,14 @@ from native_scanners import logical
 
 def install(backend):
     module=backend.modules['cached_pure_lazy_allowlist']
-    def records(files,contract,module_name=None):
+    def records(files,contract,module_name=None,paths=None):
         parameters={} if module_name is None else {'module_name':module_name}
         rows=backend.execute('cached_pure_lazy_allowlist','discovery',files,contract=contract,parameters=parameters)
-        if any(row['code']=='NATIVE-SYNTAX' for row in rows): raise SyntaxError('Native Python syntax validation failed')
+        for row in rows:
+            if row['code']=='NATIVE-SYNTAX':
+                error=row['variables']['syntax_error']
+                path=str(paths[row['path']]) if paths is not None else row['path']
+                raise SyntaxError(error['msg'],(path,error['lineno'],error['offset'],error['text'],error['end_lineno'],error['end_offset']))
         return [json.loads(row['variables']['row']['payload']) for row in rows]
     def convert(value,paths,memoized=False):
         value['path']=paths[value['path']]
@@ -21,7 +25,7 @@ def install(backend):
     def scan(path,source,*,module_name):
         path=Path(path);backend.fact_sources[path]=source
         name=logical(path,module.REPO_ROOT)
-        return tuple(convert(row,{name:path}) for row in records([dict(path=name,source=source)],'cached-discovery',module_name))
+        return tuple(convert(row,{name:path}) for row in records([dict(path=name,source=source)],'cached-discovery',module_name,{name:path}))
     backend.replace(module,'scan_cached_pure_lazy_source',scan)
     def discover(root=module.REPO_ROOT,*,memoized=False):
         root=Path(root)
@@ -31,7 +35,7 @@ def install(backend):
         for path in paths:
             source=path.read_text(encoding='utf-8');backend.fact_sources[path]=source
             name=logical(path,root);files.append(dict(path=name,source=source));identities[name]=path
-        rows=records(files,'memoized-discovery' if memoized else 'cached-discovery')
+        rows=records(files,'memoized-discovery' if memoized else 'cached-discovery',paths=identities)
         return tuple(sorted((convert(row,identities,memoized) for row in rows),key=lambda item:item.function))
     backend.replace(module,'discover_cached_pure_lazy_functions',discover)
     backend.replace(module,'discover_memoized_pure_lazy_functions',lambda root=module.REPO_ROOT:discover(root,memoized=True))
