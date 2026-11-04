@@ -1,8 +1,8 @@
 # Data-layer candidate rules
 
 This private pack contains eighty authored candidates from the pinned data-layer revision.
-All eight batches pass their recorded source-detection gates. The first 70 rules pass the complete repository gate.
-Batch eight has 493 matching observations, including 320 positive cases. Its repository gate is in progress.
+All eight batches pass their recorded source-detection gates. All 80 rules pass the complete repository gate.
+Batch eight has 522 matching observations, including 329 positive cases. The cumulative repository run matches all 25,262 findings without failures.
 The [seventh-batch report](../../docs/data-layer-batch-seven.md) records compatibility, retained contracts, and the unresolved memory cost.
 The [restart plan](../../docs/data-layer-port-restart.md) identifies the remaining 62 checks.
 The [eighth-batch report](../../docs/data-layer-batch-eight.md) records its positive coverage, CPython dependency and validation boundaries.

@@ -5986,3 +5986,69 @@ The source-cap compatibility test now uses the documented per-file limit.
 Several admitted files can exceed that limit in total. One oversized file still causes an explicit failure.
 The broader TypeScript command was stopped after 125 seconds while replaying the older sixth-batch corpus.
 It did not pass and is not included in the completed gate counts.
+
+### 2026-11-04: batch-eight semantic recovery reaches the repository gate
+
+The next ten-rule diagnostic run completes every query without engine failures.
+It reports 329 findings: 63 extra lazy findings and three missing purity findings.
+Cold wall time is 327.665 seconds. Parent CPU is 313.606 seconds and maximum RSS is 9.334 GB.
+This remains failed parity evidence. Its final phase overlaps verification, so its timings remain diagnostic.
+
+Five remaining lazy call-graph differences involve visible bindings and visitor boundaries.
+The original analyzer ignores local module imports for attribute call targets, skips assignment targets, and resolves module aliases.
+The port now preserves those behaviors. It retains every declaration for declaration diagnostics and selects the last definition for call targets.
+The service-file predicate also needs parentheses around its SQL `OR` expression.
+Without them, unrelated events in an exact service file become callable-payload findings.
+Native cursor reads remain eager I/O. They do not count as plan orchestration for `LA-004`.
+New probes cover both the clean orchestration case and the positive pure-function case.
+
+The three missing purity findings depend on inherited methods.
+The original analyzer selects candidate files before it resolves class inheritance.
+The port now keeps that scope, resolves base methods in source order, respects overrides, and prevents traversal cycles.
+The earlier unadmitted-parent probe stays clean. Two new admitted-parent probes produce the original positive findings.
+All these operations remain authored SQL over typed relations.
+
+The final focused replay matches 522 observations: 329 positive and 193 clean.
+It reports no finding differences, engine failures, API differences, or missing native coverage.
+The 50 edit/removal transitions also match.
+The broader TypeScript gate passes 117 tests and skips two existing opt-in producer-shape tests.
+The final native source passes 2,525 tests, with 67 existing ignores and the documented inherited snapshot exclusion.
+Typechecking and all three SQL-column generator tests pass.
+
+The two global rules then match the complete 9,021-file domain: 235 expected findings, 235 actual, and no failures.
+This diagnostic uses 145.397 seconds cold wall, 151.671 seconds parent CPU, and 9.311 GB maximum RSS.
+The external receipt reports 147.06 seconds wall and 153.29 seconds process-family CPU.
+It overlaps frontend verification and cannot establish a performance improvement.
+
+The selected engine is `899c3e53d2cb43a509a47d94e0bdc4fd36bb3c21`.
+Its normal addon SHA-256 is `4f5a112f088dc59713231e387e1bd62b3ec6192352e36a044688481007d49c3b`.
+The final normal addon build takes 36.61 seconds wall. Compilation remains separate from execution.
+The engine branch is pushed. No Linear tickets were created.
+The cumulative 80-rule run is now in progress without competing builds or tests.
+It uses the identical verified 9,021-file domain and 25,262 expected findings from the unchanged 70-rule and batch-eight recordings.
+This combined expectation set is not a newly timed Python oracle run.
+
+### 2026-11-04: cumulative 80-rule gate passes
+
+The reference run completes all 80 rules over the fixed 9,021-file, 137,924,324-byte domain.
+All 25,262 expected findings match, including all 269 findings from the new ten rules.
+There are no extra findings, missing findings or engine failures.
+No instrumentation, memory census, competing builds or competing tests run during this measurement.
+
+Cold execution uses 695.641446 seconds parent CPU and 607.831231 seconds wall time.
+Compilation uses 1.836054 seconds CPU and 1.874628 seconds wall time, measured separately.
+The external process-family receipt reports 701.98 seconds CPU, including Python children, and 613.94 seconds wall time through close.
+Maximum RSS is 20,451,016,704 bytes. OS peak memory footprint is a separate metric at 21,238,647,208 bytes.
+Workspace close uses 2.676788 seconds wall time and reduces RSS from 13,765,086,616 to 2,603,943,280 bytes.
+Memory remains an open optimization problem.
+
+The historical 70-rule result uses 395.519 seconds cold CPU and 15.399 GB maximum RSS.
+The engine and rule set differ. These results do not establish a speed comparison.
+The earlier roughly 1,400-second measurement is also a different workload and remains historical.
+
+The [measurement receipt](performance-decisions/data-layer-batch-eight-20261104.json) preserves the measured phases and identities.
+The [batch evidence](../fixtures/host/data-layer-port/batch-08-evidence.json) binds the final 522 observations and 50 transitions to the same addon.
+All 80 compiled digests match the repository receipt and current policy files.
+The compatibility tool now records both each source-file hash and its authored compiled digest.
+Typechecking also passes after that instrumentation change.
+The pack has 80 candidates and 62 checks remaining. It remains inactive, with signing/reporting and GPU lowering boundaries documented separately.

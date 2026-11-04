@@ -26,7 +26,8 @@ const rows = checks.map(check => {
   try {
     const policy: unknown = frontend.codeRuleSchema.parse(JSON.parse(authored));
     native.CodeRuleDslRuntime.compile(JSON.stringify(policy), "json", capabilities);
-    return { check, policySha256, passed: true };
+    const authoredDigest = native.CodeRuleDslRuntime.compile(authored, "json", capabilities).digest();
+    return { check, policySha256, authoredDigest, passed: true };
   } catch (error) { return { check, policySha256, passed: false, error: String(error) }; }
 });
 const report = { format: "rerail.integrated-schema-compatibility/v1", through, checks: checks.length,

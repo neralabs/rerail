@@ -75,8 +75,8 @@ The earlier full-repository measurement remains historical; it was not rerun or 
 
 The unchanged upstream suite passes all 456 tests.
 The original recording contains 308 eligible observations: 195 positive and 113 clean.
-Supplemental probes add 185 observations: 125 positive and 60 clean.
-All 493 observations match both native execution APIs, with zero finding differences or engine failures.
+Supplemental probes add 214 observations: 134 positive and 80 clean.
+All 522 observations match both native execution APIs, with zero finding differences or engine failures.
 Every candidate has native positive and native clean coverage.
 
 Ten always-clean controls fail on recorded oracle positives.
@@ -89,4 +89,5 @@ The LA probes include original function-fact test sources evaluated through the 
 These observations do not count as mechanically translated pytest assertions.
 The prior 70-rule audit remains a separate receipt; its native observations were not relabeled as a fresh 80-rule run.
 The [batch-eight report](data-layer-batch-eight.md) records the integrated engine and CPython 3.13 runtime dependency.
-Repository acceptance is in progress; the pack remains inactive.
+The fresh cumulative 80-rule run matches all 25,262 findings over 9,021 files without engine failures.
+The pack remains inactive.
