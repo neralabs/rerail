@@ -5,15 +5,16 @@
 //   - Core: when core's version is released (its `v<version>` tag exists) and anything core ships has changed since
 //     that tag (coreChanges in core-paths.mjs), the next version (nextCoreVersion) in package.json and package-lock.json's
 //     root entries, the installer plugins' pins of it (PLUGIN_PINS), and the root CHANGELOG.md's section for it, dated
-//     today: the lead under the unreleased heading and the entries pending in .changelog/, whose files it deletes. A
-//     version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is left alone.
+//     today: the lead under the unreleased heading and the entries pending in .changelog/ by change type, whose files it
+//     deletes. A version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is
+//     left alone.
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags fetched.
 //
 //   node scripts/release/release-version.mjs <body.md>
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { changelogLead, changelogSection, PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
+import { changelogEntryTypeRefusal, changelogLead, changelogSection, PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { listPacks, readChangesets, ROOT } from "./packs.mjs";
 
@@ -57,13 +58,17 @@ function versionCore() {
   }
   const version = nextCoreVersion(current, readText("CHANGELOG.md"));
   // A version tag-core would refuse is left out, so the packs still release; the description says why.
-  coreRefusal = coreTagRefusal(version, tags);
+  const tagRefusal = coreTagRefusal(version, tags);
+  const pending = readChangelogEntries(ROOT);
+  // So is one with a pending entry that has no type, from a pull request that merged without one: its notes have no heading for it.
+  const untyped = pending.filter(({ path }) => changelogEntryTypeRefusal(path) !== null);
+  if (tagRefusal !== null) coreRefusal = `${tagRefusal}. Name a later version in \`CHANGELOG.md\`'s unreleased heading (\`## <version> (unreleased)\`) on \`main\``;
+  else if (untyped.length > 0) coreRefusal = `on \`main\`, ${untyped.map(({ path }) => `\`${path}\``).join(", ")} ${changelogEntryTypeRefusal(untyped[0].path)}`;
   if (coreRefusal !== null) {
     console.log(`::warning title=Core not released::${coreRefusal}`);
     return null;
   }
-  const pending = readChangelogEntries(ROOT);
-  const changelog = releaseChangelog(readText("CHANGELOG.md"), version, new Date().toISOString().slice(0, 10), pending.map(({ entry }) => entry));
+  const changelog = releaseChangelog(readText("CHANGELOG.md"), version, new Date().toISOString().slice(0, 10), pending);
   writeFileSync(join(ROOT, "package.json"), setPackageVersion(readText("package.json"), version));
   writeFileSync(join(ROOT, "package-lock.json"), `${JSON.stringify(setLockVersion(JSON.parse(readText("package-lock.json")), version), null, 2)}\n`);
   for (const path of PLUGIN_PINS) writeFileSync(join(ROOT, path), setPluginVersion(readText(path), version));
@@ -88,7 +93,7 @@ const rows = [
 ];
 const lines = [];
 if (coreRefusal !== null) {
-  lines.push("> [!WARNING]", `> Core is not released by this pull request: ${coreRefusal}. Name a later version in \`CHANGELOG.md\`'s unreleased heading (\`## <version> (unreleased)\`) on \`main\`.`, "");
+  lines.push("> [!WARNING]", `> Core is not released by this pull request: ${coreRefusal}.`, "");
 }
 if (rows.length === 0) {
   lines.push("Nothing to release.");
