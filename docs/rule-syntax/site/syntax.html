@@ -10,24 +10,82 @@
     </div>
   </div>
 
+  <section style="display:grid;gap:10px">
+    <h2>Datalog in one minute</h2>
+    <p style="max-width:75ch">Datalog is a query language over tables. The data is a set of <em>facts</em>, rows in named tables called relations. A <em>rule</em> defines a new relation from existing ones, and its rows can feed further rules. There are no loops or functions: you say which rows a relation has, and the engine works out all of them.</p>
+    <p style="max-width:75ch">In Rerail the facts describe the syntax tree of your code. A rule file defines relations over them, and the rows of the relation declared as a <code>.violation</code> are the findings. The four steps below build the rule shown in the next section, which reports calls to Python's <code>exec</code>.</p>
+  </section>
+
   <section class="sect">
     <div class="txt">
-      <h2>Datalog in one minute</h2>
-      <p>A rule <code>head :- body.</code> says: the head holds for every choice of values that makes every atom of the body hold. Commas mean <em>and</em>. Variables start with <code>$</code>; <code>_</code> is a variable nobody reads.</p>
-      <p>The parser supplies facts about the syntax tree: <code>kind</code>, <code>field</code>, <code>child</code>, <code>text</code>. Rules derive new relations from them, and other rules use those. Rows of a <code>.violation</code> relation are the findings.</p>
+      <h3>1. Facts</h3>
+      <p>The parser turns each file into facts. Every node of the tree gets an id, written here as <code>#1</code>, <code>#2</code>, …. <code>kind</code> gives a node's type, <code>field</code> links a node to a named child, and <code>text</code> gives a node's source text.</p>
+      <p>These are ordinary rows: <code>kind(#3, "call")</code> is one row of the <code>kind</code> table.</p>
     </div>
     <div class="code">
-<div class="cap">Python being checked</div><div data-src>
-total = price * qty          # an assignment node; its &quot;left&quot; field is the identifier `total`
+<div class="cap">Python</div><div data-src>
+from builtins import exec as run      # the import binds the name `run` to exec
+exec(src)                             # #3 a call; its function is #4, the name `exec`
+run(src)                              # #5 a call; its function is #6, the name `run`
 </div>
-<div class="cap">Rule</div><div data-rr>
-// assigns(a, x): assignment a stores into the variable named x.
-.decl assigns(a: node, x: sym)
-assigns($a, $x) :- kind($a, &quot;assignment&quot;),    // $a is any assignment node in the tree
-    field($a, &quot;left&quot;, $t),                    // $t is its left-hand side
-    kind($t, &quot;identifier&quot;),                   // ... and that side is a plain name, not `obj.attr` or `xs[0]`
-    text($t, $x).                             // $x is that name&#x27;s text: &quot;total&quot;
-// Result: one row, assigns(&lt;the assignment&gt;, &quot;total&quot;). Other rules can now ask for assigns(_, &quot;total&quot;).
+<div class="cap">Some of its facts</div><div data-rr>
+kind(#3, &quot;call&quot;).          field(#3, &quot;function&quot;, #4).
+kind(#4, &quot;identifier&quot;).    text(#4, &quot;exec&quot;).
+kind(#5, &quot;call&quot;).          field(#5, &quot;function&quot;, #6).
+kind(#6, &quot;identifier&quot;).    text(#6, &quot;run&quot;).
+// … and rows for the import, the arguments, and the module itself.
+</div>
+    </div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h3>2. A rule</h3>
+      <p><code>head :- body.</code> reads: the head holds wherever every atom of the body holds. Commas mean <em>and</em>. Words starting with <code>$</code> are variables; the engine tries every value that fits.</p>
+      <p>For <code>$c = #3</code>, all three atoms hold, so <code>B102(#3)</code> is derived. For <code>#5</code> the last atom fails: the name is <code>run</code>. This rule misses the alias.</p>
+    </div>
+    <div class="code">
+<div class="cap">Rule, first try</div><div data-rr>
+B102($c) :- kind($c, &quot;call&quot;),            // $c is a call node
+    field($c, &quot;function&quot;, $f),           // $f is the expression being called
+    text($f, &quot;exec&quot;).                    // and its source text is exactly &quot;exec&quot;
+// Rows derived: B102(#3).   Not derived: B102(#5), because text(#6, &quot;run&quot;).
+</div>
+    </div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h3>3. Use a library relation</h3>
+      <p><code>sym_of(n, q)</code> says expression <code>n</code> refers to qualified name <code>q</code>. It is not a parser fact: rules in the <code>python/names</code> and <code>python/imports</code> libraries derive it from the facts, following scopes, imports and re-exports. Rules use it like any other relation.</p>
+      <p>Swap <code>text</code> for <code>sym_of</code> and both calls are found. Click <code>sym_of</code> to see its definition.</p>
+    </div>
+    <div class="code">
+<div class="cap">Rule, second try</div><div data-rr>
+.use python/names                        // load the library that defines sym_of
+
+// Rows the library derives for the code above:
+//   sym_of(#4, &quot;builtins.exec&quot;)   `exec` is not bound in this file, so it is the builtin
+//   sym_of(#6, &quot;builtins.exec&quot;)   `run` is bound by the import to builtins.exec
+B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), sym_of($f, &quot;builtins.exec&quot;).
+// Rows derived: B102(#3), B102(#5).
+</div>
+    </div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h3>4. Or: several rules, one head</h3>
+      <p>There is no <em>or</em> inside a body. Write a second rule with the same head; the relation has the rows of both.</p>
+      <p>Here the second rule covers <code>(exec)(src)</code>, where the called expression is wrapped in parentheses. Negation (<code>!</code>), counting and sets are in "Bodies" below.</p>
+    </div>
+    <div class="code">
+<div class="cap">Rule, final</div><div data-rr>
+B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), sym_of($f, &quot;builtins.exec&quot;).
+B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f),
+    kind($f, &quot;parenthesized_expression&quot;),   // the call is (…)(src)
+    child($f, $g, 0),                       // $g is what the parentheses wrap
+    sym_of($g, &quot;builtins.exec&quot;).
 </div>
     </div>
   </section>
@@ -35,7 +93,7 @@ assigns($a, $x) :- kind($a, &quot;assignment&quot;),    // $a is any assignment 
   <section class="sect">
     <div class="txt">
       <h2>A rule file</h2>
-      <p>Directives first, then the program. This rule reports <code>exec</code> calls even when <code>exec</code> was imported under another name.</p>
+      <p>The rule from the steps above, as a complete file: directives first, then the program. <code>.violation</code> declares <code>B102</code> as the findings relation and gives its message.</p>
       <p>Relation names in a code view are links. Click one to see its definition. Blue names come from a Datalog library and orange names are native.</p>
     </div>
     <div class="code">
@@ -51,8 +109,8 @@ assigns($a, $x) :- kind($a, &quot;assignment&quot;),    // $a is any assignment 
 // The finding: a relation with one column, the node to report. The string is the message.
 .violation B102(at: node) &quot;Replace this exec call with code that performs the operation directly.&quot;
     suppress nosec &quot;B102&quot;                       // `# nosec B102` on the line silences it, as Bandit does
-// A call whose function expression refers to builtins.exec. sym_of follows imports and aliases, so
-// `run = exec` or `from builtins import exec as run` still resolve to &quot;builtins.exec&quot;.
+// A call whose function expression refers to builtins.exec. sym_of follows imports, so
+// `from builtins import exec as run` still resolves `run` to &quot;builtins.exec&quot;.
 B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), sym_of($f, &quot;builtins.exec&quot;).
 // The same through parentheses: `(exec)(code)`. Child 0 of the parenthesized expression is what it wraps.
 B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), kind($f, &quot;parenthesized_expression&quot;),
