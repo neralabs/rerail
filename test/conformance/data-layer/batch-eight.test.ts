@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import { replay } from "../../../conformance/data-layer/replay.js";
 import { fixturesPath } from "../../support/oracles.js";
 
-it.each(["readthrough_authority_architecture", "authentication_plan_purity", "legacy_callback_quarantine", "lazy_adapter_ownership", "plan_helpers_allowlist", "lazy_sql_surface"])("ports original %s positives and clean cases", async check => {
+it.each(["readthrough_authority_architecture", "authentication_plan_purity", "legacy_callback_quarantine", "lazy_adapter_ownership", "plan_helpers_allowlist", "lazy_sql_surface", "pure_lazy_runtime_purity"])("ports original %s positives and clean cases", async check => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-batch-eight-"));
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   try {

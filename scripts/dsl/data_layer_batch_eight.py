@@ -59,6 +59,18 @@ def install(recorder):
             if active_sources:active_sources[-1].append((path,text))
         return original_init(self,path,tree,*args,**kwargs)
     recorder.originals.append((cls,'__init__',original_init));cls.__init__=observed_init
+    discovered_sources={}
+    for function_name in ('scan_cached_pure_lazy_source',):
+        cached_module=modules['cached_pure_lazy_allowlist']
+        original=getattr(cached_module,function_name)
+        def source_observer(original):
+            @wraps(original)
+            def record_source(path,source,*args,**kwargs):
+                result=original(path,source,*args,**kwargs)
+                for function in result:discovered_sources[id(function)]=(function,path,source)
+                return result
+            return record_source
+        recorder.originals.append((cached_module,function_name,original));setattr(cached_module,function_name,source_observer(original))
     entries={
         'eager_resolve':['_scan_source','_scan_file','_scan_preprocess_ast','_scan_lower_compile_ast','_scan_transitive_eager_ast','_scan_legacy_boundary_definition_ast','_scan_external_io_boundary_definition_ast'],
         'lazy_architecture':['scan_files','_scan_analyzed_files'],
@@ -100,6 +112,10 @@ def install(recorder):
                     if check=='cached_pure_lazy_allowlist':
                         functions=arguments.get('functions',arguments.get('discovered',()))
                         paths=sorted({function.path for function in functions})
+                        virtual={logical(path):text for function in functions if id(function) in discovered_sources for _,path,text in [discovered_sources[id(function)]]}
+                        files=[{'path':path,'source':text} for path,text in virtual.items()]
+                        if any(not function.path.is_file() and id(function) not in discovered_sources for function in functions):raise ValueError('Discovered policy facts have no source input')
+                        paths=[path for path in paths if logical(path) not in virtual]
                         options=event['oracle_config']['options']
                         options['policyEntries']=json.dumps([asdict(e) for e in arguments.get('entries',arguments.get('policy_entries',()))],sort_keys=True,default=str)
                     if paths is None:
@@ -108,6 +124,12 @@ def install(recorder):
                         elif 'root' in arguments:paths=sorted(Path(arguments['root']).rglob('*.py'))
                         else:raise ValueError('No source-bearing analyzer domain')
                     if not isinstance(paths,(list,tuple,set,frozenset)):raise ValueError('One-shot source iterator cannot be consumed by observation')
+                    if check=='pure_lazy_runtime_purity' and entry in {'scan_paths','scan_paths_cached'}:
+                        event['oracle_config']['options']['primaryPaths']=[logical(p) for p in paths]
+                        directories=arguments.get('directories')
+                        if directories is not None:
+                            root=Path(arguments.get('root',module.ROOT))
+                            paths=sorted(set(paths)|{p for directory in directories for p in (root/directory).rglob('*.py') if 'tests' not in p.parts})
                     for p in paths:
                         p=Path(p)
                         if p.is_file():files.append({'path':logical(p),'source':p.read_text()})
