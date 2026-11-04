@@ -139,6 +139,12 @@ pre.code .l.flash { background: var(--flash); transition: background 1.2s; }
 .wrap pre.code .l { white-space: pre-wrap; word-break: break-word; }
 .show-all { margin: 8px 16px 16px 56px; font: 500 13px var(--font-body); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
 .c-com { color: var(--muted); font-style: italic; }
+.d-add { background: color-mix(in srgb, var(--t-str) 14%, transparent); display: block; }
+.d-del { background: color-mix(in srgb, var(--accent, #8c2a3c) 12%, transparent); display: block; }
+.c-mark { color: var(--accent, #8c2a3c); font-weight: 600; font-style: normal; }
+.sect > .code > * + * { margin-top: 12px; }
+.cap { font: 600 11px/1.2 var(--font-body); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .c-str { color: var(--t-str); }
 .c-var { color: var(--t-var); }
 .c-bi { color: var(--t-builtin); }
@@ -366,10 +372,26 @@ function hlYAML(line) {
   }
   return out + esc(line.slice(last));
 }
+// Source shown beside a rule: comments muted, "← …" marks what the rule reports. Diffs: "+ " and "- " lines.
+function hlSrc(line) {
+  const m = line.match(/^(.*?)((?:#|\/\/) .*)?$/);
+  let body = esc(m[1]), com = m[2] || "";
+  if (com) {
+    const k = com.indexOf("←");
+    com = k < 0 ? `<span class="c-com">${esc(com)}</span>`
+      : `<span class="c-com">${esc(com.slice(0, k))}</span><span class="c-mark">${esc(com.slice(k))}</span>`;
+  }
+  return body + com;
+}
+function hlDiff(line) {
+  if (line.startsWith("+ ")) return `<span class="d-add">${hlSrc(line)}</span>`;
+  if (line.startsWith("- ")) return `<span class="d-del">${hlSrc(line)}</span>`;
+  return hlSrc(line);
+}
 function renderCode(el, text, lang, opts = {}) {
   const lines = text.replace(/\n$/, "").split("\n");
   const ctx = lang === "rr" ? { local: defsOf(text), uses: usesOf(text), lang: opts.lang || (text.match(/^\.language\s+(\w+)/m) || [])[1] } : null;
-  const hl = lang === "rr" ? l => hlRR(l, ctx) : lang === "json" ? hlJSON : lang === "yaml" ? hlYAML : esc;
+  const hl = lang === "rr" ? l => hlRR(l, ctx) : lang === "json" ? hlJSON : lang === "yaml" ? hlYAML : lang === "src" ? hlSrc : lang === "diff" ? hlDiff : esc;
   const draw = limit => {
     const n = Math.min(lines.length, limit);
     const start = opts.start || 0;
@@ -572,6 +594,8 @@ function buildSyntax() {
   root.innerHTML = document.getElementById("data-syntax").textContent.replace(/\{\{(\w+)\}\}/g, (_, k) => STATS[k] ?? "");
   root.querySelectorAll("[data-rr]").forEach(el => renderCode(el, el.textContent.replace(/^\n/, ""), "rr", { all: true }));
   root.querySelectorAll("[data-json]").forEach(el => renderCode(el, el.textContent.replace(/^\n/, ""), "json", { all: true }));
+  root.querySelectorAll("[data-src]").forEach(el => renderCode(el, el.textContent.replace(/^\n/, ""), "src", { all: true }));
+  root.querySelectorAll("[data-diff]").forEach(el => renderCode(el, el.textContent.replace(/^\n/, ""), "diff", { all: true }));
 }
 
 // ---------- routing ----------

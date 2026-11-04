@@ -12,25 +12,62 @@
 
   <section class="sect">
     <div class="txt">
+      <h2>Datalog in one minute</h2>
+      <p>A rule <code>head :- body.</code> says: the head holds for every choice of values that makes every atom of the body hold. Commas mean <em>and</em>. Variables start with <code>$</code>; <code>_</code> is a variable nobody reads.</p>
+      <p>The parser supplies facts about the syntax tree: <code>kind</code>, <code>field</code>, <code>child</code>, <code>text</code>. Rules derive new relations from them, and other rules use those. Rows of a <code>.violation</code> relation are the findings.</p>
+    </div>
+    <div class="code">
+<div class="cap">Python being checked</div><div data-src>
+total = price * qty          # an assignment node; its &quot;left&quot; field is the identifier `total`
+</div>
+<div class="cap">Rule</div><div data-rr>
+// assigns(a, x): assignment a stores into the variable named x.
+.decl assigns(a: node, x: sym)
+assigns($a, $x) :- kind($a, &quot;assignment&quot;),    // $a is any assignment node in the tree
+    field($a, &quot;left&quot;, $t),                    // $t is its left-hand side
+    kind($t, &quot;identifier&quot;),                   // ... and that side is a plain name, not `obj.attr` or `xs[0]`
+    text($t, $x).                             // $x is that name&#x27;s text: &quot;total&quot;
+// Result: one row, assigns(&lt;the assignment&gt;, &quot;total&quot;). Other rules can now ask for assigns(_, &quot;total&quot;).
+</div>
+    </div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
       <h2>A rule file</h2>
-      <p>Directives first, then the program. A rule defines relations with <code>:-</code> and declares the findings it reports with <code>.violation</code>.</p>
+      <p>Directives first, then the program. This rule reports <code>exec</code> calls even when <code>exec</code> was imported under another name.</p>
       <p>Relation names in a code view are links. Click one to see its definition. Blue names come from a Datalog library and orange names are native.</p>
     </div>
-    <div class="code"><div data-rr>
-.policy "bandit-b102-exec-used" revision 3
-.description "Avoid exec() calls, including through import aliases."
-.language python
-.mode steer
-.scope include "**/*.py"
+    <div class="code">
+<div class="cap">Rule</div><div data-rr>
+.policy &quot;bandit-b102-exec-used&quot; revision 3       // identity: id and revision
+.description &quot;Avoid exec() calls, including through import aliases.&quot;
+.language python                                // grammar of the files and patterns
+.mode steer                                     // a finding steers the agent; `block` would stop the edit
+.scope include &quot;**/*.py&quot;                        // which files the rule reads
 
-.use python/names
+.use python/names                               // brings in sym_of: what a name refers to
 
-.violation B102(at: node) "Replace this exec call with code that performs the operation directly."
-    suppress nosec "B102"
-B102($c) :- kind($c, "call"), field($c, "function", $f), sym_of($f, "builtins.exec").
-B102($c) :- kind($c, "call"), field($c, "function", $f), kind($f, "parenthesized_expression"),
-    child($f, $g, 0), sym_of($g, "builtins.exec").
-</div></div>
+// The finding: a relation with one column, the node to report. The string is the message.
+.violation B102(at: node) &quot;Replace this exec call with code that performs the operation directly.&quot;
+    suppress nosec &quot;B102&quot;                       // `# nosec B102` on the line silences it, as Bandit does
+// A call whose function expression refers to builtins.exec. sym_of follows imports and aliases, so
+// `run = exec` or `from builtins import exec as run` still resolve to &quot;builtins.exec&quot;.
+B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), sym_of($f, &quot;builtins.exec&quot;).
+// The same through parentheses: `(exec)(code)`. Child 0 of the parenthesized expression is what it wraps.
+B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), kind($f, &quot;parenthesized_expression&quot;),
+    child($f, $g, 0), sym_of($g, &quot;builtins.exec&quot;).
+</div>
+<div class="cap">What it reports</div><div data-src>
+exec(code)                          # ← B102 (first rule)
+from builtins import exec as run
+run(code)                           # ← B102: run refers to builtins.exec
+(exec)(code)                        # ← B102 (second rule)
+
+def exec(s): ...
+exec(code)                          # not reported: this exec is the local function
+</div>
+    </div>
   </section>
 
   <section class="sect">
@@ -44,7 +81,7 @@ B102($c) :- kind($c, "call"), field($c, "function", $f), kind($f, "parenthesized
       <tr><td><code>.description "…"</code></td><td>One line, shown to people.</td></tr>
       <tr><td><code>.language python</code></td><td>Grammar of the matcher atoms and the default libraries.</td></tr>
       <tr><td><code>.mode log | steer | block</code></td><td>What Rerail does with a finding.</td></tr>
-      <tr><td><code>.possible log</code></td><td>Mode for findings that rest on unknown facts.</td></tr>
+      <tr><td><code>.possible log</code></td><td>Mode for findings that rest on unknown facts (see "Unknown is not false").</td></tr>
       <tr><td><code>.scope include "glob", …</code><br><code>.scope exclude …</code></td><td>Files the rule reads.</td></tr>
       <tr><td><code>.budget REL by code { "a": 12, "total": 40 }</code></td><td>Ratchet: block only past these counts.</td></tr>
       <tr><td><code>.budget * { "total": N }</code></td><td>One budget across every violation the policy declares.</td></tr>
@@ -55,25 +92,49 @@ B102($c) :- kind($c, "call"), field($c, "function", $f), kind($f, "parenthesized
       <tr><td><code>.set name = "a" | "b"</code><br><code>.kindset name = …</code></td><td>Named constant sets, for <code>$x in name</code> and tree builtins.</td></tr>
       <tr><td><code>.violation CODE(at: node, …) "message {col}"</code></td><td>A finding relation. Continuation lines: <code>suppress</code>, <code>fix</code>, <code>anchor</code>.</td></tr>
       <tr><td><code>.input r(…)</code></td><td>Facts from a policy file: allowlists, baselines, registries.</td></tr>
+      <tr><td><code>.edit e(…)</code></td><td>An edit defined in Datalog, for fixes (see "Fixes").</td></tr>
     </table></div>
   </section>
 
   <section class="sect">
     <div class="txt">
       <h2>Bodies</h2>
-      <p>A body is a comma-separated conjunction. Each alternative is its own rule. Negation is stratified. Values come from <code>@</code> builtins and are never used as body atoms.</p>
+      <p>Each line below is one construct, with what it matches. An <em>or</em> is written as several rules with the same head. Negation is stratified: a relation is complete before anything negates it. Values computed by <code>@</code> builtins appear only on the right of <code>=</code>.</p>
     </div>
-    <div class="code"><div data-rr>
-host_tag($t)    :- kind($t, "identifier"), $t =~ "^[a-z]".             // regex on a node's text
-stop($n)        :- kind($n, $k), $k in barrier.                         // set membership
-stop($e)        :- kind($e, "jsx_element"), !router_el($e).             // negation
-stop($e)        :- kind($e, "jsx_element"), !(field($e, "open_tag", $o), host($o)).   // negated conjunction
+    <div class="code">
+<div class="cap">Rules</div><div data-rr>
+// Regex on a node&#x27;s text. Matches &lt;div&gt;&#x27;s tag `div`, not &lt;Card&gt;&#x27;s `Card`.
+host_tag($t)    :- kind($t, &quot;identifier&quot;), $t =~ &quot;^[a-z]&quot;.
+
+// Set membership. `barrier` is a .kindset declared elsewhere, e.g. &quot;function_declaration&quot; | &quot;class_declaration&quot;.
+stop($n)        :- kind($n, $k), $k in barrier.
+
+// Negation of a relation: a JSX element that is not a router element.
+stop($e)        :- kind($e, &quot;jsx_element&quot;), !router_el($e).
+
+// Negation of a conjunction: no open tag of e is a host tag. Reads &quot;there is no $o with both&quot;.
+stop($e)        :- kind($e, &quot;jsx_element&quot;), !(field($e, &quot;open_tag&quot;, $o), host($o)).
+
+// some { }: an inner query whose variables stay inside. &quot;Import i is not under any TYPE_CHECKING block.&quot;
 narrow($i)      :- import_stmt($i), !some { within($i, $b), type_checking_block($b) }.
-single($b)      :- kind($b, "block"), $k = count { child($b, _, _) }, $k = 1.
+
+// count { }: how many rows the inner query has. A block with exactly one statement.
+single($b)      :- kind($b, &quot;block&quot;), $k = count { child($b, _, _) }, $k = 1.
+
+// A value builtin in the head: @cat(&quot;pkg.mod&quot;, &quot;f&quot;) is &quot;pkg.mod.f&quot;. def f inside module pkg.mod gets that qualname.
 qualname($f, @cat($m, $x)) :- def_name($f, $x), nearest($f, $s, scope), modname($s, $m).
+
+// first { }: the first line whose condition holds gives the value; the last line is the default.
 FUNCTION_IMPORT($i, $c) :- local_import($i),
-    $c = first { "typing-only" if !value_read($i); "test-helper" if test_fn($i); "other" }.
-</div></div>
+    $c = first { &quot;typing-only&quot; if !value_read($i); &quot;test-helper&quot; if test_fn($i); &quot;other&quot; }.
+</div>
+<div class="cap">Python, for the last rule</div><div data-src>
+import typing
+def handler():
+    from app import models      # local_import. Its code:
+    x: models.User = load()     #   models is read only in an annotation → &quot;typing-only&quot;
+</div>
+    </div>
   </section>
 
   <section class="sect">
@@ -109,74 +170,149 @@ FUNCTION_IMPORT($i, $c) :- local_import($i),
     </table></div>
   </section>
 
-
   <section class="sect">
     <div class="txt">
       <h2>Fixes</h2>
-      <p>A fix is a set of edits, and rules derive edits like any other rows: a rule that ends in <code>=&gt; e1, e2</code> adds those edits to the fix in its head. A fix relation has its violation's columns, bound by the finding, so its rules run once per finding.</p>
-      <p>The binary applies four edits: <code>replace</code>, <code>delete</code>, <code>insert_before</code>, <code>insert_after</code>. Edits declared with <code>.edit</code>, such as <code>hoist</code>, <code>ensure_import</code> and <code>unwrap</code>, are Datalog in the libraries and expand to those four.</p>
+      <p>A fix is a set of edits, and rules derive edits like any other rows. A rule that ends in <code>=&gt; e1, e2</code> adds those edits to the fix named in its head. A fix relation has its violation's columns; Rerail fills them from each finding, so a fix's rules run once per finding.</p>
+      <p>The binary applies four edits: <code>replace</code>, <code>delete</code>, <code>insert_before</code>, <code>insert_after</code>. Edits declared with <code>.edit</code>, such as <code>hoist</code> and <code>remove_stmt</code>, are Datalog in the libraries and expand to those four, so they change without a new binary.</p>
+      <p>The example is from function-level-imports. One file has two imports inside functions:</p>
+      <ol class="steps">
+        <li><code>FUNCTION_IMPORT</code> finds both and gives each a code: <code>"deferred-no-cycle"</code> and <code>"unread"</code>.</li>
+        <li>For the first, Rerail asks <code>hoist_import(&lt;import&gt;, "deferred-no-cycle")</code>. Its body checks that the move is harmless and derives the edit <code>hoist(&lt;import&gt;)</code>.</li>
+        <li><code>hoist</code> expands: <code>remove_stmt</code> becomes <code>delete</code> (the function has another statement), and <code>add_top</code> becomes <code>insert_after(import os, …)</code>.</li>
+        <li>The native applier turns those into byte edits, reindents the moved line, applies both and reparses. The fix is <code>safe</code>, so Rerail may apply it on its own.</li>
+        <li>The second finding gets <code>remove_import</code>. It is a suggestion: the module may be imported for a side effect, so the agent or a person decides.</li>
+      </ol>
     </div>
-    <div class="code"><div data-rr>
-.use python/imports     // hoist, remove_stmt, ensure_import, remove_alias
+    <div class="code">
+<div class="cap">Python before</div><div data-src>
+import os
 
-.violation FUNCTION_IMPORT(at: node, code: sym) "{at.text}"
-    fix safe hoist_import "Move `{at.text}` to the top of the module"
-    fix remove_import "Delete `{at.text}`: nothing reads what it binds"
-FUNCTION_IMPORT($i, $c) :- local_import($i), $c = first { … }.
+def load(path):
+    from app.storage import read_blob     # ← FUNCTION_IMPORT, code &quot;deferred-no-cycle&quot;
+    return read_blob(path)                #   app.storage does not import this module, so no cycle
 
-hoist_import($i, "deferred-no-cycle") :- plain_stmt($i), !clash($i) => hoist($i).
-remove_import($i, "unread") => remove_stmt($i).
-
-// An edit in a library: Datalog that expands to the native edits.
-.edit remove_alias(a: node)
-remove_alias($a) :- import_alias($i, $a, _, _, _), some { import_alias($i, $b, _, _, _), $b != $a } => delete($a).
-remove_alias($a) :- import_alias($i, $a, _, _, _), !some { import_alias($i, $b, _, _, _), $b != $a } => remove_stmt($i).
-
-// Inline: the fix of one derivation, using its variables. Today's JSON fix templates translate to this.
-NO_DOUBLE_BANG($n) :- $n ~ `$E!!` => replace($n, `$E!`).
+def debug():
+    import app.plugins.audit              # ← FUNCTION_IMPORT, code &quot;unread&quot;: nothing reads `app`
 </div>
-    <div class="tablewrap" style="margin-top:14px"><table class="map">
+<div class="cap">Rule</div><div data-rr>
+.violation FUNCTION_IMPORT(at: node, code: sym) &quot;{at.text}&quot;
+    fix safe hoist_import &quot;Move `{at.text}` to the top of the module&quot;   // safe: may apply unreviewed
+    fix remove_import &quot;Delete `{at.text}`: nothing reads what it binds&quot; // a suggestion (the default)
+
+// Fix 1. The head&#x27;s columns are the finding&#x27;s: $i is the import, &quot;deferred-no-cycle&quot; its code, so
+// this rule applies only to findings with that code. The body is the safety argument:
+//   plain_stmt($i)  the import is a direct statement of the function body, not inside if/try/with,
+//                   so moving it cannot skip an exception handler or a condition;
+//   !clash($i)      no module-level name is already bound to something else under the same name.
+// `=&gt; hoist($i)` is the edit: move this statement to the top of the module.
+hoist_import($i, &quot;deferred-no-cycle&quot;) :- plain_stmt($i), !clash($i) =&gt; hoist($i).
+
+// Fix 2. No body: every &quot;unread&quot; finding gets it. remove_stmt deletes the statement, or writes
+// `pass` when it was the only statement, so the function stays valid Python.
+remove_import($i, &quot;unread&quot;) =&gt; remove_stmt($i).
+</div>
+<div class="cap">Library edit, one level down</div><div data-rr>
+// hoist (python/imports). `$i` in the template is the statement&#x27;s own text.
+.edit hoist(i: node)
+hoist($i) :- docof($i, $d), some { import_alias($i, _, $m, $x, $l), !top_has($d, $m, $x, $l) }
+    =&gt; remove_stmt($i), add_top($d, `$i`).       // not imported at the top yet: move it
+hoist($i) :- docof($i, $d), !some { import_alias($i, _, $m, $x, $l), !top_has($d, $m, $x, $l) }
+    =&gt; remove_stmt($i).                          // already imported at the top: just delete the copy
+</div>
+<div class="cap">After hoist_import (safe)</div><div data-diff>
+  import os
++ from app.storage import read_blob       # add_top: after the last top-level import
+
+  def load(path):
+-     from app.storage import read_blob   # remove_stmt → delete: the body keeps `return …`
+      return read_blob(path)
+</div>
+<div class="cap">After remove_import (suggestion, if accepted)</div><div data-diff>
+  def debug():
+-     import app.plugins.audit
++     pass                                # remove_stmt → replace: the body would be empty
+</div>
+<div class="cap">Inline fix</div><div data-rr>
+// Inline form: the fix of this one match, using its variables. Today&#x27;s JSON fix templates become this.
+// The pattern binds $E to the expression before the doubled `!`; the edit replaces the whole match.
+NO_DOUBLE_BANG($n) :- $n ~ `$E!!` =&gt; replace($n, `$E!`).
+</div>
+<div class="cap">TypeScript, before and after</div><div data-diff>
+- const name = user!!.name;
++ const name = user!.name;                // $E is `user`; `$E!` is written in place of `user!!`
+</div>
+<div class="tablewrap"><table class="map">
       <tr><th>Form</th><th>Meaning</th></tr>
       <tr><td><code>fix NAME "title"</code></td><td>A suggestion, shown with the finding. The agent or a person applies it.</td></tr>
       <tr><td><code>fix safe NAME "title"</code></td><td>Rerail may apply it without review. Never offered for a <code>possible</code> finding.</td></tr>
       <tr><td>Several <code>fix</code> lines</td><td>Alternatives; the reader picks one.</td></tr>
       <tr><td>Several rules for one fix</td><td>Their edits combine into one fix.</td></tr>
-      <tr><td><code>V(…) :- body =&gt; edits.</code></td><td>An unnamed suggestion for this derivation.</td></tr>
-      <tr><td><code>`…`</code> in an edit</td><td>Template in the rule's language: <code>$X</code> is a node's source or a value, <code>$$$X</code> a list a pattern bound, regex named groups are sub-spans. Reindented where it lands. Fence with more backticks to contain one.</td></tr>
+      <tr><td><code>V(…) :- body =&gt; edits.</code></td><td>An unnamed suggestion for this match, using its variables.</td></tr>
+      <tr><td><code>`…`</code> in an edit</td><td>A template in the rule's language. <code>$X</code> is a node's source text or a value; <code>$$$X</code> is a list a pattern bound. Reindented where it lands. Fence with more backticks to contain one.</td></tr>
       <tr><td>Applying</td><td>All edits of a fix, across files, or none. Dropped if two edits overlap or the result does not parse. Rule tests check that the finding is gone afterwards.</td></tr>
-    </table></div></div>
+    </table></div>
+    </div>
   </section>
 
   <section class="sect">
     <div class="txt">
       <h2>Native or Datalog</h2>
-      <p>The binary provides the parse tape, tree arithmetic, value builtins and file readers. Name resolution, imports, call targets, JSX structure and typing are Datalog libraries over those. A library update ships without a new binary.</p>
+      <p>The binary provides the parse tape, tree arithmetic, value builtins, file readers and the edit applier. Name resolution, imports, call targets, JSX structure, typing and most edits are Datalog libraries over those. A library update ships without a new binary.</p>
       <ul class="tight">
-        <li><code>core</code>: native. Tape relations, <code>within</code>, <code>nearest</code>, config readers.</li>
+        <li><code>core</code>: native. Tape relations, <code>within</code>, <code>nearest</code>, config readers, the four edits.</li>
         <li><code>python/names</code>, <code>python/imports</code>, <code>python/calls</code>: lifted from Typing-support's <code>calls.rdl</code>.</li>
         <li><code>tsx/names</code>, <code>tsx/jsx</code>: drafted for this page.</li>
       </ul>
     </div>
-    <div class="code"><div data-rr>
+    <div class="code">
+<div class="cap">What a Python rule can use</div><div data-rr>
 .use python/names       // scope_node, binding, ref_site, sym_of, annotation, catches, …
-.use python/imports     // import_alias, loads, runs, reaches, exports, public_name, …
+.use python/imports     // import_alias, loads, runs, reaches, exports, hoist, ensure_import, …
 .use python/calls       // call_target, call_open, reach, call_arg, awaited, …
 
-// core (native): kind, field, child, text, value, within, nearest, line, doc, file, tsconfig_path, …
-</div></div>
+// core (native): kind, field, child, text, value, within, nearest, line, doc, file, tsconfig_path,
+//                replace, delete, insert_before, insert_after
+</div>
+    </div>
   </section>
 
   <section class="sect">
     <div class="txt">
       <h2>Unknown is not false</h2>
-      <p>A relation declared <code>must, may</code> has two sides. In a definite derivation, a negation reads the <code>may</code> side, so a definite finding never rests on an unknown. Findings reached only through <code>may</code> keep their code, carry a <code>possible</code> tag, and use <code>.possible</code>'s mode.</p>
+      <p>Some facts cannot be known. Below, <code>Shell</code> comes from a package Rerail has no source for, so whether it renders its children is unknown. A two-valued rule must pick: treat unknown as false and miss real bugs, or as true and report things that may be fine.</p>
+      <p>A relation declared <code>must, may</code> is computed twice. <code>must</code> holds what is proven; <code>may</code> holds what is proven or unknown. A rule prefixed <code>must</code> or <code>may</code> adds rows to that side only. A rule with no prefix adds to both.</p>
+      <p>Negation swaps sides. <code>must stuck($e) :- …, !passes($e)</code> reads the may side: the element is surely stuck only if it surely does not pass. So a definite finding never rests on an unknown.</p>
+      <p>A finding that holds only on the may side keeps its code, is tagged <code>possible</code>, and uses the <code>.possible</code> mode, here <code>log</code> instead of <code>block</code>.</p>
     </div>
-    <div class="code"><div data-rr>
+    <div class="code">
+<div class="cap">TSX being checked</div><div data-src>
+import { BrowserRouter } from &quot;react-router-dom&quot;;
+import { Card } from &quot;./Card&quot;;            // workspace code: Card returns &lt;div&gt;{children}&lt;/div&gt;
+import { Shell } from &quot;@acme/ui&quot;;         // a package with no source: what Shell renders is unknown
+
+&lt;BrowserRouter&gt;
+  &lt;Card&gt;&lt;BrowserRouter/&gt;&lt;/Card&gt;           // ← definite: Card puts its children inside this router
+  &lt;Shell&gt;&lt;BrowserRouter/&gt;&lt;/Shell&gt;         // ← possible: only if Shell renders its children
+&lt;/BrowserRouter&gt;
+</div>
+<div class="cap">Rule (from nested-routers B2)</div><div data-rr>
+// passes(e): whatever e is given as children ends up rendered inside it, so the outer router&#x27;s
+// context reaches them. The nested-router rule climbs from an inner router through passing elements.
 .decl passes(e: node)  must, may
+
+// &lt;div&gt;, &lt;main&gt;: host elements always render their children. Proven, so on the must side.
 must passes($e) :- tag($e, $t), host_tag($t).
+// &lt;Card&gt;: a workspace component whose source has {children} in what it returns. Also proven.
 must passes($e) :- tag($e, $t), sym_of($t, $q), component($q, $f), children_slot($f, _).
-may  passes($e) :- tag($e, $t), sym_of($t, $q), !component($q, _).   // a package with no summary
-</div></div>
+// &lt;Shell&gt;: no source (no component row), so it might pass children. Only the may side gets this row.
+may  passes($e) :- tag($e, $t), sym_of($t, $q), !component($q, _).
+
+// For the code above:
+//   &lt;Card&gt;   must passes, may passes   → the inner router in Card is reported with .mode
+//   &lt;Shell&gt;  may passes only           → the inner router in Shell is reported as possible, .possible mode
+</div>
+    </div>
   </section>
 
   <section class="sect">
