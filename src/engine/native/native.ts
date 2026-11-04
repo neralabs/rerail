@@ -241,6 +241,8 @@ export function encodeCodeRuleWorkspaceRequest(request: {
 export type NativeCodeRuleDslWorkspaceConstructor = new () => NativeCodeRuleDslWorkspace;
 
 export interface NativeCodeRuleDslRuntimeConstructor {
+  /** Canonical CPython facts for a whole document demand batch; source is never executed. */
+  pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
 }
 

@@ -40,6 +40,7 @@ pub(super) fn demand(
     work: Arc<AtomicUsize>,
 ) -> Result<super::producer::Demand> {
     let request = super::Reachability {
+        ordered_first: None,
         roots: spec.roots.clone(),
         edges: String::new(),
         batch_size: 256,

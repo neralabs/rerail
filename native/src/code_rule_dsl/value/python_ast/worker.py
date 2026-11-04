@@ -44,8 +44,18 @@ for document in request["documents"]:
     source = document["source"]
     def text_only(item):
         return item['fields']==['column'] or item['kind'] in {'identifier','dotted_name','relative_import'} and item['fields']==['identifier']
-    tree = None if all(text_only(item) for item in document['requests']) else ast.parse(source)
-    parses += tree is not None
+    tree = None
+    syntax_error = None
+    if not all(text_only(item) for item in document['requests']):
+        parses += 1
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as error:
+            if not all(item['kind'] == 'module' and item['fields'] == ['syntax_error']
+                       for item in document['requests']):
+                raise
+            syntax_error = {name: getattr(error, name) for name in (
+                'msg', 'lineno', 'offset', 'text', 'end_lineno', 'end_offset')}
     source_bytes=source.encode("utf-8")
     offsets = [0, *(match.end() for match in re.finditer(rb"\r\n?|\n",source_bytes))]
     by_span = {}
@@ -90,7 +100,9 @@ for document in request["documents"]:
                 raise ValueError(f"No CPython AST node for {kind} at {item['start']}..{item['end']}")
         row = {}
         for field in item["fields"]:
-            if field == "dump_sha256":
+            if field == "syntax_error" and kind == "module":
+                value = json.dumps(syntax_error, ensure_ascii=True, separators=(',', ':'))
+            elif field == "dump_sha256":
                 value = hashlib.sha256(ast.dump(node, include_attributes=False).encode("utf-8")).hexdigest()
             elif field == "literal_json":
                 value = json.dumps(ast.literal_eval(node), sort_keys=True, separators=(",", ":"))

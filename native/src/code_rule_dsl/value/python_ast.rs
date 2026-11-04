@@ -9,20 +9,22 @@ use std::{
 
 #[derive(Debug, Clone)]
 pub(crate) struct Error(pub String);
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Request {
     pub start: usize,
     pub end: usize,
     pub kind: String,
     pub fields: Vec<String>,
 }
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Document {
     pub source: String,
     pub requests: Vec<Request>,
 }
 pub(crate) type Row = BTreeMap<String, String>;
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Response {
     version: [u8; 2],

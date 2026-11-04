@@ -27,6 +27,7 @@ mod insert;
 pub(in crate::code_rule_dsl) mod producer;
 pub(in crate::code_rule_dsl) mod python_ast;
 mod reachability;
+mod ordered_first;
 pub(in crate::code_rule_dsl) mod schema;
 mod source;
 pub(in crate::code_rule_dsl) mod syntax;
