@@ -6,10 +6,12 @@
   "description": "Candidate port of nera-data-layer lazy_adapter_ownership at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
-      "impl/**/*.py",
       "data_layer/**/*.py",
-      "_internal/**/*.py",
-      "l*/**/*.py"
+      "impl/common/**/*.py",
+      "l9750_graphql/**/*.py",
+      "l9900_auto_api/**/*.py",
+      "l3200_metadata/**/*.py",
+      "l2000_connection/**/*.py"
     ],
     "exclude": [
       "**/tests/**",

@@ -5881,3 +5881,32 @@ The initial native diagnostic overlaps focused tests and includes an external sa
 Node phase CPU excludes CPython child processes; the driver now states this explicitly.
 An external process-family CPU receipt is required for measurements of the new producer.
 Repository parity and activation remain separate gates.
+
+### Batch eight: repository gate rejects the focused checkpoint
+
+The first 9,021-file native run fails repository acceptance.
+It reports 600 findings against 269 expected findings, with 566 extra findings and 235 missing findings.
+There are 46 execution failures. These failures invalidate the focused checkpoint as repository acceptance evidence.
+The initial evidence receipt remains a focused-test receipt; its repository status stays open.
+
+The run uses 341.377 seconds cold wall time and 336.105 seconds parent-process cold CPU.
+The external receipt reports 343.11 seconds wall, 338.07 seconds total CPU and 2.975 GB maximum RSS.
+Compilation takes 84.6 milliseconds wall time.
+The run overlaps verification and external sampling, so these numbers are diagnostic and establish no performance improvement.
+
+Adapter ownership contributes 506 extra findings, all outside the original plugin's six production roots.
+The candidate now uses those exact roots. Explicit-file tests retain their original scope override.
+Eager source regressions expose generator arguments mistaken for direct calls and missing facade/server-ref output exemptions.
+Seven complete source files from this failed run are now supplemental oracle regressions.
+They are clean in the original analyzer; the native run must also complete without findings or failures.
+
+Repeated declaration-range scans are replaced with indexed parent-chain links.
+Eager body selection starts from calls and ownership, then joins the owning function.
+Lambda and class regions are prepared once for both body consumers.
+These changes keep SQL batching and preserve the original visitor boundaries.
+
+The repository paths also treat `maxSourceBytes` as an aggregate limit, although the model defines it per file.
+A reduced public-API test uses three individually admitted files whose total exceeds the cap.
+This test must pass snapshot and workspace execution without raising any configured limit.
+Canonical byte columns replace cache-policy source-prefix reads, so those queries no longer request a whole source snapshot.
+The corrections and repository rerun remain in progress.
