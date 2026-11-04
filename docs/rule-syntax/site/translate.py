@@ -473,6 +473,7 @@ def translate(doc):
             head.append(f".scope {k} {compact(val)}")
 
     body = []
+    seen_rel = set()
     for c in clauses:
         cid = c.get("id", "clause")
         if "define" in c:
@@ -488,6 +489,9 @@ def translate(doc):
         forbid = c.get("forbid", {})
         viol = c.get("violation", {})
         rel = ident(viol.get("code", cid))
+        if rel in seen_rel:
+            rel = f"{rel}_{snake(cid)}"
+        seen_rel.add(rel)
         if "ast" not in forbid:
             body.append(("viol", violation_lines(viol, rel)))
             body.append(("raw", f"{rel}($d) :- text_rule($d, {compact(forbid)})."))
@@ -503,14 +507,16 @@ def translate(doc):
             vl.append(f"    options {compact(opts)}")
         body.append(("viol", vl))
         rule = a.get("rule", {})
+        vs = Vars()
+        if isinstance(rule, dict) and set(rule) == {"any"} and isinstance(rule["any"], list):
+            bodies = grouped(prog, rule["any"], "$n", vs)
+        else:
+            bodies = [lower(prog, rule, "$n", vs)]
         cons = []
         for var, crule in (a.get("constraints") or {}).items():
-            cons.extend(lower(prog, crule, "$" + var, Vars()))
-        if isinstance(rule, dict) and set(rule) == {"any"} and isinstance(rule["any"], list):
-            for b in grouped(prog, rule["any"], "$n", Vars()):
-                body.append(("rule", (f"{rel}($n)", b + cons)))
-        else:
-            body.append(("rule", (f"{rel}($n)", lower(prog, rule, "$n", Vars()) + cons)))
+            cons.extend(lower(prog, crule, "$" + var, vs))
+        for b in bodies:
+            body.append(("rule", (f"{rel}($n)", b + cons)))
         for h, lits in local:
             body.append(("rule", (h, lits)))
 
