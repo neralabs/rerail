@@ -6785,6 +6785,106 @@
           "entryPoint": "_scan_source"
         }
       }
+    },
+    {
+      "test": "probe:batch8:purity-parenthesized-managed-cache",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/cache.py",
+          "source": "CACHE = (LocalMetadataCache(name=\"reviewed\", max_entries=2))\n@pure_lazy\ndef derive():\n    return CACHE.get(\"value\")\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_paths"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:purity-overload-export-last-definition",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "data_layer/api.py",
+          "source": "from impl.operations import derive_lazy\n"
+        },
+        {
+          "path": "impl/operations.py",
+          "source": "@overload\ndef derive_lazy(value: int): ...\n@overload\ndef derive_lazy(value: str): ...\n@pure_lazy\ndef derive_lazy(value):\n    return value\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_paths"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:purity-dynamic-assignment-taint",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/runtime.py",
+          "source": "@pure_lazy\ndef derive(owner):\n    txn = getattr(owner, \"_txn\", None)\n    enabled = txn is not None\n    return Payload(context=enabled)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/runtime.py",
+          "line": 3,
+          "column": null,
+          "code": "PLP-002",
+          "message": "pure-lazy functions must not dynamically access runtime attribute '_txn'"
+        },
+        {
+          "path": "impl/runtime.py",
+          "line": 5,
+          "column": null,
+          "code": "PLP-005",
+          "message": "pure-lazy functions must not return locals derived from runtime-bound state"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_paths"
+        }
+      }
     }
   ]
 }
