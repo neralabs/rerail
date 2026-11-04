@@ -14,11 +14,15 @@
  * - Continuous metrics (`time_to_completion`, `total_tokens`, `uncached_tokens`): the same test on the within-task
  *   difference of mean log(value + 1); the effect is the ratio of geometric means (A/B, of value + 1). `churn` uses
  *   the plain difference of means, and its effect is that difference in lines.
+ * - Non-inferiority against a margin (a ratio m, logged metrics only): H0 is ratio A/B ≥ m. A's log values are lowered
+ *   by log(m) within each task, then the same one-sided test for "lower"; the reported ratio and CI are not shifted.
  * - A run with a Codex or harness error counts as a failure for its arm: not first-pass clean, needing a fix round,
  *   and at least as costly as the worst run of its task.
  *
- * Without `--metric`, the primary family of the pre-registration (benchmark/README.md), Holm-corrected, then the
- * secondary hypotheses, never used for stopping. With `--metric`, that one metric over every task. Each look is
+ * Without `--metric`, the primary family of the pre-registration (benchmark/README.md): P1 first-pass clean higher,
+ * P2 total tokens lower, P3 time to completion non-inferior at ×1.10, P4 needing a fix round lower on large tasks;
+ * Holm-corrected, then the secondary hypotheses, never used for stopping. With `--metric`, that one metric over every
+ * task, superiority. Each look is
  * judged against the Pocock boundary for at most three looks, nominal one-sided α = 0.0221 per look, and the last line
  * says whether to stop. Everything here is a pure function of the reports and a seed; nothing calls a model.
  */
@@ -176,11 +180,28 @@ export interface TestResult {
   readonly p: number;
 }
 
-/** One hypothesis over `strata` of raw values (already per task and arm): the test, the effect and its CI. */
-export function testHypothesis(metric: Metric, raw: readonly Stratum[], seed: number, permutations = PERMUTATIONS, resamples = RESAMPLES): TestResult {
-  const strata = raw.map(stratum => ({ task: stratum.task, a: stratum.a.map(value => analysedValue(metric, value)), b: stratum.b.map(value => analysedValue(metric, value)) }));
+/**
+ * The analysed values the permutation test compares. With a non-inferiority `margin` (a ratio, logged metrics only),
+ * A's log values are lowered by log(margin) within each task, so "A lower" tests H0: ratio A/B ≥ margin.
+ */
+export function testedStrata(metric: Metric, raw: readonly Stratum[], margin = 1): Stratum[] {
+  if (margin !== 1 && METRIC_SPECS[metric].kind !== "log") throw new Error(`A non-inferiority margin needs a logged metric, not ${metric}`);
+  const shift = Math.log(margin);
+  return raw.map(stratum => ({
+    task: stratum.task,
+    a: stratum.a.map(value => analysedValue(metric, value) - shift),
+    b: stratum.b.map(value => analysedValue(metric, value)),
+  }));
+}
+
+/**
+ * One hypothesis over `strata` of raw values (already per task and arm): the test (against `margin` when one is
+ * given), the effect and its CI (never shifted).
+ */
+export function testHypothesis(metric: Metric, raw: readonly Stratum[], seed: number, margin = 1, permutations = PERMUTATIONS, resamples = RESAMPLES): TestResult {
+  const strata = testedStrata(metric, raw);
   const random = seeded(seed);
-  const p = permutationTest(strata, METRIC_SPECS[metric].better, permutations, random);
+  const p = permutationTest(margin === 1 ? strata : testedStrata(metric, raw, margin), METRIC_SPECS[metric].better, permutations, random);
   const ci = clusterBootstrap(strata, picked => effect(metric, picked), resamples, random);
   return { runs: strata.reduce((total, stratum) => total + stratum.a.length + stratum.b.length, 0), tasks: strata.length, effect: effect(metric, strata), ci, p };
 }
@@ -306,19 +327,28 @@ interface Hypothesis {
   readonly metric: Metric;
   /** The sizes it covers; null for every task. */
   readonly sizes: readonly Size[] | null;
+  /** Non-inferiority: H0 is ratio A/B ≥ this margin, rejected when A is shown below it. Absent for superiority. */
+  readonly margin?: number;
 }
+
+/** The non-inferiority margin of time to completion: the treatment may take at most 10% longer. */
+export const TIME_MARGIN = 1.1;
 
 /** The pre-registered primary family (benchmark/README.md): the hypotheses the stopping rule reads. */
 export const PRIMARY: readonly Hypothesis[] = [
   { id: "P1", metric: "first_pass_clean", sizes: null },
-  { id: "P2", metric: "time_to_completion", sizes: null },
-  { id: "P3", metric: "total_tokens", sizes: null },
+  { id: "P2", metric: "total_tokens", sizes: null },
+  { id: "P3", metric: "time_to_completion", sizes: null, margin: TIME_MARGIN },
   { id: "P4", metric: "needs_fix_round", sizes: ["large"] },
 ];
 
-/** The secondary hypotheses: per-size P1–P3, then uncached tokens and churn over every task. Never used for stopping. */
+/**
+ * The secondary hypotheses: per-size P1–P3 (P3 still against its margin), then time superiority, uncached tokens and
+ * churn over every task. Never used for stopping.
+ */
 const SECONDARY: readonly Hypothesis[] = [
-  ...SIZES.flatMap(size => PRIMARY.slice(0, 3).map(hypothesis => ({ id: `${hypothesis.id}-${size}`, metric: hypothesis.metric, sizes: [size] }))),
+  ...SIZES.flatMap(size => PRIMARY.slice(0, 3).map(hypothesis => ({ ...hypothesis, id: `${hypothesis.id}-${size}`, sizes: [size] }))),
+  { id: "S-time", metric: "time_to_completion", sizes: null },
   { id: "S-uncached", metric: "uncached_tokens", sizes: null },
   { id: "S-churn", metric: "churn", sizes: null },
 ];
@@ -357,7 +387,7 @@ function analyse(hypotheses: readonly Hypothesis[], runs: readonly ArmRun[], arm
   return hypotheses.map(hypothesis => {
     const scoped = runs.filter(run => hypothesis.sizes === null || (run.size !== null && hypothesis.sizes.includes(run.size)));
     const { strata, unpaired } = strataFor(hypothesis.metric, scoped, arms);
-    return { hypothesis, result: strata.length === 0 ? null : testHypothesis(hypothesis.metric, strata, seed), unpaired };
+    return { hypothesis, result: strata.length === 0 ? null : testHypothesis(hypothesis.metric, strata, seed, hypothesis.margin), unpaired };
   });
 }
 
@@ -368,7 +398,9 @@ function printAnalyses(title: string, analyses: readonly Analysis[], adjusted: R
     analyses.map(({ hypothesis, result, unpaired }, index) => {
       const { metric } = hypothesis;
       const scope = hypothesis.sizes?.join("+") ?? "all";
-      const better = `${arms[0]} ${METRIC_SPECS[metric].better}`;
+      const better = hypothesis.margin === undefined
+        ? `${arms[0]} ${METRIC_SPECS[metric].better}`
+        : `non-inferiority: ${arms[0]}/${arms[1]} < margin ${formatEffect(metric, hypothesis.margin)}`;
       if (result === null) return [hypothesis.id, `${METRIC_SPECS[metric].label} (${better})`, scope, "0", "0", "-", "-", "-", "-", "no paired task"];
       const holmP = adjusted[index] ?? null;
       return [
@@ -429,31 +461,37 @@ function synthetic(kind: "binary" | "log", shift: number, random: () => number):
 /**
  * `--self-test`: across 200 synthetic datasets each, the false-positive rate under no effect is at most 0.05 at
  * α 0.05, and under a large effect (+0.4 first-pass clean; time × 0.6) power is at least 0.9, for a binary and a
- * continuous metric, through the same test and permutation count the analysis uses.
+ * continuous metric; for time's non-inferiority test at margin ×{@link TIME_MARGIN}, the false-positive rate at a true
+ * ratio of exactly the margin is at most 0.05, and the power at a true ratio of 0.9 is reported. All through the same
+ * test and permutation count the analysis uses.
  */
 function selfTest(): boolean {
   const datasets = 200;
   const alpha = 0.05;
+  const atMost = { required: "≤ 0.05", pass: (rate: number) => rate <= 0.05 };
+  const atLeast = { required: "≥ 0.9", pass: (rate: number) => rate >= 0.9 };
+  const reported = { required: "reported", pass: () => true };
   const cases = [
-    { name: "binary first_pass_clean, no effect", metric: "first_pass_clean" as const, shift: 0, check: "false-positive rate", pass: (rate: number) => rate <= 0.05 },
-    { name: "binary first_pass_clean, +0.4", metric: "first_pass_clean" as const, shift: 0.4, check: "power", pass: (rate: number) => rate >= 0.9 },
-    { name: "continuous time_to_completion, no effect", metric: "time_to_completion" as const, shift: 0, check: "false-positive rate", pass: (rate: number) => rate <= 0.05 },
-    { name: "continuous time_to_completion, ×0.6", metric: "time_to_completion" as const, shift: Math.log(0.6), check: "power", pass: (rate: number) => rate >= 0.9 },
+    { name: "binary first_pass_clean, no effect", metric: "first_pass_clean" as const, shift: 0, margin: 1, check: "false-positive rate", ...atMost },
+    { name: "binary first_pass_clean, +0.4", metric: "first_pass_clean" as const, shift: 0.4, margin: 1, check: "power", ...atLeast },
+    { name: "continuous time_to_completion, no effect", metric: "time_to_completion" as const, shift: 0, margin: 1, check: "false-positive rate", ...atMost },
+    { name: "continuous time_to_completion, ×0.6", metric: "time_to_completion" as const, shift: Math.log(0.6), margin: 1, check: "power", ...atLeast },
+    { name: `time non-inferiority ×${TIME_MARGIN}, true ×${TIME_MARGIN}`, metric: "time_to_completion" as const, shift: Math.log(TIME_MARGIN), margin: TIME_MARGIN, check: "false-positive rate", ...atMost },
+    { name: `time non-inferiority ×${TIME_MARGIN}, true ×0.9`, metric: "time_to_completion" as const, shift: Math.log(0.9), margin: TIME_MARGIN, check: "power", ...reported },
   ];
   const random = seeded(20_261_104);
   let ok = true;
-  const rows = cases.map(({ name, metric, shift, check, pass }) => {
+  const rows = cases.map(({ name, metric, shift, margin, check, required, pass }) => {
     const started = performance.now();
     let rejections = 0;
     for (let dataset = 0; dataset < datasets; dataset++) {
       const raw = synthetic(METRIC_SPECS[metric].kind === "binary" ? "binary" : "log", shift, random);
-      const strata = raw.map(stratum => ({ task: stratum.task, a: stratum.a.map(value => analysedValue(metric, value)), b: stratum.b.map(value => analysedValue(metric, value)) }));
-      if (permutationTest(strata, METRIC_SPECS[metric].better, PERMUTATIONS, random) <= alpha) rejections++;
+      if (permutationTest(testedStrata(metric, raw, margin), METRIC_SPECS[metric].better, PERMUTATIONS, random) <= alpha) rejections++;
     }
     const rate = rejections / datasets;
     const passed = pass(rate);
     ok &&= passed;
-    return [name, check, `${rejections}/${datasets} = ${rate.toFixed(3)}`, check === "power" ? "≥ 0.9" : "≤ 0.05", passed ? "ok" : "FAIL", `${((performance.now() - started) / 1000).toFixed(1)}s`];
+    return [name, check, `${rejections}/${datasets} = ${rate.toFixed(3)}`, required, required === "reported" ? "" : passed ? "ok" : "FAIL", `${((performance.now() - started) / 1000).toFixed(1)}s`];
   });
   console.log(`Self-test: ${datasets} synthetic datasets per case (18 tasks × 2 runs per arm), ${PERMUTATIONS} permutations each, α ${alpha} one-sided`);
   console.log(table(["case", "check", "rejected", "required", "", "time"], rows));

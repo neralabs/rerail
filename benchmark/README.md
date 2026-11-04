@@ -108,12 +108,16 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   the summed within-task difference in proportions, and their mean within-task difference with a cluster-bootstrap
   95% CI (tasks, then runs within each task and arm, 10,000 resamples). Continuous metrics (`time_to_completion`,
   `total_tokens`, `uncached_tokens`) get the same test on mean log(value + 1) and the ratio of geometric means (A/B);
-  `churn` the plain difference. A run with an error counts as a failure for its arm (not clean, needing a fix, and at
-  least as costly as its task's worst run). Without `--metric` it tests the pre-registered primary family with Holm's
-  correction, then the secondary hypotheses, and judges each look against the Pocock boundary for three looks
-  (nominal one-sided α 0.0221); the last line is `STOP: success`, `CONTINUE` or `STOP: futility/max looks`.
-  `--self-test` prints the false-positive rate under no effect and the power under a large one, 200 synthetic datasets
-  each.
+  `churn` the plain difference. A non-inferiority hypothesis at margin m (H0: ratio A/B ≥ m) lowers A's log values by
+  log(m) within each task and runs the same test for "lower"; its ratio and CI are reported unshifted. A run with an
+  error counts as a failure for its arm (not clean, needing a fix, and at least as costly as its task's worst run).
+  Without `--metric` it tests the pre-registered primary family (P1 first-pass clean higher, P2 total tokens lower,
+  P3 time to completion non-inferior at ×1.10, P4 needing a fix round lower on large tasks) with Holm's correction,
+  then the secondary hypotheses (per-size P1–P3, time superiority, uncached tokens, churn), and judges each look
+  against the Pocock boundary for three looks (nominal one-sided α 0.0221); the last line is `STOP: success`,
+  `CONTINUE` or `STOP: futility/max looks`. `--self-test` prints the false-positive rate under no effect and the power
+  under a large one, and for P3's test the false-positive rate at a true ratio of 1.10 and the power at 0.9, 200
+  synthetic datasets each.
 - `merge-assist-guard.ts` (`node --import tsx benchmark/merge-assist-guard.ts --index index.json [--thresholds ...]
   [--hook-calls N]`) scores the guard offline, with no agent: each labelled teammate file and project file as a
   patch, it prints per real decision and source the recall on its caught files, fires on its passed files and cross
@@ -123,6 +127,31 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
 The workloads are host test data under `fixtures/host/benchmark/<kind>/`. Benchmark results are never committed. Keep
 them out of the repository, and put headline numbers in prose (with corpus commits and tool versions) where a change
 needs them. For the engine's own micro-benchmark, see `npm run bench:code-rule-dsl` (`scripts/dsl/`).
+
+## Merge Assist confirmatory comparison: pre-registration
+
+Fixed before any agent runs on `--split confirm`, and not changed after.
+
+- **Question.** Does Merge Assist's context injection reach a clean, finished result more cheaply than letting the
+  agent finish and then fixing what breaks the team's decisions?
+- **Arms.** `focus-pool` (frozen from the dev comparison on `--split size`: one background ranking per session, up to
+  12 picks, at most 3 per area at the area's first touch) against `posthoc` (no injection). `focus-k5` runs as a
+  secondary arm. Both arms then get the same fix rounds (at most 3) from a reviewer message that names every violating
+  line; human review time is not counted.
+- **Fixed settings.** Index `/tmp/ma-ctx/index-v3.json` (10 decisions built by the product, 4 teammate decisions, 210
+  distractors), seed 1, every distractor, Codex 0.158 with its default model, `--timeout-min 20`, the 18 `confirm` tasks.
+- **Primary hypotheses** (`focus-pool` against `posthoc`, one-sided, all 18 tasks unless stated), Holm-corrected:
+  - P1: first-pass clean is higher.
+  - P2: total tokens to completion are lower.
+  - P3: time to completion is not worse than ×1.10 (non-inferiority).
+  - P4: on the 6 large tasks, fewer runs need a fix round.
+- **Secondary** (reported, not used for stopping): per-size P1–P3, time superiority, uncached tokens, churn, and
+  `focus-pool` against `focus-k5` on large tasks.
+- **Looks.** Look 1: 2 trials per task and arm. Looks 2 and 3 add 2 trials each. Stop for success when all four
+  primaries reject at Holm-adjusted p ≤ 0.0221 (Pocock, three looks, one-sided α 0.05 overall). Stop after look 3
+  whatever the result, and report every primary's effect and CI.
+- **Analysis.** `node --import tsx benchmark/merge-assist-stats.ts --analyze <look reports...> --arms focus-pool,posthoc`.
+  Runs with errors count as failures for their arm and are reported.
 
 ## Steer strategies
 
