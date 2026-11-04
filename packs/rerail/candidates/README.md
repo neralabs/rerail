@@ -1,4 +1,4 @@
-# Rerail repository rule pack, candidates
+# Rerail rule pack: Rerail repository, candidates
 
 The rule documents in `rules/` here were drafted for the pack and not approved, so they don't ship. This file is not
 published; the pack's [README](../README.md) covers the rules it ships, and [HISTORY.md](../HISTORY.md) the study

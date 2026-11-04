@@ -141,6 +141,7 @@ packs/<id>/
 }
 ```
 
+- **`name`**: the title on the dashboard, in set-up and in a steer's note.
 - **`covers`**: the dashboard's one-sentence line under the pack's name.
 - **`category`**: `language`, `framework` or `repository`.
 - **`match`** (required): `{ "any": [signal, …] }`, what set-up recommends the pack for. A signal is file globs or
@@ -154,6 +155,11 @@ packs/<id>/
 <details>
 <summary>Field details</summary>
 
+- **`name`** says what the pack is about, and nothing else: `Python`, not `Python (Ruff and Bandit)`. Tools, versions
+  and limits go in `covers`, since they change and a title should not. The repository structure gate
+  ([metric 8](repository-structure.md#8-packs-pass-the-pack-format-layout--target-100)) holds Rerail's own packs to
+  this. A pack's README opens with `# Rerail rule pack: <name>`, and a published pack has a row in
+  [the packs table](rule-packs.md#the-packs).
 - **`covers`** says what the rules are for and where they come from. It gives no rule counts and nothing on which
   start on; the dashboard shows both beside it.
 - **`category`** drives the kind chips of the dashboard's rule pack catalog, which lists languages, then frameworks,

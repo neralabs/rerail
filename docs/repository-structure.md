@@ -245,6 +245,9 @@ Every pack has the files and manifests the pack format requires. The compile hal
 - **`<id>`:** lowercase letters, digits and dashes.
 - **`pack.json`:** `rerail.rule-pack/v1` with `id` = `<id>`; lists only tracked documents, and every file in
   `rules/`.
+- **`name`:** no brackets, digits or tool from the pack's `conformance.json`. `README.md` opens with
+  `# Rerail rule pack: <name>` and `candidates/README.md` with `# Rerail rule pack: <name>, candidates`. A published
+  pack has a row for it in the `docs/rule-packs.md` table.
 - **`package.json`:** `@neralabs/rerail-pack-<id>`, with a `license`, no `dependencies`, and `files` publishing
   `pack.json`, `rules`, `LICENSE`.
 
