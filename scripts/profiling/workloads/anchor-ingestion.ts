@@ -1,7 +1,8 @@
 /** Bounded ingestion controls. Findings parity and repository-wide evaluation are separate gates. */
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { basename, dirname, resolve } from "node:path";
 import { loadNativeBinding, resolveNativeBindingPath, encodeCodeRuleWorkspaceRequest, RESULT_PAGE_BYTES } from "../../../src/engine/index.js";
 import { capabilitiesJson } from "../../../conformance/engine.js";
 
@@ -50,7 +51,10 @@ try {
   const compileCpu = process.cpuUsage(), compileStarted = performance.now();
   for (const { check } of recording.events.slice(0, rules)) {
     const name = `data-layer-${check.replaceAll("_", "-")}`;
-    const source = readFileSync(`${values.policies}/${name}.json`, "utf8");
+    const directory = resolve(values.policies), candidate = resolve(directory, `${name}.json`);
+    const path = !existsSync(candidate) && basename(directory) === "rules" && basename(dirname(directory)) === "candidates"
+      ? resolve(directory, "../../rules", `${name}.json`) : candidate;
+    const source = readFileSync(path, "utf8");
     const rule = native.CodeRuleDslRuntime.compile(source, "json", capabilitiesJson());
     policies[name] = rule.digest(); workspace.addCodeRule(rule);
   }

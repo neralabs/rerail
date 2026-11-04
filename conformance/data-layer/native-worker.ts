@@ -1,3 +1,4 @@
+import { policyPath } from "./policies.js";
 /** Persistent native backend for the unchanged upstream pytest assertions. */
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -34,7 +35,7 @@ try {
       }
       const request = requestSchema.parse(raw);
       const authored = authoredSchema.parse(request.contract === undefined
-        ? JSON.parse(readFileSync(`${process.env.RERAIL_NATIVE_POLICY_DIRECTORY ?? "packs/data-layer/candidates/rules"}/data-layer-${request.check.replaceAll("_", "-")}.json`, "utf8"))
+        ? JSON.parse(readFileSync(policyPath(process.env.RERAIL_NATIVE_POLICY_DIRECTORY ?? "packs/data-layer/candidates/rules", `data-layer-${request.check.replaceAll("_", "-")}`), "utf8"))
         : ["lazy-analyzed", "cached-policy-comparison", "memoized-policy-comparison"].includes(request.contract) ? JSON.parse(readFileSync(resolve(dirname(process.env.RERAIL_NATIVE_POLICY_DIRECTORY ?? "packs/data-layer/candidates/rules"), "facts", `${request.contract}.json`), "utf8")) : request.contract === "cached-discovery" ? cachedDiscoveryPolicy(request.parameters?.module_name as string | undefined) : structuredClone(contracts[request.contract]));
       for (const clause of authored.clauses) if (clause.define?.options !== undefined) {
         const values = { entryPoint: request.entry, ...request.options,

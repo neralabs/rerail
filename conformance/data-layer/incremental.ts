@@ -1,3 +1,4 @@
+import { policyPath } from "./policies.js";
 /** Replay original positive/clean analyzer inputs as edits in one resident workspace. */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -39,7 +40,7 @@ for (const check of checks) {
   const candidates = events.filter(event => event.check === check);
   const pair = candidates.filter(event => event.findings!.length > 0).map(positive => ({ positive, clean: candidates.find(clean => clean.findings!.length === 0 && clean.entry === positive.entry && JSON.stringify(clean.oracle_config) === JSON.stringify(positive.oracle_config) && JSON.stringify(clean.scope) === JSON.stringify(positive.scope)) })).find(pair => pair.clean !== undefined);
   if (pair?.clean === undefined) throw new Error(`${check} needs original positive and clean inputs with the same analyzer configuration`);
-  const authored = authoredSchema.parse(JSON.parse(readFileSync(`${values.policies}/data-layer-${check.replaceAll("_", "-")}.json`, "utf8")));
+  const authored = authoredSchema.parse(JSON.parse(readFileSync(policyPath(values.policies, `data-layer-${check.replaceAll("_", "-")}`), "utf8")));
   const declaredOptions = new Set(authored.clauses.flatMap(clause => Object.keys(clause.define?.options ?? {})));
   const configuration = Object.fromEntries(Object.entries({ oracleAnalyzer: true, entryPoint: pair.positive.entry, ...pair.positive.oracle_config?.options })
     .filter(([name]) => declaredOptions.has(name)));

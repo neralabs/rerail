@@ -1,3 +1,4 @@
+import { policyPath } from "./policies.js";
 /** Measure all selected ports together against the upstream shared fact engine's repository snapshot. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -95,7 +96,7 @@ try {
   for (const event of recording.events) {
     const id = `data-layer-${event.check.replaceAll("_", "-")}`;
     const policyStarted = performance.now();
-    const source = readFileSync(`${values.policies}/${id}.json`, "utf8");
+    const source = readFileSync(policyPath(values.policies, id), "utf8");
     if (event.check === "sql_grammar_escape_hatches" && escapeHatchSignatureFailure(codeRuleSchema.parse(JSON.parse(source))) !== undefined) {
       throw new Error("Escape-hatch allowlist signature verification failed");
     }

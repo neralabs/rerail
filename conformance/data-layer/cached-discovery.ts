@@ -30,7 +30,7 @@ const projection = `SELECT n.__path path,n.__start start_byte,n.__end end_byte,f
   FROM actual_functions f JOIN nodes n ON n.__path=f.__path AND n.id=f.id`;
 
 export function cachedDiscoveryPolicy(moduleName?: string) {
-  const policy = codeRuleSchema.parse(JSON.parse(readFileSync("packs/data-layer/candidates/rules/data-layer-cached-pure-lazy-allowlist.json", "utf8")));
+  const policy = codeRuleSchema.parse(JSON.parse(readFileSync("packs/data-layer/rules/data-layer-cached-pure-lazy-allowlist.json", "utf8")));
   policy.scope = { include: ["**/*.py"], exclude: [] };
   policy.clauses = policy.clauses.filter(clause => clause.define !== undefined || clause.id === "cached-policy");
   const plan = policy.clauses.find(clause => clause.id === "cached-policy")!.relational!;

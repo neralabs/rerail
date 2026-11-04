@@ -13,7 +13,9 @@ def main():
     args=parser.parse_args()
     for folder in ('rules','facts'):
         target=args.output/folder;target.mkdir(parents=True,exist_ok=True)
-        for path in (args.source/folder).glob('*.json'):
+        paths=list((args.source/folder).glob('*.json'))
+        if folder=='rules' and args.source.name=='candidates':paths+=list((args.source.parent/'rules').glob('*.json'))
+        for path in paths:
             policy=json.loads(path.read_text())
             policy['clauses']=[clause for clause in policy['clauses'] if 'define' in clause]+[
               dict(id='always-clean',forbid=dict(regex=dict(source='file.content',pattern=r'\b\B')),

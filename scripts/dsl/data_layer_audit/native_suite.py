@@ -20,7 +20,7 @@ import pytest
 
 DSL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DSL))
-from data_layer_batch_eight import BATCH_EIGHT, MODULES, TESTS, tree_source
+from data_layer_batch_eight import BATCH_EIGHT, MODULES, TESTS, tree_source, policy_path
 from data_layer_probe_record import verify_sources
 
 
@@ -108,7 +108,7 @@ class NativeSuite:
 def receipt(backend,code,policies,checked):
     sha=lambda path:hashlib.sha256(path.read_bytes()).hexdigest()
     return dict(engineSha256=sha(backend.engine_path),contractsSha256=sha(Path(os.environ['RERAIL_NATIVE_CONTRACTS'])),
-      policySha256={check:sha(policies/('data-layer-'+check.replace('_','-')+'.json')) for check in BATCH_EIGHT},
+      policySha256={check:sha(policy_path(policies,check)) for check in BATCH_EIGHT},
       factPolicySha256={path.name:sha(path) for path in sorted((policies.parent/'facts').glob('*.json'))},
       format='rerail.data-layer-native-pytest/v1',mode=backend.mode,exitCode=int(code),instrumentationTranslations=backend.instrumentation_translations,
       sourceFilesChecked=checked,semanticFallbacks=backend.semantic_fallbacks,originalCalls=backend.original_calls,cases=backend.outcomes,calls=backend.calls)

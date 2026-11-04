@@ -60,7 +60,11 @@ def main():
     shutil.copyfile(args.addon, frozen / 'engine.node')
     policies = frozen / 'policies'
     policies.mkdir()
-    for policy in args.policies.glob('*.json'):
+    policy_files=list(args.policies.glob('*.json'))
+    if args.policies.name=='rules' and args.policies.parent.name=='candidates':
+        policy_files+=list((args.policies.parent.parent/'rules').glob('*.json'))
+    if len({path.name for path in policy_files})!=len(policy_files):raise ValueError('Duplicate policy documents')
+    for policy in policy_files:
         shutil.copyfile(policy, policies / policy.name)
     driver = ROOT / 'conformance/data-layer/suite.ts'
     manifest = {'format': 'rerail.full-repository-measurement/v1',

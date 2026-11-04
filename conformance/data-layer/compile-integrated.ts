@@ -1,3 +1,4 @@
+import { policyPath } from "./policies.js";
 /** Validate recovered candidates through the selected engine's own public schema and compiler. */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -21,7 +22,7 @@ const checks = manifest.batches.filter(batch => batch.id <= through).flatMap(bat
 const native = loadNativeBinding();
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const rows = checks.map(check => {
-  const authored = readFileSync(`packs/data-layer/candidates/rules/data-layer-${check.replaceAll("_", "-")}.json`, "utf8");
+  const authored = readFileSync(policyPath("packs/data-layer/candidates/rules", `data-layer-${check.replaceAll("_", "-")}`), "utf8");
   const policySha256 = hash(authored);
   try {
     const policy: unknown = frontend.codeRuleSchema.parse(JSON.parse(authored));

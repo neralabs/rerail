@@ -21,6 +21,14 @@ TESTS['cached_pure_lazy_allowlist']=['scripts/tests/test_verify_cached_pure_lazy
 TESTS['lazy_architecture'] += ['scripts/tests/test_lazy_architecture_plugin_parity.py','scripts/tests/test_repository_lazy_architecture.py']
 
 
+def policy_path(directory, check):
+    """Locate a port without shadowing an explicitly supplied mutation directory."""
+    directory=Path(directory);name='data-layer-'+check.replace('_','-')+'.json'
+    candidate=directory/name
+    if candidate.exists():return candidate
+    return directory.parent.parent/'rules'/name if directory.name=='rules' and directory.parent.name=='candidates' else candidate
+
+
 def tree_source(tree, sources):
     """Return original text, including for modules assembled from parsed nodes."""
     text = sources.get(tree)

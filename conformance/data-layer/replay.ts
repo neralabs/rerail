@@ -1,3 +1,4 @@
+import { policyPath } from "./policies.js";
 /** Replay the unchanged data-layer tests' recorded inputs through the native engine. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -109,7 +110,7 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     if (event.retained_reason !== undefined || !event.upstream_passed) continue;
     event.files ??= recording.files;
     if (event.files === undefined || event.scope === undefined || event.findings === undefined) throw new Error(`Incomplete event ${event.test}`);
-    const authored = configurableSchema.parse(JSON.parse(readFileSync(resolve(policies, `data-layer-${event.check.replaceAll("_", "-")}.json`), "utf8")));
+    const authored = configurableSchema.parse(JSON.parse(readFileSync(policyPath(policies, `data-layer-${event.check.replaceAll("_", "-")}`), "utf8")));
     for (const clause of authored.clauses) {
       if (clause.define?.options?.oracleAnalyzer !== undefined) {
         clause.define.config = { ...clause.define.config, oracleAnalyzer: !event.production_scope };

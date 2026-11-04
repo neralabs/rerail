@@ -1,3 +1,4 @@
+import { policyPath } from "../../../conformance/data-layer/policies.js";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { codeRuleSchema, encodeCodeRuleWorkspaceRequest, loadNativeBinding, RESULT_PAGE_BYTES } from "../../../src/engine/index.js";
@@ -12,7 +13,7 @@ it("accepts all sixty established policies through the production compiler", () 
   expect(checks).toHaveLength(60);
   const failures = checks.flatMap(check => {
     try {
-      const policy = codeRuleSchema.parse(JSON.parse(readFileSync(`packs/data-layer/candidates/rules/data-layer-${check.replaceAll("_", "-")}.json`, "utf8")));
+      const policy = codeRuleSchema.parse(JSON.parse(readFileSync(policyPath("packs/data-layer/candidates/rules", `data-layer-${check.replaceAll("_", "-")}`), "utf8")));
       loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(policy), "json", capabilitiesJson());
       return [];
     } catch (error) {

@@ -17,23 +17,22 @@ from data_layer_eight.cached import candidate as cached
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source',type=Path,required=True);parser.add_argument('--output',type=Path,default=Path('packs/data-layer/candidates/rules'))
+    parser.add_argument('--source',type=Path,required=True);parser.add_argument('--output',type=Path,default=Path('packs/data-layer/rules'))
     args=parser.parse_args();args.output.mkdir(parents=True,exist_ok=True)
     items=[candidate(args.source,policy),authentication(args.source,policy),callbacks(args.source,policy),adapters(args.source,policy),plan_helpers(args.source,policy),sql_surface(args.source,policy),purity(args.source,policy),eager(args.source,policy),lazy(args.source,policy),cached(args.source,policy)]
     for item in items:
         if item['id'] not in ('data-layer-plan-helpers-allowlist','data-layer-lazy-adapter-ownership'):
             item['scope']['exclude'].append('**/test_*.py')
         path=args.output/(item['id']+'.json');path.write_text(json.dumps(item,indent=2)+'\n');print(path)
-    if args.output.resolve()==Path('packs/data-layer/candidates/rules').resolve():
+    if args.output.resolve()==Path('packs/data-layer/rules').resolve():
         pack=Path('packs/data-layer');shipped=pack/'rules';shipped.mkdir(exist_ok=True)
-        for item in items:(shipped/(item['id']+'.json')).write_text(json.dumps(item,indent=2)+'\n')
         manifest=json.loads((pack/'pack.json').read_text())
         manifest['covers']='Ten batch-eight data-layer architecture rules. Seventy earlier ports remain candidates.'
         manifest['reason']='Repository-specific rules for explicit installation in nera-data-layer.'
         manifest['rules']=[dict(id=item['id'],document='rules/'+item['id']+'.json',title=item['id'].removeprefix('data-layer-').replace('-',' ').capitalize(),group='Data-layer architecture') for item in items]
         (pack/'pack.json').write_text(json.dumps(manifest,indent=2)+'\n')
     from data_layer_eight.analyzed_facts import candidate as analyzed_facts
-    facts=args.output.parent/'facts';facts.mkdir(parents=True,exist_ok=True)
+    facts=Path('packs/data-layer/candidates/facts') if args.output.resolve()==Path('packs/data-layer/rules').resolve() else args.output.parent/'facts';facts.mkdir(parents=True,exist_ok=True)
     (facts/'lazy-analyzed.json').write_text(json.dumps(analyzed_facts(args.source),indent=2)+'\n')
     from data_layer_eight.policy_comparison import supplied_candidate
     for kind in ('cached','memoized'):

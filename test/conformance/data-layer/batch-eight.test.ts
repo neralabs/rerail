@@ -1,3 +1,4 @@
+import { policyPath } from "../../../conformance/data-layer/policies.js";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,7 +73,7 @@ it.each(checks)("rejects an always-clean %s detector on a recorded oracle positi
     const input = join(directory, "input.json"), output = join(directory, "result.json");
     writeFileSync(input, JSON.stringify(original));
     const filename = `data-layer-${check.replaceAll("_", "-")}.json`;
-    const policy = JSON.parse(readFileSync(`packs/data-layer/candidates/rules/${filename}`, "utf8"));
+    const policy = JSON.parse(readFileSync(policyPath("packs/data-layer/candidates/rules", filename.replace(/\.json$/u, "")), "utf8"));
     policy.clauses = [...policy.clauses.filter((clause: { define?: unknown }) => clause.define !== undefined), {
       id: "negative-control", forbid: { regex: { source: "file.content", pattern: "\\b\\B" } },
       violation: { code: "CONTROL", message: "Always clean control", anchor: "witness.span" },
@@ -123,7 +124,7 @@ it("binds the completed native assertion suites to the current rules and adapter
     expect(run.cases["scripts/tests/test_lint_lazy_architecture.py::test_class_method_alias_for_self_call_resolution"].nativeHelperCalls).toBeGreaterThan(0);
   }
   for (const [check, digest] of Object.entries(receipt.policySha256))
-    expect(createHash("sha256").update(readFileSync(`packs/data-layer/candidates/rules/data-layer-${check.replaceAll("_", "-")}.json`)).digest("hex")).toBe(digest);
+    expect(createHash("sha256").update(readFileSync(policyPath("packs/data-layer/candidates/rules", `data-layer-${check.replaceAll("_", "-")}`))).digest("hex")).toBe(digest);
   for (const [path, digest] of Object.entries(receipt.implementationSha256))
     expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(digest);
   for (const [path, digest] of Object.entries(receipt.factPolicySha256))
@@ -138,10 +139,10 @@ it("binds the completed native assertion suites to the current rules and adapter
 
 it("uses one production graph contract for source and supplied facts without an oracle mode", () => {
   for (const check of checks) {
-    const policy = JSON.parse(readFileSync(`packs/data-layer/candidates/rules/data-layer-${check.replaceAll("_", "-")}.json`, "utf8"));
+    const policy = JSON.parse(readFileSync(policyPath("packs/data-layer/candidates/rules", `data-layer-${check.replaceAll("_", "-")}`), "utf8"));
     for (const clause of policy.clauses) expect(clause.define?.options ?? {}).not.toHaveProperty("oracleAnalyzer");
   }
-  const source = JSON.parse(readFileSync("packs/data-layer/candidates/rules/data-layer-lazy-architecture.json", "utf8"));
+  const source = JSON.parse(readFileSync("packs/data-layer/rules/data-layer-lazy-architecture.json", "utf8"));
   const supplied = JSON.parse(readFileSync("packs/data-layer/candidates/facts/lazy-analyzed.json", "utf8"));
   type Stage = { name: string; reachability?: { selection?: string } };
   const programs = [source, supplied].map(policy => policy.clauses.flatMap((clause: { relational?: { stages?: Stage[] } }) => clause.relational?.stages ?? []) as Stage[]);
