@@ -562,3 +562,40 @@ async_in_fts($s) :- doc($d, $p, _), @glob($p, "impl/*/fts/**"), node($d, $n, "id
     assert_eq!(read("async_in_fts"), "fetch_async\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A measurement, not a check: "calls inside a function" asked three ways over a corpus (`RERAIL_MEASURE_CORPUS`),
+/// one way per run (`RERAIL_MEASURE` = `tape`, `interval` or `recursive`), each through the corpus runner. Prints the
+/// rows and each phase's CPU (user + system).
+/// - `tape`: `nearest` from the transducer's preorder pass (tape arithmetic);
+/// - `interval`: byte-span containment against function definitions (a Datalog join, no recursion);
+/// - `recursive`: an ancestor closure over `child` (Datalog recursion).
+#[test]
+#[ignore = "a measurement over a corpus on disk"]
+fn measure_inside_three_ways() {
+    let corpus = std::path::PathBuf::from(std::env::var("RERAIL_MEASURE_CORPUS").expect("RERAIL_MEASURE_CORPUS"));
+    let way = std::env::var("RERAIL_MEASURE").unwrap_or_else(|_| "tape".into());
+    let head = r#"
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.input node
+.kindset fn = "function_definition"
+.decl hit(c: node)
+.output hit
+"#;
+    let body = match way.as_str() {
+        // No inside test: the fixed cost of the run and of its `hit` rows.
+        "baseline" => "hit($c) :- node(_, $c, \"call\", _, _).\n",
+        "tape" => "hit($c) :- node(_, $c, \"call\", _, _), nearest($c, $f, fn).\n",
+        "interval" => "hit($c) :- node($d, $c, \"call\", $s, $e), node($d, $f, \"function_definition\", $fs, $fe), $fs <= $s, $e <= $fe.\n",
+        "recursive" => ".decl child(p: node, c: node, i: int)\n.input child\n.decl up(c: node, a: node)\nup($c, $p) :- node(_, $c, \"call\", _, _), child($p, $c, _).\nup($c, $a) :- up($c, $p), child($a, $p, _).\nhit($c) :- up($c, $f), node(_, $f, \"function_definition\", _, _).\n",
+        other => panic!("no way {other}"),
+    };
+    let binding = if std::env::var("RERAIL_MEASURE_METAL").is_ok() { crate::code_rule_dsl::typing::file_local::Binding::Metal } else { crate::code_rule_dsl::typing::file_local::Binding::Cpu };
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("measure-{way}"));
+    let r = super::corpus::run(&format!("{head}{body}"), &corpus, None, &out, "program", binding, 1 << 18).unwrap();
+    let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
+    println!("MEASURE {way}: {} files, {} nodes, {} chunks, hit rows {}, CPU {cpu:.2} s, peak RSS {:.0} MB", r.files, r.nodes, r.chunks, r.rows["hit"], r.phases.iter().map(|p| p.3).fold(0.0, f64::max));
+    for (name, user, sys, rss, statements) in &r.phases {
+        println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
+    }
+    let _ = std::fs::remove_dir_all(&out);
+}
