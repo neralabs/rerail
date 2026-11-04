@@ -101,7 +101,9 @@ const packs = listPacks()
   .filter((pack) => pack.from !== pack.version);
 for (const pack of packs) {
   const path = `packs/${pack.id}/CHANGELOG.md`;
-  const changes = packRuleChanges(rulesAt(pack, releasedCommit(pack)), rulesAt(pack, null));
+  // A pack never released has no earlier rules, so every rule it ships is new; rulesAt(pack, null) would read the checkout.
+  const commit = releasedCommit(pack);
+  const changes = packRuleChanges(commit === null ? [] : rulesAt(pack, commit), rulesAt(pack, null));
   const changelog = existsSync(join(ROOT, path)) ? readText(path) : "";
   writeFileSync(join(ROOT, path), releasedPackChangelog(changelog, pack.name, pack.version, today, packRuleNotes(changes), changesetNotes(changesets, pack.name)));
 }
