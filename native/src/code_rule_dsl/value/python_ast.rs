@@ -24,14 +24,25 @@ pub(crate) struct Document {
 pub(crate) type Row = BTreeMap<String, String>;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Response {
+pub(crate) struct Response {
     version: [u8; 2],
-    documents: Vec<Vec<Row>>,
+    pub documents: Vec<Vec<Row>>,
+    pub parses: usize,
+    pub module_walks: usize,
 }
 
+#[cfg(test)]
 pub(crate) fn batch(documents: &[Document]) -> Result<Vec<Vec<Row>>, Error> {
+    Ok(batch_with_metrics(documents)?.documents)
+}
+pub(crate) fn batch_with_metrics(documents: &[Document]) -> Result<Response, Error> {
     if documents.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Response {
+            version: [3, 13],
+            documents: Vec::new(),
+            parses: 0,
+            module_walks: 0,
+        });
     }
     if documents.iter().map(|d| d.source.len()).sum::<usize>() > 8 * 1024 * 1024 {
         return Err(Error("Python AST batch exceeds its source capacity".into()));
@@ -91,7 +102,7 @@ pub(crate) fn batch(documents: &[Document]) -> Result<Vec<Vec<Row>>, Error> {
             }
         }
     }
-    Ok(response.documents)
+    Ok(response)
 }
 #[cfg(test)]
 mod tests;

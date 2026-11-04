@@ -477,6 +477,7 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
     evaluation.violations.append(&mut other.violations);
     evaluation.failures.append(&mut other.failures);
     evaluation.metrics.witnesses += other.metrics.witnesses;
+    evaluation.metrics.observe_native_work(&other.metrics);
 }
 
 /// P's corpus publication and candidate preparation for one rule's stateless evaluation (the

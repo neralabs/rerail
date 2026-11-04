@@ -38,14 +38,20 @@ KINDS = {
 }
 output = []
 output_bytes = 0
+module_walks = 0
+parses = 0
 for document in request["documents"]:
     source = document["source"]
-    tree = ast.parse(source)
+    def text_only(item):
+        return item['fields']==['column'] or item['kind'] in {'identifier','dotted_name','relative_import'} and item['fields']==['identifier']
+    tree = None if all(text_only(item) for item in document['requests']) else ast.parse(source)
+    parses += tree is not None
     source_bytes=source.encode("utf-8")
     offsets = [0, *(match.end() for match in re.finditer(rb"\r\n?|\n",source_bytes))]
     by_span = {}
     by_start = {}
-    needed_types=tuple({kind for item in document["requests"] if item["kind"]!="module" and not (item["kind"] in {"identifier","dotted_name","relative_import"} and item["fields"]==["identifier"]) for kind in KINDS.get(item["kind"],())})
+    needed_types=tuple({kind for item in document["requests"] if item["kind"]!="module" and not text_only(item) for kind in KINDS.get(item["kind"],())})
+    module_walks += bool(needed_types)
     for node in ast.walk(tree) if needed_types else ():
         if not isinstance(node,needed_types) or not hasattr(node, "lineno"):
             continue
@@ -121,4 +127,4 @@ for document in request["documents"]:
             row[field] = value
         rows.append(row)
     output.append(rows)
-json.dump({"version": [3, 13], "documents": output}, sys.stdout, ensure_ascii=True)
+json.dump({"version": [3, 13], "documents": output, "parses":parses, "module_walks":module_walks}, sys.stdout, ensure_ascii=True)

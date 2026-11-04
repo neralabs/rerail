@@ -82,6 +82,7 @@ pub(in crate::code_rule_dsl) struct Plan {
     pub(in crate::code_rule_dsl) query: String,
     pub(in crate::code_rule_dsl) key: Vec<String>,
     pub(in crate::code_rule_dsl) code: Option<String>,
+    pub(in crate::code_rule_dsl) message: Option<String>,
     pub(in crate::code_rule_dsl) last_uses: BTreeMap<String, usize>,
     pub(in crate::code_rule_dsl) reads_source: bool,
 }
@@ -644,6 +645,7 @@ impl<'a> Session<'a> {
                     .map_err(sql_error)?;
             }
             tables.extend(syntax::load(&db, spec, &syntax_files, Arc::clone(&work))?);
+            metrics.syntax_loads += syntax_files.len();
         }
         for (slot, ((name, input), rows)) in plan.inputs.iter().zip(rows).enumerate() {
             #[cfg(feature = "code-rule-profile")]
@@ -982,7 +984,17 @@ impl<'a> Session<'a> {
                 path: path.to_owned(),
                 span,
                 captures: Captures::default(),
-                message: None,
+                message: plan
+                    .message
+                    .as_ref()
+                    .map(|field| {
+                        values
+                            .get(field)
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                            .ok_or_else(|| invalid("relational message must be text"))
+                    })
+                    .transpose()?,
                 fix: None,
                 ignored: false,
                 sql_violation: None,

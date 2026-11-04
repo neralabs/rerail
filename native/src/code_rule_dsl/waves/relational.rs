@@ -2,14 +2,16 @@
 //! their input tables and earlier stages in a fresh in-memory SQLite connection.
 use crate::code_rule_dsl::eval::{evidence::Rows, failure, violation_from_witness};
 use crate::code_rule_dsl::json::{hex_digest, invalid};
-use crate::code_rule_dsl::model::{CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Snapshot};
+use crate::code_rule_dsl::model::{
+    CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Snapshot,
+};
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use napi::Result;
 use rusqlite::Connection;
 use rusqlite::hooks::Authorization;
 mod authorizer;
-pub(in crate::code_rule_dsl) mod execution;
 pub(in crate::code_rule_dsl) mod compile;
+pub(in crate::code_rule_dsl) mod execution;
 pub(in crate::code_rule_dsl) mod pipeline;
 pub(in crate::code_rule_dsl) mod pool;
 mod shared;
@@ -82,6 +84,7 @@ pub(in crate::code_rule_dsl) struct Plan {
     pub(in crate::code_rule_dsl) query: String,
     pub(in crate::code_rule_dsl) key: Vec<String>,
     pub(in crate::code_rule_dsl) code: Option<String>,
+    pub(in crate::code_rule_dsl) message: Option<String>,
     pub(in crate::code_rule_dsl) last_uses: BTreeMap<String, usize>,
     pub(in crate::code_rule_dsl) reads_source: bool,
 }
@@ -102,7 +105,10 @@ pub(in crate::code_rule_dsl) fn sql_error(error: rusqlite::Error) -> napi::Error
     invalid(format!("relational query: {error}"))
 }
 
-pub(in crate::code_rule_dsl) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
+pub(in crate::code_rule_dsl) fn connection(
+    max_pattern: usize,
+    work: Arc<AtomicUsize>,
+) -> Result<Database> {
     let db = validation_connection(max_pattern, work)?;
     db.execute_batch("PRAGMA temp_store=FILE; PRAGMA cache_spill=ON; PRAGMA cache_size=-1024; PRAGMA temp.cache_size=-512; PRAGMA analysis_limit=1000;")
         .map_err(sql_error)?;
@@ -201,7 +207,11 @@ pub(in crate::code_rule_dsl) fn inspect_fields_recursive(
     result
 }
 
-pub(in crate::code_rule_dsl) fn create_input(db: &Database, name: &str, fields: &[String]) -> Result<()> {
+pub(in crate::code_rule_dsl) fn create_input(
+    db: &Database,
+    name: &str,
+    fields: &[String],
+) -> Result<()> {
     db.storage
         .borrow_mut()
         .declare_input(db, name, input_schema(name, fields))
@@ -248,7 +258,8 @@ pub(in crate::code_rule_dsl) fn create_stage(
         });
     }
     #[cfg(feature = "code-rule-profile")]
-    let mut span = crate::code_rule_dsl::profile::trace::Span::start("sql-materialize", _logical_name);
+    let mut span =
+        crate::code_rule_dsl::profile::trace::Span::start("sql-materialize", _logical_name);
     #[cfg(feature = "code-rule-profile")]
     let work_before = work.load(Ordering::Relaxed);
     let physical = if materialize {
@@ -339,7 +350,8 @@ pub(in crate::code_rule_dsl) fn create_stage(
     if materialize && inserted != 0 {
         for (index, fields) in stage.indexes.iter().enumerate() {
             #[cfg(feature = "code-rule-profile")]
-            let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-index", _logical_name);
+            let _span =
+                crate::code_rule_dsl::profile::trace::Span::start("sql-index", _logical_name);
             db.storage
                 .borrow_mut()
                 .index(
@@ -726,7 +738,8 @@ impl<'a> Session<'a> {
                 fields.len() + 3,
                 rows.witnesses.iter().map(|witness| {
                     use rusqlite::types::ValueRef;
-                    let location = crate::code_rule_dsl::violations::anchored_span(&input.anchor, witness).0;
+                    let location =
+                        crate::code_rule_dsl::violations::anchored_span(&input.anchor, witness).0;
                     let projected = witness.captures.projection();
                     let layout = projected.map(|p| &layouts[&p.schema_identity()]);
                     [
@@ -790,7 +803,8 @@ impl<'a> Session<'a> {
                             Sql::Text(edge.source_name.text().to_owned()),
                             Sql::Text(edge.target_name.text().to_owned()),
                             Sql::Integer(i64::from(
-                                edge.target.flags & crate::code_rule_dsl::calls::summary::CLASS != 0,
+                                edge.target.flags & crate::code_rule_dsl::calls::summary::CLASS
+                                    != 0,
                             )),
                         ]
                     }),
@@ -892,8 +906,10 @@ impl<'a> Session<'a> {
             .values()
             .map(|rows| {
                 rows.capacity()
-                    * (std::mem::size_of::<((usize, usize), (crate::code_rule_dsl::violations::Span, bool))>()
-                        + 16)
+                    * (std::mem::size_of::<(
+                        (usize, usize),
+                        (crate::code_rule_dsl::violations::Span, bool),
+                    )>() + 16)
             })
             .sum::<usize>()
             + aliases
@@ -1231,7 +1247,17 @@ impl<'a> Session<'a> {
                 path: path.to_owned(),
                 span,
                 captures: Captures::default(),
-                message: None,
+                message: plan
+                    .message
+                    .as_ref()
+                    .map(|field| {
+                        values
+                            .get(field)
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                            .ok_or_else(|| invalid("relational message must be text"))
+                    })
+                    .transpose()?,
                 fix: None,
                 ignored: false,
                 sql_violation: None,

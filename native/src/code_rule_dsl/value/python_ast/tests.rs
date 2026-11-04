@@ -163,3 +163,55 @@ fn canonical_names_and_annotation_repr_preserve_python_semantics() {
     assert_eq!(out[0][1]["unparse"], "'OptimizerRunCache'");
     assert_eq!(out[0][1]["repr_unparse"], "\"'OptimizerRunCache'\"");
 }
+
+#[test]
+fn text_columns_do_not_parse_or_walk_the_module() {
+    let result = batch_with_metrics(&[Document {
+        source: "  ｃａｃｈｅ\n".into(),
+        requests: vec![
+            Request {
+                start: 2,
+                end: 17,
+                kind: "identifier".into(),
+                fields: vec!["identifier".into()],
+            },
+            Request {
+                start: 2,
+                end: 17,
+                kind: "identifier".into(),
+                fields: vec!["column".into()],
+            },
+        ],
+    }])
+    .unwrap_or_else(|error| panic!("{}", error.0));
+    assert_eq!(result.parses, 0);
+    assert_eq!(result.module_walks, 0);
+    assert_eq!(result.documents[0][0]["identifier"], "cache");
+    assert_eq!(result.documents[0][1]["column"], "2");
+}
+
+#[test]
+fn function_fields_share_one_real_parse_and_module_walk() {
+    let source = "def a(): return 1\ndef b(): return 2\n";
+    let result = batch_with_metrics(&[Document {
+        source: source.into(),
+        requests: vec![
+            Request {
+                start: 0,
+                end: 17,
+                kind: "function_definition".into(),
+                fields: vec!["body_sha256".into(), "signature_sha256".into()],
+            },
+            Request {
+                start: 18,
+                end: 35,
+                kind: "function_definition".into(),
+                fields: vec!["dump".into()],
+            },
+        ],
+    }])
+    .unwrap_or_else(|error| panic!("{}", error.0));
+    assert_eq!(result.parses, 1);
+    assert_eq!(result.module_walks, 1);
+    assert_eq!(result.documents[0].len(), 2);
+}

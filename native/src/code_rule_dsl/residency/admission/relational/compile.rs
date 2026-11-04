@@ -43,6 +43,7 @@ pub(in crate::code_rule_dsl) fn compile(
             "query",
             "key",
             "code",
+            "message",
             "references",
             "locations",
             "partitionBy",
@@ -581,7 +582,11 @@ pub(in crate::code_rule_dsl) fn compile(
         .get("code")
         .map(|value| non_empty_str(Some(value), &format!("{path}/code")).map(str::to_owned))
         .transpose()?;
-    for field in key.iter().chain(code.iter()) {
+    let message = spec
+        .get("message")
+        .map(|value| non_empty_str(Some(value), &format!("{path}/message")).map(str::to_owned))
+        .transpose()?;
+    for field in key.iter().chain(code.iter()).chain(message.iter()) {
         if !columns.contains(field) {
             return Err(invalid(format!("{path}: unknown output column {field}")));
         }
@@ -603,6 +608,7 @@ pub(in crate::code_rule_dsl) fn compile(
         query,
         key,
         code,
+        message,
         last_uses,
         reads_source,
     })

@@ -908,6 +908,10 @@ pub(super) struct Metrics {
     pub(super) files: usize,
     pub(super) visited_nodes: usize,
     pub(super) witnesses: usize,
+    pub(super) python_ast_parses: usize,
+    pub(super) python_ast_module_walks: usize,
+    pub(super) syntax_loads: usize,
+    pub(super) relational_materializations: std::collections::BTreeMap<String, usize>,
     pub(super) line_index_nanoseconds: u64,
     pub(super) regex_nanoseconds: u64,
     pub(super) ast_parse_nanoseconds: u64,
@@ -941,10 +945,27 @@ pub(super) struct Metrics {
 }
 
 impl Metrics {
+    pub(super) fn observe_native_work(&mut self, other: &Self) {
+        self.python_ast_parses += other.python_ast_parses;
+        self.python_ast_module_walks += other.python_ast_module_walks;
+        self.syntax_loads += other.syntax_loads;
+        for (name, count) in &other.relational_materializations {
+            *self
+                .relational_materializations
+                .entry(name.clone())
+                .or_default() += count;
+        }
+    }
     pub(super) fn merge(&mut self, other: Self) {
         self.files += other.files;
         self.visited_nodes += other.visited_nodes;
         self.witnesses += other.witnesses;
+        self.python_ast_parses += other.python_ast_parses;
+        self.python_ast_module_walks += other.python_ast_module_walks;
+        self.syntax_loads += other.syntax_loads;
+        for (name, count) in other.relational_materializations {
+            *self.relational_materializations.entry(name).or_default() += count;
+        }
         self.line_index_nanoseconds += other.line_index_nanoseconds;
         self.regex_nanoseconds += other.regex_nanoseconds;
         self.ast_parse_nanoseconds += other.ast_parse_nanoseconds;

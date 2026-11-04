@@ -111,11 +111,16 @@ pub(super) fn execute(
         }
         mappings.push(mapping);
     }
-    let mut rows = match canonical::batch(&documents) {
-        Ok(rows) => rows
-            .into_iter()
-            .map(|r| r.into_iter().map(Some).collect::<Vec<_>>())
-            .collect::<Vec<_>>(),
+    let mut rows = match canonical::batch_with_metrics(&documents) {
+        Ok(response) => {
+            allowance.python_ast_parses += response.parses;
+            allowance.python_ast_module_walks += response.module_walks;
+            response
+                .documents
+                .into_iter()
+                .map(|r| r.into_iter().map(Some).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        }
         Err(e) => return fail(&e.0, pending.len()),
     };
     #[cfg(feature="code-rule-profile")]

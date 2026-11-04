@@ -26,6 +26,8 @@ impl Drop for ReadOnly {
 pub(in crate::code_rule_dsl) struct Allowance {
     used: usize,
     resident: Resident,
+    pub(super) python_ast_parses: usize,
+    pub(super) python_ast_module_walks: usize,
 }
 impl Allowance {
     pub(in crate::code_rule_dsl) fn clear_resident(&mut self) {
