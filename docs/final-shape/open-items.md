@@ -1245,3 +1245,32 @@ Decision 0036: text matching is chunk-at-a-time. The host slots are done. On the
 test is still a `ByteNfa` stepped per byte per path, under a work limit. **Closure:** a chunked
 automaton per file, where each workgroup computes its chunk's state map and the maps are composed
 by a prefix scan, differentially tested against the host's DFA.
+
+## O67. Memory over budget at 1,000 files
+
+serverplan_quality on 1,000 data-layer files peaks at 1,055 MB RSS (t18 § 3), over the 1 GB
+budget. The push and the first chunk's tapes reach 693 MB, the candidate sets (dense bitmaps, every
+intermediate kept) 900 MB, the label passes 1,033 MB. The scheduler's chunk budget counts core facts
+only. **Closure:** chunks sized by what a chunk holds (tapes, bitmaps, labels), candidate sets
+freed as their last reader runs, and a 1,000-file run under the budget.
+
+## O68. The Metal label path recomputes host facts per split
+
+On Metal, serverplan_quality's labels cost 22.6 s CPU at 1,000 files against 17.2 s on the CPU,
+with host facts 12.6 s against 5.2 s, and peak RSS 1.6 GB (t18 § 3). A batch whose label levels
+outgrow the device is split in halves, and each half recomputes its facts. **Closure:** facts
+computed once per batch and shared by its halves.
+
+## O69. Rules over derived relations plan without statistics
+
+The wave plans its rules once, before any chunk, and a derived relation is priced at 1,000 rows
+whatever it holds. Bound base relations now carry their vtab indexes and distinct counts (t18 § 5),
+but a rule joining derived relations still orders from that guess. **Closure:** the planner's
+observed cardinalities (`stats.obs`) fed back between chunks, or a replan after the first chunk.
+
+## O70. No ancestor relation over syntax ids
+
+Authored rules find a node's nearest enclosing scope by joining every scope's byte range in the
+file (t18 § 4): quadratic per file, 10 s of the authored logic's 24 s at 1,000 files. The wave's
+rules cannot use `nearest` or `tape`'s subtree intervals without arithmetic. **Closure:** with O63,
+an `ancestor`/`nearest` relation over syntax ids, bound with the chunk like the base relations.
