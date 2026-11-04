@@ -170,14 +170,9 @@ unsafe impl<'a> VTab<'a> for Table {
                             info.is_in_constraint(path).unwrap_or(false),
                         )
                     });
-                if let Some((primary, c)) = primary
-                    && (range.is_none()
-                        || self.shared.source.scoped_estimate(
-                            c.column() as usize,
-                            info.is_in_constraint(primary)?,
-                            info.is_in_constraint(path)?,
-                        ) <= 32)
-                {
+                // Retain the existing equality anchor when it is available.
+                // File pushdown must not introduce a new range-cost heuristic.
+                if let Some((primary, c)) = primary {
                     let col = c.column() as usize;
                     let batch = info.is_in_constraint(primary)?;
                     let path_batch = info.is_in_constraint(path)?;
