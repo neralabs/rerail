@@ -838,6 +838,46 @@
           }
         ]
       }
+    },
+    {
+      "id": "supplied-hydration-visitation-order",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "impl/common/l2070_server_plan/steps/hydration_order.py",
+            "module": "impl.common.l2070_server_plan.steps.hydration_order",
+            "functions": [
+              {
+                "file": "impl/common/l2070_server_plan/steps/hydration_order.py",
+                "symbol": "impl.common.l2070_server_plan.steps.hydration_order.Step.preprocess",
+                "qualname": "Step.preprocess",
+                "scope": [
+                  "Step"
+                ],
+                "name": "preprocess",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    3,
+                    "hydrate_many_post_op"
+                  ],
+                  [
+                    2,
+                    "runtime_sql_conn_from_hydrator"
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

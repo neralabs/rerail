@@ -1255,6 +1255,77 @@
       "expected": [
         "l1234_test.facts_only.derive: cache argument 'cache' annotation 'tuple[Literal[\"a\\'b\\\\nc\"], \\'\\u2028\\']' does not match cache type 'l2070_batching.optimizer_run_cache.OptimizerRunCache'"
       ]
+    },
+    {
+      "id": "supplied-hydration-visitation-order",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "impl/common/l2070_server_plan/steps/hydration_order.py",
+            "module": "impl.common.l2070_server_plan.steps.hydration_order",
+            "functions": [
+              {
+                "file": "impl/common/l2070_server_plan/steps/hydration_order.py",
+                "symbol": "impl.common.l2070_server_plan.steps.hydration_order.Step.preprocess",
+                "qualname": "Step.preprocess",
+                "scope": [
+                  "Step"
+                ],
+                "name": "preprocess",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    3,
+                    "hydrate_many_post_op"
+                  ],
+                  [
+                    2,
+                    "runtime_sql_conn_from_hydrator"
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 1,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-011",
+            "file": "impl/common/l2070_server_plan/steps/hydration_order.py",
+            "line": 3,
+            "symbol": "impl.common.l2070_server_plan.steps.hydration_order.Step.preprocess",
+            "message": "Step.preprocess uses forbidden terminal hydration/runtime-SQL helper"
+          }
+        ]
+      ]
     }
   ]
 }
