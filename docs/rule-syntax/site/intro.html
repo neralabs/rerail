@@ -140,9 +140,10 @@
 }
 </div>
 <div class="cap">.rr: the same check</div><div data-rr>
-.use python/names                         // sym_of: what an expression refers to, through imports
+.use python/names        // sym_of: what an expression refers to
 B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), sym_of($f, &quot;builtins.exec&quot;).
-B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), kind($f, &quot;parenthesized_expression&quot;),
+B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f),
+    kind($f, &quot;parenthesized_expression&quot;),
     child($f, $g, 0), sym_of($g, &quot;builtins.exec&quot;).     // (exec)(src)
 </div>
     </div>
@@ -151,13 +152,17 @@ B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), kin
   <section class="sect snips">
     <div class="txt">
       <h3>It cannot say what the data-layer checks need</h3>
-      <p>The data-layer checks follow imports across files and reason over the module graph. Today they are six Python linters, {{dl_py_lines}} lines. PR 2539 ported one to YAML with SQL strings, which can only test names.</p>
+      <p>The data layer is a Python codebase of about 9,000 files whose architecture is enforced by custom checks: which layer may import which, sync and async methods in pairs, no import cycles. They follow imports across files and reason over the module graph, so today they are Python scripts, not Rerail rules. The six on this page are {{dl_py_lines}} lines. An earlier attempt moved one into YAML rules with embedded SQL, which can only test the text of names.</p>
       <p>Example: function-level-imports calls an import "circular-avoidance" when the module <em>name</em> looks internal. The .rr version proves the cycle on the import graph.</p>
     </div>
     <div class="code">
-<div class="cap">PR 2539: lint_function_level_imports.yaml (abridged)</div><div data-src>
+<div class="cap">Earlier attempt: YAML with embedded SQL (abridged)</div><div data-src>
 - when:
-    expr: &quot;%level &gt; 0 OR %module = &#x27;&#x27; OR %module IN (&#x27;api&#x27;, &#x27;impl&#x27;, &#x27;data_layer&#x27;, &#x27;_internal&#x27;) OR %module LIKE &#x27;api.%&#x27; OR %module LIKE &#x27;impl.%&#x27; OR … OR (SUBSTR(%module, 1, 1) = &#x27;l&#x27; AND SUBSTR(%module, 2, 1) &gt;= &#x27;0&#x27; AND SUBSTR(%module, 2, 1) &lt;= &#x27;9&#x27; AND … ))&quot;
+    expr: &quot;%level &gt; 0 OR %module = &#x27;&#x27;
+      OR %module IN (&#x27;api&#x27;, &#x27;impl&#x27;, &#x27;data_layer&#x27;, &#x27;_internal&#x27;)
+      OR %module LIKE &#x27;api.%&#x27; OR %module LIKE &#x27;impl.%&#x27; OR …
+      OR (SUBSTR(%module, 1, 1) = &#x27;l&#x27; AND SUBSTR(%module, 2, 1) &gt;= &#x27;0&#x27;
+          AND SUBSTR(%module, 2, 1) &lt;= &#x27;9&#x27; AND … ))&quot;
   value: &quot;&#x27;circular-avoidance&#x27;&quot;
 </div>
 <div class="cap">Python linter: scripts/lint_function_level_imports.py</div><div data-src>
@@ -169,9 +174,11 @@ if _LAYERED_MODULE_RE.match(first_segment):     # l1000_schema, l9600_graphs, �
     return &quot;circular-avoidance&quot;
 </div>
 <div class="cap">.rr: function-level-imports.b2.rr</div><div data-rr>
-// Import i, in module a, loads module b, and b already leads back to a through imports that run
+// Import i, in module a, loads module b, and b already leads back to a through imports
+//   that run
 // at import time. Moving i to the top of a would close the cycle a → b → … → a.
-cycle($i) :- local_import($i), module_of($i, $a), loads($i, $b), $b != $a, !pkg_above($a, $b),
+cycle($i) :- local_import($i), module_of($i, $a), loads($i, $b),
+    $b != $a, !pkg_above($a, $b),
     reaches($b, $a).
 </div>
     </div>
@@ -188,11 +195,13 @@ cycle($i) :- local_import($i), module_of($i, $a), loads($i, $b), $b != $a, !pkg_
 &quot;resolves&quot;: { &quot;binding&quot;: { &quot;form&quot;: &quot;import&quot;, &quot;site&quot;: { &quot;matches&quot;: &quot;alias-to-exec&quot; } } }
 </div>
 <div class="cap">.rr: lib/python/names.rr ({{lib_py_lines}} lines for all Python libraries)</div><div data-rr>
-// walk: start at the name&#x27;s own scope and move outward, skipping class bodies, until a scope binds it.
+// walk: start at the name&#x27;s own scope and move outward, skipping class bodies, until a
+//   scope binds it.
 walk($n, $x, $s) :- nameref($n, $x), nearest($n, $s, scope).
 walk($n, $x, $p) :- walk($n, $x, $s), !bound_in($s, $x), nearest($s, $p, fscope).
-look($n, $x, $s) :- walk($n, $x, $s), bound_in($s, $x).          // the scope that binds it
-// sym_of: an imported name gives the module path; a local def its qualified name; else a builtin.
+look($n, $x, $s) :- walk($n, $x, $s), bound_in($s, $x).   // the scope that binds it
+// sym_of: an imported name gives the module path; a local def its qualified name; else
+//   a builtin.
 sym_of($n, $q) :- qn($n, $q0), resolve_export($q0, $q).
 sym_of($n, $q) :- look($n, $x, $s), defn($s, $x, $f), qualname($f, $q).
 sym_of($n, $q) :- builtin_ref($n, $x), $q = @cat(&quot;builtins&quot;, $x).
@@ -259,7 +268,7 @@ sym_of($n, $q) :- builtin_ref($n, $x), $q = @cat(&quot;builtins&quot;, $x).
 </div>
 <div class="cap">Findings</div><div data-src>
 today (JSON)    no findings: the rule stops at any component
-.rr (B2)        line 2  nested router   definite  → .mode
+.rr             line 2  nested router   definite  → .mode
                 line 3  nested router   possible  → .possible
 </div>
     </div>
@@ -275,7 +284,8 @@ today (JSON)    no findings: the rule stops at any component
 &quot;fix&quot;: &quot;$E&quot;
 </div>
 <div class="cap">.rr</div><div data-rr>
-// Hoist a function-level import, but only if it closes no cycle and is a plain statement.
+// Hoist a function-level import, but only if it closes no cycle and is a plain
+//   statement.
 hoist_import($i, &quot;deferred-no-cycle&quot;) :- plain_stmt($i), !clash($i) =&gt; hoist($i).
 </div>
 <div class="cap">The edit it makes</div><div data-diff>
@@ -296,7 +306,7 @@ hoist_import($i, &quot;deferred-no-cycle&quot;) :- plain_stmt($i), !clash($i) =&
       <p>In React, a react-router router (<code>&lt;BrowserRouter&gt;</code>, <code>&lt;MemoryRouter&gt;</code>, …) owns the app's location. It keeps the current URL and the navigation history, and hands them to everything rendered below it through React context. <code>&lt;Link&gt;</code>, <code>useNavigate()</code> and <code>&lt;Route&gt;</code> read that context to know where the app is and to move it.</p>
       <p>So there must be exactly one router above any piece of the tree. A second router inside the first would start its own history: links below it would change the inner router's location, not the URL bar or the rest of the app. react-router refuses this at render time with “You cannot render a &lt;Router&gt; inside another &lt;Router&gt;. You should never have more than one in your app.”</p>
       <p>That error appears only when that screen renders, so tests and review can miss it. It usually comes from code moved between contexts: a page copied from a standalone app, or a component that wraps itself in <code>&lt;MemoryRouter&gt;</code> for a demo or test and is then used inside the app. A static rule catches it before it runs.</p>
-      <p>This version reports a router inside another router in the same file, with only HTML elements or fragments between them. It stops at anything it cannot see through: a function boundary, an attribute, or a component, whose source it does not read. That makes it precise but incomplete; the two misses below are what the more accurate B2 version adds.</p>
+      <p>This version reports a router inside another router in the same file, with only HTML elements or fragments between them. It stops at anything it cannot see through: a function boundary, an attribute, or a component, whose source it does not read. That makes it precise but incomplete; the two misses below are what the accurate version, on the Data-layer rules tab, adds.</p>
     </div>
     <div class="code">
 <div class="cap">What it reports</div><div data-src>
@@ -306,14 +316,14 @@ export function App() {
   return (
     &lt;BrowserRouter&gt;
       &lt;main&gt;
-        &lt;MemoryRouter&gt;…&lt;/MemoryRouter&gt;      // ← reported: only &lt;main&gt; lies between the two routers
+        &lt;MemoryRouter&gt;…&lt;/MemoryRouter&gt;   // ← reported: only &lt;main&gt; in between
       &lt;/main&gt;
       &lt;Layout&gt;
-        &lt;MemoryRouter&gt;…&lt;/MemoryRouter&gt;      // missed here: the climb stops at the component &lt;Layout&gt;;
-                                            //   B2 reads Layout and reports it if Layout renders children
+        &lt;MemoryRouter&gt;…&lt;/MemoryRouter&gt;   // missed: the climb stops at &lt;Layout&gt;;
+                                         //   the accurate version reads Layout&#x27;s source
       &lt;/Layout&gt;
-      &lt;Route element={&lt;MemoryRouter/&gt;} /&gt;   // missed here: inside an attribute;
-                                            //   B2 knows Route renders `element` under the router
+      &lt;Route element={&lt;MemoryRouter/&gt;} /&gt;   // missed: inside an attribute;
+                                            //   the accurate version follows `element`
     &lt;/BrowserRouter&gt;
   );
 }
@@ -337,14 +347,16 @@ export function App() {
 router_el($e) :- tag($e, $t), kind($t, &quot;identifier&quot;), ref_site($t, $s),
     imported($s, $m, $x), $m in router_module, $x in router_export.
 
-// 2. stop(n): the climb ends at functions and attributes, at routers, and at components.
+// 2. stop(n): the climb ends at functions and attributes, at routers, and at
+//   components.
 stop($n) :- kind($n, $k), $k in barrier.
 stop($n) :- router_el($n).
 stop($e) :- kind($e, &quot;jsx_element&quot;), !router_el($e), tag($e, $t),
     !(kind($t, &quot;identifier&quot;), text($t, $s), $s =~ &quot;^[a-z]&quot;).     // not &lt;div&gt;, &lt;main&gt;, …
 
 // 3. The finding: the nearest stop above a router is a router.
-NESTED_ROUTER_JSX($inner) :- router_el($inner), nearest($inner, $outer, stop), router_el($outer).
+NESTED_ROUTER_JSX($inner) :- router_el($inner),
+    nearest($inner, $outer, stop), router_el($outer).
 </div>
     </div>
   </section>

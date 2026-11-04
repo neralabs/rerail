@@ -21,9 +21,9 @@ import runpy  # noqa: E402
 
 LIBS = [
     ("core", "native", "What the binary provides: tape relations, tree arithmetic, value builtins, repository readers."),
-    ("python/names", "datalog", "Scopes, bindings, references and qualified names. LEGB and rebinding are lifted from Typing-support's calls.rdl."),
+    ("python/names", "datalog", "Scopes, bindings, references and qualified names. Python's scope lookup and rebinding, adapted from an earlier Datalog prototype."),
     ("python/imports", "datalog", "What each import binds and loads, the import-time module graph, and module exports."),
-    ("python/calls", "datalog", "Call targets and call chains: calls.rdl's points-to resolution, three-valued through call_open."),
+    ("python/calls", "datalog", "Call targets and call chains: which function a call can reach, with unknown targets kept as unknown."),
     ("python/flow", "datalog", "Statement order within a body. Tree arithmetic only."),
     ("tsx/names", "datalog", "TypeScript and JavaScript scopes after eslint-scope, import specifier resolution, exports and symbols across files."),
     ("tsx/jsx", "datalog", "JSX tags, components, and what renders under what."),
@@ -104,21 +104,21 @@ def main():
     hand_meta.append({"key": "router", "title": "no-nested-routers", "tags": ["worked example", "typescript"],
                       "summary": "A react-router router nested inside another. Today's JSON, its generated form, the same meaning written by hand, and a more accurate version that follows components across files.",
                       "views": [
-                          {"label": "B2: more accurate", "panes": [{"title": "B2 .rr", "src": "b2", "lang": "rr"}, {"title": "B1 .rr: same meaning as the JSON", "src": "b1", "lang": "rr"}]},
-                          {"label": "Today vs B1", "panes": [{"title": "Today: JSON", "src": "json", "lang": "json"}, {"title": "B1 .rr", "src": "b1", "lang": "rr"}]},
+                          {"label": "More accurate", "panes": [{"title": "Accurate version .rr", "src": "b2", "lang": "rr"}, {"title": "Same meaning as the JSON .rr", "src": "b1", "lang": "rr"}]},
+                          {"label": "Today vs .rr", "panes": [{"title": "Today: JSON", "src": "json", "lang": "json"}, {"title": "Same meaning .rr", "src": "b1", "lang": "rr"}]},
                           {"label": "Today vs generated", "panes": [{"title": "Today: JSON", "src": "json", "lang": "json"}, {"title": "Generated .rr", "src": "gen", "lang": "rr"}]},
                       ]})
 
     fli1, fli2 = read(os.path.join(RS, "function-level-imports.b1.rr")), read(os.path.join(RS, "function-level-imports.b2.rr"))
-    yaml = git_show(a.ndl, PR2539, "scripts/lint_specs/lint_function_level_imports.yaml") or "# PR 2539 YAML not available in this checkout\n"
-    py = git_show(a.ndl, NDL_COMMIT, "scripts/lint_function_level_imports.py") or "# oracle not available\n"
+    yaml = git_show(a.ndl, PR2539, "scripts/lint_specs/lint_function_level_imports.yaml") or "# The earlier YAML port is not available in this checkout\n"
+    py = git_show(a.ndl, NDL_COMMIT, "scripts/lint_function_level_imports.py") or "# The Python linter is not available in this checkout\n"
     hand_data["fli"] = {"yaml": yaml, "b1": fli1, "b2": fli2, "py": py}
     hand_meta.append({"key": "fli", "title": "function-level-imports", "tags": ["data-layer", "ratchet"],
-                      "summary": "Classifies imports inside functions. B1 matches the Python linter; B2 classifies from evidence: proven import cycles, annotation-only use, ImportError guards.",
+                      "summary": "Classifies imports inside functions. One version matches today's Python linter exactly; the accurate version classifies from evidence: proven import cycles, annotation-only use, ImportError guards.",
                       "views": [
-                          {"label": "B2: from evidence", "panes": [{"title": "B2 .rr", "src": "b2", "lang": "rr"}, {"title": "B1 .rr: the Python linter's meaning", "src": "b1", "lang": "rr"}]},
-                          {"label": "PR 2539 YAML vs B1", "panes": [{"title": "PR 2539 YAML (nera.linter/v1)", "src": "yaml", "lang": "yaml"}, {"title": "B1 .rr", "src": "b1", "lang": "rr"}]},
-                          {"label": "Python oracle vs B1", "panes": [{"title": "scripts/lint_function_level_imports.py", "src": "py", "lang": "text"}, {"title": "B1 .rr", "src": "b1", "lang": "rr"}]},
+                          {"label": "From evidence", "panes": [{"title": "Accurate version .rr", "src": "b2", "lang": "rr"}, {"title": "Same meaning as the Python linter .rr", "src": "b1", "lang": "rr"}]},
+                          {"label": "Earlier YAML attempt vs .rr", "panes": [{"title": "Earlier attempt: YAML with embedded SQL", "src": "yaml", "lang": "yaml"}, {"title": "Same meaning as the Python linter .rr", "src": "b1", "lang": "rr"}]},
+                          {"label": "Python linter vs .rr", "panes": [{"title": "scripts/lint_function_level_imports.py", "src": "py", "lang": "text"}, {"title": "Same meaning as the Python linter .rr", "src": "b1", "lang": "rr"}]},
                       ]})
 
     for key, slug, pyfile in DATA_LAYER:
@@ -133,12 +133,12 @@ def main():
             doc = json.loads(read(cand))
             entry["json"] = compact(doc)
             entry["gen"] = translate.translate(doc)[0]
-            views[0]["panes"].append({"title": "Today: candidate JSON port", "src": "json", "lang": "json"})
-            views.append({"label": "Candidate JSON vs generated", "panes": [{"title": "Candidate JSON port", "src": "json", "lang": "json"}, {"title": "Generated .rr", "src": "gen", "lang": "rr"}]})
+            views[0]["panes"].append({"title": "Today: JSON port", "src": "json", "lang": "json"})
+            views.append({"label": "JSON port vs generated", "panes": [{"title": "JSON port in today's format", "src": "json", "lang": "json"}, {"title": "Generated .rr", "src": "gen", "lang": "rr"}]})
         src = git_show(a.ndl, NDL_COMMIT, "scripts/" + pyfile)
         if src:
             entry["py"] = src
-            views.append({"label": "Python oracle vs final", "panes": [{"title": "scripts/" + pyfile, "src": "py", "lang": "text"}, {"title": slug + ".rr", "src": "final", "lang": "rr"}]})
+            views.append({"label": "Python linter vs .rr", "panes": [{"title": "scripts/" + pyfile, "src": "py", "lang": "text"}, {"title": slug + ".rr", "src": "final", "lang": "rr"}]})
         hand_data[key] = entry
         hand_meta.append({"key": key, "title": slug, "tags": ["data-layer"], "summary": description(final), "views": views})
 

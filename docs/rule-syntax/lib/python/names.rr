@@ -1,5 +1,5 @@
 // python/names: who binds a name, and what a reference reads.
-// Lifted from Typing-support's calls.rdl (LEGB, global/nonlocal, unconditional rebinding); the interface
+// Adapted from an earlier Datalog prototype of call resolution (LEGB, global/nonlocal, unconditional rebinding); the interface
 // relations at the end are what rules use. File-local except `sym_of` through re-exports (python/imports).
 //
 // How to read this file

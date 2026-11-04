@@ -9,13 +9,13 @@
 // allow(path, scope): imports that are deliberate and never reported. A fact written inline (a rule with no body).
 .decl allow(path: sym, scope: sym)
 allow("_internal/dynamic_import.py", "load_python_module").   // closed deferred-import registry
-// B2: classifies from evidence, not from module names.
+// Accurate version: classifies from evidence, not from module names.
 //   typing-only          under `if TYPE_CHECKING:`, or every name it binds is read only in annotations
 //   unread               it binds nothing that is read: unused, or imported for its side effects
 //   test-helper          inside a test function or a pytest fixture
 //   optional-dependency  inside `try:` with a handler for ImportError
 //   circular-avoidance   moving it to the top would close an import cycle, proven on the module graph
-//   deferred-no-cycle    a workspace module that could move to the top (B1 counted these as circular-avoidance)
+//   deferred-no-cycle    a workspace module that could move to the top (the linter counts these as circular-avoidance)
 //   heavy-dependency     a known expensive package (the Python declares KNOWN_EXPENSIVE_IMPORTS and never uses it)
 //   other
 //
@@ -26,7 +26,7 @@ allow("_internal/dynamic_import.py", "load_python_module").   // closed deferred
 //   3. local_import picks the imports inside a function: the only ones this rule reports.
 //   4. cycle, workspace, guarded, read, value_read, test_fn, allowed are one fact of evidence each.
 //   5. FUNCTION_IMPORT gives each local import the first code in `first { }` whose evidence holds.
-// Unlike B1, nothing here matches module names against a list of internal packages; the module graph decides.
+// Unlike the linter, nothing here matches module names against a list of internal packages; the module graph decides.
 
 .use python/imports
 //   import_stmt(i)      i is an import or from-import statement
@@ -125,7 +125,7 @@ FUNCTION_IMPORT($i, $c) :- local_import($i), !allowed($i),
 // these rules run once per finding, never over the whole repository.
 //
 // hoist_import is `safe`: Rerail may apply it without review. That is only claimed where the evidence says the
-// move cannot change behaviour, which is what B2's classification is for:
+// move cannot change behaviour, which is what this version's classification is for:
 //   - "deferred-no-cycle": the import loads workspace code and moving it closes no import cycle (cycle is false);
 //   - the import is a plain statement of the function body, not inside if/try/with/for, so it runs unconditionally
 //     whenever the function does and no exception handler around it is lost;

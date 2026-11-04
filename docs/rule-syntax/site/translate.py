@@ -404,7 +404,7 @@ def resolves(prog, r, v, vs):
     return lits
 
 
-def wrap(head, lits, width=112, edits=None):
+def wrap(head, lits, width=88, edits=None):
     if not lits:
         return head + (f" => {', '.join(edits)}." if edits else ".")
     if edits:

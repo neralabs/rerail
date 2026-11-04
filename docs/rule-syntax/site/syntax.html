@@ -56,7 +56,7 @@ B102($c) :- kind($c, &quot;call&quot;),            // $c is a call node
 .use python/names                        // load the library that defines sym_of
 
 // Rows the library derives for the code above:
-//   sym_of(#4, &quot;builtins.exec&quot;)   `exec` is not bound in this file, so it is the builtin
+// sym_of(#4, &quot;builtins.exec&quot;)   `exec` is not bound in this file, so it is the builtin
 //   sym_of(#6, &quot;builtins.exec&quot;)   `run` is bound by the import to builtins.exec
 B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), sym_of($f, &quot;builtins.exec&quot;).
 // Rows derived: B102(#3), B102(#5).
@@ -89,22 +89,26 @@ B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f),
     </div>
     <div class="code">
 <div class="cap">Rule</div><div data-rr>
-.policy &quot;bandit-b102-exec-used&quot; revision 3       // identity: id and revision
+.policy &quot;bandit-b102-exec-used&quot; revision 3   // identity
 .description &quot;Avoid exec() calls, including through import aliases.&quot;
-.language python                                // grammar of the files and patterns
-.mode steer                                     // a finding steers the agent; `block` would stop the edit
-.scope include &quot;**/*.py&quot;                        // which files the rule reads
+.language python                 // grammar of files and patterns
+.mode steer                      // steer the agent; `block` would stop the edit
+.scope include &quot;**/*.py&quot;         // which files the rule reads
 
-.use python/names                               // brings in sym_of: what a name refers to
+.use python/names                // sym_of: what a name refers to
 
-// The finding: a relation with one column, the node to report. The string is the message.
-.violation B102(at: node) &quot;Replace this exec call with code that performs the operation directly.&quot;
-    suppress nosec &quot;B102&quot;                       // `# nosec B102` on the line silences it, as Bandit does
+// The finding: a relation with one column, the node to report. The string is the
+//   message.
+.violation B102(at: node)
+    &quot;Replace this exec call with code that performs the operation directly.&quot;
+    suppress nosec &quot;B102&quot;        // `# nosec B102` silences it, as in Bandit
 // A call whose function expression refers to builtins.exec. sym_of follows imports, so
 // `from builtins import exec as run` still resolves `run` to &quot;builtins.exec&quot;.
 B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), sym_of($f, &quot;builtins.exec&quot;).
-// The same through parentheses: `(exec)(code)`. Child 0 of the parenthesized expression is what it wraps.
-B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f), kind($f, &quot;parenthesized_expression&quot;),
+// The same through parentheses: `(exec)(code)`. Child 0 of the parenthesized expression
+//   is what it wraps.
+B102($c) :- kind($c, &quot;call&quot;), field($c, &quot;function&quot;, $f),
+    kind($f, &quot;parenthesized_expression&quot;),
     child($f, $g, 0), sym_of($g, &quot;builtins.exec&quot;).
 </div>
 <div class="cap">What it reports</div><div data-src>
@@ -155,27 +159,34 @@ exec(code)                          # not reported: this exec is the local funct
 // Regex on a node&#x27;s text. Matches &lt;div&gt;&#x27;s tag `div`, not &lt;Card&gt;&#x27;s `Card`.
 host_tag($t)    :- kind($t, &quot;identifier&quot;), $t =~ &quot;^[a-z]&quot;.
 
-// Set membership. `barrier` is a .kindset declared elsewhere, e.g. &quot;function_declaration&quot; | &quot;class_declaration&quot;.
+// Set membership. `barrier` is a .kindset declared elsewhere, e.g.
+//   &quot;function_declaration&quot; | &quot;class_declaration&quot;.
 stop($n)        :- kind($n, $k), $k in barrier.
 
 // Negation of a relation: a JSX element that is not a router element.
 stop($e)        :- kind($e, &quot;jsx_element&quot;), !router_el($e).
 
-// Negation of a conjunction: no open tag of e is a host tag. Reads &quot;there is no $o with both&quot;.
+// Negation of a conjunction: no open tag of e is a host tag. Reads &quot;there is no $o with
+//   both&quot;.
 stop($e)        :- kind($e, &quot;jsx_element&quot;), !(field($e, &quot;open_tag&quot;, $o), host($o)).
 
-// some { }: an inner query whose variables stay inside. &quot;Import i is not under any TYPE_CHECKING block.&quot;
+// some { }: an inner query whose variables stay inside. &quot;Import i is not under any
+//   TYPE_CHECKING block.&quot;
 narrow($i)      :- import_stmt($i), !some { within($i, $b), type_checking_block($b) }.
 
 // count { }: how many rows the inner query has. A block with exactly one statement.
 single($b)      :- kind($b, &quot;block&quot;), $k = count { child($b, _, _) }, $k = 1.
 
-// A value builtin in the head: @cat(&quot;pkg.mod&quot;, &quot;f&quot;) is &quot;pkg.mod.f&quot;. def f inside module pkg.mod gets that qualname.
+// A value builtin in the head: @cat(&quot;pkg.mod&quot;, &quot;f&quot;) is &quot;pkg.mod.f&quot;. def f inside module
+//   pkg.mod gets that qualname.
 qualname($f, @cat($m, $x)) :- def_name($f, $x), nearest($f, $s, scope), modname($s, $m).
 
-// first { }: the first line whose condition holds gives the value; the last line is the default.
+// first { }: the first line whose condition holds gives the value; the last line is the
+//   default.
 FUNCTION_IMPORT($i, $c) :- local_import($i),
-    $c = first { &quot;typing-only&quot; if !value_read($i); &quot;test-helper&quot; if test_fn($i); &quot;other&quot; }.
+    $c = first { &quot;typing-only&quot; if !value_read($i);
+                 &quot;test-helper&quot; if test_fn($i);
+                 &quot;other&quot; }.
 </div>
 <div class="cap">Python, for the last rule</div><div data-src>
 import typing
@@ -238,58 +249,70 @@ def handler():
 import os
 
 def load(path):
-    from app.storage import read_blob     # ← FUNCTION_IMPORT, code &quot;deferred-no-cycle&quot;
-    return read_blob(path)                #   app.storage does not import this module, so no cycle
+    from app.storage import read_blob   # ← &quot;deferred-no-cycle&quot;: app.storage
+    return read_blob(path)              #   does not import this module
 
 def debug():
-    import app.plugins.audit              # ← FUNCTION_IMPORT, code &quot;unread&quot;: nothing reads `app`
+    import app.plugins.audit            # ← &quot;unread&quot;: nothing reads `app`
 </div>
 <div class="cap">Rule</div><div data-rr>
 .violation FUNCTION_IMPORT(at: node, code: sym) &quot;{at.text}&quot;
-    fix safe hoist_import &quot;Move `{at.text}` to the top of the module&quot;   // safe: may apply unreviewed
-    fix remove_import &quot;Delete `{at.text}`: nothing reads what it binds&quot; // a suggestion (the default)
+    // safe: Rerail may apply it unreviewed
+    fix safe hoist_import &quot;Move `{at.text}` to the top of the module&quot;
+    // a suggestion (the default)
+    fix remove_import &quot;Delete `{at.text}`: nothing reads what it binds&quot;
 
-// Fix 1. The head&#x27;s columns are the finding&#x27;s: $i is the import, &quot;deferred-no-cycle&quot; its code, so
+// Fix 1. The head&#x27;s columns are the finding&#x27;s: $i is the import, &quot;deferred-no-cycle&quot;
+//   its code, so
 // this rule applies only to findings with that code. The body is the safety argument:
-//   plain_stmt($i)  the import is a direct statement of the function body, not inside if/try/with,
+// plain_stmt($i)  the import is a direct statement of the function body, not inside
+//   if/try/with,
 //                   so moving it cannot skip an exception handler or a condition;
-//   !clash($i)      no module-level name is already bound to something else under the same name.
+// !clash($i)      no module-level name is already bound to something else under the
+//   same name.
 // `=&gt; hoist($i)` is the edit: move this statement to the top of the module.
 hoist_import($i, &quot;deferred-no-cycle&quot;) :- plain_stmt($i), !clash($i) =&gt; hoist($i).
 
-// Fix 2. No body: every &quot;unread&quot; finding gets it. remove_stmt deletes the statement, or writes
+// Fix 2. No body: every &quot;unread&quot; finding gets it. remove_stmt deletes the statement, or
+//   writes
 // `pass` when it was the only statement, so the function stays valid Python.
 remove_import($i, &quot;unread&quot;) =&gt; remove_stmt($i).
 </div>
 <div class="cap">Library edit, one level down</div><div data-rr>
 // hoist (python/imports). `$i` in the template is the statement&#x27;s own text.
 .edit hoist(i: node)
-hoist($i) :- docof($i, $d), some { import_alias($i, _, $m, $x, $l), !top_has($d, $m, $x, $l) }
-    =&gt; remove_stmt($i), add_top($d, `$i`).       // not imported at the top yet: move it
-hoist($i) :- docof($i, $d), !some { import_alias($i, _, $m, $x, $l), !top_has($d, $m, $x, $l) }
-    =&gt; remove_stmt($i).                          // already imported at the top: just delete the copy
+// Not imported at the top yet: move it.
+hoist($i) :- docof($i, $d),
+    some { import_alias($i, _, $m, $x, $l), !top_has($d, $m, $x, $l) }
+    =&gt; remove_stmt($i), add_top($d, `$i`).
+// Already imported at the top: just delete the copy.
+hoist($i) :- docof($i, $d),
+    !some { import_alias($i, _, $m, $x, $l), !top_has($d, $m, $x, $l) }
+    =&gt; remove_stmt($i).
 </div>
 <div class="cap">After hoist_import (safe)</div><div data-diff>
   import os
 + from app.storage import read_blob       # add_top: after the last top-level import
 
   def load(path):
--     from app.storage import read_blob   # remove_stmt → delete: the body keeps `return …`
+-     from app.storage import read_blob   # delete: `return …` remains
       return read_blob(path)
 </div>
 <div class="cap">After remove_import (suggestion, if accepted)</div><div data-diff>
   def debug():
 -     import app.plugins.audit
-+     pass                                # remove_stmt → replace: the body would be empty
++     pass                                # replace: the body would be empty
 </div>
 <div class="cap">Inline fix</div><div data-rr>
-// Inline form: the fix of this one match, using its variables. Today&#x27;s JSON fix templates become this.
-// The pattern binds $E to the expression before the doubled `!`; the edit replaces the whole match.
+// Inline form: the fix of this one match, using its variables. Today&#x27;s JSON fix
+//   templates become this.
+// The pattern binds $E to the expression before the doubled `!`; the edit replaces the
+//   whole match.
 NO_DOUBLE_BANG($n) :- $n ~ `$E!!` =&gt; replace($n, `$E!`).
 </div>
 <div class="cap">TypeScript, before and after</div><div data-diff>
 - const name = user!!.name;
-+ const name = user!.name;                // $E is `user`; `$E!` is written in place of `user!!`
++ const name = user!.name;     // $E is `user`; `user!` replaces `user!!`
 </div>
 <div class="tablewrap"><table class="map">
       <tr><th>Form</th><th>Meaning</th></tr>
@@ -310,17 +333,18 @@ NO_DOUBLE_BANG($n) :- $n ~ `$E!!` =&gt; replace($n, `$E!`).
       <p>The binary provides the parse tape, tree arithmetic, value builtins, file readers and the edit applier. Name resolution, imports, call targets, JSX structure, typing and most edits are Datalog libraries over those. A library update ships without a new binary.</p>
       <ul class="tight">
         <li><code>core</code>: native. Tape relations, <code>within</code>, <code>nearest</code>, config readers, the four edits.</li>
-        <li><code>python/names</code>, <code>python/imports</code>, <code>python/calls</code>: lifted from Typing-support's <code>calls.rdl</code>.</li>
+        <li><code>python/names</code>, <code>python/imports</code>, <code>python/calls</code>: adapted from an earlier Datalog prototype of Python call resolution.</li>
         <li><code>tsx/names</code>, <code>tsx/jsx</code>: drafted for this page.</li>
       </ul>
     </div>
     <div class="code">
 <div class="cap">What a Python rule can use</div><div data-rr>
 .use python/names       // scope_node, binding, ref_site, sym_of, annotation, catches, …
-.use python/imports     // import_alias, loads, runs, reaches, exports, hoist, ensure_import, …
+.use python/imports     // import_alias, loads, reaches, exports, hoist, …
 .use python/calls       // call_target, call_open, reach, call_arg, awaited, …
 
-// core (native): kind, field, child, text, value, within, nearest, line, doc, file, tsconfig_path,
+// core (native): kind, field, child, text, value, within, nearest, line, doc, file,
+//   tsconfig_path,
 //                replace, delete, insert_before, insert_after
 </div>
     </div>
@@ -337,29 +361,35 @@ NO_DOUBLE_BANG($n) :- $n ~ `$E!!` =&gt; replace($n, `$E!`).
     <div class="code">
 <div class="cap">TSX being checked</div><div data-src>
 import { BrowserRouter } from &quot;react-router-dom&quot;;
-import { Card } from &quot;./Card&quot;;            // workspace code: Card returns &lt;div&gt;{children}&lt;/div&gt;
-import { Shell } from &quot;@acme/ui&quot;;         // a package with no source: what Shell renders is unknown
+import { Card } from &quot;./Card&quot;;      // ours: returns &lt;div&gt;{children}&lt;/div&gt;
+import { Shell } from &quot;@acme/ui&quot;;   // a package: no source, so unknown
 
 &lt;BrowserRouter&gt;
-  &lt;Card&gt;&lt;BrowserRouter/&gt;&lt;/Card&gt;           // ← definite: Card puts its children inside this router
-  &lt;Shell&gt;&lt;BrowserRouter/&gt;&lt;/Shell&gt;         // ← possible: only if Shell renders its children
+  &lt;Card&gt;&lt;BrowserRouter/&gt;&lt;/Card&gt;     // ← definite: Card renders its children
+  &lt;Shell&gt;&lt;BrowserRouter/&gt;&lt;/Shell&gt;   // ← possible: only if Shell does
 &lt;/BrowserRouter&gt;
 </div>
-<div class="cap">Rule (from nested-routers B2)</div><div data-rr>
-// passes(e): whatever e is given as children ends up rendered inside it, so the outer router&#x27;s
-// context reaches them. The nested-router rule climbs from an inner router through passing elements.
+<div class="cap">Rule (from the accurate nested-routers rule)</div><div data-rr>
+// passes(e): whatever e is given as children ends up rendered inside it, so the outer
+//   router&#x27;s
+// context reaches them. The nested-router rule climbs from an inner router through
+//   passing elements.
 .decl passes(e: node)  must, may
 
-// &lt;div&gt;, &lt;main&gt;: host elements always render their children. Proven, so on the must side.
+// &lt;div&gt;, &lt;main&gt;: host elements always render their children. Proven, so on the must
+//   side.
 must passes($e) :- tag($e, $t), host_tag($t).
-// &lt;Card&gt;: a workspace component whose source has {children} in what it returns. Also proven.
+// &lt;Card&gt;: a workspace component whose source has {children} in what it returns. Also
+//   proven.
 must passes($e) :- tag($e, $t), sym_of($t, $q), component($q, $f), children_slot($f, _).
-// &lt;Shell&gt;: no source (no component row), so it might pass children. Only the may side gets this row.
+// &lt;Shell&gt;: no source (no component row), so it might pass children. Only the may side
+//   gets this row.
 may  passes($e) :- tag($e, $t), sym_of($t, $q), !component($q, _).
 
 // For the code above:
-//   &lt;Card&gt;   must passes, may passes   → the inner router in Card is reported with .mode
-//   &lt;Shell&gt;  may passes only           → the inner router in Shell is reported as possible, .possible mode
+// &lt;Card&gt;   must passes, may passes   → the inner router in Card is reported with .mode
+// &lt;Shell&gt;  may passes only           → the inner router in Shell is reported as
+//   possible, .possible mode
 </div>
     </div>
   </section>

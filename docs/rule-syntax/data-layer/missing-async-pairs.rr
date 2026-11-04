@@ -7,15 +7,15 @@
 .scope exclude "**/*test_*", "**/tests/**"
 .scope tests false
 .budget * { "total": 0 }    // .ratchet-baselines/lint_missing_async_pairs.json (signed): issues 0
-// Oracle: scripts/lint_missing_async_pairs.py. Methods defined directly in a class body (not inside a function),
+// Python linter: scripts/lint_missing_async_pairs.py. Methods defined directly in a class body (not inside a function),
 // public or `_…_async`, minus the exempt names and `…_lazy`; def foo and async def foo_async pair up per class.
 //   missing_pair        one side exists and does I/O (an I/O method call, or a conn/session/txn… parameter);
 //                       the other side does not exist
 //   signature_mismatch  both sides exist and their parameters, self aside, differ
-// Improves on the oracle:
-//   a counterpart inherited from a base class counts, across files (the oracle looks only in the same class body);
+// Improves on the Python linter:
+//   a counterpart inherited from a base class counts, across files (the Python linter looks only in the same class body);
 //   classes are told apart by definition, not by name (same-named classes in one file no longer merge);
-//   the whole parameter list is compared, keyword-only parameters included (the oracle compares positional ones).
+//   the whole parameter list is compared, keyword-only parameters included (the Python linter compares positional ones).
 //
 // How to read this file
 //   1. named / side: each def that can take part in a pair, with its base name and side ("sync" or "async").
@@ -31,9 +31,9 @@
 // fdef / cdef: def and class nodes, for nearest(): "the closest enclosing def" and "the closest enclosing class".
 .kindset fdef = "function_definition"
 .kindset cdef = "class_definition"
-// Parameter names that mean "this method talks to the database" (the oracle's _IO_PARAM_NAMES).
+// Parameter names that mean "this method talks to the database" (the Python linter's _IO_PARAM_NAMES).
 .set io_param  = "conn" | "connection" | "db" | "session" | "txn" | "transaction" | "session_id"
-// Method names whose call counts as I/O: the oracle's _IO_METHOD_NAMES plus execute / execute_async.
+// Method names whose call counts as I/O: the Python linter's _IO_METHOD_NAMES plus execute / execute_async.
 .set io_method = "read" | "write" | "read_version" | "write_version" | "read_async" | "write_async"
     | "read_version_async" | "write_version_async" | "insert" | "insert_async" | "insert_many" | "insert_many_async"
     | "update" | "update_async" | "update_many" | "update_many_async" | "delete_by_id" | "delete_by_id_async"
@@ -41,7 +41,7 @@
     | "upsert" | "upsert_async" | "commit" | "commit_async" | "execute" | "execute_async" | "first" | "first_async"
     | "count" | "count_async"
 // Names never paired: builders, accessors, context-manager and dunder methods, raw and internal helpers.
-// An async def is exempt when its base is (execute_raw_async because of execute_raw), as in the oracle.
+// An async def is exempt when its base is (execute_raw_async because of execute_raw), as in the Python linter.
 .set exempt = "query" | "query_unfiltered" | "filter" | "order_by" | "limit" | "offset" | "for_object" | "for_objects"
     | "filter_revision" | "between_revisions" | "since" | "by_session" | "filter_eq" | "filter_ne" | "filter_gt"
     | "filter_gte" | "filter_lt" | "filter_lte" | "filter_in" | "where" | "group_by" | "aggregate" | "window" | "having"
@@ -63,14 +63,14 @@
 .set exempt_class = "_CachedQuery"                 // operates on an in-memory dict
 
 // side(f, b, k): def f is the k side ("sync" | "async") of base name b. An async def's base drops `_async`.
-// Every base starting with `_` is skipped: the oracle's private-name filter keeps none of them in the end.
+// Every base starting with `_` is skipped: the Python linter's private-name filter keeps none of them in the end.
 // named(f, n, b0): def f, named n with base b0 (n without a trailing _async), is not exempt and not a …_lazy member.
 // The non-greedy `.*?` lets the optional (?:_async)? group take the suffix when it is there.
 .decl named(f: node, n: sym, b0: sym)
 named($f, $n, $b0) :- def_name($f, $n), !($n in exempt), !($n =~ "_lazy$"),
     $b0 = @re($n, "^(.*?)(?:_async)?$"), !($b0 in exempt).
 .decl side(f: node, b: sym, k: sym)
-// A plain def's base is its whole name, as in the oracle's sync_methods[m.name]: a sync def foo_async has base
+// A plain def's base is its whole name, as in the Python linter's sync_methods[m.name]: a sync def foo_async has base
 // "foo_async" and is not the async side of foo.
 side($f, $n, "sync")   :- named($f, $n, _), !is_async($f), !($n =~ "^_").
 // An async def's base drops _async: async def foo_async and async def foo both have base "foo".
@@ -79,7 +79,7 @@ side($f, $b, "async")  :- named($f, _, $b), is_async($f), !($b =~ "^_").
 // own(c, b, k, f): f sits directly in class c's body. sees(c, b, k, f): c has f as that side, own or inherited.
 .decl own(c: node, b: sym, k: sym, f: node)
 // nearest(f, c, cdef): c is f's closest class. !nearest(f, _, fdef): f is not inside any def, so a def nested in a
-// method is not a method (the oracle records only when its function stack is empty). _CachedQuery is skipped.
+// method is not a method (the Python linter records only when its function stack is empty). _CachedQuery is skipped.
 own($c, $b, $k, $f) :- side($f, $b, $k), nearest($f, $c, cdef), !nearest($f, _, fdef), def_name($c, $x), !($x in exempt_class).
 .decl sees(c: node, b: sym, k: sym, f: node)
 // Own methods.
@@ -88,10 +88,10 @@ sees($c, $b, $k, $f) :- own($c, $b, $k, $f).
 // this to classes that have at least one candidate method of their own, so only those classes are examined.
 sees($c, $b, $k, $f) :- own($c, _, _, _), class_def($c, $cq), mro_method($cq, _, $f), side($f, $b, $k).
 
-// The oracle's has_io: set from parameters at entry, and by any I/O call anywhere below, nested defs included.
+// The Python linter's has_io: set from parameters at entry, and by any I/O call anywhere below, nested defs included.
 // io(f): f takes a connection-like parameter, or calls an I/O method anywhere in its body.
 .decl io(f: node)
-// A parameter named conn, session, txn, … (any parameter; the oracle reads positional ones only).
+// A parameter named conn, session, txn, … (any parameter; the Python linter reads positional ones only).
 io($f) :- own(_, _, _, $f), params($f, $x, _), $x in io_param.
 // A call `….name(…)` anywhere in f's body, with name an I/O method.
 io($f) :- own(_, _, _, $f), within($c, $f), callee($c, $n), kind($n, "attribute"), field($n, "attribute", $a),

@@ -5,24 +5,24 @@
 .scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
 .scope tests false
 .budget * { "total": 0 }    // .ratchet-baselines/lint_public_api_triples.json (signed): violations 0
-// Oracle: scripts/lint_public_api_triples.py, default execution scope, over lint_lib/symbol_graph.py. Roots are what
+// Python linter: scripts/lint_public_api_triples.py, default execution scope, over lint_lib/symbol_graph.py. Roots are what
 // data_layer/*.py exports: functions group under (export module, base name); public methods of exported classes,
 // own or inherited, under (class, base name). foo / foo_async / foo_lazy fill the sync / async / lazy slots.
 //   missing_sync, missing_async, missing_lazy, missing_legacy_sync, missing_legacy_async, missing_lazy_decorator,
 //   direct_wrapper_bypasses_lazy_owner, invalid_mixed_lazy_execution_name
-// Improves on the oracle:
+// Improves on the Python linter:
 //   decorators match on the name they resolve to, so `@ls` imported as `legacy_sync as ls` counts;
-//   signature hints read resolved annotation names, string annotations included (the oracle sees neither);
-//   classes group by qualified name (the oracle keys by bare class name, merging same-named classes).
+//   signature hints read resolved annotation names, string annotations included (the Python linter sees neither);
+//   classes group by qualified name (the Python linter keys by bare class name, merging same-named classes).
 //
 // How to read this file
 //   1. Decorator facts: deco() resolves each decorator; legacy, private, lazy_decorated are flags built on it.
 //   2. Roots: root(owner, f) lists every exported function and public method. member() files each root under
 //      (owner, base name) in its sync / async / lazy slot. A group is all members with the same owner and base.
-//   3. Filters: exempt() removes groups the oracle skips; surface() keeps only groups that look like execution;
+//   3. Filters: exempt() removes groups the Python linter skips; surface() keeps only groups that look like execution;
 //      checked() also drops a group that repeats one already reported under another owner.
 //   4. Violations read checked groups: missing slots, missing decorators, a direct wrapper, a mixed name.
-// The oracle's _validate_groups loop is spread over exempt, live, checked and the violation rules.
+// The Python linter's _validate_groups loop is spread over exempt, live, checked and the violation rules.
 
 .use python/names
 .use python/imports
@@ -38,7 +38,7 @@
 .set method_skip  = "__aenter__" | "__aexit__" | "__enter__" | "__exit__" | "__init__" | "__repr__" | "__str__"
     | "authorize_internal_access" | "disable_thread_affinity_checks" | "get_thread_checks_disabled"
     | "set_disable_thread_checks" | "validate_legacy_delegates" | "versioned_read" | "versioned_write"
-// Base names that count as execution when a context hint also holds (the oracle's EXECUTION_BASE_NAMES).
+// Base names that count as execution when a context hint also holds (the Python linter's EXECUTION_BASE_NAMES).
 .set exec_base = "aggregate" | "commit" | "commit_branch" | "count" | "create_branch" | "cursor_paginate"
     | "cursor_paginate_with_total" | "delete_by_id" | "delete_by_key" | "delete_by_key_many" | "delete_many" | "execute"
     | "execute_one" | "exists" | "find_object_branches" | "find_object_revisions" | "first" | "fts_search" | "get_history"
@@ -46,16 +46,16 @@
     | "keyset_paginate_with_total" | "query" | "query_unfiltered" | "read" | "read_version" | "rollback" | "search"
     | "select_at_revision" | "select_many" | "select_one" | "table_exists" | "traverse" | "update" | "update_by_key"
     | "update_by_key_many" | "update_many" | "upsert" | "upsert_many" | "vector_search" | "write" | "write_version"
-// Owners that are by design one mode only (the oracle's _is_mode_specific_transaction_facade list).
+// Owners that are by design one mode only (the Python linter's _is_mode_specific_transaction_facade list).
 .set facade = "LazyVersionedReadTransaction" | "LazyVersionedWriteTransaction" | "SyncSessionHandle"
     | "AsyncSessionHandle" | "SyncVersionHandle" | "AsyncVersionHandle"
-// Paths of the lazy primitive builders (lazy_* functions), which are not surfaces (oracle _is_lazy_primitive_builder).
+// Paths of the lazy primitive builders (lazy_* functions), which are not surfaces (Python linter _is_lazy_primitive_builder).
 .set primitive_path = "l2055_lazy_result/lazy_reads.py" | "l2055_lazy_result/lazy_writes.py" | "l2055_lazy_result/transform.py"
-// Runtime context classes in these files are internal (oracle _is_runtime_internal_context).
+// Runtime context classes in these files are internal (Python linter _is_runtime_internal_context).
 .set ctx_path  = "l2055_lazy_result/execution_context.py" | "l2055_lazy_result/lazy_result.py"
     | "l2055_lazy_result/lazy_seq.py" | "l2055_lazy_result/transform.py"
 .set ctx_class = "BatchContext" | "EagerContext" | "LazyResult" | "LazySeq" | "OnAccessContext"
-// Files whose plan/query factories on transaction classes are not triples (oracle _is_non_triple_transaction_factory).
+// Files whose plan/query factories on transaction classes are not triples (Python linter _is_non_triple_transaction_factory).
 .set factory_path = "l2050_transaction/transaction.py" | "l7200_versioned_transactions/versioned_transactions.py"
 
 // Every later decorator test reads deco, so the "resolved name, else text" choice is made once, here.
@@ -67,7 +67,7 @@ dexpr($d, $d) :- decorator(_, $d), !kind($d, "call").
 .decl deco(f: node, q: sym)
 // The decorator resolves (through imports and aliases) to qualified name q.
 deco($f, $q) :- decorator($f, $d), dexpr($d, $e), sym_of($e, $q).
-// It does not resolve: fall back to its source text, as the oracle always does.
+// It does not resolve: fall back to its source text, as the Python linter always does.
 deco($f, $t) :- decorator($f, $d), dexpr($d, $e), !sym_of($e, _), text($e, $t).
 // legacy(f, k): f carries @legacy_sync / @legacy_module_sync (k = "sync") or the async pair. The regex anchors the end
 // of the resolved name, so "pkg.decorators.legacy_sync" matches.
@@ -75,7 +75,7 @@ deco($f, $t) :- decorator($f, $d), dexpr($d, $e), !sym_of($e, _), text($e, $t).
 legacy($f, "sync")  :- deco($f, $q), $q =~ "(legacy_sync|legacy_module_sync)$".
 legacy($f, "async") :- deco($f, $q), $q =~ "(legacy_async|legacy_module_async)$".
 // own_private(f): f is marked internal by @internal_api, @private_api or @private_public_api, compared on the last
-// dotted segment as the oracle's _is_marked_private_public_api does.
+// dotted segment as the Python linter's _is_marked_private_public_api does.
 .decl own_private(f: node)
 own_private($f) :- deco($f, $q), $q =~ "(^|\.)(internal_api|private_api|private_public_api)$".
 .decl private(f: node)                       // the def's decorators, or its class's
@@ -90,8 +90,8 @@ lazy_pipe($f) :- deco($f, $q), $q =~ "pure_lazy|apply_lazy_to_public_lazy_method
 lazy_decorated($f) :- lazy_pipe($f).
 lazy_decorated($f) :- def_name($f, $n), $n =~ "^[^_].*_lazy$", nearest($f, $c, cdef), lazy_pipe($c).
 
-// Used for the oracle's annotation_names. Only annotations outside the body count: parameters and return type.
-// The oracle lowercases names before comparing; the regexes that read sig_type use (?i) for the same effect.
+// Used for the Python linter's annotation_names. Only annotations outside the body count: parameters and return type.
+// The Python linter lowercases names before comparing; the regexes that read sig_type use (?i) for the same effect.
 // sig_type(f, x): an annotation in f's signature (not its body) names x, the last segment of what it resolves to.
 .decl sig_type(f: node, x: sym)
 // Resolved: keep the last segment of the qualified name ("pkg.lazy.LazyResult" → "LazyResult").
@@ -103,14 +103,14 @@ sig_type($f, $x) :- annotation($n), within($n, $f), field($f, "body", $b), !with
 // data_layer_module(m): a module file directly in data_layer/, the public package whose exports are the roots.
 .decl data_layer_module(m: sym)
 data_layer_module($m) :- module_path($m, $p), $p =~ "^data_layer/[^/]+\.py$".
-// root(o, f): f is a root under owner o. Functions: o is the exporting data_layer module (oracle
+// root(o, f): f is a root under owner o. Functions: o is the exporting data_layer module (Python linter
 // _scan_exported_module_functions). Methods: o is the exported class's qualified name (_scan_exported_class_methods).
 .decl root(o: sym, f: node)
 // An exported module-level function, public (no leading _), not defined under _internal/.
 root($m, $f) :- data_layer_module($m), exports($m, _, $q), qualname($f, $q), !nearest($f, _, nonmod),
     def_name($f, $n), !($n =~ "^_"), !( docof($f, $d), doc($d, $p, _), $p =~ "^_internal/" ).
 // A public method of an exported class, own or inherited (mro_method follows the bases, across files).
-// Skipped as in the oracle: private classes, Protocol classes (by name or by a base), classes named Async…,
+// Skipped as in the Python linter: private classes, Protocol classes (by name or by a base), classes named Async…,
 // _-prefixed methods, the method_skip names, private-decorated methods, and properties (getter, setter, deleter).
 root($cq, $f) :- data_layer_module($m), exports($m, _, $cq), class_def($c, $cq), def_name($c, $x), !private($c),
     !($x =~ "Protocol$|^Async"), !some { class_base($c, $b), $b =~ "Protocol" },
@@ -122,7 +122,7 @@ root($cq, $f) :- data_layer_module($m), exports($m, _, $cq), class_def($c, $cq),
 mixed($f) :- def_name($f, $n), $n =~ "(?i)lazy", $n =~ "(?i)sync".
 // member(o, b, slot, f): root f is the `slot` member of group (o, b). Base name b strips one _lazy/_async/_sync
 // suffix (the non-greedy `.*?` leaves the suffix to the optional group). The slot comes from the suffix, as in
-// _group_base_name, except that an unsuffixed (or _sync) def with @legacy_async is the async member, as in the oracle.
+// _group_base_name, except that an unsuffixed (or _sync) def with @legacy_async is the async member, as in the Python linter.
 // first {} order: the suffix tests come before the decorator test, so foo_lazy with @legacy_async stays lazy.
 .decl member(o: sym, b: sym, slot: sym, f: node)
 member($o, $b, $s, $f) :- root($o, $f), !mixed($f), def_name($f, $n), $b = @re($n, "^(.*?)(?:_lazy|_async|_sync)?$"),
@@ -130,18 +130,18 @@ member($o, $b, $s, $f) :- root($o, $f), !mixed($f), def_name($f, $n), $b = @re($
 // path_of(f, p): the repository path of a member's file, for the path-based exemptions.
 .decl path_of(f: node, p: sym)
 path_of($f, $p) :- member(_, _, _, $f), docof($f, $d), doc($d, $p, _).
-// The oracle takes next(iter(slots.values())), the first member it happened to insert. The least name is a stable
+// The Python linter takes next(iter(slots.values())), the first member it happened to insert. The least name is a stable
 // stand-in for that: it decides which member a missing_* finding is anchored at, and the path-based exemptions.
-.decl exemplar(o: sym, b: sym, f: node)      // the member with the least name: the oracle's first slot filled
+.decl exemplar(o: sym, b: sym, f: node)      // the member with the least name: the Python linter's first slot filled
 exemplar($o, $b, $f) :- member($o, $b, _, $f), def_name($f, $n), !some { member($o, $b, _, $g), def_name($g, $m), $m < $n }.
 // lazy_only(o, b): the group has a lazy member and nothing else. A bare foo_lazy is allowed (no missing slots).
 .decl lazy_only(o: sym, b: sym)
 lazy_only($o, $b) :- member($o, $b, "lazy", _), !some { member($o, $b, $s, _), $s != "lazy" }.
 
-// exempt(o, b): one rule per oracle early return in _validate_groups: _is_non_triple_lifecycle_surface,
+// exempt(o, b): one rule per Python linter early return in _validate_groups: _is_non_triple_lifecycle_surface,
 // _is_mode_specific_transaction_facade, _is_non_triple_transaction_factory, _is_lazy_only_bootstrap_group.
-// Owners are compared on their last dotted segment ($x), as the oracle's owner.rsplit(".", 1)[-1].
-// Groups the oracle never checks.
+// Owners are compared on their last dotted segment ($x), as the Python linter's owner.rsplit(".", 1)[-1].
+// Groups the Python linter never checks.
 .decl lifecycle(owner: sym, b: sym)
 lifecycle("CacheTransaction", "commit").  lifecycle("CacheTransaction", "rollback").  lifecycle("BaseMigration", "rollback").
 lifecycle("SchemaTransaction", "execute_ddl").  lifecycle("AsyncSchemaTransaction", "execute_ddl").
@@ -169,20 +169,20 @@ exempt($o, $b) :- lazy_only($o, $b), $b =~ "bootstrap".
 exempt($o, $b) :- lazy_only($o, $b), $b in bootstrap_base.
 exempt($o, $b) :- lazy_only($o, $b), owner_name($o, $b, $x), $x =~ "(?i)bootstrap".
 
-// Oracle _looks_execution_surface. A group is enforced only if some member is a surface (see live below).
+// Python linter _looks_execution_surface. A group is enforced only if some member is a surface (see live below).
 // true_lazy(f): named …_lazy, or its signature mentions LazyResult / LazySeq / ServerPlan (_is_true_lazy_surface).
 // surface(f): f looks like an execution surface.
 .decl true_lazy(f: node)
 true_lazy($f) :- member(_, _, "lazy", $f).
 true_lazy($f) :- sig_type($f, $x), $x =~ "(?i)^(lazyresult|lazyseq|serverplan)$".
-// hint(f): the oracle's contextual_hint, any one of: the file path names a transaction or graph-query module;
+// hint(f): the Python linter's contextual_hint, any one of: the file path names a transaction or graph-query module;
 // the defining class's name mentions connection/query/transaction/versioned; or a signature type is one of the
 // connection, transaction or lazy types.
 .decl hint(f: node)
 hint($f) :- path_of($f, $p), $p =~ "/(graph_query|schema_transaction|transaction|versioned_transactions)".
 hint($f) :- nearest($f, $c, cdef), def_name($c, $x), $x =~ "(?i)connection|query|schematransaction|transaction|versioned".
 hint($f) :- sig_type($f, $x), $x =~ "(?i)^(versioned)?(databaseconnection|readtransaction|writetransaction)$|^(lazyresult|lazyseq|serverplan)$".
-// not_surface(f): the oracle's early `return False` cases: abstract methods, private members, lazy primitive
+// not_surface(f): the Python linter's early `return False` cases: abstract methods, private members, lazy primitive
 // builders (module-level lazy_* in the primitive files), runtime context classes, and chainable builders.
 .decl not_surface(f: node)
 not_surface($f) :- deco($f, $q), $q =~ "abstractmethod$".
@@ -208,7 +208,7 @@ cname($c, $x) :- callee($c, $n), kind($n, "attribute"), field($n, "attribute", $
 // checked(o, b): the group is reported; an identical slot set already seen under a lesser owner is not.
 .decl live(o: sym, b: sym)
 live($o, $b) :- member($o, $b, _, $f), surface($f), !exempt($o, $b).
-// The oracle walks groups in sorted (owner, base) order and skips a group whose (base, slot → definition) set it has
+// The Python linter walks groups in sorted (owner, base) order and skips a group whose (base, slot → definition) set it has
 // already seen, which happens when two exported classes inherit the same methods. Here: no live group with the same
 // base and a smaller owner name has exactly the same members (the two inner !some blocks test set equality:
 // nothing in o's group is missing from p's, and nothing in p's is missing from o's).
@@ -216,17 +216,17 @@ live($o, $b) :- member($o, $b, _, $f), surface($f), !exempt($o, $b).
 checked($o, $b) :- live($o, $b), !some { live($p, $b), $p < $o,
     !some { member($o, $b, $s, $f), !member($p, $b, $s, $f) }, !some { member($p, $b, $s, $f), !member($o, $b, $s, $f) } }.
 // same_params(f, g): f and the lazy member g of its group take the same parameters, by name and position.
-// Oracle _legacy_decorator_applicable compares the full param_names tuples; this ignores self and cls.
+// Python linter _legacy_decorator_applicable compares the full param_names tuples; this ignores self and cls.
 .decl same_params(f: node, g: node)
 same_params($f, $g) :- member($o, $b, _, $f), member($o, $b, "lazy", $g),
     !some { params($f, $x, $i), $x != "self", $x != "cls", !params($g, $x, $i) },
     !some { params($g, $x, $i), $x != "self", $x != "cls", !params($f, $x, $i) }.
 
 // missing(o, b, s, at): checked group (o, b) has no member in slot s. Lazy-only groups need no other slot, as in
-// the oracle's required_slots. The finding is anchored at the exemplar, as the oracle reports exemplar.path/line.
+// the Python linter's required_slots. The finding is anchored at the exemplar, as the Python linter reports exemplar.path/line.
 .decl missing(o: sym, b: sym, s: sym, at: node)
 missing($o, $b, $s, $e) :- checked($o, $b), !lazy_only($o, $b), $s in slot_name, !member($o, $b, $s, _), exemplar($o, $b, $e).
-// One violation per missing slot, so each oracle issue code is its own finding relation and has its own budget.
+// One violation per missing slot, so each Python linter issue code is its own finding relation and has its own budget.
 .violation missing_sync(at: node, owner: sym, base: sym)  "{owner}.{base} is missing the sync member of the triple"
 missing_sync($e, $o, $b) :- missing($o, $b, "sync", $e).
 .violation missing_async(at: node, owner: sym, base: sym) "{owner}.{base} is missing the async member of the triple"
@@ -245,7 +245,7 @@ missing_legacy_async($f) :- checked($o, $b), member($o, $b, "async", $f), member
 missing_lazy_decorator($l) :- checked($o, $b), member($o, $b, "lazy", $l), !lazy_decorated($l).
 
 // A sync/async member of a group that has a lazy member is decorated @direct_legacy… and calls a grammar *_lazy
-// helper directly instead of delegating to the lazy member. The oracle reports one per group (the first by path and
+// helper directly instead of delegating to the lazy member. The Python linter reports one per group (the first by path and
 // line) and accepts any call name ending _lazy or starting lazy_; this lists the grammar helpers by name.
 .violation direct_wrapper_bypasses_lazy_owner(at: node)
     "{qualname(at)} uses a direct legacy wrapper despite an available lazy owner; delegate through the lazy member"
@@ -254,7 +254,7 @@ direct_wrapper_bypasses_lazy_owner($f) :- checked($o, $b), member($o, $b, "lazy"
     some { within($c, $f), cname($c, $x),
            $x =~ "^(grammar_effect_lazy|grammar_rows_lazy|grammar_row_lazy|(execute_grammar|grammar_fetch).*_lazy)$" }.
 
-// Every mixed-name root, checked or not: the oracle reports these before any exemption or surface test.
+// Every mixed-name root, checked or not: the Python linter reports these before any exemption or surface test.
 .violation invalid_mixed_lazy_execution_name(at: node, owner: sym)
     "{qualname(at)} mixes 'lazy' with 'sync' or 'async' in its name. Lazy surfaces must stay execution-mode neutral."
 invalid_mixed_lazy_execution_name($f, $o) :- root($o, $f), mixed($f).

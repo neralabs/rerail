@@ -4,7 +4,7 @@
 .mode log
 .scope include "src/**/*.tsx", "src/**/*.jsx"
 .scope exclude "**/*.test.*", "**/*.spec.*", "**/fixtures/**"
-// B1: the JSON rule's meaning, unchanged.
+// Same-meaning version: the JSON rule's meaning, unchanged.
 // Inputs: the tape relations (kind, field, text, string_value), plus ref_site(ref, site) from the
 // TypeScript scope table (the fact behind resolves.binding.site).
 //
@@ -43,7 +43,7 @@ imported($s, $m, $x) :- kind($s, "import_specifier"), field($s, "name", $n), tex
 
 // router_el(e): e is a JSX element whose tag is an identifier bound by an import of a router export.
 // ref_site follows the tag to the specifier that declares it: a local variable named BrowserRouter does not count.
-// Member tags such as <RR.BrowserRouter> are not identifiers, so this B1 form misses them, as the JSON does.
+// Member tags such as <RR.BrowserRouter> are not identifiers, so this version misses them, as the JSON does.
 .decl router_el(e: node)
 router_el($e) :- tag($e, $t), kind($t, "identifier"), ref_site($t, $s),
     imported($s, $m, $x), $m in router_module, $x in router_export.
@@ -60,7 +60,7 @@ stop($e) :- kind($e, "jsx_element"), !router_el($e), tag($e, $t),          // a 
     !(kind($t, "identifier"), text($t, $s), $s =~ "^[a-z]").                //   not a lowercase host tag
 
 // The finding: an inner router whose closest stop ancestor is a router. nearest() returns only the first stop node
-// above $inner, so a router inside <Layout> inside another router is not reported (B2 handles that case).
+// above $inner, so a router inside <Layout> inside another router is not reported (the accurate version handles that case).
 .violation NESTED_ROUTER_JSX(at: node)
     "Remove this inner router and use the outer router for its children."
 NESTED_ROUTER_JSX($inner) :- router_el($inner), nearest($inner, $outer, stop), router_el($outer).

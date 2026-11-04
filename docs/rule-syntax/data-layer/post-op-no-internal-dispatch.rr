@@ -4,24 +4,24 @@
 .mode block
 .scope dirs "l2070_batching", "impl/common", "l2060_query_builder", "l5200_vector_index", "l5100_fts", "l6500_evidence"
 .scope tests false
-// Oracle: scripts/lint_post_op_no_internal_dispatch.py, per innermost function. `E.CASE ==`/`is` comparisons on the
+// Python linter: scripts/lint_post_op_no_internal_dispatch.py, per innermost function. `E.CASE ==`/`is` comparisons on the
 // enums ResultMaterializationKind, RuntimeBuilderKind, RuntimeBuilderName:  001 one case compared twice or more;
 // 002 a materializer compares RuntimeBuilderName.*;  004 materialize_*builder has more than one.  Probes by literal key
 // in materializers: 003 `"k" in kwargs`/`in ….keys()`;  007 also `p.get("k")`, `p["k"]` on literal_payload.
 // 005 a deleted surface name;  006 an unlisted `_materialize_*` in l2070_batching/post_op.py;
 // 008 a class based on ResultRowMaterializer;  009 a `row_materializer=` keyword.
-// Improves on the oracle:
+// Improves on the Python linter:
 //   payload aliases follow bindings (ref_site): `p = x.literal_payload` then `p = {}` no longer taints p, and
-//   `self.literal_payload["k"]` is caught (the oracle wants a bare name before `.get`/`[…]`);
+//   `self.literal_payload["k"]` is caught (the Python linter wants a bare name before `.get`/`[…]`);
 //   enum cases are also matched through imports by resolved name, and deleted names inside import statements are 005.
 //
 // How to read this file
-//   1. in_fn ties each node to its innermost def, the unit the oracle counts in (its function-state stack).
+//   1. in_fn ties each node to its innermost def, the unit the Python linter counts in (its function-state stack).
 //   2. materializer / mat_body say which defs the materializer-only checks (002, 003, 007) apply to.
 //   3. enum_ref / enum_cmp find `E.CASE == x` comparisons; 001, 002 and 004 count or filter them per function.
 //   4. key_probe / kw_probe / payload / payload_probe find literal-key lookups; 003 and 007 report them.
 //   5. 005, 006, 008, 009 are single-node checks: a name, a def name, a base class, a keyword argument.
-// Each POSTOPDISPATCHnnn violation is one oracle code.
+// Each POSTOPDISPATCHnnn violation is one Python linter code.
 
 .use python/names
 .use python/calls
@@ -39,7 +39,7 @@
                  | "_materialize_terminal_array" | "_materialize_by_post_op_behavior"
 // Names that hold keyword arguments; a literal-key probe on them is 003.
 .set kwarg_alias = "kwargs" | "literal_kwargs"
-// The comparison operators that count as a dispatch test (the oracle's ast.Eq | ast.Is). `!=` and `is not` do not.
+// The comparison operators that count as a dispatch test (the Python linter's ast.Eq | ast.Is). `!=` and `is not` do not.
 .set eq_op       = "==" | "is"
 // Binding forms that carry a value, for following payload aliases: `p = …` and `p: T = …`.
 .set assign_form = "assign" | "annassign"
@@ -48,10 +48,10 @@
 // Every per-function finding carries x as its {fn}.
 .decl in_fn(n: node, f: node, x: sym)
 in_fn($n, $f, $x) :- nearest($n, $f, fdef), def_name($f, $x).
-// post_op_file(n): n is in l2070_batching/post_op.py (the oracle's POST_OP_SOURCE).
+// post_op_file(n): n is in l2070_batching/post_op.py (the Python linter's POST_OP_SOURCE).
 .decl post_op_file(n: node)
 post_op_file($n) :- docof($n, $d), doc($d, "l2070_batching/post_op.py", _).
-// materializer(f): the oracle's _is_materializer_function, by name. mat_body(f) is _is_post_op_materializer_body:
+// materializer(f): the Python linter's _is_materializer_function, by name. mat_body(f) is _is_post_op_materializer_body:
 // a materializer, or any _materialize_* function in post_op.py.
 .decl materializer(f: node)          // materialize_result, materialize_runtime_builder, materialize_*builder
 materializer($f) :- def_name($f, $n), $n =~ "^(materialize_result|materialize_runtime_builder|materialize_.*builder)$".
@@ -62,7 +62,7 @@ mat_body($f) :- def_name($f, $n), $n =~ "^_materialize_", post_op_file($f).
 // enum_cmp(c, s): comparison c tests enum case s ("RuntimeBuilderName.FOO") with a single == or is.
 // enum_ref(n, s): n names enum case s, written "Enum.CASE".
 .decl enum_ref(n: node, s: sym)
-// By text: `RuntimeBuilderName.FOO`, the enum's bare name before the dot, as the oracle's _attribute_symbol.
+// By text: `RuntimeBuilderName.FOO`, the enum's bare name before the dot, as the Python linter's _attribute_symbol.
 enum_ref($n, $s) :- kind($n, "attribute"), field($n, "object", $o), kind($o, "identifier"), text($o, $e), $e in enum_name,
     field($n, "attribute", $a), text($a, $x), $s = @cat($e, $x).
 // By resolution: any attribute that resolves to a case of one of the enums, e.g. through `import … as RBN`.
@@ -71,7 +71,7 @@ enum_ref($n, $s) :- kind($n, "attribute"), sym_of($n, $q),
     $s = @re($q, "((?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)\.[^.]+)$").
 .decl enum_cmp(c: node, s: sym)
 // cmp(c, op, l, r) has a row only for single-operator comparisons, as _comparison_symbol requires. Left side first;
-// the right side is tried only when the left is no enum case (the oracle's `left or comparators[0]`).
+// the right side is tried only when the left is no enum case (the Python linter's `left or comparators[0]`).
 enum_cmp($c, $s) :- cmp($c, $o, $l, _), $o in eq_op, enum_ref($l, $s).
 enum_cmp($c, $s) :- cmp($c, $o, $l, $r), $o in eq_op, !enum_ref($l, _), enum_ref($r, $s).
 
@@ -91,7 +91,7 @@ POSTOPDISPATCH004($f, $x) :- def_name($f, $x), $x =~ "^materialize_.*builder$",
 
 // Literal-key probes. key_probe(c, r): `"k" in r`.  kw_probe(c): r is kwargs / literal_kwargs, or `….keys()`.
 // key_probe: `"k" in r` with a static string on the left (value() exists only for literals with a static value).
-// kw_probe: r is a kwargs name, or a `….keys()` call on anything (the oracle's _is_literal_key_probe).
+// kw_probe: r is a kwargs name, or a `….keys()` call on anything (the Python linter's _is_literal_key_probe).
 .decl key_probe(c: node, r: node)
 key_probe($c, $r) :- cmp($c, "in", $l, $r), kind($l, "string"), value($l, _).
 .decl kw_probe(c: node)
@@ -103,7 +103,7 @@ POSTOPDISPATCH003($c, $x) :- kw_probe($c), in_fn($c, $f, $x), mat_body($f).
 
 // payload(n): n evaluates to the literal payload: the name literal_payload, `….literal_payload`, or a name whose
 // binding takes a value mentioning `.literal_payload` or another payload name.
-// The oracle's _literal_payload_aliases: a fixed point over names assigned from payload values. Here payload and
+// The Python linter's _literal_payload_aliases: a fixed point over names assigned from payload values. Here payload and
 // tainted call each other, so the alias chain `a = x.literal_payload; b = a; c = b` is followed to any length.
 // Because ref_site links each read to its own binding, a name rebound to something else is not a payload there.
 .decl payload(n: node)
@@ -115,14 +115,14 @@ payload($n) :- ref_site($n, $s), binding(_, _, $s, $k), $k in assign_form, bindi
 .decl tainted(v: node)
 tainted($v) :- payload($v).
 tainted($v) :- within($a, $v), kind($a, "attribute"), field($a, "attribute", $t), text($t, "literal_payload").
-// payload_probe(p): the four probe forms of 007, the oracle's _is_literal_payload_key_probe.
+// payload_probe(p): the four probe forms of 007, the Python linter's _is_literal_payload_key_probe.
 .decl payload_probe(p: node)
 // `p.get("k", …)`: the first positional argument (keyword "") is a string literal.
 payload_probe($c) :- cname_get($c, $o), payload($o), call_arg($c, 0, "", $k), kind($k, "string"), value($k, _).
 // `p["k"]`.
 payload_probe($s) :- kind($s, "subscript"), field($s, "value", $o), payload($o),
     field($s, "subscript", $k), kind($k, "string"), value($k, _).
-// `"k" in p`. And every kwargs probe, which the oracle also reports as 007 (its alias set includes kwargs).
+// `"k" in p`. And every kwargs probe, which the Python linter also reports as 007 (its alias set includes kwargs).
 payload_probe($c) :- key_probe($c, $r), payload($r).
 payload_probe($c) :- kw_probe($c).
 .decl cname_get(c: node, o: node)    // `o.get(…)`
@@ -131,10 +131,10 @@ cname_get($c, $o) :- callee($c, $n), kind($n, "attribute"), field($n, "attribute
 .violation POSTOPDISPATCH007(at: node, fn: sym) "{fn}: materializers must not dispatch by probing literal_payload keys"
 POSTOPDISPATCH007($p, $x) :- payload_probe($p), in_fn($p, $f, $x), mat_body($f).
 
-// Deleted surfaces. Identifiers in a `name` field are def, class and keyword names, which the oracle never sees.
+// Deleted surfaces. Identifiers in a `name` field are def, class and keyword names, which the Python linter never sees.
 .violation POSTOPDISPATCH005(at: node, name: sym) "<module>: deleted post-op dispatch surface {name} must not be referenced"
 // Any identifier with a deleted name, in any file and any position (attributes, imports, parameters), except the
-// `name` field: def and class names and keyword-argument names, which the oracle's on_Name / on_Attribute never see.
+// `name` field: def and class names and keyword-argument names, which the Python linter's on_Name / on_Attribute never see.
 POSTOPDISPATCH005($n, $x) :- kind($n, "identifier"), text($n, $x), $x in deleted, !field(_, "name", $n).
 
 .violation POSTOPDISPATCH006(at: node, fn: sym)

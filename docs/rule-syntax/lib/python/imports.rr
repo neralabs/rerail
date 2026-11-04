@@ -1,5 +1,5 @@
 // python/imports: what each import statement binds and loads, the import-time module graph, and exports.
-// The statement parsing is lifted from calls.rdl; multi-dot relative imports use @pkg_up (native string builtin).
+// The statement parsing is adapted from an earlier Datalog prototype of call resolution; multi-dot relative imports use @pkg_up (native string builtin).
 //
 // What it provides
 //   - Raw per-scope import bindings for python/names: rifrom, ribind (and rotgt rows for unresolvable relative

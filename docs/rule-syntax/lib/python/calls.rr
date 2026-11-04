@@ -1,4 +1,4 @@
-// python/calls: call targets and call chains (Typing-support's calls.rdl, its name parts moved to python/names).
+// python/calls: call targets and call chains (adapted from an earlier Datalog prototype of call resolution; name parts are in python/names).
 // Points-to relation pv(n, kind, v): n may evaluate to a function, class, instance, module or super().
 // Three-valued: call_target is what a call may run; call_open marks calls whose target is unknown.
 //
@@ -341,7 +341,7 @@ calls($f, $g) :- owner($c, $f), call_target($c, $g).
 // calls_open(f): f makes at least one call whose target is unknown, so its out-edges are incomplete.
 .decl calls_open(f: node)
 calls_open($f) :- owner($c, $f), call_open($c).
-// W5 `ASYNC_BLOCKING`: an async function's call, outside `await`, of a sync function that reaches a blocking call
+// `ASYNC_BLOCKING`: an async function's call, outside `await`, of a sync function that reaches a blocking call
 // through sync functions only (the native `calls` term with `through: sync`).
 
 // ==== interface ===================================================================================================

@@ -6,15 +6,15 @@
 .scope exclude "**/test/**", "**/conform/**", "**/benchmarks/**", "**/examples/**", "**/browser_build/**"
 .scope tests false
 .budget * by code { "CRITICAL": 474, "WARNING": 604 }   // .swallowed-exceptions-baseline.json (signed, Ed25519)
-// Oracle: scripts/lint_swallowed_exceptions.py. An `except` with no `raise` of its own (nested defs, classes, lambdas
+// Python linter: scripts/lint_swallowed_exceptions.py. An `except` with no `raise` of its own (nested defs, classes, lambdas
 // and inner handlers aside) that does not catch KeyError / StopIteration / StopAsyncIteration / queue.Empty:
 //   WARNING the handler reads its exception variable;  CRITICAL it does not; also every `with contextlib.suppress(…)`
 //   that suppresses more than KeyError. Logging changes nothing. Keys in the ignores file do not count. The plugin's
 //   codes missing_baseline, unsigned_baseline, invalid_baseline_signature, baseline_increase are the .budget's outcomes.
-// Improves on the oracle:
+// Improves on the Python linter:
 //   caught types are resolved (catches): aliases, `builtins.KeyError` and all-protocol tuples are protocol catches;
-//   suppress is found by what it resolves to, wherever the import is (the oracle tracks only the last contextlib import);
-//   a raise in a handler nested in a def inside another handler now counts (the oracle's depth counter loses it);
+//   suppress is found by what it resolves to, wherever the import is (the Python linter tracks only the last contextlib import);
+//   a raise in a handler nested in a def inside another handler now counts (the Python linter's depth counter loses it);
 //   the variable is followed by binding: a rebound `e = …` does not count, a closure over e does.
 //
 // How to read this file
@@ -23,7 +23,7 @@
 //   2. swallowed(x, b): a handler that does not re-raise, catches more than protocol exceptions, and is not ignored.
 //   3. reads_exc splits swallowed handlers: WARNING if the handler reads its exception variable, else CRITICAL.
 //   4. suppress_with / keyerror_only add the contextlib.suppress case to CRITICAL.
-//   5. summary(b, s) is only for the message: it describes the body, as the oracle's _summarize_body does.
+//   5. summary(b, s) is only for the message: it describes the body, as the Python linter's _summarize_body does.
 
 .use python/names
 .use python/calls
@@ -31,11 +31,11 @@
 // An input fact from a file next to the policy, not from the code: (path, line) of each accepted finding.
 .input ignored(path: sym, line: int)    // .swallowed-exceptions-ignores.json: each "path:line" key
 // own_scope: nodes that start a new scope for "does this handler raise?". A raise inside a nested def, class, lambda
-// or inner except clause belongs to that node, not to the outer handler (the oracle's _shallow_nodes stops there).
+// or inner except clause belongs to that node, not to the outer handler (the Python linter's _shallow_nodes stops there).
 .kindset own_scope = "function_definition" | "class_definition" | "lambda" | "except_clause"
 // handler_k: except clauses, for nearest(): "the closest except clause around a node".
 .kindset handler_k = "except_clause"
-// Exceptions used for control flow; catching only these is not a swallow (the oracle's _PROTOCOL_EXCEPTIONS).
+// Exceptions used for control flow; catching only these is not a swallow (the Python linter's _PROTOCOL_EXCEPTIONS).
 .set protocol = "builtins.KeyError" | "builtins.StopIteration" | "builtins.StopAsyncIteration" | "queue.Empty"
 
 .decl handler(x: node, b: node)          // except clause x, body block b
@@ -53,26 +53,26 @@ protocol_only($x) :- handler($x, _), catches($x, _), !some { catches($x, $q), !(
 // than matching the name means a nested `e = …` rebinding is not a read, and a closure in the handler that reads e is.
 .decl reads_exc(x: node)
 reads_exc($x) :- binding(_, _, $s, "except"), nearest($s, $x, handler_k), ref_site($r, $s), within($r, $x).
-// ignored_at(n): n's file and start line is a key in the ignores file. The oracle applies ignores after scanning.
+// ignored_at(n): n's file and start line is a key in the ignores file. The Python linter applies ignores after scanning.
 .decl ignored_at(n: node)
 ignored_at($n) :- docof($n, $d), doc($d, $p, _), line($n, $l), ignored($p, $l).
 
-// summary(b, s): what block b amounts to, as the oracle's message reports it.
+// summary(b, s): what block b amounts to, as the Python linter's message reports it.
 // trivial(s): a statement that does nothing: pass, `...`, and comments. Comments are nodes in this grammar (the
-// oracle's ast has none), so they are counted as trivial to keep the summary the same.
+// Python linter's ast has none), so they are counted as trivial to keep the summary the same.
 .decl trivial(s: node)
 trivial($s) :- kind($s, "pass_statement").
 trivial($s) :- kind($s, "comment").
 trivial($s) :- kind($s, "expression_statement"), child($s, $e, 0), kind($e, "ellipsis").
-// The three forms the oracle's _body_is_continue_or_return_none accepts.
+// The three forms the Python linter's _body_is_continue_or_return_none accepts.
 .decl quiet_exit(s: node)                // continue, `return`, `return None`
 quiet_exit($s) :- kind($s, "continue_statement").
 quiet_exit($s) :- kind($s, "return_statement"), !child($s, _, _).
 quiet_exit($s) :- kind($s, "return_statement"), child($s, $v, 0), kind($v, "none").
 .decl summary(b: node, s: sym)
 // $n counts the non-trivial statements of b. first { } then picks the first description that fits: no real statement,
-// exactly one that is a quiet exit, else other statements. The oracle lists the first five statement types instead
-// of "other statements", so the body column differs from the oracle's for such handlers.
+// exactly one that is a quiet exit, else other statements. The Python linter lists the first five statement types instead
+// of "other statements", so the body column differs from the Python linter's for such handlers.
 summary($b, $s) :- kind($b, "block"), $n = count { child($b, $t, _), !trivial($t) },
     $s = first {
       "pass/ellipsis only"        if $n = 0;
@@ -80,7 +80,7 @@ summary($b, $s) :- kind($b, "block"), $n = count { child($b, $t, _), !trivial($t
       "other statements"
     }.
 
-// swallowed(x, b): the oracle's _finalize_handler conditions for reporting at all.
+// swallowed(x, b): the Python linter's _finalize_handler conditions for reporting at all.
 .decl swallowed(x: node, b: node)
 swallowed($x, $b) :- handler($x, $b), !reraises($x), !protocol_only($x), !ignored_at($x).
 
@@ -99,11 +99,11 @@ CRITICAL($w, "contextlib.suppress", $s) :- suppress_with($w, $c), !keyerror_only
 
 // suppress_with(w, c): an item of with-statement w is the call c = contextlib.suppress(…), however imported.
 // The callee is resolved by sym_of, so `from contextlib import suppress as s` and imports inside functions count;
-// the oracle matches the text `contextlib.suppress`, or `suppress` after a module-level from-import.
+// the Python linter matches the text `contextlib.suppress`, or `suppress` after a module-level from-import.
 .decl suppress_with(w: node, c: node)
 suppress_with($w, $c) :- kind($w, "with_statement"), child($w, $cl, _), kind($cl, "with_clause"), child($cl, $it, _),
     field($it, "value", $c), callee($c, $f), sym_of($f, "contextlib.suppress").
-// keyerror_only(c): exactly one positional argument, and it resolves to builtins.KeyError (the oracle's ["KeyError"]).
-// `suppress()` with no argument is not KeyError-only, so it is reported, as in the oracle.
+// keyerror_only(c): exactly one positional argument, and it resolves to builtins.KeyError (the Python linter's ["KeyError"]).
+// `suppress()` with no argument is not KeyError-only, so it is reported, as in the Python linter.
 .decl keyerror_only(c: node)
 keyerror_only($c) :- call_arg($c, 0, "", $e), sym_of($e, "builtins.KeyError"), !call_arg($c, 1, _, _).

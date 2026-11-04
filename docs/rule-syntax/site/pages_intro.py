@@ -26,22 +26,27 @@ row("The JSON is hard to read and write", [
  ("json", open(os.path.join(HERE, "..", "..", "..", "packs", "python", "rules", "bandit-b102-exec-used.json")).read(),
   "Today: packs/python/rules/bandit-b102-exec-used.json"),
  ("rr", '''
-.use python/names                         // sym_of: what an expression refers to, through imports
+.use python/names        // sym_of: what an expression refers to
 B102($c) :- kind($c, "call"), field($c, "function", $f), sym_of($f, "builtins.exec").
-B102($c) :- kind($c, "call"), field($c, "function", $f), kind($f, "parenthesized_expression"),
+B102($c) :- kind($c, "call"), field($c, "function", $f),
+    kind($f, "parenthesized_expression"),
     child($f, $g, 0), sym_of($g, "builtins.exec").     // (exec)(src)
 ''', ".rr: the same check"),
 ])
 
 row("It cannot say what the data-layer checks need", [
-    "The data-layer checks follow imports across files and reason over the module graph. Today they are six Python linters, {{dl_py_lines}} lines. PR 2539 ported one to YAML with SQL strings, which can only test names.",
+    "The data layer is a Python codebase of about 9,000 files whose architecture is enforced by custom checks: which layer may import which, sync and async methods in pairs, no import cycles. They follow imports across files and reason over the module graph, so today they are Python scripts, not Rerail rules. The six on this page are {{dl_py_lines}} lines. An earlier attempt moved one into YAML rules with embedded SQL, which can only test the text of names.",
     "Example: function-level-imports calls an import \"circular-avoidance\" when the module <em>name</em> looks internal. The .rr version proves the cycle on the import graph.",
 ], [
  ("src", '''
 - when:
-    expr: "%level > 0 OR %module = '' OR %module IN ('api', 'impl', 'data_layer', '_internal') OR %module LIKE 'api.%' OR %module LIKE 'impl.%' OR … OR (SUBSTR(%module, 1, 1) = 'l' AND SUBSTR(%module, 2, 1) >= '0' AND SUBSTR(%module, 2, 1) <= '9' AND … ))"
+    expr: "%level > 0 OR %module = ''
+      OR %module IN ('api', 'impl', 'data_layer', '_internal')
+      OR %module LIKE 'api.%' OR %module LIKE 'impl.%' OR …
+      OR (SUBSTR(%module, 1, 1) = 'l' AND SUBSTR(%module, 2, 1) >= '0'
+          AND SUBSTR(%module, 2, 1) <= '9' AND … ))"
   value: "'circular-avoidance'"
-''', "PR 2539: lint_function_level_imports.yaml (abridged)"),
+''', "Earlier attempt: YAML with embedded SQL (abridged)"),
  ("src", '''
 if module.startswith(internal_prefixes) or module in ("api", "impl", "data_layer", "_internal"):
     return "circular-avoidance"
@@ -53,7 +58,8 @@ if _LAYERED_MODULE_RE.match(first_segment):     # l1000_schema, l9600_graphs, �
  ("rr", '''
 // Import i, in module a, loads module b, and b already leads back to a through imports that run
 // at import time. Moving i to the top of a would close the cycle a → b → … → a.
-cycle($i) :- local_import($i), module_of($i, $a), loads($i, $b), $b != $a, !pkg_above($a, $b),
+cycle($i) :- local_import($i), module_of($i, $a), loads($i, $b),
+    $b != $a, !pkg_above($a, $b),
     reaches($b, $a).
 ''', ".rr: function-level-imports.b2.rr"),
 ])
@@ -69,7 +75,7 @@ row("Resolution logic ships in the binary", [
 // walk: start at the name's own scope and move outward, skipping class bodies, until a scope binds it.
 walk($n, $x, $s) :- nameref($n, $x), nearest($n, $s, scope).
 walk($n, $x, $p) :- walk($n, $x, $s), !bound_in($s, $x), nearest($s, $p, fscope).
-look($n, $x, $s) :- walk($n, $x, $s), bound_in($s, $x).          // the scope that binds it
+look($n, $x, $s) :- walk($n, $x, $s), bound_in($s, $x).   // the scope that binds it
 // sym_of: an imported name gives the module path; a local def its qualified name; else a builtin.
 sym_of($n, $q) :- qn($n, $q0), resolve_export($q0, $q).
 sym_of($n, $q) :- look($n, $x, $s), defn($s, $x, $f), qualname($f, $q).
@@ -125,7 +131,7 @@ row("Unknown is not false", [
 ''', "TSX"),
  ("src", '''
 today (JSON)    no findings: the rule stops at any component
-.rr (B2)        line 2  nested router   definite  → .mode
+.rr             line 2  nested router   definite  → .mode
                 line 3  nested router   possible  → .possible
 ''', "Findings"),
 ])
@@ -156,7 +162,7 @@ row("What the rule is for", [
     "In React, a react-router router (<code>&lt;BrowserRouter&gt;</code>, <code>&lt;MemoryRouter&gt;</code>, …) owns the app's location. It keeps the current URL and the navigation history, and hands them to everything rendered below it through React context. <code>&lt;Link&gt;</code>, <code>useNavigate()</code> and <code>&lt;Route&gt;</code> read that context to know where the app is and to move it.",
     "So there must be exactly one router above any piece of the tree. A second router inside the first would start its own history: links below it would change the inner router's location, not the URL bar or the rest of the app. react-router refuses this at render time with “You cannot render a &lt;Router&gt; inside another &lt;Router&gt;. You should never have more than one in your app.”",
     "That error appears only when that screen renders, so tests and review can miss it. It usually comes from code moved between contexts: a page copied from a standalone app, or a component that wraps itself in <code>&lt;MemoryRouter&gt;</code> for a demo or test and is then used inside the app. A static rule catches it before it runs.",
-    "This version reports a router inside another router in the same file, with only HTML elements or fragments between them. It stops at anything it cannot see through: a function boundary, an attribute, or a component, whose source it does not read. That makes it precise but incomplete; the two misses below are what the more accurate B2 version adds.",
+    "This version reports a router inside another router in the same file, with only HTML elements or fragments between them. It stops at anything it cannot see through: a function boundary, an attribute, or a component, whose source it does not read. That makes it precise but incomplete; the two misses below are what the accurate version, on the Data-layer rules tab, adds.",
 ], [
  ("src", '''
 import { BrowserRouter, MemoryRouter } from "react-router-dom";
@@ -165,14 +171,14 @@ export function App() {
   return (
     <BrowserRouter>
       <main>
-        <MemoryRouter>…</MemoryRouter>      // ← reported: only <main> lies between the two routers
+        <MemoryRouter>…</MemoryRouter>   // ← reported: only <main> in between
       </main>
       <Layout>
-        <MemoryRouter>…</MemoryRouter>      // missed here: the climb stops at the component <Layout>;
-                                            //   B2 reads Layout and reports it if Layout renders children
+        <MemoryRouter>…</MemoryRouter>   // missed: the climb stops at <Layout>;
+                                         //   the accurate version reads Layout's source
       </Layout>
-      <Route element={<MemoryRouter/>} />   // missed here: inside an attribute;
-                                            //   B2 knows Route renders `element` under the router
+      <Route element={<MemoryRouter/>} />   // missed: inside an attribute;
+                                            //   the accurate version follows `element`
     </BrowserRouter>
   );
 }
@@ -199,7 +205,8 @@ stop($e) :- kind($e, "jsx_element"), !router_el($e), tag($e, $t),
     !(kind($t, "identifier"), text($t, $s), $s =~ "^[a-z]").     // not <div>, <main>, …
 
 // 3. The finding: the nearest stop above a router is a router.
-NESTED_ROUTER_JSX($inner) :- router_el($inner), nearest($inner, $outer, stop), router_el($outer).
+NESTED_ROUTER_JSX($inner) :- router_el($inner),
+    nearest($inner, $outer, stop), router_el($outer).
 ''', "The three relations, from nested-routers.b1.rr"),
 ])
 

@@ -6,28 +6,28 @@
 .possible log                    // side-effect calls whose receiver does not resolve
 .scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
 .scope tests false
-// Oracle: scripts/lint_plan_scope_side_effects.py (codes spelled PSE-010 … PSE-AUDIT-010 there). A plan scope is a
+// Python linter: scripts/lint_plan_scope_side_effects.py (codes spelled PSE-010 … PSE-AUDIT-010 there). A plan scope is a
 // `with` (or `async with`) an item of which calls open_*_plan; the innermost one governs every node below it.
 //   PSE_010 `.resolved_value`   PSE_020 resolve() / resolve_async()   PSE_030 raw SQL execution calls
 //   PSE_040 `.read()` / `.write()` legacy callbacks   PSE_050 open(), or open/sleep/run/get/… on asyncio, os, requests, …
 //   PSE_AUDIT_010 in a write plan, an `if`/`elif` whose test is a typed eager read or reads a name bound to one
-// Improves on the oracle:
+// Improves on the Python linter:
 //   side-effect calls match on resolved names: `from time import sleep; sleep(1)` and `import requests as r` are caught;
 //   a call on a receiver that does not resolve but whose text names one of the modules is reported `possible`;
 //   PSE_AUDIT_010 follows each name in the test to its binding (ref_site), not to any earlier same-named assignment.
 //
 // How to read this file
-//   1. cname / method_call name each call by its last identifier, as the oracle's _call_name does.
+//   1. cname / method_call name each call by its last identifier, as the Python linter's _call_name does.
 //   2. item_call / plan / write_plan find the plan scopes: with-statements that open a plan.
 //   3. PSE_010 … PSE_050 are each "a forbidden node, inside some plan scope": nearest($n, _, plan).
 //   4. fx is three-valued (must, may): resolved side-effect calls are definite, unresolved look-alikes are possible.
 //   5. PSE_AUDIT_010 pairs eager reads bound inside a write plan (eager_site) with `if` tests in the same plan.
-// The oracle keeps a stack of open plan scopes while walking the tree; here "inside a plan" is a tree query instead.
+// The Python linter keeps a stack of open plan scopes while walking the tree; here "inside a plan" is a tree query instead.
 
 .use python/names
 .use python/calls
 
-// Calls that open a plan scope (the oracle's PLAN_OPENERS), and the subset that opens a write plan.
+// Calls that open a plan scope (the Python linter's PLAN_OPENERS), and the subset that opens a write plan.
 .set opener       = "open_read_plan" | "open_write_plan" | "open_provider_read_plan" | "open_provider_write_plan"
                   | "open_provider_versioned_read_plan" | "open_provider_versioned_write_plan"
 .set write_opener = "open_write_plan" | "open_provider_write_plan" | "open_provider_versioned_write_plan"
@@ -43,7 +43,7 @@
 .set fx_module    = "asyncio" | "subprocess" | "requests" | "httpx" | "socket" | "shutil" | "os" | "time"
 // Binding forms that carry a value: `x = …` and `x: T = …`.
 .set assign_form  = "assign" | "annassign"
-// `elif` is its own node in this grammar; the oracle sees it as a nested ast.If, so both kinds are tested.
+// `elif` is its own node in this grammar; the Python linter sees it as a nested ast.If, so both kinds are tested.
 .set branch       = "if_statement" | "elif_clause"
 
 // cname(c, x): the name call c is made by, `f(…)` or `….f(…)`; method_call(c) for the second form.
@@ -66,10 +66,10 @@ item_call($w, $c) :- item_value($w, $c), call($c).
 // `with open_write_plan(…) as p:` — the call is the first child of the `as` pattern.
 item_call($w, $c) :- item_value($w, $v), kind($v, "as_pattern"), child($v, $c, 0), call($c).
 // plan(w): w is a plan scope. Used as a set in nearest($n, $w, plan): "n is inside plan scope w", w the innermost.
-// Nodes in the with-items count as inside too, as in the oracle, which opens the scope before visiting the items.
+// Nodes in the with-items count as inside too, as in the Python linter, which opens the scope before visiting the items.
 .decl plan(w: node)
 plan($w) :- item_call($w, $c), cname($c, $x), $x in opener.
-// write_plan(w): some item opens a write plan (the oracle's any(_is_write_plan_scope_item …)).
+// write_plan(w): some item opens a write plan (the Python linter's any(_is_write_plan_scope_item …)).
 .decl write_plan(w: node)
 write_plan($w) :- item_call($w, $c), cname($c, $x), $x in write_opener.
 
@@ -86,21 +86,21 @@ PSE_020($c, $x) :- cname($c, $x), $x in eager_call, nearest($c, _, plan).
 PSE_030($c, $x) :- cname($c, $x), $x in raw_call, nearest($c, _, plan).
 
 // PSE_040: read/write callbacks only as method calls (`txn.read(…)`): a bare read() is some other function.
-// The four name sets are disjoint, so separate rules give the same result as the oracle's if/elif chain.
+// The four name sets are disjoint, so separate rules give the same result as the Python linter's if/elif chain.
 .violation PSE_040(at: node, name: sym) "Nested legacy callback API {name}() is forbidden inside plan scopes."
 PSE_040($c, $x) :- method_call($c), cname($c, $x), $x in legacy_cb, nearest($c, _, plan).
 
 // must: proven by name resolution. may: only a textual hint. A PSE_050 resting only on a may row is "possible".
 // fx(c, x): call c is a Python side effect named x.
 .decl fx(c: node, x: sym)  must, may
-// The builtin open(). global_ref means no local binding shadows it; the oracle matches any name `open`.
+// The builtin open(). global_ref means no local binding shadows it; the Python linter matches any name `open`.
 must fx($c, "open") :- callee($c, $n), global_ref($n, "open").
 // The callee resolves to q, e.g. "time.sleep" or "requests.get" (aliases and from-imports included). The first dotted
 // segment of q must be a side-effect module and the last segment a side-effect name.
 must fx($c, $x) :- callee($c, $n), sym_of($n, $q), $m = @re($q, "^([^.]+)\."), $m in fx_module,
     $x = @re($q, "([^.]+)$"), $x in fx_name.
-// `recv.get(…)` where recv does not resolve: the oracle's receiver-token test, as a word match on the receiver's text
-// (case-insensitive). The text includes call arguments inside the receiver, which the oracle's tokens do not.
+// `recv.get(…)` where recv does not resolve: the Python linter's receiver-token test, as a word match on the receiver's text
+// (case-insensitive). The text includes call arguments inside the receiver, which the Python linter's tokens do not.
 may  fx($c, $x) :- method_call($c), cname($c, $x), $x in fx_name, callee($c, $n), !sym_of($n, _),
     field($n, "object", $o), text($o, $t), $t =~ "(?i)\b(asyncio|subprocess|requests|httpx|socket|shutil|os|time)\b".
 
@@ -108,7 +108,7 @@ may  fx($c, $x) :- method_call($c), cname($c, $x), $x in fx_name, callee($c, $n)
 .violation PSE_050(at: node, name: sym) "Python side-effect call {name}() is forbidden inside plan scopes."
 PSE_050($c, $x) :- fx($c, $x), nearest($c, _, plan).
 
-// The oracle collects names assigned from eager reads per scope (on_Assign / on_AnnAssign); this keeps the binding
+// The Python linter collects names assigned from eager reads per scope (on_Assign / on_AnnAssign); this keeps the binding
 // site itself, so a later rebinding of the same name to something else is not confused with it.
 // eager_site(s, w): binding site s, whose innermost plan scope is write plan w, takes a typed eager read (`n = q.count()`).
 .decl eager_site(s: node, w: node)

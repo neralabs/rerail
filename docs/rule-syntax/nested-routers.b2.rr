@@ -5,7 +5,7 @@
 .possible log                    // findings reached only through components whose behaviour is unknown
 .scope include "src/**/*.tsx", "src/**/*.jsx"
 .scope exclude "**/*.test.*", "**/*.spec.*", "**/fixtures/**"
-// B2: also catches nesting through components (across files), router wrappers, re-exports,
+// Accurate version: also catches nesting through components (across files), router wrappers, re-exports,
 // namespace imports, composites that render {children}, Fragment, and <Route element={…}>.
 //
 // How to read this file
@@ -16,7 +16,8 @@
 //      across files. roots is keyed by the component's symbol, so it joins files without walking their trees.
 //   5. Two findings: a router element under a router in the same file (NESTED_ROUTER_JSX), and a component
 //      that renders a router being used under a router (NESTED_ROUTER_VIA_COMPONENT).
-// Compared with B1: B1 stops at the first component element; B2 asks what that component does with its children.
+// Compared with the same-meaning version, which stops at the first component element, this one asks what
+// that component does with its children.
 
 .use tsx/names
 //   sym_of(n, q)          identifier or member chain n denotes exported symbol q ("module#name"). Follows imports,
@@ -37,7 +38,7 @@
 // A rule prefixed `must` or `may` adds rows to that side only; a rule with no prefix holds on both sides.
 // Findings that hold only on the may side are reported as `possible`, with the .possible mode above.
 
-// Router symbols, as "module#Export" keys once combined by @qname. StaticRouterProvider is new relative to B1.
+// Router symbols, as "module#Export" keys once combined by @qname. StaticRouterProvider is new in this version.
 .set router_module = "react-router" | "react-router-dom" | "react-router/dom"
                    | "react-router-dom/server" | "react-router/dom/server" | "react-router/server"
 .set router_export = "BrowserRouter" | "HashRouter" | "MemoryRouter" | "Router" | "RouterProvider"
