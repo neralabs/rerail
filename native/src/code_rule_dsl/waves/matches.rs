@@ -464,6 +464,7 @@ impl Wave {
         let (space, sets) = crate::code_rule_dsl::prof::time("candidates.select", || {
             crate::code_rule_dsl::prefilter::select_sets(graph.store(), self.lang, &plans, &ids, device)
         })?;
+        crate::code_rule_dsl::prof::peak("2a3.selected");
         let _compact = crate::code_rule_dsl::prof::Stage::start("candidates.compact");
         use rayon::prelude::*;
         // Each clause's starts per file: its set's nodes where its root program starts, ascending

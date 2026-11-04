@@ -250,6 +250,8 @@ const ROOT_RECORD: usize = 20;
 /// `RootFrame`s of 31 words (thread memory for every item in flight held ~140 MB of footprint).
 const ROOT_POOL: usize = 4096;
 const ROOT_STACK_WORDS: usize = 32 * 31;
+// The 32-frame root pool's stacks are part of the pooled stacks.
+const _: () = assert!(ROOT_POOL * ROOT_STACK_WORDS <= STACK_WORDS);
 /// A deep group walk's device stack: 32 `MicroFrame`s of 17 words, per thread launched.
 const GROUP_STACK_WORDS: usize = 32 * 17;
 
@@ -723,9 +725,11 @@ const GROUP_WIDTH: u64 = 64;
 /// A walk's stack tier (`label_micro_8`, `label_micro_32`, `label_micro`): the fewest frames its
 /// static depth (`Micro::depth`) fits, 128 where it loops.
 fn tier(depth: Option<usize>) -> usize {
-    // Thread memory is reserved per thread in flight for the kernel's whole stack, so only the
-    // shallow walks (97% of S7's starts) keep theirs there; the rest take the pool's device stacks.
-    // (`label_micro_32` stays for a tier between them.)
+    // Every tier's stacks are in device memory (`Runner::stacks`): thread memory is the driver's
+    // scratch, sized for every thread in flight at the kernel's whole stack and kept by the process
+    // for its life (O39: 8 root frames, ~100 MB). The shallow walks (97% of S7's starts) take a
+    // wide pool of 8-frame stacks; the rest the loop pool's. (`label_micro_32` stays for a tier
+    // between them.)
     match depth {
         Some(depth) if depth <= 8 => 0,
         _ => 2,
@@ -744,6 +748,14 @@ const TIER_KERNELS: [usize; 3] = [4, 5, 3];
 /// the same stacks as 2048 of 128 (`label_micro_deep`, `MICRO_DEEP_POOL`).
 const MICRO_POOL: usize = 4096;
 const MICRO_STACK_WORDS: usize = 64 * 17;
+/// The pooled stacks' words (`Runner::stacks`), shared by every tier and the root walks: a tier
+/// of `frames` frames of `words` words each runs this many lanes (32,768 of 8 micro frames).
+const STACK_WORDS: usize = MICRO_POOL * MICRO_STACK_WORDS;
+fn stack_lanes(frames: usize, words: usize) -> usize {
+    STACK_WORDS / (frames * words)
+}
+/// Frames a micro tier's walks hold (`TIER_KERNELS`).
+const TIER_FRAMES: [usize; 3] = [8, 32, 64];
 const MICRO_DEEP_POOL: usize = 2048;
 /// The deep pool's kernel in `KERNELS`.
 const DEEP_KERNEL: usize = 6;
@@ -803,20 +815,40 @@ fn pipelines() -> Result<Vec<ComputePipelineState>, Error> {
     Ok(pipelines)
 }
 
-/// The clause's pattern kernel, compiled once per distinct source.
-fn pattern_pipeline(patterns: &[&PackedPattern], facts: bool) -> Result<Option<(ComputePipelineState, Vec<Vec<String>>)>, Error> {
+/// The plan's pattern kernels, one per `patterns::GROUP` of its patterns (a fact-only plan's
+/// one), with every pattern's metavariable names in the plan's numbering.
+fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool) -> Result<Option<(Vec<ComputePipelineState>, Vec<Vec<String>>)>, Error> {
     if patterns.is_empty() && !facts {
         return Ok(None);
     }
-    let (source, names) = patterns::source(patterns);
+    let (mut pipelines, mut names) = (Vec::new(), Vec::new());
+    let groups = patterns.chunks(patterns::GROUP).collect::<Vec<_>>();
+    for (group, members) in if groups.is_empty() { vec![&[][..]] } else { groups }.into_iter().enumerate() {
+        let (pipeline, group_names) = pattern_pipeline(members, group * patterns::GROUP)?;
+        pipelines.push(pipeline);
+        names.extend(group_names);
+    }
+    Ok(Some((pipelines, names)))
+}
+
+/// One group's pattern kernel, compiled once per distinct source.
+fn pattern_pipeline(patterns: &[&PackedPattern], first: usize) -> Result<(ComputePipelineState, Vec<Vec<String>>), Error> {
+    let (source, names) = patterns::source(patterns, first);
+    // `RERAIL_DIAG_PATTERNS=<dir>`: each pattern kernel's source, for measuring it alone.
+    if let Some(dir) = std::env::var_os("RERAIL_DIAG_PATTERNS") {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hasher);
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{:016x}.metal", hasher.finish())), &source);
+    }
     let mut cached = PATTERN_PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipeline) = cached.get(&source) {
-        return Ok(Some((pipeline.clone(), names)));
+        return Ok((pipeline.clone(), names));
     }
     crate::code_rule_dsl::prof::count("gpu.pattern_pipelines", 1);
     let pipeline = pipeline_named(&source, patterns::KERNEL)?;
     cached.insert(source, pipeline.clone());
-    Ok(Some((pipeline, names)))
+    Ok((pipeline, names))
 }
 
 fn bytes_of<T: Copy>(values: &[T]) -> &[u8] {
@@ -894,7 +926,7 @@ struct Runner<'a> {
     /// (root, program). Its task buffer carries them after the tasks.
     orders: HashMap<usize, Vec<u32>>,
     /// The clause's pattern kernel and each pattern's metavariables in index order.
-    patterns: Option<(ComputePipelineState, Vec<Vec<String>>)>,
+    patterns: Option<(Vec<ComputePipelineState>, Vec<Vec<String>>)>,
     files: &'a [TapeDoc],
     tapes: Tapes,
     /// Labels in the prefix.
@@ -925,7 +957,7 @@ struct Runner<'a> {
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
     /// another in the command buffer (five of 33 MB each on S7 before, list step 13).
-    group_stacks: Option<MappedBuffer>,
+    group_stacks: [Option<MappedBuffer>; 2],
     encoded: bool,
     outcome: Outcome,
     /// The plan's root walks, encoded after its passes (`records`).
@@ -1186,7 +1218,7 @@ fn encode(
             None
         },
         orders: HashMap::new(),
-        patterns: pattern_pipeline(&plan.patterns, plan.steps.iter().flat_map(|(_, levels)| levels).flatten().any(|pass| matches!(pass, Pass::Fact { .. })))?,
+        patterns: pattern_pipelines(&plan.patterns, plan.steps.iter().flat_map(|(_, levels)| levels).flatten().any(|pass| matches!(pass, Pass::Fact { .. })))?,
         command,
         queue,
         files,
@@ -1208,7 +1240,7 @@ fn encode(
         segments: Segments::default(),
         segs: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
-        group_stacks: None,
+        group_stacks: [None, None],
         encoded: false,
         outcome: Outcome {
             words,
@@ -1403,6 +1435,15 @@ fn tapes(
 
 impl Runner<'_> {
     /// The batch's slabs at `SLAB_SLOT..` (`Slabs`), the last repeated where it has fewer.
+    /// The pooled stacks every walk tier and root walk runs on (`STACK_WORDS`), made at first use
+    /// and kept for the next run (`Kept`). Kernels that share them run in order (tracked).
+    fn stacks(&mut self) -> Result<Buffer, Error> {
+        if self.stacks.is_none() {
+            self.stacks = Some(MappedBuffer::untouched::<u32>(self.device, STACK_WORDS)?);
+        }
+        Ok(self.stacks.as_ref().expect("stacks").buffer.clone())
+    }
+
     fn bind_slabs(&self, encoder: &metal::ComputeCommandEncoderRef) {
         let slabs = &self.tapes.table.slabs;
         for slot in 0..crate::code_rule_dsl::residency::slabs::MAX_SLABS {
@@ -1494,8 +1535,8 @@ impl Runner<'_> {
     }
 
     /// The clause's pattern kernel over the level's (pattern, root) items.
-    fn pattern_kernel(&mut self, buffers: &[(&Buffer, u64)], shape: Shape) -> Result<(), Error> {
-        let state = self.patterns.as_ref().ok_or(Error::BackendFailure)?.0.clone();
+    fn pattern_kernel(&mut self, group: usize, buffers: &[(&Buffer, u64)], shape: Shape) -> Result<(), Error> {
+        let state = self.patterns.as_ref().and_then(|(pipelines, _)| pipelines.get(group)).ok_or(Error::BackendFailure)?.clone();
         self.dispatch(&state, patterns::KERNEL, buffers, shape, shape.item_count as usize);
         Ok(())
     }
@@ -1893,9 +1934,11 @@ impl Runner<'_> {
         let programs = programs_of(passes, true);
         // How each target settles: from scratch, or computed by `label_settle` per word.
         let mut settles = Vec::new();
-        let mut matches = Vec::new();
         let mut constraints = Vec::new();
-        let mut pattern_threads = 0_u32;
+        // Per pattern kernel (`patterns::GROUP`), its items and their threads; facts in the first.
+        let groups = self.patterns.as_ref().map_or(0, |(pipelines, _)| pipelines.len());
+        let mut matches = vec![Vec::<u32>::new(); groups];
+        let mut pattern_threads = vec![0_u32; groups];
         let tallies = count_rows(passes);
         // A label's place in the prefix (`label_rows`).
         let rows = self.label_rows.clone();
@@ -1924,8 +1967,9 @@ impl Runner<'_> {
                     // One item for the pass: its threads find their roots in its segments.
                     let (segment, roots) = self.segments.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)).copied().ok_or(Error::BackendFailure)?;
                     if roots > 0 {
-                        matches.extend([*pattern as u32, row, segment, start, count, pattern_threads]);
-                        pattern_threads += roots;
+                        let group = *pattern / patterns::GROUP;
+                        matches[group].extend([*pattern as u32, row, segment, start, count, pattern_threads[group]]);
+                        pattern_threads[group] += roots;
                     }
                     Op {
                         target: place(target),
@@ -1939,8 +1983,8 @@ impl Runner<'_> {
                         for (node, label) in targets {
                             constraints.extend([*node, place(label)]);
                         }
-                        matches.extend([patterns::FACT, row, *root, start, targets.len() as u32, pattern_threads]);
-                        pattern_threads += 1;
+                        matches[0].extend([patterns::FACT, row, *root, start, targets.len() as u32, pattern_threads[0]]);
+                        pattern_threads[0] += 1;
                     }
                     Op {
                         target: place(target),
@@ -1957,9 +2001,12 @@ impl Runner<'_> {
         let labels = self.tapes.supertypes.buffer.clone();
         let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
         let (scratch, counts) = ((&state, self.tapes.scratch_at), (&state, self.tapes.counts_at));
-        if !matches.is_empty() {
+        for (group, (matches, pattern_threads)) in matches.iter().zip(pattern_threads).enumerate() {
+            if matches.is_empty() {
+                continue;
+            }
             let task_count = (matches.len() / 6) as u32;
-            let (items, constraints) = (self.upload(&matches)?, self.upload(&constraints)?);
+            let (items, constraints) = (self.upload(matches)?, self.upload(&constraints)?);
             let docs = self.tapes.docs.buffer.clone();
             let segs = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
             let shape = Shape {
@@ -1968,6 +2015,7 @@ impl Runner<'_> {
                 ..self.shape()
             };
             self.pattern_kernel(
+                group,
                 &[
                     (&docs, 0),
                     (&labels, 8),
@@ -2198,14 +2246,14 @@ impl Runner<'_> {
             ops,
         ];
         let pipeline = GROUP_KERNELS[usize::from(deepest > 8)];
-        // The deep kernel's stacks in device memory, one per thread launched.
+        // The kernel's stacks in device memory, one per thread launched (8 or 32 frames).
         let mut buffers = buffers.to_vec();
-        if deepest > 8 {
-            if self.group_stacks.is_none() {
-                self.group_stacks = Some(MappedBuffer::untouched::<u32>(self.device, self.files.len().max(1) * GROUP_WIDTH as usize * GROUP_STACK_WORDS)?);
-            }
-            buffers.push(self.group_stacks.as_ref().expect("group stacks").buffer.clone());
+        let depth = usize::from(deepest > 8);
+        if self.group_stacks[depth].is_none() {
+            let words = GROUP_STACK_WORDS / if depth == 0 { 4 } else { 1 };
+            self.group_stacks[depth] = Some(MappedBuffer::untouched::<u32>(self.device, self.files.len().max(1) * GROUP_WIDTH as usize * words)?);
         }
+        buffers.push(self.group_stacks[depth].as_ref().expect("group stacks").buffer.clone());
         let state = self.kernels[pipeline].clone();
         let encoder = self.command.new_compute_command_encoder();
         encoder.set_label(KERNELS[pipeline]);
@@ -2392,29 +2440,28 @@ impl Runner<'_> {
                 (&cursor.buffer.clone(), 0),
                 (&failures.buffer.clone(), 0),
             ];
-            if tier == 0 {
-                self.kernel(ROOT_KERNELS[0], &buffers, shape, tier_items.len());
-            } else {
-                // The pool's device stacks follow the shape (`root_records_32`'s buffer 12).
-                let stacks = MappedBuffer::untouched::<u32>(self.device, ROOT_POOL * ROOT_STACK_WORDS)?;
-                let threads = tier_items.len().min(ROOT_POOL);
-                let state = self.kernels[ROOT_KERNELS[1]].clone();
+            {
+                // The pool's device stacks follow the shape (buffer 10): 8 frames a lane over the
+                // pooled stacks, or `ROOT_POOL` lanes of 32.
+                let stacks = self.stacks()?;
+                let threads = if tier == 0 { tier_items.len().min(stack_lanes(8, 31)) } else { tier_items.len().min(ROOT_POOL) };
+                let kernel = ROOT_KERNELS[tier.min(1)];
+                let state = self.kernels[kernel].clone();
                 let encoder = self.command.new_compute_command_encoder();
-                encoder.set_label(KERNELS[ROOT_KERNELS[1]]);
+                encoder.set_label(KERNELS[kernel]);
                 encoder.set_compute_pipeline_state(&state);
                 for (index, (buffer, offset)) in buffers.iter().enumerate() {
                     encoder.set_buffer(index as u64, Some(buffer), *offset);
                 }
                 encoder.set_bytes(9, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
-                encoder.set_buffer(10, Some(&stacks.buffer), 0);
+                encoder.set_buffer(10, Some(&stacks), 0);
                 self.bind_slabs(encoder);
                 let width = state.thread_execution_width().max(1);
                 encoder.checked_dispatch_threads(&self.command, MTLSize::new(threads as u64, 1, 1), MTLSize::new(width.min(threads as u64), 1, 1));
                 encoder.end_encoding();
                 self.encoded = true;
                 self.outcome.dispatches += 1;
-                self.retained.push(stacks);
-                self.split(KERNELS[ROOT_KERNELS[1]]);
+                self.split(KERNELS[kernel]);
             }
             offset += tier_items.len() as u64;
         }
@@ -2431,11 +2478,7 @@ impl Runner<'_> {
         let texts = walks.texts.buffer.clone();
         let steps = walks.steps;
         let tiers = walks.tiers.iter().map(|(tier, passes, count, threads)| (*tier, passes.buffer.clone(), *count, *threads)).collect::<Vec<_>>();
-        if self.stacks.is_none() && tiers.iter().any(|(tier, ..)| *tier == 2) {
-            self.stacks = Some(MappedBuffer::untouched::<u32>(self.device, MICRO_POOL * MICRO_STACK_WORDS)?);
-        }
-        // The small tiers do not read it: any buffer binds there.
-        let stacks = self.stacks.as_ref().map_or_else(|| self.flags.buffer.clone(), |stacks| stacks.buffer.clone());
+        let stacks = self.stacks()?;
         for (tier, passes, count, threads) in tiers {
         let shape = Shape { item_count: threads as u32, target_count: count as u32, steps, ..self.shape() };
         let tapes = &self.tapes;
@@ -2459,7 +2502,7 @@ impl Runner<'_> {
         let (pipeline, threads) = match tier {
             2 if self.deep => (DEEP_KERNEL, threads.min(MICRO_DEEP_POOL)),
             2 => (TIER_KERNELS[2], threads.min(MICRO_POOL)),
-            _ => (TIER_KERNELS[tier], threads),
+            _ => (TIER_KERNELS[tier], threads.min(stack_lanes(TIER_FRAMES[tier], 17))),
         };
         self.kernel(pipeline, &buffers, shape, threads);
         }

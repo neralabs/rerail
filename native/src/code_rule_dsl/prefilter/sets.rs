@@ -401,6 +401,7 @@ pub(super) fn select(
         }
         Ok((space, leaves, gated))
     })?;
+    crate::code_rule_dsl::prof::peak("2a1.leaves");
     let _stage = crate::code_rule_dsl::prof::Stage::start("sets.evaluate");
     let started = std::time::Instant::now();
     let mut outputs = match device {
@@ -408,6 +409,7 @@ pub(super) fn select(
         #[cfg(target_os = "macos")]
         Device::Metal => evaluate_metal(&program, &space, &leaves)?,
     };
+    crate::code_rule_dsl::prof::peak("2a2.evaluated");
     // Each plan keeps its gated files' nodes only.
     for (set, gate) in outputs.iter_mut().zip(&gated.plans) {
         let Some(gate) = gate else { continue };

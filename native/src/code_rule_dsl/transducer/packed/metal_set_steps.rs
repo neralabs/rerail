@@ -87,6 +87,7 @@ pub(in crate::code_rule_dsl) fn run(
     outputs: &[usize],
 ) -> Result<Vec<Vec<u64>>, Error> {
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    crate::code_rule_dsl::prof::peak("2a1a.device");
     // The steps' submission within the caller's launch budget, or one of their own.
     let _scope = super::metal_backend::launch::LaunchScope::enter();
     let space_words = (len as usize).div_ceil(64).max(1);
@@ -112,7 +113,9 @@ pub(in crate::code_rule_dsl) fn run(
         let encoded = steps.iter().map(|step| step.encoded()).collect::<Vec<_>>();
         let steps_buffer = MappedBuffer::from_slice(device, &encoded)?;
         let layout_buffer = MappedBuffer::from_slice(device, &layout)?;
+        crate::code_rule_dsl::prof::peak("2a1b.filled");
         let pipeline = pipelines()?.remove(0);
+        crate::code_rule_dsl::prof::peak("2a1c.pipeline");
         let queue = device.new_command_queue();
         let command = queue.new_command_buffer();
         command.set_label("Rerail set steps");
@@ -128,6 +131,7 @@ pub(in crate::code_rule_dsl) fn run(
         encoder.end_encoding();
         commit_checked(command)?;
         wait_checked(command)?;
+        crate::code_rule_dsl::prof::peak("2a1d.ran");
     }
     Ok(outputs
         .iter()

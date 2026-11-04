@@ -1,8 +1,8 @@
 //! A clause's ast-grep pattern leaves as one generated Metal kernel (06-first-slice S2, F1): each
 //! `PackedPattern` becomes functions that mirror `PackedPattern::one` and `children` line for
 //! line. A pattern is a tree, so each function calls only its children's and none recurses; the
-//! structural equality of a repeated metavariable (`exact`) walks an explicit stack, and one too
-//! deep for it fails the clause (flags[0]) rather than guessing.
+//! structural equality of a repeated metavariable (`exact`) compares the two subtrees' preorder
+//! runs in the tape, with no stack.
 
 use super::super::super::PackedPattern;
 use std::fmt::Write as _;
@@ -36,7 +36,10 @@ static bool kinds_match(uint goal,uint kind){return goal==kind||goal==65535u;}
 static bool named_leaf(Ctx c,uint node){return (c_flags(c,node)&1u)!=0u&&tape_size(c.s,c.d,c_local(c,node))==1u;}
 static bool same_text(Ctx c,uint left,uint right){uint l=c_local(c,left),r=c_local(c,right);uint ls=tape_start(c.s,c.d,l),rs=tape_start(c.s,c.d,r);uint n=tape_end(c.s,c.d,l)-ls;if(n!=tape_end(c.s,c.d,r)-rs)return false;device const uchar* source=tape_source(c.s,c.d);for(uint i=0u;i<n;i++)if(source[ls+i]!=source[rs+i])return false;return true;}
 static bool text_is(Ctx c,uint node,uint start,uint length){uint l=c_local(c,node);uint from=tape_start(c.s,c.d,l);if(tape_end(c.s,c.d,l)-from!=length)return false;device const uchar* source=tape_source(c.s,c.d);for(uint i=0u;i<length;i++)if(source[from+i]!=c.text[start+i])return false;return true;}
-static bool exact(Ctx c,uint left,uint right){uint2 stack[64];uint top=0u;stack[top++]=uint2(left,right);while(top>0u){uint2 pair=stack[--top];if(pair.x==pair.y)continue;if(named_leaf(c,pair.x)||named_leaf(c,pair.y)){if(!same_text(c,pair.x,pair.y))return false;continue;}uint count=c_count(c,pair.x);if(c_kind(c,pair.x)!=c_kind(c,pair.y)||count!=c_count(c,pair.y))return false;if(top+count>64u){atomic_fetch_or_explicit(&c.flags[0],2u,memory_order_relaxed);return false;}uint l=c_first(c,pair.x),r=c_first(c,pair.y);for(uint i=0u;i<count;i++){stack[top++]=uint2(l,r);l=c_next(c,l);r=c_next(c,r);}}return true;}
+// Two subtrees are equal where their preorder runs are (a subtree is contiguous in the tape):
+// pair by pair the same kind and child count, the same text at a named leaf, a node shared by
+// both skipped whole. No stack: thread memory is the driver's scratch for every thread in flight.
+static bool exact(Ctx c,uint left,uint right){uint a=c_local(c,left),b=c_local(c,right);uint aEnd=a+tape_size(c.s,c.d,a),bEnd=b+tape_size(c.s,c.d,b);while(a<aEnd&&b<bEnd){if(a==b){uint n=tape_size(c.s,c.d,a);a+=n;b+=n;continue;}uint x=c_global(c,a),y=c_global(c,b);if(named_leaf(c,x)||named_leaf(c,y)){if(!same_text(c,x,y))return false;a+=tape_size(c.s,c.d,a);b+=tape_size(c.s,c.d,b);continue;}if(c_kind(c,x)!=c_kind(c,y)||c_count(c,x)!=c_count(c,y))return false;a++;b++;}return a==aEnd&&b==bEnd;}
 static uint var_at(Ctx c,Var v,uint i){return v.mode==1u?v.a:c_child(c,v.a,v.from+i);}
 static bool bind_single(Ctx c,thread Var& v,uint node){if(v.mode!=0u)return v.n==1u&&exact(c,var_at(c,v,0u),node);v.mode=1u;v.a=node;v.from=0u;v.n=1u;v.multi=0u;return true;}
 static bool bind_multi(Ctx c,thread Var& v,uint mode,uint a,uint from,uint n){
@@ -47,13 +50,21 @@ static bool bind_multi(Ctx c,thread Var& v,uint mode,uint a,uint from,uint n){
 static DocView doc_of(device const DocView* docs,uint count,uint node){uint first=0u,last=count;while(last-first>1u){uint middle=(first+last)/2u;if(docs[middle].nodeBase<=node)first=middle;else last=middle;}return docs[first];}
 "#;
 
-/// The kernel source for `patterns`, with each pattern's metavariable names in index order.
-pub(super) fn source(patterns: &[&PackedPattern]) -> (String, Vec<Vec<String>>) {
+/// Patterns a pattern kernel holds (`source`). A kernel's thread memory is the driver's scratch,
+/// sized for every thread in flight and kept by the process, and one kernel of every clause's
+/// patterns spills: on S7's 59, eight cost no scratch, thirty 16-48 MB, all 59 88 MB (O39).
+pub(super) const GROUP: usize = 8;
+
+/// The kernel source for `patterns`, numbered from `first` (the plan's numbering, which items
+/// carry), with each pattern's metavariable names in index order. Every group's kernel answers
+/// the fact case.
+pub(super) fn source(patterns: &[&PackedPattern], first: usize) -> (String, Vec<Vec<String>>) {
     let mut out = format!("{}{COMMON}", super::TAPE_VIEW);
     let mut text = Vec::<u8>::new();
     let mut names = Vec::new();
     let mut bodies = String::new();
     for (index, pattern) in patterns.iter().enumerate() {
+        let index = first + index;
         let mut vars = Vec::new();
         collect(pattern, &mut vars);
         let count = vars.len().max(1);
@@ -76,6 +87,7 @@ pub(super) fn source(patterns: &[&PackedPattern]) -> (String, Vec<Vec<String>>) 
         "kernel void {KERNEL}(device const DocView* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],device const uint4* segs [[buffer(6)]],constant Shape& shape [[buffer(7)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){{\n  if(tid>=shape.itemCount||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;\n  uint low=0u,high=shape.taskCount;while(high-low>1u){{uint middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}\n  Item item=items[low];Ctx c;c.s=Slabs{{s0,s1,s2,s3}};c.text=TEXT;c.flags=flags;\n  if(item.pattern=={FACT}u)c.d=doc_of(docs,shape.fileCount,item.root);\n  else{{uint i=tid-item.threadStart;uint4 seg=segs[root_segment(segs,item.root,i)];c.d=docs[seg.x];item.root=c.d.nodeBase+root_local(c.s,c.d,segs,seg,i-seg.w);}}\n  switch(item.pattern){{\n"
     );
     for (index, vars) in names.iter().enumerate() {
+        let index = first + index;
         let _ = write!(
             out,
             "  case {index}u:{{B{index} b;for(uint v=0u;v<{};v++){{b.v[v].mode=0u;b.v[v].a=0u;b.v[v].from=0u;b.v[v].n=0u;b.v[v].multi=0u;}}if(p{index}_root(c,item.root,b)!=0)return;for(uint at=0u;at<item.constraintCount;at++){{uint2 constraint=constraints[item.constraintStart+at];Var v=b.v[constraint.x];if(v.mode!=0u&&v.multi==0u){{uint node=var_at(c,v,0u);if(((labels[constraint.y*shape.words+node/32u]>>(node%32u))&1u)==0u)return;}}}}break;}}\n",

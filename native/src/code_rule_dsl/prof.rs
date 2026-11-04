@@ -140,6 +140,28 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
                 if std::env::var_os("RERAIL_PROF_RISES").is_some() && max > RISEN.fetch_max(max, std::sync::atomic::Ordering::Relaxed) + 32 {
                     eprintln!("footprint high-water {max} MB by {stage} (now {} MB)", info.ri_phys_footprint >> 20);
                 }
+                // `RERAIL_DIAG_PAUSE_AT=<stage>:<n>` (with `RERAIL_DIAG_PAUSE=<seconds>`): the n-th time
+                // the stage is reached, wait that long (bounded), for `footprint` on the process.
+                if let (Ok(at), Some(seconds)) = (std::env::var("RERAIL_DIAG_PAUSE_AT"), std::env::var("RERAIL_DIAG_PAUSE").ok().and_then(|s| s.parse::<u64>().ok())) {
+                    static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                    let (name, nth) = at.split_once(':').map_or((at.as_str(), 1), |(name, nth)| (name, nth.parse().unwrap_or(1)));
+                    if name == stage && SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 == nth {
+                        eprintln!("DIAG pause at {stage}, pid {}", std::process::id());
+                        std::thread::sleep(std::time::Duration::from_secs(seconds.min(30)));
+                    }
+                }
+                // `RERAIL_PROF_STAGES=1`: every stage's footprint and live heap, in order.
+                if std::env::var_os("RERAIL_PROF_STAGES").is_some() {
+                    let _ = tikv_jemalloc_ctl::epoch::advance();
+                    eprintln!(
+                        "stage {stage}: footprint {} MB, heap live {} MB, heap resident {} MB, Metal buffers {} MB, driver {} MB",
+                        info.ri_phys_footprint >> 20,
+                        tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
+                        tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20,
+                        crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
+                        crate::code_rule_dsl::transducer::packed::metal_backend::driver_mb()
+                    );
+                }
             }
         }
         // The system allocator's (SQLite's, the Metal runtime's): in use, and held.

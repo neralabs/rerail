@@ -105,3 +105,115 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     drop(store);
     let _ = std::fs::remove_file(path);
 }
+
+/// Diagnostic (O39): the process footprint a command queue and a submission add, run alone
+/// (`--ignored --nocapture`).
+#[test]
+#[ignore = "diagnostic: prints the footprint of queues and submissions"]
+fn a_submission_costs_footprint() {
+    let Some(device) = METAL_DEVICE.as_ref() else { return };
+    let mb = crate::code_rule_dsl::prof::footprint_mb;
+    let source = "#include <metal_stdlib>\nusing namespace metal;\nkernel void touch(device uint* o [[buffer(0)]],uint g [[thread_position_in_grid]]){o[g]=g;}";
+    let pipeline = pipeline_named(source, "touch").unwrap();
+    eprintln!("start {} MB", mb());
+    let out = MappedBuffer::zeroed::<u32>(device, 1 << 20).unwrap();
+    let submit = |queue: &metal::CommandQueueRef| {
+        let command = queue.new_command_buffer();
+        let encoder = command.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(&pipeline);
+        encoder.set_buffer(0, Some(&out.buffer), 0);
+        let threads = std::env::var("RERAIL_DIAG_THREADS").ok().and_then(|s| s.parse().ok()).unwrap_or(1_u64 << 20);
+        encoder.dispatch_threads(MTLSize::new(threads, 1, 1), MTLSize::new(64, 1, 1));
+        encoder.end_encoding();
+        command.commit();
+        command.wait_until_completed();
+    };
+    let queue = device.new_command_queue();
+    eprintln!("queue {} MB", mb());
+    submit(&queue);
+    eprintln!("first submission {} MB", mb());
+    for _ in 0..10 {
+        submit(&queue);
+    }
+    eprintln!("ten more on one queue {} MB", mb());
+    for _ in 0..10 {
+        metal::objc::rc::autoreleasepool(|| submit(&device.new_command_queue()));
+    }
+    eprintln!("ten new queues, pooled {} MB", mb());
+    for _ in 0..10 {
+        submit(&device.new_command_queue());
+    }
+    eprintln!("ten new queues, unpooled {} MB", mb());
+    // `RERAIL_DIAG_PAUSE`: seconds to wait here, for `footprint`/`vmmap` on the process.
+    if let Some(seconds) = std::env::var("RERAIL_DIAG_PAUSE").ok().and_then(|s| s.parse().ok()) {
+        eprintln!("pid {}", std::process::id());
+        std::thread::sleep(std::time::Duration::from_secs(seconds));
+    }
+}
+
+/// Diagnostic (O39): the footprint a kernel's private stack adds (the driver's scratch, sized for
+/// every thread in flight and kept by the process), by stack words (`RERAIL_DIAG_WORDS`).
+#[test]
+#[ignore = "diagnostic: prints the footprint of a kernel's private stack"]
+fn a_private_stack_costs_footprint() {
+    let Some(device) = METAL_DEVICE.as_ref() else { return };
+    let mb = crate::code_rule_dsl::prof::footprint_mb;
+    let words: usize = std::env::var("RERAIL_DIAG_WORDS").ok().and_then(|s| s.parse().ok()).unwrap_or(1024);
+    let source = format!(
+        "#include <metal_stdlib>\nusing namespace metal;\nkernel void deep(device uint* o [[buffer(0)]],uint g [[thread_position_in_grid]]){{uint s[{words}];for(uint i=0;i<{words}u;i++)s[(i*7u+g)%{words}u]=i^g;uint a=0;for(uint i=0;i<{words}u;i+=13u)a+=s[(i+o[g])%{words}u];o[g]=a;}}"
+    );
+    let shallow = "#include <metal_stdlib>\nusing namespace metal;\nkernel void touch(device uint* o [[buffer(0)]],uint g [[thread_position_in_grid]]){o[g]=g;}";
+    let out = MappedBuffer::zeroed::<u32>(device, 1 << 20).unwrap();
+    let queue = device.new_command_queue();
+    let submit = |pipeline: &metal::ComputePipelineState| {
+        let command = queue.new_command_buffer();
+        let encoder = command.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(&out.buffer), 0);
+        encoder.dispatch_threads(MTLSize::new(1 << 20, 1, 1), MTLSize::new(64, 1, 1));
+        encoder.end_encoding();
+        command.commit();
+        command.wait_until_completed();
+    };
+    submit(&pipeline_named(shallow, "touch").unwrap());
+    eprintln!("after a shallow kernel {} MB", mb());
+    let deep = pipeline_named(&source, "deep").unwrap();
+    eprintln!("compiled, {words} words {} MB", mb());
+    submit(&deep);
+    eprintln!("after a {words}-word stack {} MB", mb());
+}
+
+/// Diagnostic (O39): the footprint one label kernel's dispatch adds (`RERAIL_DIAG_KERNEL`), with
+/// no items, in a fresh process: its private memory, which the driver sizes for every thread in
+/// flight and keeps.
+#[test]
+#[ignore = "diagnostic: prints the footprint of one label kernel's dispatch"]
+fn a_label_kernel_costs_footprint() {
+    let Some(device) = METAL_DEVICE.as_ref() else { return };
+    let Ok(name) = std::env::var("RERAIL_DIAG_KERNEL") else { return };
+    let mb = crate::code_rule_dsl::prof::footprint_mb;
+    let source = match std::env::var_os("RERAIL_DIAG_SOURCE") {
+        Some(path) => std::fs::read_to_string(path).unwrap(),
+        None => format!("#include <metal_stdlib>\nusing namespace metal;\n{TAPE}{}", include_str!("metal_label_passes.metal")),
+    };
+    let pipeline = pipeline_named(&source, &name).unwrap();
+    let zero = MappedBuffer::zeroed::<u32>(device, 1 << 18).unwrap();
+    let queue = device.new_command_queue();
+    let submit = |pipeline: &metal::ComputePipelineState| {
+        let command = queue.new_command_buffer();
+        let encoder = command.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(pipeline);
+        for slot in 0..31 {
+            encoder.set_buffer(slot, Some(&zero.buffer), 0);
+        }
+        encoder.dispatch_thread_groups(MTLSize::new(1, 1, 1), MTLSize::new(64, 1, 1));
+        encoder.end_encoding();
+        command.commit();
+        command.wait_until_completed();
+    };
+    let touch = pipeline_named("#include <metal_stdlib>\nusing namespace metal;\nkernel void touch(device uint* o [[buffer(0)]],uint g [[thread_position_in_grid]]){o[g]=0;}", "touch").unwrap();
+    submit(&touch);
+    let before = mb();
+    submit(&pipeline);
+    eprintln!("KERNEL {name}: +{} MB", mb() as i64 - before as i64);
+}
