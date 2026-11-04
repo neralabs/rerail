@@ -6274,3 +6274,119 @@ Default production scopes and complete Rerail reporter/signing/ratchet workflows
 The pack remains inactive. GPU lowering remains separate.
 The revised batch-eight kernels have no new CPU/RSS profiling receipt.
 No implementation changed during this audit.
+
+## 2026-11-04 — Complete batch eight on the default engine
+
+The two audit defects are fixed. Red commit `b4cec00a0` adds the hydration-order case and twelve independent graph-state probes.
+LA-011 now uses supplied visitation order, not minimum location.
+The transitive helper consumes initial memo and visiting state through the production ordered-graph producer.
+It preserves negative entries, target precedence, memo insertion order and complete updates.
+
+Commit `edffa2547` integrates the required capabilities into this worktree's default engine.
+It preserves SQL fusion, shared binding ownership and typed producer contracts.
+The native graph producer contains no data-layer symbols or per-node SQL submissions.
+Canonical Python requests remain whole demand batches, with one isolated CPython process per nonempty wave.
+SQL diagnostic messages and native output schemas now survive compilation and inference.
+Source-byte admission is consistently per file.
+
+A real enforcer test found another integration defect: its result parser rejected the SQL `row` object.
+The enforcer and API now accept the existing recursive JSON value type.
+Production tests check authentication and purity positives with shipped defaults and scopes, exact messages and source lines, delivery, retraction and exclusions.
+These tests execute the real enforcer rather than the replay adapter.
+
+The upstream cache-discovery case reads 3,095 files and 62,921,799 source bytes.
+External sampling found SQL fact publication and index retirement, including WAL work, for files already rejected by their selectors.
+Preparation now skips publication when there is no admitted anchor demand, in both execution paths.
+Red commit `3f53dd32c` records the unused-publication regression.
+Complex Unicode trigger expressions also lost admission when literal extraction exceeded its alternative limit.
+The generic text requirement now retains a conservative regex in that case.
+It removes zero-width assertions before searching the containing source.
+Tests prove that node anchors and word boundaries cannot become file boundaries.
+
+One Rust allowance test relied on work that the new admission could eliminate.
+Its input now gives every integer a real matching preceding sibling.
+The test still requires clause-local failure under the same fixed allowance; it cannot pass through an empty candidate set.
+The broader Rust DSL run then passed 1,552 tests, with 22 existing ignores.
+It took 50.34 seconds. Test compilation was checked again after fixture relocation.
+The final addon build took about 103 seconds; builds are separate from workload timings.
+
+Commit `5d218b3d2` gives each rule one canonical document.
+The ten batch-eight documents live in `packs/data-layer/rules/`; the earlier seventy remain candidates.
+The harnesses resolve both locations and retain explicit mutation-directory isolation.
+The frozen profiling workload includes both locations and rejects duplicate filenames.
+The private pack loads through the public catalog; core does not enable it automatically.
+
+Final addon SHA-256: `75468a30ae1520582ed11b4a4bd12680aded5ead1de26a7bd755ca6bcb96b0db`.
+It was rebuilt from the committed source after the fixture relocation.
+All final native receipts use this addon, with `RERAIL_ENGINE_PATH` unset.
+
+| Correctness gate | Final result |
+| --- | --- |
+| Unchanged upstream source; original behavior assertions | 456 cases passed in each API mode; no skips or semantic fallback |
+| Complete API comparison | 305 results per mode; zero differences |
+| Complete analyzer comparison | 85 inputs per mode; zero field differences |
+| Graph-helper state | 12 inputs per mode; exact results, memo order and visiting state |
+| Supplied facts without source | 17 batches through both APIs |
+| Recorded scanner corpus | 558 observations: 351 positive and 207 clean; no differences or engine failures |
+| Disabled-detector controls | 173 assertion failures and ten positive-fixture errors across nine original pytest suites |
+| Focused TypeScript suite | 74 passed |
+| Default-engine compilation | All 80 policies accepted |
+| Typechecking, boundaries and Windows paths | Passed |
+| Structure | Only the three existing directory-size findings |
+
+Of the 456 original cases, 336 invoke native execution: 523 calls, including 201 positive diagnostic calls.
+The other 120 cases test host constants, DTOs, discovery, signing or CLI orchestration.
+Four instrumentation cases translate Python hooks and count assertions to actual native counters; their behavior assertions remain intact.
+The original Python detector and analyzer implementations are forbidden by the harness.
+The SQL-surface rule has no upstream pytest module at this pin; independent positive and clean probes and a disabled-detector control cover it.
+
+CI now builds this engine and runs both upstream API modes against the pinned private checkout.
+It also checks complete results, complete facts, graph state and disabled-detector rejection.
+Each subprocess is bounded at 115 seconds.
+The existing CI app supplies read-only upstream access on trusted jobs.
+Remote CI execution and app installation access have not been verified locally.
+
+### Focused CPU and RSS measurements
+
+The [measurement receipt](performance-decisions/data-layer-batch-eight-default-kernels-20261104.json) contains three serial cold processes per kernel and a separate Instruments capture.
+The benchmark loads only the new kernels, not the rule batch or the repository.
+Compile and evaluation CPU remain separate.
+External BSD `time` records process-family CPU, including waited Python children and process startup.
+RSS is the maximum per-process RSS, not simultaneous family memory.
+The companion and default profiles both use optimization level 3 but differ in inheritance and codegen-unit count.
+These are compatibility measurements, not a controlled claim about an engine-wide speedup.
+
+Medians from three cold processes:
+
+| Build and kernel | Compile CPU | Evaluation CPU, Node | Evaluation wall | Process-family CPU including startup | Maximum RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Companion: 1,000-root graph | 21.831 ms | 14.002 ms | 14.005 ms | 0.85 s | 242.6 MiB |
+| Default: same graph | 24.566 ms | 14.076 ms | 14.100 ms | 0.83 s | 226.5 MiB |
+| Default: graph with memo and visiting state | 23.084 ms | 8.654 ms | 8.679 ms | 0.78 s | 225.1 MiB |
+| Companion: 20 canonical Python documents | 0.102 ms | 1.037 ms | 41.468 ms | 0.85 s | 258.9 MiB |
+| Default: same Python documents | 0.101 ms | 0.777 ms | 40.389 ms | 0.78 s | 242.3 MiB |
+
+The Python evaluation CPU column excludes its child process; it is not total kernel CPU.
+Use the external process-family measurement for that boundary.
+The graph-state case emits 599 findings, while the plain case emits 1,000, so those rows do not establish an algorithm speedup.
+The plain graph's evaluation CPU is effectively unchanged between builds.
+
+Instruments Time Profiler captured 5,681 running-thread samples from the final addon.
+Bottom-up self time was led by memory comparison, JSON value indexing, memory copying, SHA-256 compression and allocation.
+Inclusive CPU shares were 48.86% in JSON work, 15.16% in finding-row construction, 14.43% in SQL and 3.91% in finding identity.
+Graph preparation accounted for 4.03%; traversal itself accounted for 0.56%.
+These inclusive categories overlap.
+This positive-output kernel points toward result construction and serialization before further graph-algorithm optimization.
+It does not rank bottlenecks in a mostly-clean repository run.
+The initial `sample` capture was too sparse for percentages; the Instruments capture supplies the quantitative evidence.
+
+Reproduce a bounded kernel with `node --import tsx conformance/data-layer/batch-eight-kernels.ts --kernel graph-state`.
+Use `--seconds 10` for an external profiler attachment; the tool rejects durations above ten seconds.
+The other kernels are `graph` and `python`.
+`xcrun xctrace record --template 'Time Profiler' --attach <pid> --time-limit 5s --output <trace>` records the native stacks.
+The tool prints its PID before evaluation.
+
+No full-repository cold run was performed.
+The initial interrupted discovery runs are timeout observations, not before/after benchmark measurements.
+This work does not claim to resolve the historical repository CPU or 20.451 GB peak-memory problem.
+There are 62 rules left to port. No Linear issues were created.

@@ -1,22 +1,28 @@
 {
   "format": "rerail.data-layer-integrated-engine/v1",
-  "base_commit": "9bc955cc5",
-  "commit": "29cbf425b0f26081ce0bfa2304817511f47027e4",
-  "branch": "jeremy/data-layer-integrated-compat-20261103",
-  "native_sha256": "34b553e63d5b8277d488fba591816bfbb6c7a7554509c3ea63a1566dbdc6871b",
+  "base_commit": "100cf6aa6",
+  "commit": "5d218b3d238552643be22835560aa10b80236fdb",
+  "branch": "jeremybarnes/Data-layer-rule-expressivity",
+  "native_sha256": "75468a30ae1520582ed11b4a4bd12680aded5ead1de26a7bd755ca6bcb96b0db",
   "build": {
     "package": "rerail-engine",
     "profile": "profiling",
     "extra_features": [],
     "allocator": "jemalloc",
-    "wallSeconds": 50.7,
-    "testBinaryBuildSeconds": 218
+    "wallSeconds": 103,
+    "profileDefinition": {
+      "inherits": "release",
+      "debug": 2,
+      "strip": "none",
+      "lto": false,
+      "codegenUnits": 16
+    }
   },
-  "frontend_schema_sha256": "b05aab5bf43630d8b83c20a5f1b9fed8a094d5700688dc2f41f4e8d891cd1866",
+  "frontend_schema_sha256": "837a378d586d571c23965b64f6822d8fdda8ef45c93a87b5e7c251e79cbba4b5",
   "frontend_capabilities_sha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01",
-  "python": "Python 3.13.12",
-  "boundary": "Production schema and native compiled-rule/workspace APIs; relational compatibility, with wave/GPU lowering separate.",
-  "runtime_dependency": "CPython 3.13 for canonical AST and syntax-error facts. Text-only identifier and byte-column requests perform no parse or AST walk.",
-  "replay_schema_sha256": "af229140fc9e0604e888b93f11ce60859b37a7f0ba3e2e2944a812b2e1658e63",
+  "python": "Canonical worker: CPython 3.13.12; upstream assertions: CPython 3.13.18",
+  "boundary": "Default native addon from this worktree; legacy relational contracts retained. Wave/GPU lowering is separate.",
+  "runtime_dependency": "CPython 3.13 for canonical AST and syntax-error facts; isolated -I -S worker, no source imports or execution.",
+  "replay_schema_sha256": "837a378d586d571c23965b64f6822d8fdda8ef45c93a87b5e7c251e79cbba4b5",
   "replay_capabilities_sha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01"
 }
