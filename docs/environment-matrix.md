@@ -65,7 +65,8 @@ Each environment installs Node and Git the way a user would.
 
 Eight checks run as the ordinary user, never root or SYSTEM, so set-up writes PATH as on a person's computer.
 
-1. **registry**: a registry on the VM serves the package and every rule pack in `packs/`; all else comes from npmjs.
+1. **registry**: a registry on the VM serves the package and every published rule pack in `packs/`; all else comes
+   from npmjs.
 2. **project**: a Git repository with a `package.json` and one commit, plus empty agent folders.
 3. **setup**: `npx @neralabs/rerail setup --json`, answered until Rerail is on.
 4. **status**: `rerail status` shows the daemon running with `Engine: ok`.

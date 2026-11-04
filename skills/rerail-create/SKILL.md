@@ -79,7 +79,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    instead.
 2. **Choose the kind.** A code rule checks files; read [references/code-rules.md](references/code-rules.md). A conversation rule
    checks a command the agent runs; read [references/conversation-rules.md](references/conversation-rules.md). Conversation
-   rules are in internal testing: Rerail 0.1.0 releases code rules only.
+   rules are in internal testing: Rerail's latest release ships code rules only.
    - Give it the id `local:<short-kebab-name>` and `revision` 1.
    - Set `mode`. Use `steer` when you are sure of the rule. Use `log` when the repo pass or the meaning leaves doubt. Never use
      `block`.
@@ -145,7 +145,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    - **Architecture rules.** Put the history result above the card in one line: `Checked against history: caught the first
      draft of #123; quiet on its merge and on 15 recent merged PRs.`
    - **Conversation rules** (command or similarity). Put one line above the card: `Internal testing: this kind of rule is not
-     part of Rerail 0.1.0 yet.`
+     part of Rerail's latest release yet.`
    - **"Change something".** Offer Steer and Log, each with what it means; All of the repo or this worktree only (its rule
      runs nowhere else, not in the main checkout nor other worktrees); and any other row the person names.
    - **"Show me the rule".** Print the rule JSON, then ask again.

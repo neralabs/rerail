@@ -1,4 +1,4 @@
-# Rerail repository rule pack, history
+# Rerail rule pack: Rerail repository, history
 
 These are the rules that were considered for the pack, and the study behind each. This file is not published; the
 pack's [README](../README.md) covers the rules it ships, and [candidates/README.md](candidates/README.md) the two drafts

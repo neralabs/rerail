@@ -1,4 +1,4 @@
-# Rerail repository rule pack
+# Rerail rule pack: Rerail repository
 
 Rules for working in this repository: they steer the coding agent toward the architecture and conventions Rerail has
 written down (REVIEW.md, CONTEXT.md, `src/README.md`, `docs/`) and has broken before. Set-up offers the pack to a

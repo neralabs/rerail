@@ -1,1 +1,0 @@
-`RERAIL_STORAGE_ROOT` and `RERAIL_MODEL_PATH` mean the same everywhere: a relative value resolves against the session's workspace, an empty one counts as unset, and the daemon and Pi through it now read them too. Only the default storage root, `<workspace>/.rerail/sessions`, gets its `.gitignore`; a custom root inside another `.rerail` folder is left alone.

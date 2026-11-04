@@ -5,9 +5,9 @@
 # request after each review, so request it again for another), or comment "@neralabs-reviewer review"
 # ("@neralabs-reviewer help" lists the commands). Only people with write access can trigger it. A Dependabot PR
 # is reviewed on its own once CI passes on its head (workflow_run below), so that an approval can auto-merge it
-# (dependabot-automerge.yml). Pushes do nothing else. The review reads the PR and its CI results; it never builds, runs or pushes anything. It approves
-# (allow_approve: true) only when it finds nothing blocking, CI passed, and the PR touches no high-risk path that
-# REVIEW.md lists; otherwise its verdict is a comment review. Main requires one approval and no code owner, so
+# (dependabot-automerge.yml). Pushes do nothing else. The review reads the PR and its CI results; it never builds,
+# runs or pushes anything. It approves (allow_approve: true) only when it finds nothing blocking, CI passed, and the
+# PR touches no high-risk path that REVIEW.md lists; otherwise its verdict is a comment review. Main requires one approval and no code owner, so
 # the bot's approval counts as the required review. It reviews only pull requests whose head branch is in this
 # repo: a fork PR is never reviewed by the bot, whoever asks.
 name: reviewer
@@ -92,10 +92,10 @@ jobs:
     # Pinned to a release commit. `reviewer_ref` is where the called workflow loads the reviewer's own code
     # from, so it is the same commit: Dependabot moves `uses:` alone, and `npm run check:pins` fails until
     # `npm run deps:sync` brings `reviewer_ref` along (scripts/deps/sync-pins.mjs).
-    uses: neralabs/reviewer/.github/workflows/review.yml@a5661b2d02971b4e51667c230eb7664c699d643a # v0.1.0
+    uses: neralabs/reviewer/.github/workflows/review.yml@8bbc1d0f29e189f771151527c98e0a657bf6f392 # v0.1.1
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
-      reviewer_ref: a5661b2d02971b4e51667c230eb7664c699d643a
+      reviewer_ref: 8bbc1d0f29e189f771151527c98e0a657bf6f392
       allow_approve: true
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
@@ -107,7 +107,22 @@ jobs:
       provider: bedrock
       model: ${{ vars.REVIEWER_MODEL }}
       aws_region: us-east-1
+      # Rerail module (trial): beside the review, a Rerail scan checks the pull request against this repo's own
+      # rule pack (packs/rerail, taken from the base branch only and approved there) and the complexity rule pack,
+      # with the rules from the base branch, and marks each violation new or existing. A separate rules pass
+      # recommends which new violations to post; a new violation of a steer rule can be a blocker that names its
+      # rule. The review itself never sees the scan. Rerail is the published npm release; the scan result is sent
+      # to the Rerail remote (send_results), in a job that holds only the remote's URL and token. To turn it off,
+      # remove these five inputs and the two RESULTS_SINK secrets.
+      modules: rerail
+      rerail_package: "@neralabs/rerail@0.1.1"
+      rerail_packs: complexity
+      rerail_repo_packs: packs/rerail
+      send_results: true
     # Named, not `secrets: inherit`: the reviewer gets these and nothing else this repo can see.
     secrets:
       REVIEWER_APP_PRIVATE_KEY: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
       REVIEWER_BEDROCK_API_KEY: ${{ secrets.REVIEWER_BEDROCK_API_KEY_MAIN }}
+      # The Rerail remote is the results sink.
+      RESULTS_SINK_URL: ${{ secrets.RERAIL_REMOTE_URL }}
+      RESULTS_SINK_TOKEN: ${{ secrets.RERAIL_REMOTE_TOKEN }}
