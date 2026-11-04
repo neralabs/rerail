@@ -137,7 +137,8 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   capture, time and tokens per phase, and L1 for the batch alone; `--json` keeps it all. `--concurrency` bounds the
   Codex work at once: an A with its capture, or one B run.
 - `merge-assist-stats.ts` (`node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...]
-  --arms A,B [--metric m] [--look N] [--seed N] [--diagnostic]`, or `--self-test`) analyses `--arms` reports, no model
+  --arms A,B [--metric m] [--look N] [--seed N] [--diagnostic]`, `--analyze ... --family large --arms A,B,C[,D]
+  [--diagnostic]`, or `--self-test`) analyses `--arms` reports, no model
   involved. A run is the unit, stratified by task; several reports' batches are pooled (one look each unless `--look` says
   otherwise), and reports with a different index, arm definitions, fix-round limit or run settings are refused. `A` is
   the treatment, `B` the control, and every test is one-sided in A's favour. Binary metrics (`first_pass_clean`,
@@ -153,9 +154,18 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   then the secondary hypotheses (per-size P1–P3, time superiority, uncached tokens, churn), and judges each look
   against the Pocock boundary for three looks (nominal one-sided α 0.0221); the last line is `STOP: success`,
   `CONTINUE` or `STOP: futility/max looks`. It refuses the diagnostic `oracle-area` as the treatment of the primary
-  family unless `--diagnostic` is passed, and then heads the output as a diagnostic that decides nothing. `--self-test`
-  prints the false-positive rate under no effect and the power
-  under a large one, and for P3's test the false-positive rate at a true ratio of 1.10 and the power at 0.9, 200
+  family unless `--diagnostic` is passed, and then heads the output as a diagnostic that decides nothing.
+  `--family large` is the large-task confirmation: `--arms A,B,C` with A the treatment, B `posthoc` and C the second
+  control, every hypothesis one-sided on large tasks with strata = task. Its primary family, Holm across exactly these
+  four with the same looks, Pocock boundary and verdict: L1 first-pass clean A higher than B, L2 total tokens A lower
+  than B, L3 time to completion A non-inferior to B at ×1.10, L4 first-pass clean A higher than C. Secondaries, raw p
+  only: A vs C total tokens (lower) and time (non-inferior at ×1.10), needing a fix round A vs B and A vs C, uncached
+  tokens and churn A vs B. A fourth arm D (`oracle-area`) with `--diagnostic`, when every report holds it, adds
+  headroom lines, D vs A on first-pass clean, total tokens and time (raw p, deciding nothing); without `--diagnostic`
+  D is ignored. `--self-test` prints the false-positive rate under no effect and the power under a large one, for
+  P3's test the false-positive rate at a true ratio of 1.10 and the power at 0.9, and the large family's family-wise
+  false-positive rate under its global null (A's time at exactly ×1.10 B's, all else equal; 9 tasks × 3 runs per
+  arm), 200
   synthetic datasets each. `--analyze-live live.json [...] [--look N] [--planned-looks N]` analyses `--live` reports:
   L1, B's violation of D lower with `focus-pool` than with `none`, by the same stratified permutation test with strata
   = B task, its effect the mean within-task difference in proportions with a cluster-bootstrap 95% CI, one-sided

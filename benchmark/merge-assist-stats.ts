@@ -2,6 +2,7 @@
  * Merge Assist significance: the confirmatory analysis of `--arms` reports from benchmark/merge-assist-context.ts.
  *
  *   node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric m] [--look N] [--seed N]
+ *   node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --family large --arms A,B,C[,D] [--diagnostic]
  *   node --import tsx benchmark/merge-assist-stats.ts --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N]
  *   node --import tsx benchmark/merge-assist-stats.ts --self-test
  *
@@ -28,6 +29,10 @@
  * says whether to stop. The primary family refuses a diagnostic ceiling (`oracle-area`, which selects with the task's
  * labels) as the treatment unless `--diagnostic` is passed. Everything here is a pure function of the reports and a
  * seed; nothing calls a model.
+ *
+ * `--family large` is the large-task confirmation over `--arms A,B,C` (A the treatment, B posthoc, C the second
+ * control): L1–L4 ({@link LARGE_PRIMARY}) with Holm and the same looks, then its secondaries; a 4th arm D with
+ * `--diagnostic` adds D-vs-A headroom lines that decide nothing.
  *
  * `--analyze-live` reads `--live` reports (the two-agent coordination check): L1, B's violation of the decision lower
  * with `focus-pool` than with `none`, by the same stratified permutation test with strata = B task, the effect the
@@ -337,6 +342,8 @@ interface Hypothesis {
   readonly sizes: readonly Size[] | null;
   /** Non-inferiority: H0 is ratio A/B ≥ this margin, rejected when A is shown below it. Absent for superiority. */
   readonly margin?: number;
+  /** The compared arms as positions in `--arms`, treatment first; absent for the first two. */
+  readonly pair?: readonly [number, number];
 }
 
 /** The non-inferiority margin of time to completion: the treatment may take at most 10% longer. */
@@ -367,6 +374,37 @@ const SECONDARY: readonly Hypothesis[] = [
   { id: "S-churn", metric: "churn", sizes: null },
 ];
 
+export const FAMILIES = ["default", "large"] as const;
+export type Family = (typeof FAMILIES)[number];
+
+/**
+ * The pre-registered large-task confirmation (`--family large`, `--arms A,B,C`): A the treatment, B posthoc, C the
+ * best earlier protocol. Holm across exactly these four.
+ */
+export const LARGE_PRIMARY: readonly Hypothesis[] = [
+  { id: "L1", metric: "first_pass_clean", sizes: ["large"], pair: [0, 1] },
+  { id: "L2", metric: "total_tokens", sizes: ["large"], pair: [0, 1] },
+  { id: "L3", metric: "time_to_completion", sizes: ["large"], margin: TIME_MARGIN, pair: [0, 1] },
+  { id: "L4", metric: "first_pass_clean", sizes: ["large"], pair: [0, 2] },
+];
+
+/** The large family's secondary hypotheses, raw p only. */
+const LARGE_SECONDARY: readonly Hypothesis[] = [
+  { id: "LS-tokens-C", metric: "total_tokens", sizes: ["large"], pair: [0, 2] },
+  { id: "LS-time-C", metric: "time_to_completion", sizes: ["large"], margin: TIME_MARGIN, pair: [0, 2] },
+  { id: "LS-fix-B", metric: "needs_fix_round", sizes: ["large"], pair: [0, 1] },
+  { id: "LS-fix-C", metric: "needs_fix_round", sizes: ["large"], pair: [0, 2] },
+  { id: "LS-uncached-B", metric: "uncached_tokens", sizes: ["large"], pair: [0, 1] },
+  { id: "LS-churn-B", metric: "churn", sizes: ["large"], pair: [0, 1] },
+];
+
+/** `--family large --diagnostic` with a 4th arm D (`oracle-area`): how far D is ahead of A. Raw p; decides nothing. */
+const LARGE_HEADROOM: readonly Hypothesis[] = [
+  { id: "H-clean", metric: "first_pass_clean", sizes: ["large"], pair: [3, 0] },
+  { id: "H-tokens", metric: "total_tokens", sizes: ["large"], pair: [3, 0] },
+  { id: "H-time", metric: "time_to_completion", sizes: ["large"], pair: [3, 0] },
+];
+
 function formatEffect(metric: Metric, value: number): string {
   switch (METRIC_SPECS[metric].kind) {
     case "binary": return `${value >= 0 ? "+" : ""}${value.toFixed(3)}`;
@@ -375,11 +413,11 @@ function formatEffect(metric: Metric, value: number): string {
   }
 }
 
-function describeEffect(metric: Metric, arms: readonly [string, string]): string {
+function describeEffect(metric: Metric, [a, b]: readonly [string, string]): string {
   switch (METRIC_SPECS[metric].kind) {
-    case "binary": return `mean within-task difference in proportions, ${arms[0]} − ${arms[1]}`;
-    case "log": return `ratio of geometric means of value + 1, ${arms[0]}/${arms[1]}`;
-    case "plain": return `mean within-task difference in lines, ${arms[0]} − ${arms[1]}`;
+    case "binary": return `mean within-task difference in proportions, ${a} − ${b}`;
+    case "log": return `ratio of geometric means of value + 1, ${a}/${b}`;
+    case "plain": return `mean within-task difference in lines, ${a} − ${b}`;
   }
 }
 
@@ -393,57 +431,80 @@ const formatP = (p: number): string => (p < 0.0001 ? p.toExponential(1) : p.toFi
 
 interface Analysis {
   readonly hypothesis: Hypothesis;
+  /** The compared arms by name, treatment first. */
+  readonly pair: readonly [string, string];
   readonly result: TestResult | null;
   readonly unpaired: readonly string[];
 }
 
-function analyse(hypotheses: readonly Hypothesis[], runs: readonly ArmRun[], arms: readonly [string, string], seed: number): Analysis[] {
+/** A hypothesis's arms by name and its strata of raw values: its sizes' runs of those two arms, per task. */
+function hypothesisStrata(hypothesis: Hypothesis, runs: readonly ArmRun[], arms: readonly string[]): { pair: [string, string]; strata: Stratum[]; unpaired: string[] } {
+  const [a, b] = hypothesis.pair ?? [0, 1];
+  const pair: [string, string] = [arms[a]!, arms[b]!];
+  const scoped = runs.filter(run => hypothesis.sizes === null || (run.size !== null && hypothesis.sizes.includes(run.size)));
+  return { pair, ...strataFor(hypothesis.metric, scoped, pair) };
+}
+
+function analyse(hypotheses: readonly Hypothesis[], runs: readonly ArmRun[], arms: readonly string[], seed: number): Analysis[] {
   return hypotheses.map(hypothesis => {
-    const scoped = runs.filter(run => hypothesis.sizes === null || (run.size !== null && hypothesis.sizes.includes(run.size)));
-    const { strata, unpaired } = strataFor(hypothesis.metric, scoped, arms);
-    return { hypothesis, result: strata.length === 0 ? null : testHypothesis(hypothesis.metric, strata, seed, hypothesis.margin), unpaired };
+    const { pair, strata, unpaired } = hypothesisStrata(hypothesis, runs, arms);
+    return { hypothesis, pair, result: strata.length === 0 ? null : testHypothesis(hypothesis.metric, strata, seed, hypothesis.margin), unpaired };
   });
 }
 
-function printAnalyses(title: string, analyses: readonly Analysis[], adjusted: ReadonlyArray<number | null>, arms: readonly [string, string]): void {
+/** `adjusted` holds each row's Holm p (null: raw p only); `diagnostic` rows show no decision at all. */
+function printAnalyses(title: string, analyses: readonly Analysis[], adjusted: ReadonlyArray<number | null>, diagnostic = false): void {
   console.log(`\n${title}`);
   console.log(table(
     ["hypothesis", "metric", "sizes", "n runs", "n tasks", "effect", "95% CI", "raw p", "Holm p", `decision (≤ ${POCOCK_ALPHA})`],
-    analyses.map(({ hypothesis, result, unpaired }, index) => {
+    analyses.map(({ hypothesis, pair, result, unpaired }, index) => {
       const { metric } = hypothesis;
       const scope = hypothesis.sizes?.join("+") ?? "all";
       const better = hypothesis.margin === undefined
-        ? `${arms[0]} ${METRIC_SPECS[metric].better}`
-        : `non-inferiority: ${arms[0]}/${arms[1]} < margin ${formatEffect(metric, hypothesis.margin)}`;
+        ? `${pair[0]} ${METRIC_SPECS[metric].better} than ${pair[1]}`
+        : `non-inferiority: ${pair[0]}/${pair[1]} < margin ${formatEffect(metric, hypothesis.margin)}`;
       if (result === null) return [hypothesis.id, `${METRIC_SPECS[metric].label} (${better})`, scope, "0", "0", "-", "-", "-", "-", "no paired task"];
       const holmP = adjusted[index] ?? null;
       return [
         hypothesis.id, `${METRIC_SPECS[metric].label} (${better})`, scope, String(result.runs), `${result.tasks}${unpaired.length === 0 ? "" : ` (+${unpaired.length} unpaired)`}`,
         formatEffect(metric, result.effect), `[${formatEffect(metric, result.ci[0])}, ${formatEffect(metric, result.ci[1])}]`,
-        formatP(result.p), holmP === null ? "-" : formatP(holmP), holmP === null ? (result.p <= POCOCK_ALPHA ? "(nominal) reject" : "(nominal) keep") : holmP <= POCOCK_ALPHA ? "REJECT H0" : "keep H0",
+        formatP(result.p), holmP === null ? "-" : formatP(holmP),
+        diagnostic ? "decides nothing" : holmP === null ? (result.p <= POCOCK_ALPHA ? "(nominal) reject" : "(nominal) keep") : holmP <= POCOCK_ALPHA ? "REJECT H0" : "keep H0",
       ];
     }),
   ));
-  for (const metric of [...new Set(analyses.map(({ hypothesis }) => hypothesis.metric))]) console.log(`  ${METRIC_SPECS[metric].label}: ${describeEffect(metric, arms)}`);
+  for (const line of new Set(analyses.map(({ hypothesis, pair }) => `${METRIC_SPECS[hypothesis.metric].label}: ${describeEffect(hypothesis.metric, pair)}`))) console.log(`  ${line}`);
 }
 
-function analyzeReports(paths: readonly string[], arms: readonly [string, string], metric: Metric | null, look: number, seed: number): void {
+/**
+ * `--analyze`: the family's primary hypotheses with Holm and the look's verdict, then its secondaries. `arms` is A,B
+ * for the default family and A,B,C for `large`; a 4th arm D is analysed only under `headroom` and when every report
+ * holds it.
+ */
+function analyzeReports(paths: readonly string[], arms: readonly string[], family: Family, metric: Metric | null, look: number, seed: number, headroom: boolean): void {
   const reports = paths.map(path => ({ path, report: JSON.parse(readFileSync(path, "utf8")) as ArmsReport }));
   for (const { path, report } of reports) if (!Array.isArray(report.arms) || !Array.isArray(report.runs)) throw new Error(`${path} is not an --arms report of benchmark/merge-assist-context.ts`);
-  const problems = poolingProblems(reports, arms);
+  const diagnosticArm = family === "large" && arms.length === 4 ? arms[3]! : null;
+  const withHeadroom = diagnosticArm !== null && headroom && reports.every(({ report }) => report.arms.includes(diagnosticArm));
+  const used = diagnosticArm !== null && !withHeadroom ? arms.slice(0, 3) : arms;
+  const problems = poolingProblems(reports, used);
   if (problems.length > 0) throw new Error(`Refusing to pool:\n- ${problems.join("\n- ")}`);
-  const runs = reports.flatMap(({ report }) => report.runs.filter(run => arms.includes(run.arm)));
+  const runs = reports.flatMap(({ report }) => report.runs.filter(run => used.includes(run.arm)));
   const first = reports[0]!.report;
-  console.log(`Merge Assist significance: ${arms[0]} (treatment) vs ${arms[1]} (control), look ${look} of at most ${MAX_LOOKS}; ${reports.length} report(s) pooled: ${reports.map(({ path, report }) => `${path} (${report.startedAt}, ${report.codexVersion})`).join("; ")}`);
+  const compared = family === "large" ? `${arms[0]} (treatment) vs ${arms[1]} (control) and ${arms[2]} (second control)` : `${arms[0]} (treatment) vs ${arms[1]} (control)`;
+  console.log(`Merge Assist significance, family ${family}: ${compared}, look ${look} of at most ${MAX_LOOKS}; ${reports.length} report(s) pooled: ${reports.map(({ path, report }) => `${path} (${report.startedAt}, ${report.codexVersion})`).join("; ")}`);
   console.log(`Index ${first.index.path} built ${first.index.builtAt}; ${PROTOCOL_OPTIONS.map(option => `${option} ${JSON.stringify(first.options[option] ?? null)}`).join(", ")}; ${PERMUTATIONS} permutations within task, ${RESAMPLES} cluster-bootstrap resamples, seed ${seed}; one-sided`);
+  if (diagnosticArm !== null && !withHeadroom) console.log(headroom ? `${diagnosticArm} is not in every report: no headroom lines.` : `${diagnosticArm} ignored: headroom lines need --diagnostic.`);
   const errors = runs.filter(failed);
-  console.log(`\nExcluded: none. Runs with a Codex or harness error, counted as failures for their arm: ${arms.map(arm => `${arm} ${errors.filter(run => run.arm === arm).length}/${runs.filter(run => run.arm === arm).length}`).join(", ")}`);
+  console.log(`\nExcluded: none. Runs with a Codex or harness error, counted as failures for their arm: ${used.map(arm => `${arm} ${errors.filter(run => run.arm === arm).length}/${runs.filter(run => run.arm === arm).length}`).join(", ")}`);
   for (const run of errors) console.log(`  ${run.arm} ${run.taskId} #${run.trial}: ${(run.error ?? [run.phase1, ...run.rounds].find(phase => phase.error !== null)?.error ?? "").replace(/\s+/gu, " ").slice(0, 160)}`);
-  const family = metric === null ? PRIMARY : [{ id: metric, metric, sizes: null }];
-  const primary = analyse(family, runs, arms, seed);
+  const primaryFamily = family === "large" ? LARGE_PRIMARY : metric === null ? PRIMARY : [{ id: metric, metric, sizes: null }];
+  const primary = analyse(primaryFamily, runs, used, seed);
   const adjusted = holm(primary.map(({ result }) => result?.p ?? 1));
-  printAnalyses(metric === null ? `Primary family (Holm across ${family.length})` : `Metric ${metric}, every task`, primary, adjusted, arms);
-  if (metric === null) printAnalyses("Secondary (not used for stopping; raw p against the per-look α)", analyse(SECONDARY, runs, arms, seed), SECONDARY.map(() => null), arms);
+  printAnalyses(metric === null ? `Primary family ${family} (Holm across ${primaryFamily.length})` : `Metric ${metric}, every task`, primary, adjusted);
+  const secondary = family === "large" ? LARGE_SECONDARY : metric === null ? SECONDARY : [];
+  if (secondary.length > 0) printAnalyses("Secondary (not used for stopping; raw p against the per-look α)", analyse(secondary, runs, used, seed), secondary.map(() => null));
+  if (withHeadroom) printAnalyses(`Headroom: ${diagnosticArm} vs ${arms[0]} (diagnostic, raw p, decides nothing)`, analyse(LARGE_HEADROOM, runs, used, seed), LARGE_HEADROOM.map(() => null), true);
   console.log(`\n${verdict(adjusted, look)}`);
 }
 
@@ -577,12 +638,40 @@ function synthetic(kind: "binary" | "log", shift: number, random: () => number):
   });
 }
 
+/** The synthetic large family's shape: the large dev batch's 9 tasks with 3 runs per arm. */
+const LARGE_TASKS = 9;
+const LARGE_RUNS = 3;
+
+/**
+ * Synthetic `--arms` runs of three arms on large tasks under the large family's global null: first-pass clean and
+ * tokens the same in every arm, A's time exactly ×{@link TIME_MARGIN} B's (L3's boundary), C the same as B. Tasks
+ * differ widely in difficulty and cost.
+ */
+function syntheticLargeRuns(arms: readonly string[], random: () => number): ArmRun[] {
+  return Array.from({ length: LARGE_TASKS }, (_, task) => {
+    const cleanRate = 0.1 + 0.5 * random();
+    const tokens = Math.log(400_000) + 0.6 * normal(random);
+    const seconds = Math.log(600) + 0.6 * normal(random);
+    return arms.flatMap(arm => Array.from({ length: LARGE_RUNS }, (_, trial): ArmRun => {
+      const firstPassClean = random() < cleanRate;
+      const timeShift = arm === arms[0] ? Math.log(TIME_MARGIN) : 0;
+      return {
+        arm, taskId: `t${task}`, size: "large", trial: trial + 1, phase1: { error: null }, rounds: firstPassClean ? [] : [{ error: null }], firstPassClean, churn: 0,
+        wallMs: 1000 * Math.exp(seconds + timeShift + 0.4 * normal(random)),
+        tokens: { input: Math.round(Math.exp(tokens + 0.4 * normal(random))), cached: 0, output: 0 },
+        error: null,
+      };
+    }));
+  }).flat();
+}
+
 /**
  * `--self-test`: across 200 synthetic datasets each, the false-positive rate under no effect is at most 0.05 at
  * α 0.05, and under a large effect (+0.4 first-pass clean; time × 0.6) power is at least 0.9, for a binary and a
  * continuous metric; for time's non-inferiority test at margin ×{@link TIME_MARGIN}, the false-positive rate at a true
- * ratio of exactly the margin is at most 0.05, and the power at a true ratio of 0.9 is reported. All through the same
- * test and permutation count the analysis uses.
+ * ratio of exactly the margin is at most 0.05, and the power at a true ratio of 0.9 is reported. The large family
+ * (A,B,C) under its global null rejects any hypothesis after Holm at most 5% of the time. All through the same test,
+ * arm pairing and permutation count the analysis uses.
  */
 function selfTest(): boolean {
   const datasets = 200;
@@ -612,8 +701,28 @@ function selfTest(): boolean {
     ok &&= passed;
     return [name, check, `${rejections}/${datasets} = ${rate.toFixed(3)}`, required, required === "reported" ? "" : passed ? "ok" : "FAIL", `${((performance.now() - started) / 1000).toFixed(1)}s`];
   });
-  console.log(`Self-test: ${datasets} synthetic datasets per case (18 tasks × 2 runs per arm), ${PERMUTATIONS} permutations each, α ${alpha} one-sided`);
+  const started = performance.now();
+  const arms = ["A", "B", "C"];
+  const rawRejections = LARGE_PRIMARY.map(() => 0);
+  let familyRejections = 0;
+  for (let dataset = 0; dataset < datasets; dataset++) {
+    const runs = syntheticLargeRuns(arms, random);
+    const pValues = LARGE_PRIMARY.map(hypothesis => {
+      const { strata } = hypothesisStrata(hypothesis, runs, arms);
+      return permutationTest(testedStrata(hypothesis.metric, strata, hypothesis.margin), METRIC_SPECS[hypothesis.metric].better, PERMUTATIONS, random);
+    });
+    pValues.forEach((p, index) => { if (p <= alpha) rawRejections[index]!++; });
+    if (holm(pValues).some(p => p <= alpha)) familyRejections++;
+  }
+  const familyRate = familyRejections / datasets;
+  ok &&= familyRate <= 0.05;
+  rows.push([
+    `large family A,B,C, global null (${LARGE_TASKS} tasks × ${LARGE_RUNS} runs per arm)`, "family-wise false-positive rate, Holm", `${familyRejections}/${datasets} = ${familyRate.toFixed(3)}`, "≤ 0.05",
+    familyRate <= 0.05 ? "ok" : "FAIL", `${((performance.now() - started) / 1000).toFixed(1)}s`,
+  ]);
+  console.log(`Self-test: ${datasets} synthetic datasets per case (18 tasks × 2 runs per arm unless stated), ${PERMUTATIONS} permutations each, α ${alpha} one-sided`);
   console.log(table(["case", "check", "rejected", "required", "", "time"], rows));
+  console.log(`Large family, raw rejections per hypothesis at α ${alpha}: ${LARGE_PRIMARY.map((hypothesis, index) => `${hypothesis.id} ${rawRejections[index]}/${datasets}`).join(", ")}`);
   const holmCheck = holm([0.01, 0.04, 0.03, 0.005]).map(p => p.toFixed(3)).join(",");
   const holmOk = holmCheck === "0.030,0.060,0.060,0.020";
   console.log(`Holm on [0.01, 0.04, 0.03, 0.005] = [${holmCheck}] ${holmOk ? "ok" : "FAIL (expected 0.030,0.060,0.060,0.020)"}`);
@@ -623,7 +732,7 @@ function selfTest(): boolean {
 
 // ---------------------------------------------------------------------------------------------------------- CLI
 
-const USAGE = `Usage: node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric ${METRICS.join("|")}] [--look N] [--seed N] [--diagnostic] | --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N] | --self-test`;
+const USAGE = `Usage: node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric ${METRICS.join("|")}] [--look N] [--seed N] [--diagnostic] | --analyze report.json [report.json ...] --family large --arms A,B,C[,D] [--diagnostic] [--look N] [--seed N] | --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N] | --self-test`;
 
 function main(): void {
   const args = process.argv.slice(2);
@@ -633,7 +742,8 @@ function main(): void {
   }
   const paths: string[] = [];
   const livePaths: string[] = [];
-  let arms: [string, string] | null = null;
+  let arms: string[] | null = null;
+  let family: Family = "default";
   let metric: Metric | null = null;
   let look: number | null = null;
   let plannedLooks = 1;
@@ -664,8 +774,14 @@ function main(): void {
       }
       case "--arms": {
         const names = value().split(",").map(name => name.trim()).filter(name => name !== "");
-        if (names.length !== 2 || names[0] === names[1]) throw new Error(`--arms takes two different arms, treatment first: A,B\n${USAGE}`);
-        arms = [names[0]!, names[1]!];
+        if (names.length < 2 || names.length > 4 || new Set(names).size < names.length) throw new Error(`--arms takes two to four different arms, treatment first: A,B (default family) or A,B,C[,D] (large)\n${USAGE}`);
+        arms = names;
+        break;
+      }
+      case "--family": {
+        const name = value();
+        if (!FAMILIES.some(known => known === name)) throw new Error(`--family takes one of ${FAMILIES.join(", ")}\n${USAGE}`);
+        family = name as Family;
         break;
       }
       case "--metric": {
@@ -696,12 +812,15 @@ function main(): void {
     return;
   }
   if (paths.length === 0 || arms === null) throw new Error(USAGE);
+  if (family === "default" && arms.length !== 2) throw new Error(`The default family takes two arms: --arms A,B\n${USAGE}`);
+  if (family === "large" && arms.length < 3) throw new Error(`--family large takes --arms A,B,C (treatment, posthoc, second control), and D for --diagnostic headroom\n${USAGE}`);
+  if (family === "large" && metric !== null) throw new Error(`--metric belongs to the default family\n${USAGE}`);
   if (look === null && paths.length > MAX_LOOKS) throw new Error(`${paths.length} reports is more than ${MAX_LOOKS} looks; pass --look\n${USAGE}`);
-  if (metric === null && DIAGNOSTIC_ARMS.includes(arms[0])) {
+  if (metric === null && DIAGNOSTIC_ARMS.includes(arms[0]!)) {
     if (!diagnostic) throw new Error(`${arms[0]} selects with the task's labels: a diagnostic ceiling, never the treatment of the pre-registered primary family. Pass --diagnostic to analyse it as a diagnostic anyway\n${USAGE}`);
     console.log(`DIAGNOSTIC analysis: ${arms[0]} selects with the task's labels; this is not the pre-registered comparison and decides nothing.\n`);
   }
-  analyzeReports(paths, arms, metric, look ?? paths.length, seed);
+  analyzeReports(paths, arms, family, metric, look ?? paths.length, seed, diagnostic);
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
