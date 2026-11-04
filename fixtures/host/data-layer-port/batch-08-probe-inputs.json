@@ -1893,6 +1893,153 @@
         }
       ],
       "signed": false
+    },
+    {
+      "id": "cached-policy-bare-decorator-call",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "signed": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\nx = cached_pure_lazy(cache_args=(\"cache\",))\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-escaped-decorator",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "signed": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\nregistry.append(cached_pure_lazy)\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-unknown-decorator",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "signed": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@unknown(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-alias",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "signed": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy as reviewed\n@reviewed(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "eager-full-source-resolve",
+      "check": "eager_resolve",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "impl/sample.py",
+          "source": "def f():\n    value.resolve()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "eager-full-source-resolve-async",
+      "check": "eager_resolve",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "impl/sample.py",
+          "source": "def f():\n    value.resolve_async()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "eager-full-source-result",
+      "check": "eager_resolve",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "impl/sample.py",
+          "source": "def f():\n    value.result()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "eager-full-source-int-lazy",
+      "check": "eager_resolve",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "impl/sample.py",
+          "source": "def f():\n    int(lazy_value)\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "eager-full-source-float-lazy",
+      "check": "eager_resolve",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "impl/sample.py",
+          "source": "def f():\n    float(lazy_value)\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "eager-full-source-bool-lazy",
+      "check": "eager_resolve",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "impl/sample.py",
+          "source": "def f():\n    bool(lazy_value)\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "eager-full-source-string",
+      "check": "eager_resolve",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "impl/sample.py",
+          "source": "def f():\n    \"value.resolve()\"\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "eager-full-source-comment",
+      "check": "eager_resolve",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "impl/sample.py",
+          "source": "def f():\n    # value.resolve()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "eager-full-source-multiline",
+      "check": "eager_resolve",
+      "entry": "_scan_source",
+      "files": [
+        {
+          "path": "impl/sample.py",
+          "source": "def f():\n    \"\"\"\n    value.resolve()\n    \"\"\"\n    return 1\n"
+        }
+      ]
     }
   ]
 }

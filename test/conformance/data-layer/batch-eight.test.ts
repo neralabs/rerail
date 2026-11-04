@@ -5,7 +5,9 @@ import { expect, it, vi } from "vitest";
 import { replay } from "../../../conformance/data-layer/replay.js";
 import { fixturesPath } from "../../support/oracles.js";
 
-it.each(["readthrough_authority_architecture", "authentication_plan_purity", "legacy_callback_quarantine", "lazy_adapter_ownership", "plan_helpers_allowlist", "lazy_sql_surface", "pure_lazy_runtime_purity", "eager_resolve", "lazy_architecture", "cached_pure_lazy_allowlist"])("ports original %s positives and clean cases", async check => {
+const checks = ["readthrough_authority_architecture", "authentication_plan_purity", "legacy_callback_quarantine", "lazy_adapter_ownership", "plan_helpers_allowlist", "lazy_sql_surface", "pure_lazy_runtime_purity", "eager_resolve", "lazy_architecture", "cached_pure_lazy_allowlist"];
+
+it.each(checks)("ports original %s positives and clean cases", async check => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-batch-eight-"));
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   try {
@@ -35,3 +37,34 @@ it("keeps positive oracle probes for all eighteen lazy architecture diagnostics"
     .flatMap((event: { findings: { code: string }[] }) => event.findings.map(finding => finding.code)));
   for (let number = 1; number <= 18; number++) expect(codes.has(`LA-${String(number).padStart(3, "0")}`)).toBe(true);
 });
+
+
+it.each(checks)("rejects an always-clean %s detector on a recorded oracle positive", async check => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-batch-eight-positive-control-"));
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const original = JSON.parse(readFileSync(fixturesPath("host", "data-layer-port", "batch-08-recording.json"), "utf8"));
+    const probes = JSON.parse(readFileSync(fixturesPath("host", "data-layer-port", "batch-08-probes.json"), "utf8"));
+    const positive = [...original.events, ...probes.events].find((event: { check: string; upstream_passed: boolean; retained_reason?: string; findings?: unknown[] }) =>
+      event.check === check && event.upstream_passed && event.retained_reason === undefined && (event.findings?.length ?? 0) > 0);
+    expect(positive, `${check} needs an unchanged-oracle positive`).toBeDefined();
+    original.checks = [check]; original.events = [positive];
+    const input = join(directory, "input.json"), output = join(directory, "result.json");
+    writeFileSync(input, JSON.stringify(original));
+    const filename = `data-layer-${check.replaceAll("_", "-")}.json`;
+    const policy = JSON.parse(readFileSync(`packs/data-layer/candidates/rules/${filename}`, "utf8"));
+    policy.clauses = [...policy.clauses.filter((clause: { define?: unknown }) => clause.define !== undefined), {
+      id: "negative-control", forbid: { regex: { source: "file.content", pattern: "\\b\\B" } },
+      violation: { code: "CONTROL", message: "Always clean control", anchor: "witness.span" },
+    }];
+    writeFileSync(join(directory, filename), JSON.stringify(policy));
+    expect(await replay(input, output, directory)).toBe(false);
+    const report = JSON.parse(readFileSync(output, "utf8"));
+    expect(report.nativeCalls).toBe(1);
+    expect(report.hostGuardCalls).toBe(0);
+    expect(report.falseNegatives).toBe(positive.findings.length);
+    expect(report.falsePositives).toBe(0);
+    expect(report.engineFailures).toBe(0);
+    expect(report.executionPathDifferences).toBe(0);
+  } finally { log.mockRestore(); rmSync(directory, { recursive: true, force: true }); }
+}, 30_000);
