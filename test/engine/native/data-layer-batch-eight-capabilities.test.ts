@@ -26,3 +26,17 @@ it("produces exact Python fingerprints for a whole SQL-selected demand batch", (
   expect(result.violations.map((finding: { variables: { row: { body_sha256: string; signature_sha256: string } } }) => finding.variables.row))
     .toEqual([expect.objectContaining({ body_sha256: body, signature_sha256: signature }), expect.objectContaining({ body_sha256: body, signature_sha256: signature })]);
 });
+
+it("reads canonical byte columns from selected nodes without a repository source snapshot", () => {
+  const authored = policy();
+  Object.assign(authored.clauses[0]!.relational.stages[0]!.pythonAst, { fields: ["column"] });
+  authored.clauses[0]!.relational.stages[0]!.pythonAst.roots = "SELECT __path,id FROM nodes WHERE kind='function_definition' AND name_source='f'";
+  authored.clauses[0]!.relational.query = "SELECT n.__path path,n.__start start_byte,n.__end end_byte,n.id,h.column FROM fingerprints h JOIN nodes n ON n.__path=h.__path AND n.id=h.id";
+  const native = loadNativeBinding();
+  const rule = native.CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(authored)), "json", capabilities);
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
+    files: [{ path: "a.py", language: "python", source: "class Owner:\n    def f(self):\n        return 1\n" }] }), "report"));
+  expect(result.failures).toEqual([]);
+  expect(result.violations).toHaveLength(1);
+  expect(result.violations[0].variables.row.column).toBe("4");
+});
