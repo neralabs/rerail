@@ -4,9 +4,21 @@ Every notable change to Rerail's core package, `@neralabs/rerail`, latest first.
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. A release is a patch unless it names a later version, and a patch can change or remove what you use, so read the notes before you update.
 
-## Unreleased
+## 0.1.2 (2026-11-04)
 
 0.1.2 stops counting what Git writes as your agent's work: after a pull, rebase or branch switch, an agent no longer gets findings for code it never touched. It also keeps Rerail's Git calls from fetching from the remote in a partial clone, and corrects what set-up and `rerail install --remove` tell you. Before you update: if you set `RERAIL_STORAGE_ROOT` or `RERAIL_MODEL_PATH`, check the values, since Rerail now reads them everywhere and resolves a relative one against the session's workspace.
+
+### Changed
+
+- `RERAIL_STORAGE_ROOT` and `RERAIL_MODEL_PATH` mean the same everywhere: a relative value resolves against the session's workspace, an empty one counts as unset, and the daemon and Pi through it now read them too. Only the default storage root, `<workspace>/.rerail/sessions`, gets its `.gitignore`; a custom root inside another `.rerail` folder is left alone.
+
+### Fixed
+
+- In a partial clone (`git clone --filter=blob:none`), Rerail's Git calls no longer fetch missing objects from the remote, with Git 2.45 or a 2024-04-19 security release (2.39.4 to 2.44.1): every Git process sets `GIT_NO_LAZY_FETCH=1`, and a git-diff audit lists a renamed file under its new path. The Claude Code set-up check runs Git the same way.
+- Rerail no longer steers or records a session for files Git rewrote. A checkout, pull, merge, rebase, reset or new worktree counted as an edit of every file it changed, in every session open in that checkout, so an agent that wrote nothing got findings for code it never touched.
+- `rerail` usage now names the version you are running as the release that leaves out features in internal testing, rather than always 0.1.0, and `/rerail-create` says the latest release.
+- Set-up's "Not now" screen writes the start command as each coding agent types it: `$rerail-start` where Codex is the only one, and an "In Codex, type $rerail-start." line beside `/rerail-start` where Codex is one of several. The confirm question's "Adds /rerail commands" line follows the same rule.
+- `rerail install --remove` counts the daemon's `access-token` as Rerail's own: a Rerail home holding it and nothing of yours is again offered for deletion as a whole, and a shared home lists `access-token` among Rerail's files instead of calling it a file that is not Rerail's.
 
 ## 0.1.1 (2026-11-04)
 

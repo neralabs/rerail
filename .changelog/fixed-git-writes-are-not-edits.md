@@ -1,1 +1,0 @@
-Rerail no longer steers or records a session for files Git rewrote. A checkout, pull, merge, rebase, reset or new worktree counted as an edit of every file it changed, in every session open in that checkout, so an agent that wrote nothing got findings for code it never touched.
