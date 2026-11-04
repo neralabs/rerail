@@ -14,7 +14,7 @@ import type {
   CodeRuleSourceLanguage,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
-import { gitHead, headMovedOnlyByCommits, readGitBlobs } from "../git.js";
+import { gitHead, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobs } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
@@ -139,6 +139,10 @@ interface SourceDiscovery {
   readonly reported: Map<string, string>;
   /** Each checkout's `HEAD` when the last walk that finished began, by its root: what the next walk's changes followed. */
   readonly heads: Map<string, string>;
+  /** Each checkout's unmerged entries (`readUnmerged`) when that walk began: a conflict they hold is not the next walk's. */
+  readonly unmerged: Map<string, ReadonlyMap<string, string>>;
+  /** Reads a checkout's unmerged entries now. Every pass asks, so a Git process runs only if its index file changed. */
+  readonly readUnmerged: ReturnType<typeof gitUnmergedReader>;
 }
 
 /**
@@ -338,7 +342,7 @@ export class CodeRuleBridge {
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
-        heads: new Map(),
+        heads: new Map(), unmerged: new Map(), readUnmerged: gitUnmergedReader(),
       };
       this.#discovery = discovery;
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
@@ -719,7 +723,7 @@ export class CodeRuleBridge {
     const previous = new Map(this.#observed);
     const versions = new Map(discovery.versions);
     // Read before the walk, so a move the walk only partly saw is still a move to the next one.
-    const heads = await this.#readHeads(discovery);
+    const { heads, unmerged } = await this.#readCheckouts(discovery);
     // An earlier session's baseline of this workspace lets unchanged sources skip the read.
     const seed = baseline ? this.#observations?.get(this.#cwd) : undefined;
     const scan = await this.#observeSources({
@@ -747,6 +751,7 @@ export class CodeRuleBridge {
         throw error;
       }
       for (const [root, head] of heads) discovery.heads.set(root, head);
+      for (const [root, entries] of unmerged) discovery.unmerged.set(root, entries);
       discovery.baselineComplete = true;
       discovery.baselineRoots = scan.failedRoots;
       discovery.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
@@ -785,14 +790,21 @@ export class CodeRuleBridge {
     return edits;
   }
 
-  /** `HEAD` of the session folder's checkout and of every other checkout a walk has found a change in. */
-  async #readHeads(discovery: SourceDiscovery): Promise<Map<string, string>> {
+  /**
+   * `HEAD` and the unmerged entries of the session folder's checkout and of every other checkout a walk has found a change
+   * in. Read on every pass, not only one that finds changes: a modify/delete conflict can stop a merge without changing a
+   * file, and the next pass must still know that conflict was there before the edit it finds.
+   */
+  async #readCheckouts(discovery: SourceDiscovery): Promise<Pick<SourceDiscovery, "heads" | "unmerged">> {
     const heads = new Map<string, string>();
+    const unmerged = new Map<string, ReadonlyMap<string, string>>();
     for (const root of new Set([discovery.root, ...discovery.heads.keys()])) {
       const head = await gitHead(root);
-      if (head !== undefined) heads.set(root, head);
+      if (head === undefined) continue;
+      heads.set(root, head);
+      unmerged.set(root, await discovery.readUnmerged(root));
     }
-    return heads;
+    return { heads, unmerged };
   }
 
   /**
@@ -843,8 +855,10 @@ export class CodeRuleBridge {
    * writes no file, so that file was written by something else and then committed, and stays the session's (measured
    * from the tree before the commit). `HEAD` not having moved, the file holding its blob adds nothing to what is
    * committed (`git restore`, `git stash`). A file a move left absent from `HEAD` was removed by it. A merge, rebase or
-   * cherry-pick stopped on a conflict has not moved `HEAD` for its work so far: an unmerged file it just wrote is Git's, and
-   * in the same walk so is one that holds its index blob or that the index no longer has. Bytes Git's filters change (`autocrlf`) never match, and stay the session's.
+   * cherry-pick stopped on a conflict has not moved `HEAD` for its work so far: a file it just made unmerged is Git's, and
+   * in the same walk so is one that holds its index blob or that the index no longer has. A later change to a file with
+   * the same unmerged entries as the last walk is no longer Git's stop, even when the file held the blob of its side
+   * before it. Bytes Git's filters change (`autocrlf`) never match, and stay the session's.
    */
   async #gitVerdicts(
     discovery: SourceDiscovery,
@@ -857,6 +871,9 @@ export class CodeRuleBridge {
     if (head === undefined) return verdicts;
     const from = discovery.heads.get(checkout);
     if (from === undefined) discovery.heads.set(checkout, head);
+    const unmerged = await discovery.readUnmerged(checkout);
+    const unmergedBefore = discovery.unmerged.get(checkout);
+    if (unmergedBefore === undefined) discovery.unmerged.set(checkout, unmerged);
     const moved = from !== head;
     const committed = moved && await headMovedOnlyByCommits(checkout, from);
     const before = moved && from !== undefined ? from : undefined;
@@ -872,10 +889,12 @@ export class CodeRuleBridge {
     // A file stays unmerged after the agent edits it: Git wrote it only if it changed from what Git started the merge on.
     const conflicted = ({ edit, path }: { edit: CodeRuleEdit; path: string }): boolean => {
       if (!blobs.has(`:2:./${path}`) && !blobs.has(`:3:./${path}`)) return false;
+      if (unmerged.has(path) && unmergedBefore?.get(path) === unmerged.get(path)) return false;
       const prior = uncaptured.get(edit.path);
       return prior === undefined || prior === digest(`:2:./${path}`) || (before !== undefined && prior === digest(`${before}:./${path}`));
     };
-    const stopped = named.some(conflicted);
+    // A modify/delete conflict can leave its file as it was, so the walk's changes need not name what stopped Git.
+    const stopped = [...unmerged].some(([path, entry]) => unmergedBefore?.get(path) !== entry);
     const heldByGit = (edit: CodeRuleEdit, path: string): boolean => {
       if (edit.deleted === true) return (moved && !committed && !blobs.has(`HEAD:./${path}`)) || (stopped && !blobs.has(`:./${path}`));
       const after = this.#observed.get(edit.path)?.digest;
