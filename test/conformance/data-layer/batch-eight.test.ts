@@ -94,7 +94,10 @@ it("preserves diagnostic text, ordered graph targets and first matching owner ca
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   try {
     const output = join(directory, "result.json");
-    const passed = await replay(fixturesPath("host", "data-layer-port", "batch-08-exact-probes.json"), output);
+    const passed = await replay([
+      fixturesPath("host", "data-layer-port", "batch-08-exact-probes.json"),
+      fixturesPath("host", "data-layer-port", "batch-08-edge-probes.json"),
+    ], output);
     const report = JSON.parse(readFileSync(output, "utf8"));
     expect(report.rows.filter((row: { falsePositives: unknown[]; falseNegatives: unknown[]; engineFailures: unknown[] }) =>
       row.falsePositives.length || row.falseNegatives.length || row.engineFailures.length)).toEqual([]);
@@ -108,8 +111,14 @@ it("binds the completed native assertion suites to the current rules and adapter
     const run = receipt.executionPaths[path];
     expect(run).toMatchObject({ collected: 456, passed: 456, failed: 0, skipped: 0, semanticFallbacks: [] });
     expect(Object.keys(run.cases)).toHaveLength(456);
-    expect(run.casesWithNativeCalls).toBe(336);
-    expect(run.nativeCalls).toBe(480);
+    expect(run.casesWithNativeCalls).toBe(Object.values(run.cases).filter((row: unknown) => {
+      const value = row as { nativeDiagnosticCalls: number; nativeHelperCalls: number };
+      return value.nativeDiagnosticCalls + value.nativeHelperCalls > 0;
+    }).length);
+    expect(run.nativeCalls).toBe(Object.values(run.cases).reduce((sum: number, row: unknown) => {
+      const value = row as { nativeDiagnosticCalls: number; nativeHelperCalls: number };
+      return sum + value.nativeDiagnosticCalls + value.nativeHelperCalls;
+    }, 0));
     expect(run.instrumentationTranslations).toHaveLength(4);
     expect(run.cases["scripts/tests/test_lint_lazy_architecture.py::test_class_method_alias_for_self_call_resolution"].nativeHelperCalls).toBeGreaterThan(0);
   }
@@ -117,6 +126,24 @@ it("binds the completed native assertion suites to the current rules and adapter
     expect(createHash("sha256").update(readFileSync(`packs/data-layer/candidates/rules/data-layer-${check.replaceAll("_", "-")}.json`)).digest("hex")).toBe(digest);
   for (const [path, digest] of Object.entries(receipt.implementationSha256))
     expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(digest);
+  for (const [path, digest] of Object.entries(receipt.factPolicySha256))
+    expect(createHash("sha256").update(readFileSync(`packs/data-layer/candidates/facts/${path}`)).digest("hex")).toBe(digest);
+  for (const comparison of Object.values(receipt.completeComparisons))
+    expect(comparison).toMatchObject({ apiObservations: 305, analyzerInputs: 85, differences: 0, semanticFallbacks: [] });
   expect(Object.keys(receipt.positiveControls.rejectedByCheck)).toHaveLength(9);
   expect(receipt.positiveControls.failedCases).toBeGreaterThan(100);
+});
+
+it("uses one production graph contract for source and supplied facts without an oracle mode", () => {
+  for (const check of checks) {
+    const policy = JSON.parse(readFileSync(`packs/data-layer/candidates/rules/data-layer-${check.replaceAll("_", "-")}.json`, "utf8"));
+    for (const clause of policy.clauses) expect(clause.define?.options).not.toHaveProperty("oracleAnalyzer");
+  }
+  const source = JSON.parse(readFileSync("packs/data-layer/candidates/rules/data-layer-lazy-architecture.json", "utf8"));
+  const supplied = JSON.parse(readFileSync("packs/data-layer/candidates/facts/lazy-analyzed.json", "utf8"));
+  type Stage = { name: string; reachability?: { selection?: string } };
+  const programs = [source, supplied].map(policy => policy.clauses.flatMap((clause: { relational?: { stages?: Stage[] } }) => clause.relational?.stages ?? []) as Stage[]);
+  const select = (stages: Stage[]) => stages.filter(stage => stage.reachability?.selection === "memoized-first").sort((a,b) => a.name.localeCompare(b.name));
+  expect(select(programs[0]!)).toHaveLength(5);
+  expect(select(programs[1]!)).toEqual(select(programs[0]!));
 });
