@@ -278,8 +278,9 @@ export class NativeSessionServer {
   }
 
   /**
-   * Model, database, and session storage paths resolve against the session's cwd; the hosts send theirs, and a path
-   * left out is the daemon's (`resolveSessionPaths`).
+   * Model, database, and session storage paths resolve against the session's cwd; the hosts send theirs. A model or
+   * database path left out is the daemon's; a storage root left out is resolved again for the session's cwd
+   * (`resolveSessionPaths`: `RERAIL_STORAGE_ROOT`, else `<cwd>/.rerail/sessions`).
    */
   #sessionPaths(
     options: { modelPath?: string; databasePath?: string; storageRoot?: string },

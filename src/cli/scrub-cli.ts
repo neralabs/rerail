@@ -18,6 +18,7 @@ import { type HookHost, scrubbedPendingText, withPendingFileLock } from "../harn
 import { preUpdateSnapshotPath } from "./project-cli.js";
 import { DAEMON_LOG_FILE } from "../runtime/daemon-control.js";
 import { scrubbedLedgerLine } from "../runtime/runtime.js";
+import { defaultStorageRoot } from "../runtime/session-paths.js";
 
 /** Rows read and rewritten per transaction: a running daemon waits on at most one batch. */
 const BATCH_ROWS = 500;
@@ -342,7 +343,7 @@ async function scrubPending(sessions: string, report: SessionFilesReport): Promi
 async function scrubSessionFiles(checkoutPaths: readonly string[]): Promise<SessionFilesReport> {
   const report: SessionFilesReport = { lines: 0, files: 0, pendingFiles: 0, checkouts: 0, skipped: [] };
   for (const checkout of checkoutPaths) {
-    const sessions = join(checkout, ".rerail", "sessions");
+    const sessions = defaultStorageRoot(checkout);
     if (!isAbsolute(checkout) || !realDirectory(checkout) || !realDirectory(join(checkout, ".rerail")) || !realDirectory(sessions)) continue;
     report.checkouts += 1;
     for await (const entry of await opendir(sessions)) {
