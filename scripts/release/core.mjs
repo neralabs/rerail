@@ -4,9 +4,9 @@
 // CHANGELOG.md's section for it from the entries pending in .changelog/, by change type, below the lead written under
 // the unreleased heading. Each released core version is marked by the git tag `v<version>`, which release.yml publishes.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import semver from "semver";
-import { releaseNoteEntry } from "./release-notes.mjs";
+import { CHANGE_TYPES, changeType, changeTypeRefusal, changeTypeSections, releaseNoteEntry } from "./release-notes.mjs";
 
 export const CORE_NAME = "@neralabs/rerail";
 
@@ -19,21 +19,10 @@ export const coreTag = (version) => `v${version}`;
  */
 export const CHANGELOG_ENTRIES = ".changelog";
 
-/** Keep a Changelog 1.1.0's change types, in the order a release's notes list them. */
-export const CHANGE_TYPES = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"];
-
-/** The change type a pending entry's file name opens with (`fixed-dashboard-toasts.md`), or null. */
-export function changelogEntryType(path) {
-  const file = basename(path);
-  return CHANGE_TYPES.find((type) => file.startsWith(`${type.toLowerCase()}-`) && file.length > `${type}-.md`.length) ?? null;
-}
+export { CHANGE_TYPES, changeType as changelogEntryType };
 
 /** Why the pending entry at `path` can't go under a heading of a release's notes, or null: its name gives no type. */
-export function changelogEntryTypeRefusal(path) {
-  if (changelogEntryType(path) !== null) return null;
-  const prefixes = CHANGE_TYPES.map((type) => `${type.toLowerCase()}-`);
-  return `names no change type: start its file name with ${prefixes.slice(0, -1).join(", ")} or ${prefixes.at(-1)} (${CHANGELOG_ENTRIES}/README.md)`;
-}
+export const changelogEntryTypeRefusal = (path) => changeTypeRefusal(path, `${CHANGELOG_ENTRIES}/README.md`);
 
 /**
  * Core's pending changelog entries in the checkout at `root`: every `.md` file in CHANGELOG_ENTRIES but its README, in
@@ -49,7 +38,7 @@ export function readChangelogEntries(root) {
     .map((file) => `${CHANGELOG_ENTRIES}/${file}`)
     .map((path) => {
       const text = readFileSync(join(root, path), "utf8");
-      return { path, type: changelogEntryType(path), text, entry: releaseNoteEntry(text) };
+      return { path, type: changeType(path), text, entry: releaseNoteEntry(text) };
     });
 }
 
@@ -102,8 +91,7 @@ export function releaseChangelog(text, version, date, entries) {
   const next = unreleased ? /^## /mu.exec(rest) : null;
   const written = unreleased ? (next === null ? rest : rest.slice(0, next.index)).trim() : "";
   const after = unreleased ? (next === null ? "" : rest.slice(next.index)) : rest;
-  const groups = CHANGE_TYPES.map((type) => [type, entries.filter((entry) => entry.type === type)]).filter(([, group]) => group.length > 0);
-  const parts = [written, ...groups.map(([type, group]) => `### ${type}\n\n${group.map(({ entry }) => entry).join("\n")}`)].filter((part) => part !== "");
+  const parts = [written, ...changeTypeSections(entries)].filter((part) => part !== "");
   const body = parts.length === 0 ? NO_CHANGELOG_ENTRIES : parts.join("\n\n");
   return { text: `${before}## ${version} (${date})\n\n${body}\n${after === "" ? "" : `\n${after}`}`, notes: parts.length > 0 };
 }

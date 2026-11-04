@@ -186,8 +186,8 @@ The trusted publisher setting expires unless a publish uses it within 2 days.
 The workflow publishes a pack only when a **Release** pull request that bumps it merges.
 
 - **A Release pull request bumps it:** merge it within the 2 days.
-- **None does:** add a `patch` changeset naming the pack (`npx changeset`), merge it, then merge the Release pull
-  request it updates.
+- **None does:** add a `patch` changeset naming the pack (`npx changeset`, named `changed-…`), merge it, then merge the
+  Release pull request it updates.
 - **Approve** the `release` environment when asked.
 
 <details>

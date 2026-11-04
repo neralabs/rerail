@@ -4,7 +4,7 @@ name: Release packs
 # "Versioning and release"); a pack with `"private": true` is never published. Core's release is release.yml, on `v*`
 # tags; this workflow never touches core.
 #
-# The "Release" pull request (each pack's version and CHANGELOG.md, written by changesets, beside core's bump) is
+# The "Release" pull request (each pack's version and CHANGELOG.md, from its changesets, beside core's bump) is
 # opened by release-pr.yml; merging it is the release. On a push to main this workflow publishes:
 #   Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
 #   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, published

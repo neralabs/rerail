@@ -257,6 +257,8 @@ jobs:
               - 'scripts/samples/**'
               - 'scripts/release/packs.mjs'
               - 'scripts/release/dist-tags.mjs'
+              - 'scripts/release/release-notes.mjs'
+              - 'scripts/check/check-internal-refs.mjs'
               - 'tsconfig.json'
             # The dashboard browser tests: the specs and their scenario seeding, the daemon from source, and the packs
             # the scenarios install from this checkout (INSTALLED_PACKS in e2e/support/scenarios.ts).
