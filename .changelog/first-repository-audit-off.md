@@ -1,1 +1,0 @@
-Rerail no longer scans the whole repository the first time it sees a checkout, so a fresh install no longer fills the dashboard with violations the code already held. The scan is in internal testing, and `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` turns it back on.

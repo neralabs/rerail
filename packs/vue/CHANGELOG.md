@@ -1,5 +1,11 @@
 # @neralabs/rerail-pack-vue
 
+## 0.1.6 (2026-11-04)
+
+23 rules, 21 of them on by default.
+
+- 4 new rules: `eslint-plugin-vue-no-dupe-keys`, `eslint-plugin-vue-require-valid-default-prop` and `eslint-plugin-vue-return-in-computed-property` start in Steer; `eslint-plugin-vue-no-unused-refs` starts off.
+
 ## 0.1.5
 
 ### Patch Changes

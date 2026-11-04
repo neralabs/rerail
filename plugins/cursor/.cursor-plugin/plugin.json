@@ -1,6 +1,6 @@
 {
   "name": "rerail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Installs Rerail, which checks a coding agent's edits and commands against your rules as it works and steers it back when it breaks one.",
   "author": {
     "name": "Nera",

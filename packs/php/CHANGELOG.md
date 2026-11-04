@@ -1,5 +1,12 @@
 # @neralabs/rerail-pack-php
 
+## 0.1.5 (2026-11-04)
+
+15 rules, 5 of them on by default.
+
+- 8 new rules: `phpstan-argument-sprintf` and `phpstan-array-duplicate-key` start in Steer; `phpcs-generic-php-deprecated-functions`, `phpcs-generic-php-forbidden-functions`, `phpcs-generic-php-no-silenced-errors`, `phpcs-squiz-php-disallow-size-functions-in-loops`, `phpstan-if-always-false` and `phpstan-random-int-parameters` start off.
+- `phpcs-generic-code-analysis-empty-statement` honours a `phpcs:ignore` or `phpcs:disable` comment naming one of the sniff's message codes, such as `Generic.CodeAnalysis.EmptyStatement.DetectedIf`, as PHP_CodeSniffer does. Before, only the bare sniff code `Generic.CodeAnalysis.EmptyStatement` silenced it.
+
 ## 0.1.4
 
 ### Patch Changes
