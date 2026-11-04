@@ -312,6 +312,10 @@ impl Wave {
             ),
             ("document".to_owned(), (Source::positional("temp.wave_document", &["position", "d"]), 100.0)),
         ]);
+        // The relations the rules read as bound with the chunk, priced as the demand statement prices them.
+        for (rel, columns) in &self.logic.bound {
+            batch.insert(rel.clone(), (Source::named(&format!("main.{rel}"), columns), 1000.0));
+        }
         let mut source = SOURCE.to_owned();
         source.push_str(&self.logic.rules);
         if kept {

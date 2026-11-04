@@ -1,0 +1,33 @@
+// data-layer-serverplan-quality's relational clauses in Rerail logic, on the final shape's path.
+//
+// The policy below holds each clause's anchor: a forbid clause whose matcher finds the nodes a violation can
+// be reported at, with the clause's code and message. The rules give the violations; they replace the
+// one-line rule the policy's forbid clause would give. An `ast` atom that is no clause's matcher is a helper
+// of the wave. Rules read the base relations as bound: `core_node(d, t, n)` turns a matched tape node `t`
+// into the syntax node `n` that `node`, `text`, `child` and `field` key on.
+//
+// Source: the relational clauses of gate/data-layer/final-shape/data-layer-serverplan-quality.json
+// (the PIAT port of nera-data-layer serverplan_quality).
+
+.policy {{POLICY}}
+
+// ---- spq-vector-filter-constants (SPQ-042) ----
+// A QueryFilter column named by a module constant whose (latest) value is "branch_id" or "revision_id".
+// The SQL took the constant's last string assignment per name (max start); here a flagged assignment that
+// a later one to the same name supersedes does not count.
+
+// Module-level `NAME = "<string>"` in the file: the name's text and the assignment's start.
+.decl constant(d: int, s: sym, b: int)
+constant($D, $S, $B) :- ast($D, $T, {{CONSTANT}}), core_node($D, $T, $N), text($N, $S), node($D, $N, _, $B, _).
+
+// Those whose value is a branch or revision id.
+.decl id_constant(d: int, s: sym, b: int)
+id_constant($D, $S, $B) :- ast($D, $T, {{IDCONSTANT}}), core_node($D, $T, $N), text($N, $S), node($D, $N, _, $B, _).
+
+.decl superseded(d: int, s: sym, b: int)
+superseded($D, $S, $B) :- id_constant($D, $S, $B), constant($D, $S, $C), $C > $B.
+
+violation("data-layer-serverplan-quality-logic", "spq-vector-filter-constants", $D, $T) :-
+    ast($D, $T, {{ANCHOR042}}),
+    core_node($D, $T, $N), text($N, $S),
+    id_constant($D, $S, $B), !superseded($D, $S, $B).

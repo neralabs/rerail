@@ -64,6 +64,9 @@ pub(in crate::code_rule_dsl) struct Logic {
     /// The demand program: the magic rules seeded by `wave(d)`, deriving `demanded(i, d)`. `None`: every
     /// clause is demanded on every document.
     pub(in crate::code_rule_dsl) demand: Option<Program>,
+    /// The relations the rules read as bound with the chunk (`is_bound`), with their columns: the
+    /// wave reads them as the chunk's `main` tables.
+    pub(in crate::code_rule_dsl) bound: Vec<(String, &'static [&'static str])>,
 }
 
 impl Logic {
@@ -78,7 +81,7 @@ impl Logic {
             prog.rules.push(Rule { head, body: vec![matched(i, "D", "N")] });
         }
         declare_violation(&mut prog);
-        Self { rules: wave_text(&merged(prog)), demand: None }
+        Self { rules: wave_text(&merged(prog)), demand: None, bound: Vec::new() }
     }
 
     /// The demand statement on `store` (its atoms interned there): a SELECT of `(i, d)` rows over
@@ -97,8 +100,8 @@ impl Logic {
         let mut batch = HashMap::from([(WAVE.to_owned(), (Source::positional("temp.wave_document", &["d"]), 100.0))]);
         // The `py.*` families are read where they are bound (`main`), as the chunk's base relations are,
         // each priced at a thousand rows: no statistics exist before the chunk's first read (decision 0029).
-        for rel in prog.inputs.iter().filter(|rel| is_py(rel)) {
-            let columns = crate::code_rule_dsl::logic::sql::select::input_columns(rel).expect("a py family's columns");
+        for rel in prog.inputs.iter().filter(|rel| is_bound(rel)) {
+            let columns = crate::code_rule_dsl::logic::sql::select::input_columns(rel).expect("a bound relation's columns");
             batch.insert(rel.clone(), (Source::named(&format!("main.{rel}"), columns), 1000.0));
         }
         let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
@@ -138,6 +141,14 @@ fn declare_py(prog: &mut Program) {
     for rel in read {
         let columns = PY_COLUMNS[PY.iter().position(|p| *p == rel).expect("a py family")];
         prog.decls.entry(rel).or_insert_with(|| columns.iter().map(|c| ((*c).to_owned(), "int".to_owned())).collect());
+    }
+}
+
+/// Declares each base relation the rules read and do not declare (`BASE`), as bound.
+fn declare_base(prog: &mut Program) {
+    let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
+    for (rel, columns) in BASE.iter().filter(|(rel, _)| read.contains(*rel)) {
+        prog.decls.entry((*rel).to_owned()).or_insert_with(|| columns.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
     }
 }
 
@@ -287,6 +298,96 @@ pub(in crate::code_rule_dsl) struct Lowered {
 /// `ast` atoms whose Python matcher lowers as the wave's clauses, their rules rewritten over them, and the
 /// demand program.
 pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]) -> StoreResult<Lowered> {
+    lower_with(policies, &Program::default())
+}
+
+/// The policy of an authored program's helper `ast` atoms has its policy's id and this suffix.
+const HELPERS: &str = "~helpers";
+
+/// A matcher's text as a compiled policy holds it (`by_matcher`'s keys): authored text may order or
+/// space its keys otherwise.
+fn normalized(matcher: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(matcher).map_or_else(|_| matcher.to_owned(), |value| crate::code_rule_dsl::json::canonicalize_value(value).to_string())
+}
+
+/// The base relations a rule may read besides the `py.*` families: T's syntax relations and
+/// `core_node`, bound with each chunk before its batch (`facts::vtab::syntax::sources`).
+const BASE: [(&str, &[(&str, &str)]); 10] = [
+    ("node", &[("d", "int"), ("n", "int"), ("kind", "int"), ("start", "int"), ("end_", "int")]),
+    ("doc", &[("d", "int"), ("path", "sym"), ("module", "sym")]),
+    ("pkg", &[("d", "int"), ("p", "sym")]),
+    ("child", &[("p", "int"), ("c", "int"), ("idx", "int")]),
+    ("field", &[("p", "int"), ("f", "int"), ("c", "int")]),
+    ("text", &[("n", "int"), ("s", "sym")]),
+    ("intval", &[("n", "int"), ("v", "int")]),
+    ("op", &[("n", "int"), ("s", "sym")]),
+    ("tape", &[("n", "int"), ("par", "int"), ("size", "int"), ("depth", "int")]),
+    ("core_node", &[("d", "int"), ("t", "int"), ("n", "int")]),
+];
+
+/// Whether `rel` is bound with the chunk before its batch: a base relation or a `py.*` family.
+fn is_bound(rel: &str) -> bool {
+    is_py(rel) || BASE.iter().any(|(base, _)| *base == rel)
+}
+
+/// `policies` and an authored program in Rerail logic beside them (`authored`; empty for none):
+/// - its `.policy` documents are policies of their own, whose forbid clauses are the anchors of its
+///   violations: their codes, messages and shapes;
+/// - its rules join the policies', and a rule deriving `violation("<policy>", "<clause>", …)` replaces
+///   the rules the round trip gave that clause;
+/// - an `ast` atom of its rules that is no clause's matcher is a helper clause of the wave, of a
+///   policy of its own (`HELPERS`, its first `.policy`'s `define` clauses kept so utils resolve) that
+///   derives no violation;
+/// - its rules may read the base relations (`BASE`) and the `py.*` families as they are bound.
+pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRuleDsl)], authored: &Program) -> StoreResult<Lowered> {
+    let compile = |document: &serde_json::Value| {
+        crate::code_rule_dsl::CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), crate::code_rule_dsl::tools::CAPABILITIES.to_owned()).map_err(|e| invalid(e.reason))
+    };
+    let mut owned: Vec<(String, CompiledCodeRuleDsl)> = policies.iter().map(|(name, compiled)| (name.clone(), CompiledCodeRuleDsl { inner: Arc::clone(&compiled.inner) })).collect();
+    for document in &authored.policies {
+        let id = document.get("id").and_then(|id| id.as_str()).ok_or_else(|| invalid("an authored .policy has no id"))?;
+        owned.push((id.to_owned(), compile(document)?));
+    }
+    // The authored atoms' matchers that no clause has: the helper clauses, `h0`, `h1`, … in order.
+    let known: BTreeSet<String> = owned
+        .iter()
+        .filter_map(|(_, compiled)| serde_json::from_str::<serde_json::Value>(&compiled.inner.canonical).ok())
+        .flat_map(|canonical| canonical.get("clauses").and_then(|c| c.as_array()).cloned().unwrap_or_default())
+        .filter_map(|clause| clause.get("forbid").and_then(|f| f.get("ast")).map(|m| m.to_string()))
+        .collect();
+    let mut helpers = Vec::<String>::new();
+    for literal in authored.rules.iter().flat_map(|rule| &rule.body) {
+        if let Literal::Ast { matcher, .. } = literal {
+            let matcher = normalized(matcher);
+            if !known.contains(&matcher) && !helpers.contains(&matcher) {
+                helpers.push(matcher);
+            }
+        }
+    }
+    if !helpers.is_empty() {
+        let base = authored.policies.first().ok_or_else(|| invalid("authored rules with helper ast atoms need a .policy"))?;
+        let id = format!("{}{HELPERS}", base.get("id").and_then(|id| id.as_str()).unwrap_or_default());
+        let mut document = base.clone();
+        document["id"] = serde_json::Value::String(id.clone());
+        let mut clauses: Vec<serde_json::Value> = base.get("clauses").and_then(|c| c.as_array()).into_iter().flatten().filter(|c| c.get("define").is_some()).cloned().collect();
+        for (i, matcher) in helpers.iter().enumerate() {
+            let matcher: serde_json::Value = serde_json::from_str(matcher).map_err(invalid)?;
+            clauses.push(serde_json::json!({"id": format!("h{i}"), "forbid": {"ast": matcher}, "violation": {"code": "helper", "message": "helper", "anchor": "witness.span"}}));
+        }
+        document["clauses"] = serde_json::Value::Array(clauses);
+        owned.push((id, compile(&document)?));
+    }
+    // The clauses whose rules the authored ones replace.
+    let replaced: BTreeSet<(String, String)> = authored
+        .rules
+        .iter()
+        .filter(|rule| rule.head.rel == "violation")
+        .filter_map(|rule| match rule.head.args.as_slice() {
+            [Term::Str(policy), Term::Str(clause), ..] => Some((policy.clone(), clause.clone())),
+            _ => None,
+        })
+        .collect();
+    let policies = &owned[..];
     let mut program = Program::default();
     let mut documents = Vec::new();
     for (name, compiled) in policies {
@@ -306,7 +407,7 @@ pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]
         for clause in canonical.get("clauses").and_then(|c| c.as_array()).into_iter().flatten() {
             let (Some(id), Some(matcher)) = (clause.get("id").and_then(|i| i.as_str()), clause.get("forbid").and_then(|f| f.get("ast"))) else { continue };
             if let Some(at) = compiled.inner.clauses.iter().position(|c| c.id == id) {
-                by_matcher.entry(matcher.to_string()).or_default().push((p, at));
+                by_matcher.entry(normalized(&matcher.to_string())).or_default().push((p, at));
             }
         }
     }
@@ -334,9 +435,24 @@ pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]
     };
 
     // The rules over the wave's clauses; a rule whose atom does not lower is left out.
-    let mut wave = Program { decls: program.decls.clone(), outputs: program.outputs.clone(), ..Program::default() };
+    let mut wave = Program { decls: program.decls.clone(), outputs: program.outputs.clone(), facts: authored.facts.clone(), ..Program::default() };
+    for (rel, columns) in &authored.decls {
+        wave.decls.entry(rel.clone()).or_insert_with(|| columns.clone());
+    }
+    for rel in &authored.outputs {
+        if !wave.outputs.contains(rel) {
+            wave.outputs.push(rel.clone());
+        }
+    }
     let mut demand = Program::default();
-    for rule in &program.rules {
+    let key_of = |rule: &Rule| match rule.head.args.as_slice() {
+        [Term::Str(policy), Term::Str(clause), ..] if rule.head.rel == "violation" => Some((policy.clone(), clause.clone())),
+        _ => None,
+    };
+    let generated = program.rules.iter().filter(|rule| {
+        key_of(rule).is_none_or(|key| !replaced.contains(&key) && !key.0.ends_with(HELPERS))
+    });
+    for rule in generated.chain(&authored.rules) {
         let head_key = match rule.head.args.as_slice() {
             [Term::Str(policy), Term::Str(clause), ..] => Some((policy.as_str(), clause.as_str())),
             _ => None,
@@ -356,7 +472,7 @@ pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]
                 covered = false;
                 break;
             }
-            let found = by_matcher.get(matcher).and_then(|found| {
+            let found = by_matcher.get(&normalized(matcher)).and_then(|found| {
                 found
                     .iter()
                     .find(|&&(p, at)| head_key == Some((policies[p].1.inner.id.as_str(), policies[p].1.inner.clauses[at].id.as_str())))
@@ -381,14 +497,34 @@ pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]
         let body = seeds.iter().map(|d| atom(WAVE, vec![var(d)])).chain(demand_body).collect();
         demand.rules.push(Rule { head: rule.head.clone(), body });
     }
+    // An authored violation's clause is the wave's even where no rule reads its matcher: its shape
+    // is the layer's (code, message, anchor).
+    for (policy, clause) in &replaced {
+        let at = policies.iter().enumerate().find_map(|(p, (_, compiled))| {
+            (compiled.inner.id == *policy).then(|| compiled.inner.clauses.iter().position(|c| c.id == *clause).map(|at| (p, at))).flatten()
+        });
+        let Some((p, at)) = at else {
+            return Err(invalid(format!("authored violations of {policy}/{clause}: no such forbid clause")));
+        };
+        if lower_clause(p, at).is_none() {
+            return Err(invalid(format!("authored violations of {policy}/{clause}: its matcher does not lower")));
+        }
+    }
     declare_violation(&mut wave);
     declare_py(&mut wave);
+    declare_base(&mut wave);
     let shared: Vec<(String, String)> = clauses.iter().map(|clause| clause.key.clone()).collect();
     if let Some(key) = shared.iter().enumerate().find_map(|(at, key)| shared[..at].contains(key).then_some(key)) {
         return Err(invalid(format!("clause {}/{} lowers twice: its violations would not tell its matchers apart", key.0, key.1)));
     }
     let demand = demand_program(demand, &wave, clauses.len())?;
-    Ok(Lowered { clauses, shapes, logic: Logic { rules: wave_text(&merged(wave)), demand }, program })
+    let read: BTreeSet<&str> = wave.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
+    let bound = read
+        .into_iter()
+        .filter(|rel| is_bound(rel))
+        .filter_map(|rel| crate::code_rule_dsl::logic::sql::select::input_columns(rel).map(|columns| (rel.to_owned(), columns)))
+        .collect();
+    Ok(Lowered { clauses, shapes, logic: Logic { rules: wave_text(&merged(wave)), demand, bound }, program })
 }
 
 /// The demand program of `rules` (each reading `ast_i` atoms after `wave` seeds): `.demand` on every atom,
@@ -412,7 +548,7 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
     // `py.*` families (bound with the chunk's base relations, before the batch), and every relation
     // that reads one.
     let mut unavailable: BTreeSet<String> = (0..atoms).map(|i| format!("ast_{i}")).collect();
-    unavailable.extend(magic.inputs.iter().filter(|rel| *rel != WAVE && !rel.starts_with("ast_") && !is_py(rel)).cloned());
+    unavailable.extend(magic.inputs.iter().filter(|rel| *rel != WAVE && !rel.starts_with("ast_") && !is_bound(rel)).cloned());
     loop {
         let more = magic
             .rules
@@ -455,7 +591,7 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
     }
     let facts = magic.facts.iter().filter(|(rel, _)| referenced.contains(*rel)).map(|(r, f)| (r.clone(), f.clone())).collect();
     // The chunk's documents and the `py.*` families the magic rules read are its inputs.
-    let inputs = std::iter::once(WAVE.to_owned()).chain(referenced.iter().filter(|rel| is_py(rel)).cloned()).collect();
+    let inputs = std::iter::once(WAVE.to_owned()).chain(referenced.iter().filter(|rel| is_bound(rel)).cloned()).collect();
     let demand = Program { decls, facts, rules, inputs, outputs: vec![DEMANDED.to_owned()], ..Program::default() };
     front::strata(&demand).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
     Ok(Some(demand))

@@ -54,7 +54,16 @@ pub(in crate::code_rule_dsl) struct Rules {
 impl Rules {
     /// The clauses of `policies` (each by its file stem) that lower (S1), with their shapes.
     pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)], backend: ExecutionBackend) -> StoreResult<Self> {
-        let lowered = crate::code_rule_dsl::waves::policies::lower(policies)?;
+        Self::lower_with(policies, &crate::code_rule_dsl::logic::front::Program::default(), backend)
+    }
+
+    /// `lower`, with a program in Rerail logic beside the policies (`policies::lower_with`).
+    pub(in crate::code_rule_dsl) fn lower_with(
+        policies: &[(String, CompiledCodeRuleDsl)],
+        authored: &crate::code_rule_dsl::logic::front::Program,
+        backend: ExecutionBackend,
+    ) -> StoreResult<Self> {
+        let lowered = crate::code_rule_dsl::waves::policies::lower_with(policies, authored)?;
         let layer = Layer::new(lowered.shapes)?;
         let wave = Wave::with_logic(&lowered.clauses, lowered.logic, backend)?;
         Ok(Self { wave, digest: layer.digest(), layer, backing: Backing::default() })

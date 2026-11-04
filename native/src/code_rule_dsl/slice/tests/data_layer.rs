@@ -3,11 +3,13 @@
 //! time and memory, and (`RERAIL_DL_W=1`) its keys against W's engine on the same files.
 //!
 //!   RERAIL_DL_POLICY=<policy.json>[:<policy.json>…] RERAIL_DL_ROOT=<dir>
-//!   [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
+//!   [RERAIL_DL_LOGIC=<program.rdl>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
 //!   cargo test --profile profiling --lib -- slice::tests::data_layer::data_layer_bench --ignored --nocapture
 //!
 //! A clause the path cannot run is reported with its reason, and left out of the policy the slice
 //! lowers: the round trip (`logic::front::yaml`) refuses a whole policy for one such clause.
+//! `RERAIL_DL_LOGIC` is a program in Rerail logic beside the policies (`policies::lower_with`): its
+//! own `.policy` of anchor clauses, and rules giving their violations.
 
 use super::*;
 use crate::code_rule_dsl::matcher::gated_match_tree;
@@ -35,6 +37,30 @@ fn refusal(clause: &serde_json::Value) -> Option<String> {
         return Some(format!("forbid {:?}", forbid.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()));
     }
     None
+}
+
+/// The authored program of `RERAIL_DL_LOGIC`, empty without one; each `define`'s options at
+/// `options` where given.
+fn authored(options: &serde_json::Map<String, serde_json::Value>) -> crate::code_rule_dsl::logic::front::Program {
+    let Ok(path) = std::env::var("RERAIL_DL_LOGIC") else { return Default::default() };
+    let mut program = crate::code_rule_dsl::logic::front::parse(&std::fs::read_to_string(&path).unwrap()).unwrap_or_else(|e| panic!("{path}: {e}"));
+    for document in &mut program.policies {
+        with_options(document, options);
+    }
+    program
+}
+
+/// `document` with each `define`'s option defaults set to `options`' values.
+fn with_options(document: &mut serde_json::Value, options: &serde_json::Map<String, serde_json::Value>) {
+    for clause in document["clauses"].as_array_mut().into_iter().flatten() {
+        if let Some(defined) = clause.pointer_mut("/define/options").and_then(|o| o.as_object_mut()) {
+            for (name, value) in options {
+                if let Some(option) = defined.get_mut(name) {
+                    option["default"] = value.clone();
+                }
+            }
+        }
+    }
 }
 
 /// Each policy split into what the slice runs (compiled) and the clauses it refused, with reasons.
@@ -96,7 +122,8 @@ fn data_layer_bench() {
 
     let footprint = crate::code_rule_dsl::prof::footprint_mb;
     let (cpu0, wall0) = (cpu(), std::time::Instant::now());
-    let mut rules = Rules::lower(&policies, backend).unwrap();
+    let program = authored(&Default::default());
+    let mut rules = Rules::lower_with(&policies, &program, backend).unwrap();
     let lowering = (cpu() - cpu0, wall0.elapsed());
     eprintln!("DL lowered {} clauses in cpu {:?}, wall {:?}; footprint {} MB", rules.clauses(), lowering.0, lowering.1, footprint());
 
@@ -184,21 +211,14 @@ fn data_layer_fixtures() {
     for (options, events) in &by_options {
         let options: serde_json::Map<String, serde_json::Value> = serde_json::from_str(options).unwrap();
         let mut document = document.clone();
-        for clause in document["clauses"].as_array_mut().unwrap() {
-            if let Some(defined) = clause.pointer_mut("/define/options").and_then(|o| o.as_object_mut()) {
-                for (name, value) in &options {
-                    if let Some(option) = defined.get_mut(name) {
-                        option["default"] = value.clone();
-                    }
-                }
-            }
-        }
+        with_options(&mut document, &options);
         let file = temp("dl-policy").with_extension("json");
         std::fs::write(&file, document.to_string()).unwrap();
         let (compiled, refused) = split(&file);
         let entry = options.get("entryPoint").and_then(|e| e.as_str()).unwrap_or("?").to_owned();
         let policies = vec![(policy.file_stem().unwrap().to_string_lossy().into_owned(), compiled.1)];
-        let mut rules = Rules::lower(&policies, backend).unwrap();
+        let program = authored(&options);
+        let mut rules = Rules::lower_with(&policies, &program, backend).unwrap();
         // W runs every clause of the policy (relational ones included, as test builds compile them).
         let full = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|e| panic!("{}", e.reason));
         let mut good = 0;

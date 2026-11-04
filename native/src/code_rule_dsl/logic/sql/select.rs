@@ -99,6 +99,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "op" => &["n", "s"],
         "pkg" => &["d", "p"],
         "tape" => &["n", "par", "size", "depth"],
+        "core_node" => &["d", "t", "n"],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`).
         rel if rel.starts_with("nearest_") => &["n", "a"],
         // The `py.*` families (`facts::vtab::syntax::PY`).
