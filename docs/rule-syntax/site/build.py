@@ -71,7 +71,7 @@ def main():
     for mod, kind, blurb in LIBS:
         libs[mod] = {"kind": kind, "src": read(os.path.join(RS, "lib", mod + ".rr")), "blurb": blurb}
     n_native = sum(len(re.findall(r"^\.native\s", l["src"], re.M)) for l in libs.values())
-    n_datalog = sum(len(re.findall(r"^\.decl\s", l["src"], re.M)) for m, l in libs.items() if l["kind"] == "datalog")
+    n_datalog = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for m, l in libs.items() if l["kind"] == "datalog")
 
     packs, total_json, total_rr, atom_rules, n_rules = [], 0, 0, 0, 0
     for pdir in sorted(glob.glob(os.path.join(ROOT, "packs", "*", "rules"))):

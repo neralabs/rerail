@@ -102,9 +102,49 @@ FUNCTION_IMPORT($i, $c) :- local_import($i),
       <tr><td><code>"count": {…, "min": 1}</code></td><td><code>$k = count { … }, $k >= 1</code></td></tr>
       <tr><td><code>"resolves": {"import": […]}</code></td><td><code>sym_of($n, $q), $q in {…}</code></td></tr>
       <tr><td><code>"resolves": {"binding": {"site": …}}</code></td><td><code>ref_site($n, $s), …</code></td></tr>
+      <tr><td><code>"fix": "$E"</code></td><td><code>… => replace($n, `$E`)</code> on each rule of the clause</td></tr>
+      <tr><td><code>"fix": {"template": "", "range": "capture.X"}</code></td><td><code>… => replace($X, ``)</code></td></tr>
       <tr><td><code>"$option": "name"</code></td><td><code>option("name", $v)</code></td></tr>
       <tr><td><code>mode</code>, <code>scope</code>, <code>violation</code></td><td>Directives</td></tr>
     </table></div>
+  </section>
+
+
+  <section class="sect">
+    <div class="txt">
+      <h2>Fixes</h2>
+      <p>A fix is a set of edits, and rules derive edits like any other rows: a rule that ends in <code>=&gt; e1, e2</code> adds those edits to the fix in its head. A fix relation has its violation's columns, bound by the finding, so its rules run once per finding.</p>
+      <p>The binary applies four edits: <code>replace</code>, <code>delete</code>, <code>insert_before</code>, <code>insert_after</code>. Edits declared with <code>.edit</code>, such as <code>hoist</code>, <code>ensure_import</code> and <code>unwrap</code>, are Datalog in the libraries and expand to those four.</p>
+    </div>
+    <div class="code"><div data-rr>
+.use python/imports     // hoist, remove_stmt, ensure_import, remove_alias
+
+.violation FUNCTION_IMPORT(at: node, code: sym) "{at.text}"
+    fix safe hoist_import "Move `{at.text}` to the top of the module"
+    fix remove_import "Delete `{at.text}`: nothing reads what it binds"
+FUNCTION_IMPORT($i, $c) :- local_import($i), $c = first { … }.
+
+hoist_import($i, "deferred-no-cycle") :- plain_stmt($i), !clash($i) => hoist($i).
+remove_import($i, "unread") => remove_stmt($i).
+
+// An edit in a library: Datalog that expands to the native edits.
+.edit remove_alias(a: node)
+remove_alias($a) :- import_alias($i, $a, _, _, _), some { import_alias($i, $b, _, _, _), $b != $a } => delete($a).
+remove_alias($a) :- import_alias($i, $a, _, _, _), !some { import_alias($i, $b, _, _, _), $b != $a } => remove_stmt($i).
+
+// Inline: the fix of one derivation, using its variables. Today's JSON fix templates translate to this.
+NO_DOUBLE_BANG($n) :- $n ~ `$E!!` => replace($n, `$E!`).
+</div>
+    <div class="tablewrap" style="margin-top:14px"><table class="map">
+      <tr><th>Form</th><th>Meaning</th></tr>
+      <tr><td><code>fix NAME "title"</code></td><td>A suggestion, shown with the finding. The agent or a person applies it.</td></tr>
+      <tr><td><code>fix safe NAME "title"</code></td><td>Rerail may apply it without review. Never offered for a <code>possible</code> finding.</td></tr>
+      <tr><td>Several <code>fix</code> lines</td><td>Alternatives; the reader picks one.</td></tr>
+      <tr><td>Several rules for one fix</td><td>Their edits combine into one fix.</td></tr>
+      <tr><td><code>V(…) :- body =&gt; edits.</code></td><td>An unnamed suggestion for this derivation.</td></tr>
+      <tr><td><code>`…`</code> in an edit</td><td>Template in the rule's language: <code>$X</code> is a node's source or a value, <code>$$$X</code> a list a pattern bound, regex named groups are sub-spans. Reindented where it lands. Fence with more backticks to contain one.</td></tr>
+      <tr><td>Applying</td><td>All edits of a fix, across files, or none. Dropped if two edits overlap or the result does not parse. Rule tests check that the finding is gone afterwards.</td></tr>
+    </table></div></div>
   </section>
 
   <section class="sect">
@@ -144,7 +184,7 @@ may  passes($e) :- tag($e, $t), sym_of($t, $q), !component($q, _).   // a packag
       <h2>Where to look next</h2>
       <ul class="tight">
         <li><a href="#packs">Pack rules</a>: every shipped rule, today's JSON beside the generated .rr.</li>
-        <li><a href="#data-layer">Data-layer rules</a>: hand-written final forms of complex data-layer checks, and the router example in four forms.</li>
+        <li><a href="#data-layer">Data-layer rules</a>: hand-written final forms of complex data-layer checks, and the router example in four forms. function-level-imports, missing-async-pairs and the router carry fixes.</li>
         <li><a href="#library">Library</a>: the Datalog libraries and the native core they stand on.</li>
       </ul>
       <p class="note" style="padding:0">Generated .rr is a display translation from today's JSON. It shows the shape; nothing here has been compiled or run against the engine.</p>

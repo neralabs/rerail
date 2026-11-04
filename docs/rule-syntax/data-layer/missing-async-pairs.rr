@@ -116,4 +116,13 @@ differ($s, $a) :- pair(_, $s, $a), params($a, $x, $i), $x != "self", !params($s,
 
 // signature_mismatch: reported at the sync def, naming the async def as `other`.
 .violation signature_mismatch(at: node, cls: sym, other: node) "{cls}.{at.name}/{other.name}: Argument mismatch"
+    fix match_sync "Give {other.name} the parameters of {at.name}"
+    fix match_async "Give {at.name} the parameters of {other.name}"
 signature_mismatch($s, $x, $a) :- pair($c, $s, $a), differ($s, $a), def_name($c, $x).
+
+// Two alternative fixes, both suggestions: the rule cannot know which side is right, so the person or agent picks.
+// Each copies one def's whole parameter list, annotations and defaults included, onto the other. `$sp` in the
+// template is the source text of the parameters node `(self, txn: Txn, key: str)`. Callers and the edited body
+// may still use the old names; that is why these are not `safe`.
+match_sync($s, _, $a) :- field($s, "parameters", $sp), field($a, "parameters", $ap) => replace($ap, `$sp`).
+match_async($s, _, $a) :- field($s, "parameters", $sp), field($a, "parameters", $ap) => replace($sp, `$ap`).

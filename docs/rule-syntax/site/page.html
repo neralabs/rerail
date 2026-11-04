@@ -240,15 +240,16 @@ const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&
 const MAX_LINES = 2500;
 
 // ---------- statements and definitions ----------
-const DIRECTIVE_WORDS = new Set(["must", "may", "some", "first", "count", "if", "or", "in", "and", "code", "anchor", "suppress", "fix", "options", "each", "revision", "by", "at", "field"]);
+const DIRECTIVE_WORDS = new Set(["must", "may", "some", "first", "count", "if", "or", "in", "and", "code", "anchor", "suppress", "fix", "options", "each", "revision", "by", "at", "safe"]);
+const isDecl = s => s.kind === "decl" || s.kind === "native" || s.kind === "edit";
 function statements(src) {
   const lines = src.split("\n"); const out = []; let cur = null;
   lines.forEach((ln, i) => {
     const t = ln.replace(/\/\/.*$/, "").trimEnd();
     if (cur === null) {
       if (!t.trim() || /^\s/.test(ln)) return;
-      const m = t.match(/^(?:\.(decl|native|violation)\s+)?(?:(must|may)\s+)?([A-Za-z_]\w*)\s*\(/);
-      cur = { start: i, end: i, kind: m ? (m[1] || "rule") : "other", name: m ? m[3] : null };
+      const m = t.match(/^(?:\.(decl|native|violation|edit)\s+)?(?:(?:must|may|edit)\s+)?([A-Za-z_]\w*)\s*\(/);
+      cur = { start: i, end: i, kind: m ? (m[1] || "rule") : "other", name: m ? m[2] : null };
       if (t.startsWith(".") && !(m && m[1])) { cur.kind = "directive"; cur.name = null; }
     }
     if (cur) {
@@ -275,7 +276,7 @@ const DEFINERS = new Map();
 for (const [mod, lib] of Object.entries(LIBS)) {
   LIBDEFS[mod] = defsOf(lib.src);
   for (const [name, sts] of LIBDEFS[mod]) {
-    if (!sts.some(s => s.kind === "decl" || s.kind === "native")) continue;
+    if (!sts.some(s => isDecl(s))) continue;
     if (!DEFINERS.has(name)) DEFINERS.set(name, []);
     DEFINERS.get(name).push(mod);
   }
@@ -296,11 +297,16 @@ function resolveLib(name, uses, lang) {
 }
 
 // ---------- highlighting ----------
-const RR_TOKEN = /(\/\/.*$)|("(?:[^"\\]|\\.)*")|(`(?:[^`\\]|\\.)*`)|(\$[A-Za-z_]\w*)|(@[A-Za-z_]\w*)|(:-|=~|!=|<=|>=)|(\bast(?=\())|(\b-?\d+(?:\.\d+)?\b)|(\b[A-Za-z_]\w*)(?=\s*\()|(\b[A-Za-z_]\w*\b)/g;
+const RR_TOKEN = /(\/\/.*$)|("(?:[^"\\]|\\.)*")|(```\s.*?\s```|``\s.*?\s``|`(?:[^`\\]|\\.)*`)|(\$[A-Za-z_]\w*)|(@[A-Za-z_]\w*)|(:-|=>|=~|!=|<=|>=)|(\bast(?=\())|(\b-?\d+(?:\.\d+)?\b)|(\b[A-Za-z_]\w*)(?=\s*\()|(\b[A-Za-z_]\w*\b)/g;
 function hlRR(line, ctx) {
   let out = "", last = 0;
   const dm = line.match(/^(\s*)(\.[a-z_]+)/);
   if (dm) { out += esc(dm[1]) + `<span class="c-dir">${esc(dm[2])}</span>`; last = dm[0].length; }
+  const fm = !dm && line.match(/^(\s+)fix(\s+)(?:safe(\s+))?([a-z_]\w*)(?=\s+")/);
+  if (fm) {
+    out += `${fm[1]}<span class="c-kw">fix</span>${fm[2]}` + (fm[3] ? `<span class="c-kw">safe</span>${fm[3]}` : "") + relLink(fm[4], ctx);
+    last = fm[0].length;
+  }
   RR_TOKEN.lastIndex = last;
   let m;
   while ((m = RR_TOKEN.exec(line))) {
@@ -393,7 +399,7 @@ function openDef(mod, name, push = true) {
     <span style="flex:1"></span><button class="btn" type="button" id="d-open">Open module</button>`;
   const srcLines = lib.src.split("\n");
   const body = $("#d-body"); body.innerHTML = "";
-  const decl = sts.filter(s => s.kind === "decl" || s.kind === "native");
+  const decl = sts.filter(s => isDecl(s));
   const rules = sts.filter(s => s.kind === "rule");
   const pieces = [];
   const take = (st, withComments) => {
@@ -446,7 +452,7 @@ function buildLib() {
   const list = $("#lib-list"); list.innerHTML = "";
   for (const [mod, lib] of Object.entries(LIBS)) {
     const el = document.createElement("div"); el.className = "item"; el.setAttribute("role", "option"); el.tabIndex = 0; el.dataset.mod = mod;
-    const nrel = [...LIBDEFS[mod].values()].filter(s => s.some(x => x.kind === "decl" || x.kind === "native")).length;
+    const nrel = [...LIBDEFS[mod].values()].filter(s => s.some(x => isDecl(x))).length;
     el.innerHTML = `<span class="id">${esc(mod)}</span><span class="meta"><span class="pill ${lib.kind}">${lib.kind === "native" ? "native" : "Datalog"}</span><span>${nrel} relations · ${lineCount(lib.src)} lines</span></span>`;
     el.addEventListener("click", () => showLib(mod));
     el.addEventListener("keydown", e => { if (e.key === "Enter") showLib(mod); });

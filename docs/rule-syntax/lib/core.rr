@@ -136,3 +136,27 @@
 // signed_list("allow/exec.txt", "scripts/build.py"): approved exceptions; the signature check is native so a
 // rule cannot accept an edited list.
 .native signed_list(path: sym, entry: sym)           // entries of a signed allowlist; refused if the signature fails
+
+// ---- edits (native applier) -----------------------------------------------------------------------------------
+// A fix is a set of edits. Rules derive edits like any other rows: a rule ending in `=> e1, e2` contributes those
+// edits to the fix in its head (see the "Fixes" section of the syntax page). These four are the only edits the
+// binary applies; every other edit (ensure_import, remove_alias, hoist, rename, unwrap, …) is Datalog in a library
+// and expands to these.
+//
+// The applier is native because it works on bytes, not facts. For one fix it:
+//   1. turns each edit into a byte range in the edited node's file (a fix may edit several files);
+//   2. fills templates: in `…`, $X is variable X's value (a node's source text, or a sym); $$$X is a list
+//      variable bound by a pattern atom; the text is reindented to where it lands, as ast-grep's fix does;
+//   3. drops the whole fix if two of its edits overlap, or the same node gets two different texts;
+//   4. applies all files or none, reparses them, and drops the fix if any no longer parses.
+// After a fix is applied, Rerail re-checks the edited files; the finding must be gone (checked in rule tests).
+//
+// replace(n, `$A or $B`): n's source span becomes the text.
+.native edit replace(n: node, text: sym)
+// delete(n): remove n. In a list (arguments, parameters, import names, JSX children, dict entries) one separator
+// goes with it; a statement alone on its lines takes its lines with it, so no blank line is left behind.
+.native edit delete(n: node)
+// insert_before(n, `x = 1`) / insert_after(n, …): new text as n's sibling. Before or after a statement it goes on
+// its own line at n's indentation; in a list it gets a separator.
+.native edit insert_before(n: node, text: sym)
+.native edit insert_after(n: node, text: sym)

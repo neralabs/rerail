@@ -125,3 +125,20 @@ children_slot($f, $s) :- kind($s, "jsx_expression"), child($s, $i, 0), text($i, 
 children_slot($f, $s) :- kind($s, "jsx_expression"), child($s, $m, 0), kind($m, "member_expression"),
     field($m, "property", $p), text($p, "children"), field($m, "object", $o), ref_site($o, $site),
     field($f, "parameters", $ps), within($site, $ps), render_root($f, $r), within($s, $r).
+
+// ---- edits --------------------------------------------------------------------------------------------------------
+// An `.edit` is an edit defined in Datalog that expands to core's native edits (see lib/python/flow.rr).
+
+// content(e, c): c is real content of element e: a child element or expression, or non-blank text.
+.decl content(e: node, c: node)
+content($e, $c) :- kind($e, "jsx_element"), child($e, $c, _), !field($e, "open_tag", $c), !field($e, "close_tag", $c),
+    !(kind($c, "jsx_text"), $c =~ "^\s*$").
+
+// unwrap(e): replace element e by what it contains. `<A><B/></A>` becomes `<B/>`. With several children the tags
+// become a fragment, `<A><B/><C/></A>` → `<><B/><C/></>`, because a single expression is still needed where e was.
+// Only elements with children unwrap: a self-closing element has nothing to put in its place.
+.edit unwrap(e: node)
+unwrap($e) :- field($e, "open_tag", $o), field($e, "close_tag", $c), $k = count { content($e, _) }, $k <= 1
+    => delete($o), delete($c).
+unwrap($e) :- field($e, "open_tag", $o), field($e, "close_tag", $c), $k = count { content($e, _) }, $k > 1
+    => replace($o, `<>`), replace($c, `</>`).

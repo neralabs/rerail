@@ -16,6 +16,8 @@
 //   `import a.b.c` binds only `a` in the current scope, but loads a, a.b and a.b.c.
 //   `from .m import x` is relative: one dot is the current package, each extra dot goes one package up.
 //   `from m import *` binds every public name of m: those in m's `__all__`, else those not starting with "_".
+.use python/flow     // remove_stmt, for the edits at the end of this file
+
 .kindset scope = "module" | "function_definition" | "class_definition" | "lambda"
 // Function-like scopes: an import inside one runs only when the function is called, not at module import time.
 .kindset fdef  = "function_definition" | "lambda"
@@ -169,3 +171,51 @@ dunder_all($m, $x) :- kind($a, "assignment"), field($a, "left", $l), text($l, "_
 .decl public_name(m: sym, x: sym)
 public_name($m, $x) :- dunder_all($m, $x).
 public_name($m, $x) :- exports($m, $x, _), !some { dunder_all($m, _) }, !($x =~ "^_").
+
+// ---- edits --------------------------------------------------------------------------------------------------------
+// Library edits for import fixes. Each expands to core's native edits; see python/flow for what `.edit` means.
+
+// top_import(d, i): i is an import statement at the top level of document d. last_top_import: the last of them.
+.decl top_import(d: int, i: node)
+top_import($d, $i) :- import_stmt($i), child($m, $i, _), kind($m, "module"), docof($i, $d).
+.decl last_top_import(d: int, i: node)
+last_top_import($d, $i) :- top_import($d, $i), !some { top_import($d, $j), precedes($i, $j) }.
+// module_doc(d, s): the module's docstring statement, which must stay first.
+.decl module_doc(d: int, s: node)
+module_doc($d, $s) :- modnode($d, $m), child($m, $s, 0), kind($s, "expression_statement"), child($s, $str, 0),
+    kind($str, "string").
+
+// add_top(d, text): put a new top-level statement among the module's imports: after the last one, else after the
+// docstring, else first. `from __future__` imports stay first because they are already imports.
+.edit add_top(d: int, text: sym)
+add_top($d, $t) :- last_top_import($d, $i) => insert_after($i, $t).
+add_top($d, $t) :- !last_top_import($d, _), module_doc($d, $s) => insert_after($s, $t).
+add_top($d, $t) :- !last_top_import($d, _), !module_doc($d, _), modnode($d, $m), child($m, $s, 0)
+    => insert_before($s, $t).
+
+// top_has(d, m, x, l): document d already has a top-level import binding local name l to m.x (x "" for `import m`).
+.decl top_has(d: int, m: sym, x: sym, l: sym)
+top_has($d, $m, $x, $l) :- top_import($d, $i), import_alias($i, _, $m, $x, $l).
+
+// ensure_import(d, m, x): make `from m import x` (or `import m` when x is "") available at the top of d.
+// Nothing happens if an equivalent top-level import already exists.
+.edit ensure_import(d: int, module: sym, name: sym)
+ensure_import($d, $m, "") :- !top_has($d, $m, "", _) => add_top($d, `import $m`).
+ensure_import($d, $m, $x) :- $x != "", !top_has($d, $m, $x, $x) => add_top($d, `from $m import $x`).
+
+// remove_alias(a): stop importing one name. `from m import a, b` loses `a`; an import of a single name loses the
+// whole statement (via remove_stmt, so a function body never ends up empty).
+.edit remove_alias(a: node)
+remove_alias($a) :- import_alias($i, $a, _, _, _), some { import_alias($i, $b, _, _, _), $b != $a } => delete($a).
+remove_alias($a) :- import_alias($i, $a, _, _, _), !some { import_alias($i, $b, _, _, _), $b != $a }
+    => remove_stmt($i).
+
+// hoist(i): move a function-level import to the top of the module, keeping its exact text (`$i` in a template is
+// the statement's source; the applier dedents it). If the module already imports every name it binds, the
+// function-level copy is only deleted. Whether hoisting is *safe* is the calling rule's business: see
+// function-level-imports.b2.rr, which offers it only where no import cycle is proven.
+.edit hoist(i: node)
+hoist($i) :- docof($i, $d), some { import_alias($i, _, $m, $x, $l), !top_has($d, $m, $x, $l) }
+    => remove_stmt($i), add_top($d, `$i`).
+hoist($i) :- docof($i, $d), !some { import_alias($i, _, $m, $x, $l), !top_has($d, $m, $x, $l) }
+    => remove_stmt($i).

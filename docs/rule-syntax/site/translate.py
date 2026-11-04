@@ -20,6 +20,16 @@ def q(s):
     return json.dumps(s, ensure_ascii=False)
 
 
+def tick(s):
+    """A backtick literal: fenced with one more backtick than the longest run inside, as Markdown code spans are."""
+    s = s.replace("\n", "\\n")
+    runs = [len(r) for r in re.findall(r"`+", s)]
+    if not runs:
+        return f"`{s}`"
+    f = "`" * (max(runs) + 1)
+    return f"{f} {s} {f}"
+
+
 def snake(name):
     s = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
     s = re.sub(r"[^0-9A-Za-z]+", "_", s).strip("_")
@@ -109,7 +119,7 @@ def lower(prog, rule, v, vs, skip=()):
             lits.extend(lower(prog, {kk: vv for kk, vv in val.items() if kk != "grammar"}, r, vs))
         elif k == "pattern" and isinstance(val, dict) and "context" in val:
             sel = f" at {q(val['selector'])}" if "selector" in val else ""
-            lits.append(f"{v} ~ `{val['context'].replace(chr(10), chr(92) + 'n')}`{sel}")
+            lits.append(f"{v} ~ {tick(val['context'])}{sel}")
         elif k == "matches" and isinstance(val, dict) and len(val) == 1:
             name, args = next(iter(val.items()))
             prog.names.add(snake(name))
@@ -117,7 +127,7 @@ def lower(prog, rule, v, vs, skip=()):
         elif k == "notRegex":
             lits.append(f"!({v} =~ {q(val)})")
         elif k == "pattern" and isinstance(val, str):
-            lits.append(f"{v} ~ `{val.replace(chr(10), chr(92) + 'n')}`")
+            lits.append(f"{v} ~ {tick(val)}")
         elif k == "value" and isinstance(val, dict) and (len(val) > 1 or "type" in val):
             x = vs.fresh("v")
             lits.append(f"{'static_value' if val.get('follow') else 'value'}({v}, {x})")
@@ -394,9 +404,11 @@ def resolves(prog, r, v, vs):
     return lits
 
 
-def wrap(head, lits, width=112):
+def wrap(head, lits, width=112, edits=None):
     if not lits:
-        return head + "."
+        return head + (f" => {', '.join(edits)}." if edits else ".")
+    if edits:
+        lits = lits[:-1] + [lits[-1] + " => " + ", ".join(edits)]
     out = head + " :- "
     line = out
     lines = []
@@ -430,7 +442,19 @@ def render_util(prog, name, rule, out):
         out.append((f"{rel}($n)", lower(prog, rule, "$n", Vars())))
 
 
-def violation_lines(viol, rel):
+def fix_edits(viol):
+    """Today's ast fix template as a native edit: replace the witness, or the capture `range` names."""
+    fx = viol.get("fix")
+    if isinstance(fx, str):
+        return [f"replace($n, {tick(fx)})"]
+    if isinstance(fx, dict) and isinstance(fx.get("template"), str):
+        rng = fx.get("range", "")
+        target = "$" + rng[len("capture."):] if rng.startswith("capture.") else "$n"
+        return [f"replace({target}, {tick(fx['template'])})"]
+    return None
+
+
+def violation_lines(viol, rel, ast=False):
     code = viol.get("code", rel)
     msg = viol.get("message", "")
     head = f".violation {rel}(at: node)"
@@ -446,7 +470,7 @@ def violation_lines(viol, rel):
             lines.append(f"    suppress {tool} {', '.join(q(n) for n in names)}")
         else:
             lines.append(f"    suppress {tool}")
-    if "fix" in viol:
+    if "fix" in viol and not ast:
         lines.append(f"    fix {compact(viol['fix'])}")
     if "each" in viol:
         lines.append(f"    each {compact(viol['each'])}")
@@ -504,12 +528,15 @@ def translate(doc):
         local = []
         for name, rule in (a.get("utils") or {}).items():
             render_util(prog, name, rule, local)
-        opts = {k: v for k, v in a.items() if k not in ("language", "rule", "utils", "constraints")}
-        vl = violation_lines(viol, rel)
-        if opts:
-            vl.append(f"    options {compact(opts)}")
         note = [f"// {rel}(n): a finding at node n, from clause `{cid}`.",
                 "// Each rule below is one way the JSON `rule` can match."]
+        opts = {k: v for k, v in a.items() if k not in ("language", "rule", "utils", "constraints")}
+        vl = violation_lines(viol, rel, ast=True)
+        edits = fix_edits(viol)
+        if edits:
+            note.append("// `=> replace(…)` is today's fix template: the edit suggested with each finding.")
+        if opts:
+            vl.append(f"    options {compact(opts)}")
         if a.get("constraints"):
             note.append(f"// The JSON `constraints` on {', '.join('$' + k for k in a['constraints'])} are added to every rule.")
         if opts:
@@ -526,7 +553,7 @@ def translate(doc):
         for var, crule in (a.get("constraints") or {}).items():
             cons.extend(lower(prog, crule, "$" + var, vs))
         for b in bodies:
-            body.append(("rule", (f"{rel}($n)", b + cons)))
+            body.append(("rule", (f"{rel}($n)", b + cons, edits)))
         for h, lits in local:
             body.append(("rule", (h, lits)))
 
@@ -537,7 +564,7 @@ def translate(doc):
     pending_helpers = list(prog.rules)
     for kind, item in body:
         if kind == "rule":
-            h, lits = item
+            h, lits, *ed = item
             name = h.split("(")[0]
             if name in prog.decls and name not in declared:
                 if out[-1] != "":
@@ -545,7 +572,7 @@ def translate(doc):
                 out.extend(prog.notes.get(name, []))
                 out.append(prog.decls[name])
                 declared.add(name)
-            out.append(wrap(h, lits))
+            out.append(wrap(h, lits, edits=ed[0] if ed else None))
         elif kind == "note":
             if out[-1] != "":
                 out.append("")

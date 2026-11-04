@@ -104,7 +104,16 @@ roots($q, $r) :- component($q, $f), rendered($f, $e), !outer($e, _), tag($e, $t)
 // {outer.tag} and {outer.line} print the outer router's tag name and line.
 .violation NESTED_ROUTER_JSX(at: node, outer: node)
     "Remove this inner router; <{outer.tag}> at line {outer.line} already provides one."
+    fix drop_inner "Remove the inner <{at.tag}> and keep what it contains"
 NESTED_ROUTER_JSX($e, $o) :- provider_el($e), outer($e, $o).
+
+// Fix for finding 1 (a suggestion: the person or agent confirms it). unwrap (tsx/jsx) deletes the inner element's
+// open and close tags, or turns them into <>…</> when several children need one parent. Offered only when it loses
+// nothing: the inner element is a router itself, not a wrapper component that may do more, and it has no
+// attributes, since `basename` or `initialEntries` would change routing.
+drop_inner($e, $o) :- tag($e, $t), sym_of($t, $q), $m in router_module, $x in router_export, $q = @qname($m, $x),
+    field($e, "open_tag", $ot), !some { child($ot, $a, _), kind($a, "jsx_attribute") }
+    => unwrap($e).
 
 // Finding 2: element u uses a component that renders a router (roots), and u itself sits under a router.
 // !provider_el($u) avoids reporting the same element twice: a provider element is already covered by finding 1.

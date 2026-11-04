@@ -21,3 +21,15 @@ before($a, $b) :- stmt_of($a, $sa, $body), stmt_of($b, $sb, $body), child($body,
 .decl in_branch(n: node, b: node)                 // n is inside branch b of an if/try/match
 in_branch($n, $b) :- within($n, $b), kind($b, "block"), child($p, $b, _),
     kind($p, $k), $k in {"if_statement", "elif_clause", "else_clause", "try_statement", "except_clause", "case_clause"}.
+
+// ---- edits --------------------------------------------------------------------------------------------------------
+// An `.edit` is an edit defined in Datalog: rules for it end in `=> …` and expand to the native edits in core
+// (replace, delete, insert_before, insert_after). Its arguments are always bound by the caller, so a library edit
+// only ever runs for the nodes a fix names.
+//
+// remove_stmt(st): delete statement st without leaving an empty body. Python needs at least one statement in a
+// block, so `def f():\n    import x` becomes `def f():\n    pass`, not a syntax error.
+.edit remove_stmt(st: node)
+remove_stmt($st) :- child($b, $st, _), kind($b, "block"), some { child($b, $o, _), $o != $st } => delete($st).
+remove_stmt($st) :- child($b, $st, _), kind($b, "block"), !some { child($b, $o, _), $o != $st } => replace($st, `pass`).
+remove_stmt($st) :- child($m, $st, _), kind($m, "module") => delete($st).    // module level: an empty module is fine

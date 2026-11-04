@@ -96,6 +96,8 @@ allowed($i) :- allow($p, $s), docof($i, $d), doc($d, $p, _), scope_name($i, $s).
 
 // The finding: one per local import that is not allowed, with one code.
 .violation FUNCTION_IMPORT(at: node, code: sym) "{at.text} (in {scope_name(at)})"
+    fix safe hoist_import "Move `{at.text}` to the top of the module"
+    fix remove_import "Delete `{at.text}`: nothing reads what it binds"
 FUNCTION_IMPORT($i, $c) :- local_import($i), !allowed($i),
     // first { }: the first line whose condition holds gives the code; "other" is the default.
     // The order is a priority: stronger, more specific evidence first. An unread import is reported as unread even
@@ -117,3 +119,31 @@ FUNCTION_IMPORT($i, $c) :- local_import($i), !allowed($i),
       "heavy-dependency"    if some { module_text($i, $m), $m =~ "^(torch|tensorflow|numpy|pandas|scipy|matplotlib)(\.|$)" };
       "other"
     }.
+
+// ---- fixes ----------------------------------------------------------------------------------------------------------
+// A fix relation has the violation's columns. Its rules end in `=> edits`; the finding's columns arrive bound, so
+// these rules run once per finding, never over the whole repository.
+//
+// hoist_import is `safe`: Rerail may apply it without review. That is only claimed where the evidence says the
+// move cannot change behaviour, which is what B2's classification is for:
+//   - "deferred-no-cycle": the import loads workspace code and moving it closes no import cycle (cycle is false);
+//   - the import is a plain statement of the function body, not inside if/try/with/for, so it runs unconditionally
+//     whenever the function does and no exception handler around it is lost;
+//   - nothing at module level already binds the same name to something else (clash).
+// The library edit `hoist` (python/imports) deletes the statement, leaving `pass` if the body would be empty, and
+// adds the same text among the top-level imports, or only deletes it if the module already has that import.
+hoist_import($i, "deferred-no-cycle") :- plain_stmt($i), !clash($i) => hoist($i).
+
+// remove_import is a suggestion (the default): "unread" also covers imports kept for their side effects, such as
+// registering plugins, so a person or the agent decides. remove_stmt keeps the function body valid.
+remove_import($i, "unread") => remove_stmt($i).
+
+// plain_stmt(i): i sits directly in a function's body block.
+.decl plain_stmt(i: node)
+plain_stmt($i) :- child($b, $i, _), field($f, "body", $b), kind($f, "function_definition").
+// clash(i): at module level, a name i binds is already bound by something other than the same import (a def, an
+// assignment, a different import), or the module reads it as a builtin elsewhere. Hoisting would change its meaning.
+.decl clash(i: node)
+clash($i) :- import_alias($i, _, $m, $x, $l), docof($i, $d), modnode($d, $mod), binding($mod, $l, $s, _),
+    !some { import_alias(_, $s, $m, $x, $l) }.
+clash($i) :- import_alias($i, _, _, _, $l), docof($i, $d), some { global_ref($r, $l), docof($r, $d) }.
