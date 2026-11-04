@@ -5,14 +5,26 @@ from types import SimpleNamespace
 import sys
 import unittest
 from weakref import WeakKeyDictionary
+from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/dsl'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'scripts/dsl'))
 import data_layer_batch_eight as batch
-from data_layer_record import Recorder
+# Unit tests isolate the pytest registration marker. The unchanged upstream
+# suites exercise the real pytest fixture ordering and plugin lifecycle.
+def hookimpl(**options):
+    def register(method):
+        method.pytest_impl = options
+        return method
+    return register
+
+
+with patch.dict(sys.modules, {'pytest': SimpleNamespace(hookimpl=hookimpl)}):
+    from data_layer_record import Recorder
 
 
 class Recording(unittest.TestCase):
     def test_setup_fixture_calls_belong_to_the_test(self):
+        self.assertTrue(Recorder.pytest_runtest_setup.pytest_impl['tryfirst'])
         recorder = Recorder(Path('/source'), 8)
         item = SimpleNamespace(nodeid='tests.py::positive')
         recorder.pytest_runtest_setup(item)

@@ -1,7 +1,7 @@
 # Data-layer batch eight
 
 Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
-Status: ten candidates pass focused parity and the cumulative 80-rule repository gate.
+Status: ten candidates pass focused parity. The complete repository result below predates the diagnostic metadata additions.
 
 | Check | Main contract |
 | --- | --- |
@@ -17,13 +17,13 @@ Status: ten candidates pass focused parity and the cumulative 80-rule repository
 | `lazy_adapter_ownership` | Shared lazy bodies, direct adapters and legacy ownership |
 
 The unchanged upstream suite passes all 456 tests.
-The [recording](../fixtures/host/data-layer-port/batch-08-recording.json) contains 308 eligible observations: 195 positive and 113 clean.
-It also records 12 retained calls and 209 tests without a captured detector call.
+The [recording](../fixtures/host/data-layer-port/batch-08-recording.json) contains 320 eligible observations: 201 positive and 119 clean.
+It also records one retained call and 208 tests without a captured scanner call.
 These counts are distinct from translated pytest cases.
 
 Supplemental expectations come from unchanged upstream analyzers.
 The 214 supplements contain 134 positive and 80 clean observations.
-All 522 original and supplemental observations match both native APIs, with zero finding or execution differences.
+All 534 original and supplemental observations match both native APIs, with zero finding or execution differences.
 All ten always-clean controls and all 50 edit/removal transitions pass.
 They include original lazy-architecture fact-test source inputs and positive probes for every LA diagnostic family.
 The source pin has no dedicated lazy-SQL-surface test module.
@@ -34,9 +34,46 @@ Always-clean controls must miss every expected finding on their selected positiv
 The edit harness checks clean, positive, restored, repeated-positive and removed-file states.
 Removal results must match a fresh empty workspace.
 
+## Exactness audit
+
+All eight upstream batches ran again against the unchanged source pin: 4,680 tests passed and three kept their existing skips.
+Batch eight passed all 456 tests. Source checks found no modified upstream files.
+No complete repository cold execution ran during this audit.
+Future cold measurements must use the new kernels only.
+
+The recorder now starts before fixture setup.
+It resolves `AnalyzedFile` inputs by file path, rather than analyzer identity.
+These changes recover seven lazy-architecture observations and five empty or missing-file observations.
+Six recovered lazy-architecture observations contain findings.
+The remaining retained call checks invalid UTF-8 input in the Python file reader.
+
+Eager AST entry points intentionally normalize their input with `ast.unparse` upstream.
+The recording preserves both the original text and the effective scanner text.
+Native comparisons use the upstream scanner's effective coordinates.
+
+Replay now compares eager symbols, purity qualified names and plan-helper callsites.
+A control rejects an otherwise correct eager finding on the wrong symbol.
+Separate controls still reject all ten always-clean detectors.
+
+The native discovery check compares every recorded `DecoratedFunction` field through both native APIs.
+All 15 observations match: 14 positive and one clean.
+These include Unicode identifiers, body and signature hashes, annotations, cache members and validation errors.
+Controls reject a missing declaration and a changed fingerprint.
+The original syntax-exception assertion remains a separate Python API contract.
+
+The [case ledger](../fixtures/host/data-layer-port/batch-08-case-coverage.json) lists every batch-eight case and its actual evidence.
+It binds the input recordings by hash. Its audit rejects missing calls, duplicate calls and finding differences.
+The ledger records scanner observations for 247 cases and discovery observations for five cases; one case has both.
+The remaining 205 cases pass their original assertions, without a direct native scanner or discovery observation.
+These include constants, Python data structures, helper facts, CLI behavior, signing, I/O and fixture-result assertions.
+Thirty of these cases also supply original fact-source inputs for the supplemental corpus.
+Those source comparisons do not certify the helper assertions themselves.
+Diagnostic prose is not compared unless it forms the recorded diagnostic identity.
+These boundaries prevent a Python test count from becoming a claim of complete native assertion translation.
+
 ## Full repository result
 
-All 80 rules match the fixed 9,021-file repository: 25,262 expected findings and 25,262 actual findings.
+The prior 80-rule run matched the fixed 9,021-file repository: 25,262 expected findings and 25,262 actual findings.
 The run reports no extra findings, missing findings or engine failures.
 The new ten rules contribute 269 findings: 34 eager findings and 235 purity findings.
 The complete result also validates the first 70 rules on the selected engine.
@@ -55,6 +92,8 @@ The [measurement receipt](performance-decisions/data-layer-batch-eight-20261104.
 The expected findings combine the unchanged first-70 and batch-eight oracle recordings on an identical verified source domain.
 There is no newly timed cumulative Python oracle run.
 The run enables no instrumentation and overlaps no agent-owned builds or tests.
+Its policy digests identify the versions before the diagnostic metadata additions.
+The historical measurement remains unchanged.
 
 Memory remains an open optimization problem.
 Workspace close reduces RSS from 13.765 GB to 2.604 GB.

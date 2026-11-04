@@ -4,6 +4,14 @@ Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The [coverage receipt](../fixtures/host/data-layer-port/testsuite-positive-coverage-20261103.json) records the earlier 70-rule audit.
 Batch eight adds ten candidates; its evidence is described separately below.
 
+The [fresh 80-rule receipt](../fixtures/host/data-layer-port/testsuite-positive-coverage-20261104.json) supersedes these earlier totals.
+It records 4,680 passing original tests and three existing skips.
+The native corpus passes 3,961 observations: 2,112 positive and 1,849 clean.
+All 80 candidates have native positive and clean coverage, with zero finding differences or engine failures.
+Three host signature observations remain separate.
+The audit also passes 15 exact cached-discovery observations and 50 edit/removal transitions.
+It performs no complete repository cold execution.
+
 The unchanged upstream tests collect 4,227 cases: **4,224 pass and three retain their upstream skips**.
 These Python results establish the oracle. They are separate from native parity results.
 
@@ -74,9 +82,9 @@ The earlier full-repository measurement remains historical; it was not rerun or 
 ## Batch eight
 
 The unchanged upstream suite passes all 456 tests.
-The original recording contains 308 eligible observations: 195 positive and 113 clean.
+The refreshed recording contains 320 eligible observations: 201 positive and 119 clean.
 Supplemental probes add 214 observations: 134 positive and 80 clean.
-All 522 observations match both native execution APIs, with zero finding differences or engine failures.
+All 534 observations match both native execution APIs, with zero finding differences or engine failures.
 Every candidate has native positive and native clean coverage.
 
 Ten always-clean controls fail on recorded oracle positives.
@@ -84,10 +92,18 @@ The lazy SQL surface control uses a supplemental positive, because this pin has 
 The other nine controls use original upstream positives.
 All 50 edit, restoration and removal transitions pass.
 
-The batch retains 12 calls and records 209 tests without a captured detector call.
+The batch retains one invalid-encoding I/O call and records 208 tests without a captured scanner call.
 The LA probes include original function-fact test sources evaluated through the unchanged full analyzer.
 These observations do not count as mechanically translated pytest assertions.
 The prior 70-rule audit remains a separate receipt; its native observations were not relabeled as a fresh 80-rule run.
 The [batch-eight report](data-layer-batch-eight.md) records the integrated engine and CPython 3.13 runtime dependency.
 The fresh cumulative 80-rule run matches all 25,262 findings over 9,021 files without engine failures.
 The pack remains inactive.
+
+The exactness audit reran all eight original test batches: 4,680 passed, with three existing skips.
+It also compares all fields from 15 cached-discovery observations: 14 positive and one clean.
+The [case ledger](../fixtures/host/data-layer-port/batch-08-case-coverage.json) accounts for all 456 batch-eight cases.
+It rejects dropped or duplicate scanner observations, even when each rule still has positive coverage.
+Replay now compares eager symbols, purity qualified names and plan-helper callsites.
+The [batch report](data-layer-batch-eight.md#exactness-audit) states the remaining assertion and diagnostic-prose boundaries.
+The complete repository measurement predates these metadata additions. It was not rerun for this audit.

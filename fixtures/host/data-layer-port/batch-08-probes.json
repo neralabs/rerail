@@ -1145,8 +1145,14 @@
           "line": 4,
           "column": null,
           "code": "old or private grammar_row_lazy() call is forbidden",
-          "message": "old or private grammar_row_lazy() call is forbidden"
+          "message": "old or private grammar_row_lazy() call is forbidden",
+          "metadata": {
+            "callsite": "l1000_example.example::<module>"
+          }
         }
+      ],
+      "compare_fields": [
+        "callsite"
       ],
       "oracle_config": {
         "options": {
@@ -1180,8 +1186,14 @@
           "line": 3,
           "column": null,
           "code": "old or private grammar_rows_lazy() call is forbidden",
-          "message": "old or private grammar_rows_lazy() call is forbidden"
+          "message": "old or private grammar_rows_lazy() call is forbidden",
+          "metadata": {
+            "callsite": "l1000_example.example::<module>"
+          }
         }
+      ],
+      "compare_fields": [
+        "callsite"
       ],
       "oracle_config": {
         "options": {
@@ -1210,6 +1222,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "callsite"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -1242,8 +1257,14 @@
           "line": 3,
           "column": null,
           "code": "old or private grammar_row_lazy() call is forbidden",
-          "message": "old or private grammar_row_lazy() call is forbidden"
+          "message": "old or private grammar_row_lazy() call is forbidden",
+          "metadata": {
+            "callsite": "l1000_example.example::<module>"
+          }
         }
+      ],
+      "compare_fields": [
+        "callsite"
       ],
       "oracle_config": {
         "options": {
@@ -1277,8 +1298,14 @@
           "line": 4,
           "column": null,
           "code": "old or private grammar_row_lazy() call is forbidden",
-          "message": "old or private grammar_row_lazy() call is forbidden"
+          "message": "old or private grammar_row_lazy() call is forbidden",
+          "metadata": {
+            "callsite": "l1000_example.example::<module>"
+          }
         }
+      ],
+      "compare_fields": [
+        "callsite"
       ],
       "oracle_config": {
         "options": {
@@ -1312,8 +1339,14 @@
           "line": 1,
           "column": null,
           "code": "lazy terminal grammar_row_lazy assigned to eager alias",
-          "message": "lazy terminal grammar_row_lazy assigned to eager alias"
+          "message": "lazy terminal grammar_row_lazy assigned to eager alias",
+          "metadata": {
+            "callsite": "l1000_example.example::<module>"
+          }
         }
+      ],
+      "compare_fields": [
+        "callsite"
       ],
       "oracle_config": {
         "options": {
@@ -1347,15 +1380,24 @@
           "line": 2,
           "column": null,
           "code": "old or private grammar_row_lazy() call is forbidden",
-          "message": "old or private grammar_row_lazy() call is forbidden"
+          "message": "old or private grammar_row_lazy() call is forbidden",
+          "metadata": {
+            "callsite": "l1000_example.example::<module>"
+          }
         },
         {
           "path": "api/l1000_example/example.py",
           "line": 2,
           "column": null,
           "code": "old or private grammar_row_lazy() call is forbidden",
-          "message": "old or private grammar_row_lazy() call is forbidden"
+          "message": "old or private grammar_row_lazy() call is forbidden",
+          "metadata": {
+            "callsite": "l1000_example.example::<module>"
+          }
         }
+      ],
+      "compare_fields": [
+        "callsite"
       ],
       "oracle_config": {
         "options": {
@@ -1389,8 +1431,14 @@
           "line": 2,
           "column": null,
           "code": "old or private grammar_rows_lazy() call is forbidden",
-          "message": "old or private grammar_rows_lazy() call is forbidden"
+          "message": "old or private grammar_rows_lazy() call is forbidden",
+          "metadata": {
+            "callsite": "l1000_example.example::<module>"
+          }
         }
+      ],
+      "compare_fields": [
+        "callsite"
       ],
       "oracle_config": {
         "options": {
@@ -5713,15 +5761,24 @@
           "line": 1,
           "column": null,
           "code": "transitive:*.resolve()",
-          "message": "def f():"
+          "message": "def f():",
+          "metadata": {
+            "symbol": "impl.sample.f"
+          }
         },
         {
           "path": "impl/sample.py",
           "line": 2,
           "column": null,
           "code": ".resolve()",
-          "message": "value.resolve()"
+          "message": "value.resolve()",
+          "metadata": {
+            "symbol": "impl.sample.f"
+          }
         }
+      ],
+      "compare_fields": [
+        "symbol"
       ],
       "oracle_config": {
         "options": {
@@ -5755,15 +5812,24 @@
           "line": 1,
           "column": null,
           "code": "transitive:*.resolve_async()",
-          "message": "def f():"
+          "message": "def f():",
+          "metadata": {
+            "symbol": "impl.sample.f"
+          }
         },
         {
           "path": "impl/sample.py",
           "line": 2,
           "column": null,
           "code": ".resolve_async()",
-          "message": "value.resolve_async()"
+          "message": "value.resolve_async()",
+          "metadata": {
+            "symbol": "impl.sample.f"
+          }
         }
+      ],
+      "compare_fields": [
+        "symbol"
       ],
       "oracle_config": {
         "options": {
@@ -5797,15 +5863,24 @@
           "line": 1,
           "column": null,
           "code": "transitive:*.result()",
-          "message": "def f():"
+          "message": "def f():",
+          "metadata": {
+            "symbol": "impl.sample.f"
+          }
         },
         {
           "path": "impl/sample.py",
           "line": 2,
           "column": null,
           "code": ".result()",
-          "message": "value.result()"
+          "message": "value.result()",
+          "metadata": {
+            "symbol": "impl.sample.f"
+          }
         }
+      ],
+      "compare_fields": [
+        "symbol"
       ],
       "oracle_config": {
         "options": {
@@ -5839,8 +5914,14 @@
           "line": 2,
           "column": null,
           "code": "int(lazy...)",
-          "message": "int(lazy_value)"
+          "message": "int(lazy_value)",
+          "metadata": {
+            "symbol": "impl.sample.f"
+          }
         }
+      ],
+      "compare_fields": [
+        "symbol"
       ],
       "oracle_config": {
         "options": {
@@ -5874,8 +5955,14 @@
           "line": 2,
           "column": null,
           "code": "float(lazy...)",
-          "message": "float(lazy_value)"
+          "message": "float(lazy_value)",
+          "metadata": {
+            "symbol": "impl.sample.f"
+          }
         }
+      ],
+      "compare_fields": [
+        "symbol"
       ],
       "oracle_config": {
         "options": {
@@ -5909,8 +5996,14 @@
           "line": 2,
           "column": null,
           "code": "bool(lazy...)",
-          "message": "bool(lazy_value)"
+          "message": "bool(lazy_value)",
+          "metadata": {
+            "symbol": "impl.sample.f"
+          }
         }
+      ],
+      "compare_fields": [
+        "symbol"
       ],
       "oracle_config": {
         "options": {
@@ -5944,8 +6037,14 @@
           "line": 2,
           "column": null,
           "code": ".resolve()",
-          "message": "\"value.resolve()\""
+          "message": "\"value.resolve()\"",
+          "metadata": {
+            "symbol": "impl.sample.f"
+          }
         }
+      ],
+      "compare_fields": [
+        "symbol"
       ],
       "oracle_config": {
         "options": {
@@ -5974,6 +6073,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6001,6 +6103,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6126,8 +6231,14 @@
           "line": 2,
           "column": null,
           "code": "PLP-003",
-          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "metadata": {
+            "qualname": "inspect_runtime"
+          }
         }
+      ],
+      "compare_fields": [
+        "qualname"
       ],
       "oracle_config": {
         "options": {
@@ -6165,8 +6276,14 @@
           "line": 2,
           "column": null,
           "code": "PLP-003",
-          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "metadata": {
+            "qualname": "inspect_runtime"
+          }
         }
+      ],
+      "compare_fields": [
+        "qualname"
       ],
       "oracle_config": {
         "options": {
@@ -6204,8 +6321,14 @@
           "line": 2,
           "column": null,
           "code": "PLP-003",
-          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "metadata": {
+            "qualname": "inspect_runtime"
+          }
         }
+      ],
+      "compare_fields": [
+        "qualname"
       ],
       "oracle_config": {
         "options": {
@@ -6310,6 +6433,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "qualname"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6337,6 +6463,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6364,6 +6493,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6391,6 +6523,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6418,6 +6553,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6445,6 +6583,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6472,6 +6613,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6499,6 +6643,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6531,8 +6678,14 @@
           "line": 5,
           "column": null,
           "code": "PLP-003",
-          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "metadata": {
+            "qualname": "run"
+          }
         }
+      ],
+      "compare_fields": [
+        "qualname"
       ],
       "oracle_config": {
         "options": {
@@ -6752,6 +6905,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6779,6 +6935,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "symbol"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6806,6 +6965,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "qualname"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6837,6 +6999,9 @@
         }
       ],
       "findings": [],
+      "compare_fields": [
+        "qualname"
+      ],
       "oracle_config": {
         "options": {
           "oracleAnalyzer": true,
@@ -6869,15 +7034,24 @@
           "line": 3,
           "column": null,
           "code": "PLP-002",
-          "message": "pure-lazy functions must not dynamically access runtime attribute '_txn'"
+          "message": "pure-lazy functions must not dynamically access runtime attribute '_txn'",
+          "metadata": {
+            "qualname": "derive"
+          }
         },
         {
           "path": "impl/runtime.py",
           "line": 5,
           "column": null,
           "code": "PLP-005",
-          "message": "pure-lazy functions must not return locals derived from runtime-bound state"
+          "message": "pure-lazy functions must not return locals derived from runtime-bound state",
+          "metadata": {
+            "qualname": "derive"
+          }
         }
+      ],
+      "compare_fields": [
+        "qualname"
       ],
       "oracle_config": {
         "options": {
@@ -6987,8 +7161,14 @@
           "line": 3,
           "column": null,
           "code": "PLP-003",
-          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "metadata": {
+            "qualname": "Parent.inspect_runtime"
+          }
         }
+      ],
+      "compare_fields": [
+        "qualname"
       ],
       "oracle_config": {
         "options": {
@@ -7026,8 +7206,14 @@
           "line": 3,
           "column": null,
           "code": "PLP-003",
-          "message": "pure-lazy functions must not return runtime-bound handles or containers"
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "metadata": {
+            "qualname": "Parent.inspect_runtime"
+          }
         }
+      ],
+      "compare_fields": [
+        "qualname"
       ],
       "oracle_config": {
         "options": {

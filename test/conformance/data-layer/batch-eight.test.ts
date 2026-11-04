@@ -1,11 +1,31 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import { replay } from "../../../conformance/data-layer/replay.js";
 import { fixturesPath } from "../../support/oracles.js";
 
 const checks = ["readthrough_authority_architecture", "authentication_plan_purity", "legacy_callback_quarantine", "lazy_adapter_ownership", "plan_helpers_allowlist", "lazy_sql_surface", "pure_lazy_runtime_purity", "eager_resolve", "lazy_architecture", "cached_pure_lazy_allowlist"];
+
+it("accounts for every upstream case and permits only the recorded invalid-encoding I/O boundary", () => {
+  const recording = JSON.parse(readFileSync(fixturesPath("host", "data-layer-port", "batch-08-recording.json"), "utf8"));
+  const coverage = JSON.parse(readFileSync(fixturesPath("host", "data-layer-port", "batch-08-case-coverage.json"), "utf8"));
+  expect(recording.collected_tests).toBe(456);
+  expect(coverage.cases).toHaveLength(recording.collected_tests);
+  expect(coverage.cases.map((row: { test: string }) => row.test).sort()).toEqual(Object.keys(recording.test_outcomes).sort());
+  const retained = recording.events.filter((event: { retained_reason?: string }) => event.retained_reason !== undefined);
+  expect(retained).toHaveLength(1);
+  expect(retained[0].test).toBe("scripts/tests/test_lint_plan_helpers_allowlist.py::test_scan_file_tolerates_non_utf8");
+  expect(retained[0].retained_reason).toContain("UnicodeDecodeError");
+  const eligible = recording.events.filter((event: { retained_reason?: string; upstream_passed: boolean }) => !event.retained_reason && event.upstream_passed);
+  expect(eligible).toHaveLength(320);
+  expect(eligible.filter((event: { findings: unknown[] }) => event.findings.length)).toHaveLength(201);
+  expect(coverage.cases.reduce((sum: number, row: { nativeScannerCalls: number }) => sum + row.nativeScannerCalls, 0)).toBe(320);
+  for (const [path, sha256] of Object.entries(coverage.inputs)) {
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(sha256);
+  }
+});
 
 it.each(checks)("ports original %s positives and clean cases", async check => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-batch-eight-"));

@@ -4,8 +4,8 @@ from pathlib import Path
 import sys
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/dsl'))
-from data_layer_case_coverage import audit_calls
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'scripts/dsl'))
+from data_layer_audit.coverage import audit_calls
 
 
 class CaseCoverage(unittest.TestCase):

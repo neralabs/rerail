@@ -44,7 +44,7 @@ def candidate(source,policy):
        FROM raw_issues i JOIN module_names m ON m.__path=i.__path WHERE NOT (i.kind='alias' AND helper IN (SELECT name FROM helper_names WHERE legacy)) AND NOT (i.kind='call' AND m.name='impl.common.l2070_server_plan.plan_helpers' AND (helper GLOB '_*via_plan*' OR helper IN (SELECT name FROM helper_names WHERE legacy)))"""),
     ]
     # Diagnostic identity is the original reason for direct scanner observations.
-    base="SELECT __path path,__start start_byte,__end end_byte,{code} issue,identity FROM issues WHERE reason IS NOT NULL AND callsite NOT IN "+literals(value('ALLOWLISTED_CALLSITES'))
+    base="SELECT __path path,__start start_byte,__end end_byte,{code} issue,identity,callsite FROM issues WHERE reason IS NOT NULL AND callsite NOT IN "+literals(value('ALLOWLISTED_CALLSITES'))
     discovery=" AND rx_matches(__path,'(?:^|/)(?:impl|api|l[0-9]{4}_[^/]*)/') AND NOT rx_matches(__path,"+q('(?:^|/)(?:'+'|'.join(__import__('re').escape(x) for x in sorted(value('SKIP_PARTS')))+')(?:/|$)')+")"
     direct=base.format(code='reason')
     query={'$option':'oracleAnalyzer','cases':{'true':{'$option':'entryPoint','cases':{'scan_repo':direct+discovery},'default':direct},'false':base.format(code="'PHA001'")+discovery}}

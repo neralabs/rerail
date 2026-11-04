@@ -226,6 +226,11 @@ class Recorder:
     def pytest_collection_finish(self, session) -> None:
         self.collected = [item.nodeid for item in session.items]
 
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_runtest_setup(self, item) -> None:
+        # Fixtures can construct ASTs and call scanners before the call phase.
+        self.item = item
+
     def pytest_runtest_call(self, item) -> None:
         self.item = item
 
@@ -301,6 +306,7 @@ def main() -> None:
         "test_outcomes": recorder.reports,
         "events": recorder.events,
         "source_probes": getattr(recorder,"source_probes",[]),
+        "helper_events": getattr(recorder,"helper_events",[]),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, indent=2) + "\n")

@@ -8,6 +8,7 @@ from functools import wraps
 import importlib
 import inspect
 import json
+import sys
 from pathlib import Path
 import time
 from weakref import WeakKeyDictionary
@@ -18,6 +19,30 @@ MODULES['cached_pure_lazy_allowlist']='scripts.verify_cached_pure_lazy_allowlist
 TESTS = {name:['scripts/tests/test_lint_'+name+'.py'] for name in BATCH_EIGHT}
 TESTS['cached_pure_lazy_allowlist']=['scripts/tests/test_verify_cached_pure_lazy_allowlist.py']
 TESTS['lazy_architecture'] += ['scripts/tests/test_lazy_architecture_plugin_parity.py','scripts/tests/test_repository_lazy_architecture.py']
+
+
+def tree_source(tree, sources):
+    """Return original text, including for modules assembled from parsed nodes."""
+    text = sources.get(tree)
+    if text is not None:
+        return text
+    texts = {sources[node] for node in ast.walk(tree) if node in sources}
+    return next(iter(texts)) if len(texts) == 1 else None
+
+
+def analyzed_file_sources(by_file, sources):
+    """AnalyzedFile contains facts; its mapping key identifies the source file."""
+    result = []
+    for path in by_file:
+        path = Path(path)
+        text = sources.get(path)
+        if text is None:
+            try:
+                text = path.read_text()
+            except (OSError, UnicodeError) as error:
+                raise ValueError(f'No original source for {path}') from error
+        result.append((path, text))
+    return result
 
 
 def normalize(check, result, files, logical):
@@ -35,7 +60,8 @@ def normalize(check, result, files, logical):
         code=value.get('code',value.get('rule',value.get('pattern_name',value.get('reason',value.get('message')))))
         if not code:raise ValueError('Finding has no diagnostic identity')
         findings.append({'path':logical(path),'line':value.get('line_num',value.get('line_number',value.get('line',1))),
-                         'column':None,'code':code,'message':value.get('message',value.get('reason',value.get('text','')))})
+                         'column':None,'code':code,'message':value.get('message',value.get('reason',value.get('text',''))),
+                         **({'metadata':{field:value[field]}} if (field:={'eager_resolve':'symbol','pure_lazy_runtime_purity':'qualname','plan_helpers_allowlist':'callsite'}.get(check)) else {})})
     return findings
 
 
@@ -52,12 +78,13 @@ def install(recorder):
     modules={name:importlib.import_module(module) for name,module in MODULES.items()}
     analyzed_sources={};active_sources=[]
     recorder.source_probes=[]
+    recorder.helper_events=[]
     cls=modules['lazy_architecture'].FunctionAnalyzer;original_init=cls.__init__
     @wraps(original_init)
     def observed_init(self,path,tree,*args,**kwargs):
-        text=trees.get(tree)
+        text=tree_source(tree,trees)
         if text is not None:
-            analyzed_sources[id(self)]=(path,text)
+            analyzed_sources[Path(path)]=text
             if recorder.item is not None:
                 root=modules['lazy_architecture'].ROOT
                 relative=Path(path).relative_to(root).as_posix() if Path(path).is_relative_to(root) else Path(path).as_posix()
@@ -86,8 +113,22 @@ def install(recorder):
         def source_observer(original):
             @wraps(original)
             def record_source(path,source,*args,**kwargs):
-                result=original(path,source,*args,**kwargs)
+                event=None
+                caller=Path(sys._getframe(1).f_code.co_filename)
+                if recorder.item is not None and not recorder.depth and caller.is_relative_to(recorder.root/'scripts/tests'):
+                    event={'test':recorder.item.nodeid,'helper':'scan_cached_pure_lazy_source',
+                           'path':str(path),'source':source,'module_name':kwargs['module_name']}
+                try:result=original(path,source,*args,**kwargs)
+                except SyntaxError as error:
+                    if event is not None:
+                        event['exception']={'type':type(error).__name__,'line':error.lineno,'offset':error.offset,'message':error.msg}
+                        recorder.helper_events.append(event)
+                    raise
                 for function in result:discovered_sources[id(function)]=(function,path,source)
+                if event is not None:
+                    event['functions']=[asdict(function) for function in result]
+                    for function in event['functions']:function['path']=str(function['path'])
+                    recorder.helper_events.append(event)
                 return result
             return record_source
         recorder.originals.append((cached_module,function_name,original));setattr(cached_module,function_name,source_observer(original))
@@ -111,6 +152,7 @@ def install(recorder):
             arguments=dict(signature.bind_partial(*args,**kwargs).arguments)
             event={'test':recorder.item.nodeid,'check':check,'entry':entry,'call':1+sum(e['test']==recorder.item.nodeid for e in recorder.events),
                    'scope':{'include':['**/*.py'],'exclude':[]},'production_scope':False,'oracle_config':{'options':{'oracleAnalyzer':True,'entryPoint':entry}}}
+            if field:={'eager_resolve':'symbol','pure_lazy_runtime_purity':'qualname','plan_helpers_allowlist':'callsite'}.get(check):event['compare_fields']=[field]
             roots=[arguments.get('root'),recorder.item.funcargs.get('tmp_path'),getattr(module,'ROOT',getattr(module,'REPO_ROOT',recorder.root))]
             roots=[Path(p).resolve() for p in roots if isinstance(p,(str,Path))]
             def logical(path):
@@ -123,13 +165,22 @@ def install(recorder):
             try:
                 source=arguments.get('source',arguments.get('content'));path=arguments.get('file_path',arguments.get('path',arguments.get('rel_path','input.py')))
                 tree=next((v for v in arguments.values() if isinstance(v,ast.AST)),None)
-                if source is None and tree is not None:source=ast.unparse(tree) if check=='eager_resolve' else trees.get(tree)
+                if source is None and tree is not None:
+                    source=tree_source(tree,trees)
+                    if source is None:raise ValueError('AST input has no unambiguous original source')
+                if check=='eager_resolve' and tree is not None:
+                    # Upstream _scan_source explicitly replaces content with
+                    # ast.unparse(tree), then reparses through its fact engine.
+                    # Record both domains; findings use the effective domain.
+                    event['original_ast_source']=tree_source(tree,trees)
+                    source=ast.unparse(tree)
+                    event['input_adapter_note']='Upstream lint_eager_resolve._scan_source normalizes AST input with ast.unparse before scanning.'
                 if check=='eager_resolve':event['oracle_config']['options']['externalIoBoundaries']=module._load_external_io_boundary_allowlist()
                 if isinstance(source,str):files=[{'path':logical(path),'source':source}]
                 else:
                     paths=arguments.get('paths',arguments.get('files'))
                     if check=='lazy_architecture' and 'by_file' in arguments:
-                        files=[{'path':logical(path),'source':text} for analyzer in arguments['by_file'].values() for path,text in [analyzed_sources[id(analyzer)]]];paths=[]
+                        files=[{'path':logical(path),'source':text} for path,text in analyzed_file_sources(arguments['by_file'],analyzed_sources)];paths=[]
                     if check=='cached_pure_lazy_allowlist':
                         functions=arguments.get('functions',arguments.get('discovered',()))
                         paths=sorted({function.path for function in functions})
@@ -154,7 +205,6 @@ def install(recorder):
                     for p in paths:
                         p=Path(p)
                         if p.is_file():files.append({'path':logical(p),'source':p.read_text()})
-                if not files and check not in {'lazy_architecture','cached_pure_lazy_allowlist','authentication_plan_purity','readthrough_authority_architecture'}:raise ValueError('No readable analyzer inputs')
                 if not Path.read_text.__module__.startswith('pathlib'):raise ValueError('Test replaces the original source reader')
                 event['files']=files
             except Exception as error:event['retained_reason']='Input adapter: '+type(error).__name__+': '+str(error)

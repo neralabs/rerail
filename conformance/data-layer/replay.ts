@@ -9,12 +9,13 @@ import { capabilitiesJson } from "../engine.js";
 import { escapeHatchSignatureFailure } from "./signed-allowlist.js";
 import { replayExecution } from "./execution.js";
 
-const findingSchema = z.object({ path: z.string(), line: z.number(), column: z.number().nullable(), code: z.string(), message: z.string(), tag: z.string().nullable().optional() });
+const findingSchema = z.object({ path: z.string(), line: z.number(), column: z.number().nullable(), code: z.string(), message: z.string(), tag: z.string().nullable().optional(), metadata: z.record(z.string(), z.unknown()).optional() });
 const eventSchema = z.object({
   test: z.string(), call: z.number(), check: z.string(), entry: z.string(), upstream_passed: z.boolean(),
   retained_reason: z.string().optional(), oracle_ms: z.number().optional(),
   production_scope: z.boolean().optional(), path_skip_override: z.boolean().optional(),
   compare_clause: z.boolean().optional(),
+  compare_fields: z.array(z.string()).optional(),
   oracle_config: z.object({ categories: z.record(z.string(), z.array(z.string())).optional(), source_gate: z.boolean().optional(), options: z.record(z.string(), z.unknown()).optional(), allowlist_signature: z.string().optional() }).optional(),
   scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()) }).optional(),
   files: z.array(z.object({ path: z.string(), source: z.string() })).optional(),
@@ -27,7 +28,7 @@ const recordingSchema = z.object({
   collected_tests: z.number(), uncaptured_tests: z.array(z.string()), events: z.array(eventSchema),
 });
 const resultSchema = z.object({
-  violations: z.array(z.object({ code: z.string(), path: z.string(), message: z.string(), clauseId: z.string(),
+  violations: z.array(z.object({ code: z.string(), path: z.string(), message: z.string(), clauseId: z.string(), variables: z.object({ row: z.record(z.string(), z.unknown()).optional() }).passthrough().optional(),
     span: z.object({ startByte: z.number(), startLine: z.number(), startColumn: z.number() }) })),
   failures: z.array(z.object({ code: z.string(), message: z.string(), path: z.string().optional() })),
 });
@@ -183,14 +184,18 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     const columns = event.check === "backend_type_strings";
     const expected = event.findings.map(finding => {
       if (event.compare_clause && finding.tag == null) throw new Error(`Missing diagnostic tag: ${event.test}`);
-      return JSON.stringify([finding.path, finding.line, finding.code, ...(columns ? [finding.column] : []), ...(event.compare_clause ? [finding.tag] : [])]);
+      const fields = (event.compare_fields ?? []).map(field => {
+        if (finding.metadata?.[field] === undefined) throw new Error(`Missing oracle ${field}: ${event.test}`);
+        return finding.metadata[field];
+      });
+      return JSON.stringify([finding.path, finding.line, finding.code, ...(columns ? [finding.column] : []), ...(event.compare_clause ? [finding.tag] : []), ...fields]);
     });
     const actual = (result: Result): string[] => result.violations.map(finding => {
       const file = event.files!.find(file => file.path === finding.path)!;
       const bytes = Buffer.from(file?.source ?? "");
       const prefix = bytes.subarray(finding.span.startByte - finding.span.startColumn, finding.span.startByte).toString("utf8");
       const category = event.check === "connection_caches" ? finding.clauseId.replace(/-file-\d+$/, "") : finding.clauseId;
-      return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(columns ? [[...prefix].length + 1] : []), ...(event.compare_clause ? [category] : [])]);
+      return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(columns ? [[...prefix].length + 1] : []), ...(event.compare_clause ? [category] : []), ...(event.compare_fields ?? []).map(field => finding.variables?.row?.[field] ?? null)]);
     });
     const observed = actual(result);
     rows.push({ execution: signatureFailure === undefined ? "native" : "host-signature-guard", test: event.test, call: event.call, check: event.check,
@@ -215,7 +220,7 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     nativeCalls: rows.filter(row => row.execution === "native").length,
     hostGuardCalls: rows.filter(row => row.execution === "host-signature-guard").length,
     nativeCoverage, missingNativeCoverage,
-    nativeSha256, dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
+    nativeSha256, dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded", "recorded semantic metadata"],
     format: "rerail.data-layer-parity/v1", commit: recording.commit, recordings: paths,
     collectedTests: recording.collected_tests, replayedCalls: rows.length,
     positiveCalls: rows.filter(row => row.positive).length, cleanCalls: rows.filter(row => !row.positive).length,

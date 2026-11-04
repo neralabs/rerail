@@ -6052,3 +6052,98 @@ All 80 compiled digests match the repository receipt and current policy files.
 The compatibility tool now records both each source-file hash and its authored compiled digest.
 Typechecking also passes after that instrumentation change.
 The pack has 80 candidates and 62 checks remaining. It remains inactive, with signing/reporting and GPU lowering boundaries documented separately.
+
+## 2026-11-04 — Original test cases, positive coverage and exact diagnostic owners
+
+The user restricted future cold measurements to new kernels.
+This audit ran no complete repository cold workload and made no new CPU or RSS claim.
+The existing complete repository receipt remains historical.
+The integrated addon remains `899c3e53d2cb43a509a47d94e0bdc4fd36bb3c21`, with SHA-256 `4f5a112f088dc59713231e387e1bd62b3ec6192352e36a044688481007d49c3b`.
+No native engine code changed.
+
+All eight unchanged upstream test batches ran again at `2b1504adc4291daaf080b2e932962b134da1a69a`.
+They collected 4,683 cases: 4,680 passed and three kept their original skips.
+Each recorder checked imported source and test files against Git blobs. All source checks passed.
+Every upstream command had a 115-second deadline. The slowest batch completed within that deadline.
+The inherited `GIT_PAGER` variable was removed for these processes, as required by the upstream scan guard.
+
+| Batch | Passed | Existing skips |
+| --- | ---: | ---: |
+| 1 | 564 | 3 |
+| 2 | 700 | 0 |
+| 3 | 568 | 0 |
+| 4 | 605 | 0 |
+| 5 | 646 | 0 |
+| 6 | 933 | 0 |
+| 7 | 208 | 0 |
+| 8 | 456 | 0 |
+
+The audit found two recorder defects.
+Recording started after fixture setup, so it missed scanner calls and AST sources created by fixtures.
+The lazy-architecture adapter also used analyzer identities to locate sources from `AnalyzedFile` records.
+The recorder now starts before fixture setup and resolves those source domains by file path.
+It also records empty and missing-file scanner inputs as empty native snapshots.
+This recovers seven lazy-architecture observations, including six positives, and five clean observations.
+The original scanner corpus now contains 320 eligible observations: 201 positive and 119 clean.
+One invalid-encoding file-reader call remains an explicit Python I/O contract.
+
+An initial source-preservation change produced 41 pairs of line differences in eager AST tests.
+Investigation showed that upstream `_scan_source` intentionally calls `ast.unparse(tree)` before its fact engine reparses the input.
+The corrected adapter records both the original text and this effective scanner text.
+It compares findings in the effective coordinate domain. The test assertions and upstream source remain unchanged.
+
+The old comparator also ignored semantic owners that original tests inspect.
+Native terminal projections now expose eager symbols, purity qualified names and plan-helper callsites.
+Diagnostic rows carry these values from their existing relations, without additional per-finding source or owner lookups.
+Replay compares these fields with the original findings.
+A new control proves that the correct eager code at the correct location still fails on the wrong symbol.
+Only diagnostic projections changed; the candidate predicates and producer implementations remain unchanged.
+
+Cached discovery now has a direct native contract check.
+It replaces only the terminal projection of the production cached-policy program.
+The SQL uses the same producer demands, aliases, fingerprints, cache relations and validation errors.
+Its JSON object is a test result envelope; it adds no production JSON storage or alternate linter implementation.
+All 15 observations match every `DecoratedFunction` field through both native APIs: 14 positive and one clean.
+Controls reject a removed declaration and a changed body hash.
+The original syntax-exception assertion remains a separate Python API contract.
+
+All 534 batch-eight scanner observations pass both native APIs: 335 positive and 199 clean.
+The broader native corpus also passes: 3,961 observations across 80 candidates, including 2,112 positives and 1,849 clean observations.
+All 80 candidates have both native positive and clean coverage.
+There are zero extra findings, missing findings, engine failures or execution-path differences.
+Three host signature observations remain outside native counts.
+Batch six completes all 1,259 observations in 24 bounded shards; each observation retains its complete file domain.
+No complete-repository benchmark substitutes for these positive test inputs.
+
+The TypeScript runs pass 86 distinct assertions, including ten always-clean controls and the new discovery and owner controls.
+The final focused run passes 25 tests. The Python harness passes nine regression tests.
+The integrated frontend and compiler accept all 80 current policies.
+All 50 batch-eight edit, restoration and removal transitions pass.
+The native Rust suite was not rerun because this audit changes no engine code.
+
+The new [case ledger](../fixtures/host/data-layer-port/batch-08-case-coverage.json) lists every batch-eight case and its actual evidence.
+The audit rejects dropped calls, duplicate calls and finding differences, even when other positive coverage remains.
+Its input hashes and retained-call inventory have a regression gate.
+The ledger records scanner observations for 247 cases and discovery observations for five cases, with one overlap.
+The remaining 205 cases pass their original assertions without a direct native scanner or discovery observation.
+Thirty of those cases supply original source inputs for the supplemental corpus.
+These source comparisons do not certify the helper assertions that inspect them.
+Diagnostic prose remains outside comparison unless it forms the recorded diagnostic identity.
+This boundary is explicit; passing Python tests does not imply complete translation of their internal assertions.
+
+The [80-rule receipt](../fixtures/host/data-layer-port/testsuite-positive-coverage-20261104.json) records current counts, input hashes and qualifications.
+The [batch evidence](../fixtures/host/data-layer-port/batch-08-evidence.json) records current policy hashes and the unchanged addon.
+The historical complete-repository receipt retains its original policy digests.
+It was not relabeled after the three diagnostic projections changed.
+
+Reproduction uses `data_layer_record.py --batch N` for each unchanged upstream batch.
+Native scanner replay uses `conformance/data-layer/replay.ts`.
+Native discovery replay uses `conformance/data-layer/cached-discovery.ts --recording <json> --output <json>`.
+The per-case audit uses `scripts/dsl/data_layer_audit/coverage.py`; its help lists the required evidence inputs.
+The regression tests are `test_data_layer_recording.py`, `test_data_layer_case_coverage.py`, `cached-discovery.test.ts` and `diagnostic-metadata.test.ts`.
+The Python harness tests use the standard library. The original suites exercise the real pytest lifecycle.
+
+Typechecking, boundary checks, script tests and whitespace checks pass.
+The complete `npm run check` still fails the repository structure gate on three existing directory-size findings.
+The baseline commit `408f91f1a` already has 26 files in `native/src/code_rule_dsl/`, 31 in `scripts/dsl/`, and 26 in `test/engine/native/`.
+New Python audit tools and tests use subdirectories. They add no directory-size or CI-registration finding.

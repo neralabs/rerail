@@ -26,18 +26,18 @@
   "upstream": {
     "passed": 456,
     "sourceMismatches": [],
-    "eligibleCalls": 308,
-    "positiveCalls": 195,
-    "cleanCalls": 113,
-    "retainedCalls": 12,
-    "uncapturedTests": 209
+    "eligibleCalls": 320,
+    "positiveCalls": 201,
+    "cleanCalls": 119,
+    "retainedCalls": 1,
+    "uncapturedTests": 208
   },
   "native": {
-    "nativeCalls": 522,
+    "nativeCalls": 534,
     "hostGuardCalls": 0,
-    "replayedCalls": 522,
-    "positiveCalls": 329,
-    "cleanCalls": 193,
+    "replayedCalls": 534,
+    "positiveCalls": 335,
+    "cleanCalls": 199,
     "falsePositives": 0,
     "falseNegatives": 0,
     "engineFailures": 0,
@@ -50,8 +50,8 @@
       },
       {
         "check": "lazy_architecture",
-        "positive": 89,
-        "clean": 101
+        "positive": 95,
+        "clean": 102
       },
       {
         "check": "pure_lazy_runtime_purity",
@@ -71,7 +71,7 @@
       {
         "check": "plan_helpers_allowlist",
         "positive": 55,
-        "clean": 22
+        "clean": 27
       },
       {
         "check": "legacy_callback_quarantine",
@@ -107,7 +107,7 @@
     "checks": 10,
     "transitions": 50,
     "differences": 0,
-    "elapsedMs": 771.671458,
+    "elapsedMs": 673.362791,
     "rows": [
       {
         "check": "eager_resolve",
@@ -599,25 +599,26 @@
   "nativeTests": {
     "passed": 2525,
     "ignored": 67,
-    "excludedInheritedFailure": "admission_spike::interpreter_snapshot_matches_the_current_independent_oracle"
+    "excludedInheritedFailure": "admission_spike::interpreter_snapshot_matches_the_current_independent_oracle",
+    "qualification": "Historical Rust suite; no engine code changed for the exactness audit."
   },
-  "repositoryGate": "passed",
+  "repositoryGate": "historical-pass-before-diagnostic-metadata-projections",
   "policies": {
-    "eager_resolve": "7d1d4062d321f75b8ca63ed91abd3cab9fb3c99493eefa7846c23f3c4df6e516",
+    "eager_resolve": "6d6018db76770f598116d402deacf0352b625addfa303c8a16254d656647d484",
     "lazy_architecture": "cdb2802c6c3db0dcdd61775ffd5750f8995c0239b23cf8366805bc266bc2557a",
-    "pure_lazy_runtime_purity": "cc23acde749b5cc8475f89ff434f0536af7e50ea0e4d96312d2c66541612afc5",
+    "pure_lazy_runtime_purity": "d2b96027619e9d8bf3f0257791099adbd2ccfeacf4542cd08c0ce0696dc110d4",
     "cached_pure_lazy_allowlist": "7df526577a86d01fb6cada8fcfbeff61f1e388bbf5cfbd1a8702a4818d5950c7",
     "lazy_sql_surface": "60bb5c5396b44d2c4f5612d03d2207434196bda622d6aa652e48eca1c5f2728c",
-    "plan_helpers_allowlist": "cf9daffbd6bbe6e5f93ece1abafb15b08a4b47401b09ea3eabdbefccce285f88",
+    "plan_helpers_allowlist": "5df0a07570787c35d7d6891c556e3d2635182f2742c459c0d990590b9499b0f3",
     "legacy_callback_quarantine": "ded5835e2322c93064d9e345cd8478265d3606bf9a8b260e7760010d85915cca",
     "readthrough_authority_architecture": "f69ebc9679de9fc2d5fa47ddbaf5a5f7d47aa1cd4da931e5f6c561b67e240190",
     "authentication_plan_purity": "80f0cf548e5214d1c3df61cc35e97bf44cd7570c69e47453581dde90da2b0ef9",
     "lazy_adapter_ownership": "cab4cc03af19e8f29b44b081e75f5709f27f02d400e22f32f88390564e4b03ff"
   },
   "typescriptTests": {
-    "passed": 117,
-    "skipped": 2,
-    "skippedReason": "Existing opt-in producer-shape instrumentation tests were not enabled."
+    "passed": 86,
+    "skipped": 0,
+    "scope": "Distinct assertions across the broad native conformance run and final focused run; batch six separately replays all 1259 observations in 24 bounded shards."
   },
   "compatibility": {
     "checks": 80,
@@ -1046,8 +1047,8 @@
       },
       {
         "check": "eager_resolve",
-        "policySha256": "7d1d4062d321f75b8ca63ed91abd3cab9fb3c99493eefa7846c23f3c4df6e516",
-        "authoredDigest": "sha256:e2d1d8c6ed3d9800783ce15dce1e3e31001daec399b5ad33e879ee6058c5703e",
+        "policySha256": "6d6018db76770f598116d402deacf0352b625addfa303c8a16254d656647d484",
+        "authoredDigest": "sha256:2d1b9a372470f9c0d20a1ef63a7e84985261be9e8de74dbbb14af6c6ac7e6411",
         "passed": true
       },
       {
@@ -1058,8 +1059,8 @@
       },
       {
         "check": "pure_lazy_runtime_purity",
-        "policySha256": "cc23acde749b5cc8475f89ff434f0536af7e50ea0e4d96312d2c66541612afc5",
-        "authoredDigest": "sha256:4d362584906395022e4493fe1d439e4b40df505dcbc131187234c321ad62178d",
+        "policySha256": "d2b96027619e9d8bf3f0257791099adbd2ccfeacf4542cd08c0ce0696dc110d4",
+        "authoredDigest": "sha256:919d4a974975efad2ea8e61fae7e9aed30ce55c0fcae404724823207084fee47",
         "passed": true
       },
       {
@@ -1076,8 +1077,8 @@
       },
       {
         "check": "plan_helpers_allowlist",
-        "policySha256": "cf9daffbd6bbe6e5f93ece1abafb15b08a4b47401b09ea3eabdbefccce285f88",
-        "authoredDigest": "sha256:b3c1e8c338ad8e1fd512b344fcefea8600be802265975fb62df059f2b546df34",
+        "policySha256": "5df0a07570787c35d7d6891c556e3d2635182f2742c459c0d990590b9499b0f3",
+        "authoredDigest": "sha256:f2478ca0f0c8ef72228750b78e24bfaa00ee7edda72afcd906e35caaf6954e7a",
         "passed": true
       },
       {
@@ -1203,11 +1204,53 @@
     "batchEightExpected": 269,
     "batchEightActual": 269,
     "measurement": "docs/performance-decisions/data-layer-batch-eight-20261104.json",
-    "oracleQualification": "Expected findings combine the unchanged first-70 and batch-eight oracle recordings on an identical verified source domain; no new cumulative Python timing is claimed."
+    "oracleQualification": "Expected findings combine the unchanged first-70 and batch-eight oracle recordings on an identical verified source domain; no new cumulative Python timing is claimed.",
+    "qualification": "Historical full repository result for the recorded policy digests. Eager symbols, purity qualified names and helper callsites were subsequently added to diagnostic projections. No new full repository cold execution was run."
   },
   "recordings": {
-    "batch-08-recording.json": "9e014c75ba27e6409de8cf2abc0eaa42d7ae57d1a7607c37865d25aa48cc01ea",
-    "batch-08-probes.json": "5fba131535f660af71ddd05a9a4fea1a0ed7176f6c963bc9f575fd5119951cd4",
+    "batch-08-recording.json": "5cd4d58c2c34d81df509ac3d473a6caa065eb7a78a1586ff6d34d3204d6c63ab",
+    "batch-08-probes.json": "dbeae7b28266265241ffa0097bf550f60a6a51f4774fc5ff0651e7813ae30643",
     "batch-08-probe-inputs.json": "5a1e9035159a344411ba3ac57687bc710831f4265f8ae2d23b1340faed2ca03a"
+  },
+  "exactnessAudit": {
+    "caseLedger": "fixtures/host/data-layer-port/batch-08-case-coverage.json",
+    "caseLedgerSha256": "ef6a279846d4ec45e182a9bcad56eeff7307ef5a72044e763ce6b37c1c2b1ed2",
+    "coverageReceipt": "fixtures/host/data-layer-port/testsuite-positive-coverage-20261104.json",
+    "discovery": {
+      "tests": [
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_enumerates_only_candidate_module_asts_once[]",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_enumerates_only_candidate_module_asts_once[@cached_pure_lazy(cache_args=())\\n]",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_normalized_identifier_findings[@\\uff43\\uff41\\uff43\\uff48\\uff45\\uff44_\\uff50\\uff55\\uff52\\uff45_\\uff4c\\uff41\\uff5a\\uff59(cache_args=())]",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_normalized_identifier_findings[@unresolved(\\uff43\\uff41\\uff43\\uff48\\uff45_\\uff41\\uff52\\uff47\\uff53=())]",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy"
+      ],
+      "positive": 14,
+      "clean": 1,
+      "syntaxContracts": [
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_unrelated_syntax_errors"
+      ],
+      "failures": [],
+      "differences": []
+    },
+    "dimensions": [
+      "multiplicity",
+      "relative path",
+      "line",
+      "diagnostic code",
+      "backend comparison column",
+      "diagnostic category where recorded",
+      "recorded semantic metadata"
+    ],
+    "upstreamAssertionsOnlyCases": 205
   }
 }

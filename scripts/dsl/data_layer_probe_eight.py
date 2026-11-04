@@ -61,6 +61,7 @@ def main():
             findings=normalize(check,raw,files,logical)
             events.append({'test':'probe:batch8:'+case['id'],'check':check,'entry':entry,'call':1,'upstream_passed':True,
                 'scope':{'include':['**/*.py'],'exclude':[]},'production_scope':False,'files':files,'findings':findings,
+                **({'compare_fields':[field]} if (field:={'eager_resolve':'symbol','pure_lazy_runtime_purity':'qualname','plan_helpers_allowlist':'callsite'}.get(check)) else {}),
                 'oracle_config':{'options':{'oracleAnalyzer':True,'entryPoint':entry,**({'policyEntries':policy_entries} if check=='cached_pure_lazy_allowlist' else {})}}})
     report={'format':'rerail.data-layer-recording/v1','commit':PIN,'checks':sorted({e['check'] for e in events}),
             'source_mismatches':[],'pytest_exit_code':0,'collected_tests':0,'uncaptured_tests':[],
