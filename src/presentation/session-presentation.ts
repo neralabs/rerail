@@ -20,11 +20,12 @@ import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 export type { PresentationPresence } from "../engine/storage/schema.js";
 
 /**
- * The footer's state (design A1f): on here, not on here (stopped in this checkout), not set up (started,
- * but the repository has no rules configured yet), not running (no live daemon), or on but missing what
- * it needs to count (an unknown session).
+ * The footer's state (design A1f): on here, not on here (stopped in this checkout, or never started; the ambient
+ * footer draws nothing then, only reads on demand say so), not set up (started, but the repository has no rules
+ * configured yet), not running (no live daemon), starting (on, but this session's start is not recorded yet), or on
+ * but missing what it needs to count (a session that does not match).
  */
-export type PresentationStatus = "on" | "not-on-here" | "not-set-up" | "not-running" | "unavailable";
+export type PresentationStatus = "on" | "not-on-here" | "not-set-up" | "not-running" | "starting" | "unavailable";
 
 export interface PresentationCounts {
   /** Rules on for this session; null when coverage is unknown. */
@@ -73,7 +74,9 @@ const READ_TIMEOUT_MS = 2_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
 const terminalText = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 
-const STATUS_MARKS: Record<PresentationStatus, string> = { on: "●", unavailable: "●", "not-on-here": "○", "not-set-up": "○", "not-running": "✕" };
+const STATUS_MARKS: Record<PresentationStatus, string> = {
+  on: "●", starting: "●", unavailable: "●", "not-on-here": "○", "not-set-up": "○", "not-running": "✕",
+};
 /** Between the footer's items (plan §3): single spaces, so a stacked footer stays short. */
 const ITEM_SEPARATOR = " · ";
 
@@ -297,9 +300,16 @@ function notSetUpPresentation(origin: URL, scope: RulesDashboardScope | null, pr
   });
 }
 
-/** The footer for a session whose host already knows Rerail is off here; no daemon is asked. */
-export function notOnHerePresentation(): SessionPresentation {
-  return unavailable("not-on-here", NOT_ON_HERE, "compact", "stopped");
+/** The footer in a session that has started where the daemon has not recorded the session's start yet. */
+const STARTING = "starting";
+
+/**
+ * Where Rerail is stopped, or was never started: on demand, `not on here` and how to start it; the ambient footer
+ * draws nothing, since a line in a repository Rerail does not run in only takes space (#298).
+ */
+function notOnHere(presence: PresentationPresence, onDemand: boolean): SessionPresentation {
+  return onDemand ? unavailable("not-on-here", NOT_ON_HERE, presence, "stopped")
+    : { status: "not-on-here", text: "", url: null, parts: [], presence, repositoryState: "stopped", counts: null };
 }
 
 /**
@@ -376,7 +386,9 @@ const NOT_RUNNING = "not running";
  * No daemon answered. Nothing autostarts where Rerail is off, so that is only "not running" in a started
  * checkout; elsewhere the caller's own reading of the start state says "not on here".
  */
-async function withoutDaemon(startState: PresentationRequest["startState"], presence: PresentationPresence): Promise<SessionPresentation> {
+async function withoutDaemon(
+  startState: PresentationRequest["startState"], presence: PresentationPresence, onDemand: boolean,
+): Promise<SessionPresentation> {
   let state: RepositoryStartState | undefined;
   try {
     state = await startState?.();
@@ -387,7 +399,7 @@ async function withoutDaemon(startState: PresentationRequest["startState"], pres
   if (state === "not-set-up") return presentation({
     status: "not-set-up", items: [{ text: NOT_SET_UP, url: null }, { text: SET_UP_HINT, url: null }], presence, repositoryState: state,
   });
-  return unavailable("not-on-here", NOT_ON_HERE, presence, state);
+  return notOnHere(presence, onDemand);
 }
 
 /**
@@ -418,21 +430,22 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false,
   try {
     // The `/api/presentation` response proves liveness; it must not pay for a second probe.
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !ownProcessAlive(daemon.state.pid)) return await withoutDaemon(startState, presence);
+    if (typeof daemon === "string" || !ownProcessAlive(daemon.state.pid)) return await withoutDaemon(startState, presence, onDemand);
     const { workspace, state, origin } = daemon;
     const response = await get(daemon, `/api/presentation?${new URLSearchParams({
       repository: workspace, host, sessionId, onDemand: String(onDemand),
     })}`, presentationResponseSchema);
     const context = response.context;
-    if (context === undefined || context.daemon.pid !== state.pid) return await withoutDaemon(startState, presence);
+    if (context === undefined || context.daemon.pid !== state.pid) return await withoutDaemon(startState, presence, onDemand);
     answered = true;
     presence = response.presence;
     if (presence === "silent" && !onDemand) return silent(presence, response.repositoryState);
     // A session in a repository where Rerail is not started is never recorded, so this comes first.
-    if (response.repositoryState === "stopped") return unavailable("not-on-here", NOT_ON_HERE, presence, "stopped");
+    if (response.repositoryState === "stopped") return notOnHere(presence, onDemand);
     // A started checkout that is not set up records its sessions, but no rules run there until it is set up.
     if (response.repositoryState === "not-set-up") return notSetUpPresentation(origin, response.scope ?? null, presence);
-    if (context.session === null) return unavailable("unavailable", "session unavailable", presence, "started");
+    // The session-start hook records the session; until it has, Rerail is still starting, not failing (#302).
+    if (context.session === null) return unavailable("starting", STARTING, presence, "started");
     const { session } = context.session;
     // The host may sit below its launch root; the session's canonical cwd stays the identity.
     const root = await realpath(session.cwd);
@@ -444,7 +457,7 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false,
     return onPresentation(origin, context.session, response.scope ?? null, presence, health);
   } catch {
     // The locator named a live process, but nothing answered as the daemon.
-    return answered ? unavailable("not-running", NOT_RUNNING, presence) : await withoutDaemon(startState, presence);
+    return answered ? unavailable("not-running", NOT_RUNNING, presence) : await withoutDaemon(startState, presence, onDemand);
   }
 }
 

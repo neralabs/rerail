@@ -1,4 +1,4 @@
-import { fallbackPresentation, formatTerminalStatus, notOnHerePresentation, readPresentation } from "./session-presentation.js";
+import { fallbackPresentation, formatTerminalStatus, readPresentation } from "./session-presentation.js";
 
 const STATUS_KEY = "rerail";
 const REFRESH_MS = 5_000;
@@ -83,7 +83,9 @@ export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentati
       const presentation = await readPresentation({ sessionId, host, cwd });
       if (!isCurrent()) return;
       const silenced = presentation.presence === "silent";
-      show(ctx, silenced ? [] : [formatTerminalStatus(presentation)], silenced);
+      // A footer with nothing to draw (Rerail is not on here) is no line at all, not an empty one.
+      const line = silenced ? "" : formatTerminalStatus(presentation);
+      show(ctx, line === "" ? [] : [line], silenced);
     } catch {
       // The footer is one short line users stack with others, so the error's detail stays out of it; readPresentation
       // already turns every daemon failure into a state, so reaching here is a Rerail bug, not something to explain inline.
@@ -99,8 +101,9 @@ export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentati
     if (!ctx.hasUI) return;
     current = ctx;
     if (options.off === true) {
-      // Nothing autostarts where Rerail is off, so asking a daemon would only report it missing.
-      show(ctx, [formatTerminalStatus(notOnHerePresentation())]);
+      // Nothing autostarts where Rerail is off, so asking a daemon would only report it missing; and a footer in a
+      // repository Rerail does not run in only takes space (#298), so none is drawn.
+      show(ctx, []);
       return;
     }
     const tick = (): void => {

@@ -330,7 +330,14 @@ policy("no-assign-module-variable", "Don't declare a variable named module in Ne
   {
     id: "upstream",
     ast: {
-      rule: { any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }], has: { kind: "variable_declarator", has: { field: "name", kind: "identifier", regex: "^module$" } } },
+      rule: {
+        any: [
+          { any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }], has: { kind: "variable_declarator", has: { field: "name", kind: "identifier", regex: "^module$" } } },
+          // A for…of/for…in head (`for (const module of mods)`) is a VariableDeclaration in ESTree, reported at its
+          // keyword; tree-sitter has no declaration node there, only the keyword in the loop's `kind` field.
+          { regex: "^(?:const|let|var)$", inside: { kind: "for_in_statement", field: "kind", has: { field: "left", kind: "identifier", regex: "^module$" } } },
+        ],
+      },
     },
     message: `Do not assign to the variable \`module\`. See: https://nextjs.org/docs/messages/no-assign-module-variable`,
   },

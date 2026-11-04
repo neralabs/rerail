@@ -253,10 +253,12 @@ R E R A I L ● 26 rules · steered 3×
 
 | Footer | Meaning |
 | --- | --- |
-| `R E R A I L ○ not on here` | Not started here, or stopped |
 | `R E R A I L ○ not set up · rerail start` | Started, but no rules set up |
 | `R E R A I L ✕ not running` | No daemon answers |
-| `R E R A I L ● session unavailable` | Session not recorded yet |
+| `R E R A I L ● starting` | Session not recorded yet: Rerail is still starting it |
+| `R E R A I L ● session unavailable` | The session could not be read |
+
+Where Rerail is not started, or was stopped, there is no footer; `/rerail` says `not on here`.
 
 It refreshes every five seconds and only reads: it never starts a daemon, runs a check or writes anything.
 

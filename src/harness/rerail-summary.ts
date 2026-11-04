@@ -71,6 +71,7 @@ function headline(input: RerailSummaryInput): readonly string[] {
       return notSetUpLines(input);
     case "not-running":
       return NOT_RUNNING;
+    case "starting":
     case "unavailable":
       return [onLine(input), "  This session is not recorded yet; ask again after your next message."];
     case "on": {
