@@ -9,11 +9,11 @@ import { parseRuleDraft, testRuleDraft } from "../../src/cli/rule-draft.js";
 /**
  * The `/rerail-create` skill (`skills/rerail-create/`): every rule draft it shows the agent is a fenced `json draft` block, and
  * each one must be valid with every case right, as `rerail rules test` would report it. Its Markdown links must resolve. The
- * drafts of `docs/path-and-text-rules.md`, which people copy, are held to the same bar.
+ * drafts of the guides in `docs/`, which people copy, are held to the same bar.
  */
 
 const SKILL = resolve("skills", "rerail-create");
-const GUIDE = resolve("docs", "path-and-text-rules.md");
+const GUIDES = ["path-and-text-rules.md", "architecture-rule-examples.md"];
 
 async function markdownFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true, recursive: true });
@@ -28,7 +28,7 @@ function draftsOf(name: string, text: string): Array<{ name: string; json: strin
 }
 
 const drafts = [...texts].flatMap(([file, text]) => draftsOf(file.slice(SKILL.length + 1), text));
-const guideDrafts = draftsOf("docs/path-and-text-rules.md", await readFile(GUIDE, "utf8"));
+const guideDrafts = (await Promise.all(GUIDES.map(async name => draftsOf(`docs/${name}`, await readFile(resolve("docs", name), "utf8"))))).flat();
 
 let repo = "";
 

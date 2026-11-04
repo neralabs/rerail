@@ -1,41 +1,51 @@
 # Tape transducer language
 
-Status: a language design with a test-only implementation. Production rule evaluation does not use the transducer.
-The interpreter in `native/src/code_rule_dsl/transducer.rs` (with `execute_batch` and the ast-grep pattern compiler) is
-compiled only for tests, and its arm64 JIT and Metal backends only for tests with the `bench-backends` feature on macOS.
-The one part of that file production uses is the per-tape stream of node kinds it stores as a search index.
+Status: a design with a test-only implementation; production rule evaluation does not use it.
+
+<details>
+<summary>What is compiled, and where</summary>
+
+The interpreter in `native/src/code_rule_dsl/transducer.rs`, with `execute_batch` and the ast-grep pattern compiler,
+compiles only for tests. Its arm64 JIT and Metal backends compile only for tests with the `bench-backends` feature on macOS.
+Production uses only that file's per-tape stream of node kinds, stored as a search index.
+
+</details>
 
 ## Scope
 
-A transducer reads a syntax tape and produces match records with captures.
-It describes selection, tests, navigation, alternatives, and output. It is not a general-purpose VM.
+A transducer reads a syntax tape and produces match records with captures; it is not a general-purpose VM.
 
-There are no registers, arithmetic instructions, calls, stack operations, mutable memory, or host callbacks.
-Storage, SQL rule composition, scheduling, and backend implementation are outside the language semantics.
+It describes selection, tests, navigation, alternatives, and output.
+It has no registers, arithmetic instructions, calls, stack operations, mutable memory, or host callbacks.
+Storage, SQL rule composition, scheduling, and backend implementation are outside its semantics.
 
 ## Input and output
 
-Input is an immutable tape, optional source bytes, and an ordered set of starting nodes.
-A tape node exposes kind, incoming field, flags, byte span, parent, and ordered children.
-Node identity is its tape identity and ordinal, not its byte span.
+Paths walk an immutable tape; only `EMIT` turns a path into an output record.
 
-Each starting node begins an independent path at instruction zero.
-A path consists logically of an instruction position, a current node, and an ordered capture sequence.
-These are transducer semantics, not a prescribed runtime data structure.
+- **Tape:** immutable input, plus optional source bytes and ordered starting nodes.
+- **Path:** each starting node begins one at instruction zero; it holds a position, a current node, and ordered captures.
+- **Record:** the starting node, output label, and ordered captures of a successful path.
 
-A test either retains or rejects the path.
-Navigation changes its current node. A navigation with several results creates one path per result.
-Alternatives create independent paths with the same current node and captures.
-Only `EMIT` produces an output record.
+<details>
+<summary>Nodes, paths, and captures in detail</summary>
 
-An output record contains the starting node, output label, and ordered captures.
-Each capture contains its label, node identity, and half-open UTF-8 byte span.
-Repeated capture labels append values. They do not overwrite earlier values.
-Rejected paths produce no output, including their captures.
+A node exposes kind, incoming field, flags, byte span, parent, and ordered children.
+Its identity is tape identity plus ordinal, not byte span.
+A path's parts are transducer semantics, not a prescribed runtime data structure.
+
+- **Tests** retain or reject the path.
+- **Navigation** moves the current node; several results create one path each.
+- **Alternatives** create independent paths with the same node and captures.
+
+A capture is a label, node identity, and half-open UTF-8 byte span.
+Repeated labels append; they never overwrite. Rejected paths output nothing, including their captures.
+
+</details>
 
 ## Exactly one word per instruction
 
-Every instruction occupies exactly **32 bits**:
+Every instruction is exactly **32 bits**; there are no extension words, operand words, escape prefixes, or variable lengths.
 
 ```text
 31                    16 15          8 7           0
@@ -46,23 +56,24 @@ Every instruction occupies exactly **32 bits**:
 word = opcode | (mode << 8) | (operand << 16)
 ```
 
-There are no extension words, operand words, escape prefixes, or variable-length instructions.
-The next instruction is always the next word.
-Instruction positions count words, not bytes.
-Serialized words use little-endian byte order.
+The next instruction is always the next word. Positions count words, not bytes. Serialized words are little-endian.
 
-Most arithmetic is 16-bit: instruction positions, local table indices, labels, and small numeric comparisons.
-Checked arithmetic rejects overflow. It never wraps into another instruction or table entry.
-The encoding supports at most 65,536 instructions and 65,536 entries in each local table.
-An oversized program produces an explicit compilation error, not truncated code.
+<details>
+<summary>Exact limits</summary>
 
-Tape positions and source spans are exceptions. Large inputs retain their native-width positions through the tape iterator.
-A file with more than 65,535 nodes is not truncated or divided by the instruction encoding.
-This does not require general wide arithmetic in the language.
+Positions, local table indices, labels, and small numeric comparisons are 16-bit.
+Checked arithmetic rejects overflow; it never wraps into another instruction or table entry.
+A program holds at most 65,536 instructions and 65,536 entries per local table.
+More is an explicit compilation error, not truncated code.
+
+Tape positions and source spans are the exception: they keep native width through the tape iterator.
+A file with more than 65,535 nodes is not truncated or split, and the language needs no general wide arithmetic.
+
+</details>
 
 ## Tables
 
-Each transducer has four local tables:
+Each transducer has four local data tables, referenced by 16-bit index.
 
 | Table | Contents |
 | --- | --- |
@@ -71,21 +82,29 @@ Each transducer has four local tables:
 | Labels | Capture and output names, each referring to a string entry. |
 | Long integers | Unsigned 64-bit constants for numeric tests that exceed 16 bits. |
 
-String lengths and backing-storage offsets are not limited to 16 bits.
-Strings can contain embedded NUL bytes. Neither instructions nor table indices contain inline string data.
-Regex entries identify their regex dialect and flags. An unsupported dialect is an error, not a failed match.
+<details>
+<summary>Table rules</summary>
 
-The `SIZE` instruction has a long-constant mode.
-In that mode, its 16-bit operand indexes the long-integer table instead of holding the number directly.
-It remains one instruction word.
-Other instructions have no implicit long mode.
-Tables contain data, not hidden instruction sequences or arbitrary executable expressions.
+- String lengths and backing-storage offsets are not limited to 16 bits. Strings may contain NUL bytes.
+- Neither instructions nor table indices contain inline string data.
+- Regex entries name their dialect and flags; an unsupported dialect is an error, not a failed match.
+- Tables hold data, never hidden instruction sequences or arbitrary executable expressions.
+- Only `SIZE` has a long-constant mode: its 16-bit operand indexes the long-integer table, still in one word.
+  Other instructions have no implicit long mode.
+
+</details>
 
 ## Instructions
 
-An instruction normally continues at the next word.
-Unused mode and operand fields must be zero.
-Kind and field operands use the input grammar's IDs. Field zero means no incoming field.
+Fourteen opcodes cover tests, navigation, capture, branching, and output; each continues at the next word unless noted.
+
+- **Tests** (`KIND`, `FIELD`, `FLAGS`, `TEXT`, `SIZE`) retain or reject the path.
+- **Navigation** (`CHILD`, `NEXT`, `PARENT`, `DESCEND`) moves the current node, one path per result.
+- **Capture and output:** `CAPTURE` appends the current node under a label; `EMIT` emits one record and ends the path.
+- **Control:** `FORK` continues at the next instruction and the target; `GOTO` jumps; `STOP` ends without output.
+
+<details>
+<summary>Opcode table and mode encoding</summary>
 
 | Opcode | Instruction | Mode | Operand | Effect |
 | --- | --- | --- | --- | --- |
@@ -104,37 +123,22 @@ Kind and field operands use the input grammar's IDs. Field zero means no incomin
 | `31` | `GOTO` | 0 | target instruction | Continue at the target with the same node and captures. |
 | `40` | `EMIT` | 0 | label index | Emit one record and end this path. |
 
-Flags use bits `0=named`, `1=extra`, `2=missing`, and `3=error`.
-All other flag bits are reserved.
-A flag cannot be both required and forbidden.
-Node selection mode is `0=all nodes` or `1=named nodes`.
-`NEXT named` skips anonymous siblings, rather than rejecting at the first anonymous sibling.
+Unused mode and operand fields must be zero.
+Kind and field operands are the input grammar's IDs; field zero means no incoming field.
 
-`SIZE` comparison modes are `0=equal`, `1=at least`, and `2=at most`.
-Bit 7 selects a long-integer table reference. All other mode bits are zero.
-For example, `SIZE at-least,long 3` compares against `longs[3]`.
-The span length retains its native width during comparison. It is never narrowed before the test.
+- **Flags:** bits `0=named`, `1=extra`, `2=missing`, `3=error`; others reserved. No flag may be both required and forbidden.
+- **Node selection:** `0=all nodes`, `1=named nodes`. `NEXT named` skips anonymous siblings instead of rejecting.
+- **`SIZE` modes:** `0=equal`, `1=at least`, `2=at most`. Bit 7 selects a long-integer reference; other bits are zero.
+  `SIZE at-least,long 3` compares against `longs[3]`. The span length keeps native width and is never narrowed.
+
+</details>
 
 ## Alternatives, repetition, and ordering
 
-`FORK` and navigation enumerate paths. They do not change another path's captures.
-A path does not expose an undo stack or a register environment.
-An implementation can share immutable prefixes without changing these semantics.
-
-Logical output order is depth-first path order:
-
-1. Starting nodes follow their supplied order.
-2. `CHILD` follows sibling order. `DESCEND` follows preorder.
-3. `FORK` follows its next-instruction path before its target path.
-4. Captures follow the order of `CAPTURE` instructions along that path.
-
-Parallel execution must preserve that observable order.
-Different successful paths remain different outputs, even if their captures are equal.
-The language does not silently deduplicate matches or choose a longest match.
-A query frontend must account for its own selection semantics rather than assume they match this language.
+Branches enumerate isolated paths, emitted in a fixed depth-first order.
 
 A repeated sibling match uses `FORK`, `NEXT`, and a backward `GOTO`.
-For example, this fragment emits every nonempty prefix of consecutive named identifiers:
+This fragment emits every nonempty prefix of consecutive named identifiers:
 
 ```text
 0  KIND identifier
@@ -145,22 +149,42 @@ For example, this fragment emits every nonempty prefix of consecutive named iden
 5  EMIT sequence
 ```
 
-For siblings `a, b`, it emits `[a,b]` before `[a]`.
-The shorter path never receives the longer path's capture of `b`.
+For siblings `a, b`, it emits `[a,b]` before `[a]`; the shorter path never sees the capture of `b`.
 
-A valid cycle must advance through a finite tape domain.
-For this fragment, every return to instruction zero requires a later sibling.
-A cycle containing only tests, captures, and branches is invalid.
-Parent/child oscillation is also invalid. A changed node alone does not prove progress.
-Compilation rejects cycles without a monotonic traversal proof.
-Zero-width nodes still advance by ordinal.
+<details>
+<summary>Ordering rules</summary>
+
+`FORK` and navigation never change another path's captures; there is no undo stack or register environment.
+Implementations may share immutable prefixes without changing these semantics.
+
+Output order is depth-first path order:
+
+1. Starting nodes follow their supplied order.
+2. `CHILD` follows sibling order. `DESCEND` follows preorder.
+3. `FORK` follows its next-instruction path before its target path.
+4. Captures follow the order of `CAPTURE` instructions along that path.
+
+Parallel execution must preserve this order.
+Distinct successful paths are distinct outputs, even with equal captures: no silent deduplication, no longest match.
+A query frontend must handle its own selection semantics rather than assume they match this language.
+
+</details>
+
+<details>
+<summary>Cycle rules</summary>
+
+A valid cycle must advance through a finite tape domain; in the fragment, each return to instruction zero needs a later sibling.
+Cycles of only tests, captures, and branches are invalid, as is parent/child oscillation.
+A changed node alone does not prove progress.
+Compilation rejects cycles without a monotonic traversal proof. Zero-width nodes still advance by ordinal.
+
+</details>
 
 ## Worked example
 
-Select Python calls whose direct `function` child is the identifier `eval`.
-Capture the call and its function child, then emit a `match` record.
+This program matches Python calls whose direct `function` child is the identifier `eval`.
 
-For this example, resolved IDs and tables are:
+It captures the call and its function child, then emits `match`. Resolved IDs and tables:
 
 ```text
 kind call = 0, identifier = 1
@@ -170,7 +194,7 @@ predicates[0] = byte-equality(strings[0])
 labels = [strings[1], strings[2], strings[3]]
 ```
 
-These kind IDs are example assignments, not claims about a particular grammar binary.
+The kind IDs are illustrative, not from a real grammar binary.
 
 ```text
 position  instruction          word
@@ -185,38 +209,60 @@ position  instruction          word
 ```
 
 Eight instructions occupy exactly 32 bytes.
-For `eval(x)`, the output captures are `call=[0,7)` followed by `callee=[0,4)`.
-For `other(x)`, the text test rejects the path.
-For `obj.eval(x)`, the function child is an attribute, so the kind test rejects the path.
-An argument child fails the field test regardless of its text.
-A repeated matching field creates independent paths. It does not overwrite a capture.
 
-A long-constant example is also exactly one word:
+<details>
+<summary>Results for sample inputs</summary>
+
+| Input | Result |
+| --- | --- |
+| `eval(x)` | Captures `call=[0,7)`, then `callee=[0,4)`. |
+| `other(x)` | Rejected by the text test. |
+| `obj.eval(x)` | Function child is an attribute; rejected by the kind test. |
+| Argument child | Rejected by the field test, whatever its text. |
+
+A repeated matching field creates independent paths, not overwritten captures.
+
+</details>
+
+<details>
+<summary>Long-constant example</summary>
+
+A long constant is also one word:
 
 ```text
 longs[3] = 100000
 SIZE at-least,long 3 = 00038105
 ```
 
-The word contains opcode `05`, mode `81`, and table index `0003`.
-The integer `100000` exists only in the table.
+The word holds opcode `05`, mode `81`, and table index `0003`; `100000` lives only in the table.
+
+</details>
 
 ## Errors and language boundary
 
-Invalid opcodes, modes, table indices, grammar IDs, branch targets, and non-progressing cycles are errors.
-A reachable fallthrough past the last instruction is an error, not an implicit `EMIT` or a wrapped instruction position.
-Missing source bytes for `TEXT` are an input error, not a negative text result.
-Cancellation or exhausted resources mean incomplete output, never a complete negative result.
+Invalid programs and inputs are errors, and the language stops short of rule-level logic.
 
-This language does not define SQL operators, rule-level negation, binding environments, rewrites, or a general expression evaluator.
-It does not claim that arbitrary Tree-sitter queries or ast-grep rules lower directly to these primitives without semantic adaptation.
+<details>
+<summary>Errors and exclusions</summary>
 
-The encoding checks read the example words directly from this document:
+**Errors:**
+
+- Invalid opcodes, modes, table indices, grammar IDs, branch targets, and non-progressing cycles.
+- Reachable fallthrough past the last instruction (not an implicit `EMIT` or wrapped position).
+- Missing source bytes for `TEXT` (an input error, not a negative text result).
+- Cancellation or exhausted resources mean incomplete output, never a complete negative result.
+
+**Out of scope:** SQL operators, rule-level negation, binding environments, rewrites, and a general expression evaluator.
+The language does not claim that arbitrary Tree-sitter queries or ast-grep rules lower directly to these primitives
+without semantic adaptation.
+
+</details>
+
+The encoding tests read the example words from this document and check one-word encoding and its boundaries:
 
 ```bash
 python3 test/docs/test_transducer_design.py
 ```
 
-They check one-word encoding and its boundaries.
-The test-only interpreter in `native/src/code_rule_dsl/transducer.rs` implements every instruction above, table validation,
-path ordering, capture isolation, cycle checks, and shared kind dispatch.
+The test-only interpreter in `native/src/code_rule_dsl/transducer.rs` implements every instruction above,
+plus table validation, path ordering, capture isolation, cycle checks, and shared kind dispatch.

@@ -1,48 +1,83 @@
 # Content-addressed workspace store
 
 The content store is a SQLite cache of parsed source shared by every workspace that opens the same
-file. It holds compressed sources and syntax tapes, per-file rule results, Git tree and snapshot
-metadata, each workspace's overlay of changed files, and a kind search index over stored tapes. It
-lets a repository index restore clean files instead of reading and evaluating them again.
+file. With it, a repository index restores clean files instead of reading and evaluating them again.
+Losing it costs reuse, never results.
 
-The store is a cache: losing it costs reuse, never results. The code is in
-`native/src/content_store/`; the workspace side is in `native/src/code_rule_dsl/workspace/`
-(`storage.rs`, `persisted.rs`, `index.rs`, `documents.rs`). Where the file lives and which process
-opens it are in [How setup works](how-setup-works.md#the-content-store).
+<details>
+<summary>What it holds and where the code lives</summary>
+
+It holds compressed sources and syntax tapes, per-file rule results, Git tree and snapshot metadata,
+workspace overlays of changed files, and a kind search index.
+
+Code: `native/src/content_store/`, plus `native/src/code_rule_dsl/workspace/` (`storage.rs`,
+`persisted.rs`, `index.rs`, `documents.rs`). File location and owning process:
+[How setup works](how-setup-works.md#the-content-store).
+
+</details>
 
 ## Boundary
 
-Rust owns every connection, statement, transaction and schema change. JavaScript passes only the
-store's path to `enableStorageAsync()` and calls coarse workspace operations: `applyBufferAsync()`,
-`indexRepositoryAsync()`, `completeStorageRevisionAsync()` and `resultPageAsync()`
-(`src/engine/native/native.ts`). No SQL, row identifier, hash lane or database error crosses to
-JavaScript.
+Rust owns the database; JavaScript sees only a path and a few coarse operations.
 
-A workspace attaches to the store only inside a Git worktree; elsewhere it runs without one. A file
-named like one holding secrets (the names `enableStorageAsync` receives) is never written: not its
-source, its tapes or its results (`StorageContext::withholds`).
+- A workspace attaches to the store only inside a Git worktree; elsewhere it runs without one.
+- Files named like secret holders are never written.
+
+<details>
+<summary>The JavaScript calls and withheld files</summary>
+
+JavaScript passes the store's path to `enableStorageAsync()` and calls `applyBufferAsync()`,
+`indexRepositoryAsync()`, `completeStorageRevisionAsync()` and `resultPageAsync()`
+(`src/engine/native/native.ts`). Connections, statements, transactions and schema changes stay in
+Rust; no SQL, row identifier, hash lane or database error reaches JavaScript.
+
+The secret-holder names are the ones `enableStorageAsync` receives. Such a file gets no stored
+source, tapes or results (`StorageContext::withholds`).
+
+</details>
 
 ## Schema and compatibility
 
-`schema.rs` holds one idempotent DDL. Opening a store that already has every object it creates only
-reads, so it never waits on another writer. A store missing any object (a new store, or an index
-this build added) takes the exclusive lock and applies the DDL; a new store also gets
-`auto_vacuum=INCREMENTAL`.
+One idempotent DDL creates the schema; a version floor keeps older builds off newer stores.
+
+The floor rises only when an older binary would corrupt or misread the store. Raising it renames
+the file, so the new store starts empty.
+
+<details>
+<summary>How opening and the floor work</summary>
+
+`schema.rs` holds the DDL. Opening a complete store only reads, so it never waits on a writer. A
+store missing any object (new, or lacking an index this build added) takes the exclusive lock and
+applies the DDL; a new store also gets `auto_vacuum=INCREMENTAL`.
 
 `PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (1). A build refuses a store
-whose floor is newer than its own. The floor rises only when an older binary would corrupt or
-misread the store; additive changes such as indexes do not raise it. Raising it renames the store
-file (`STORE_FILE_NAME`, now `content-v1.sqlite`), so a new store starts empty and the old file is
-neither migrated nor deleted. Tests: `newer_compatibility_floor_is_refused`,
+whose floor is newer than its own. Additive changes such as indexes never raise it.
+
+The renamed file is `STORE_FILE_NAME`, now `content-v1.sqlite`. The old file is neither migrated nor
+deleted.
+
+Tests: `newer_compatibility_floor_is_refused`,
 `reopening_restores_missing_indexes_without_raising_the_floor`,
 `opening_a_current_store_never_needs_the_write_lock`.
 
+</details>
+
 ## Connections and busy writers
 
-`ContentStore` holds `connection: ThreadConnection`, which opens one connection per thread and
-database path from the thread-local `THREAD_CONNECTIONS`. Rayon workers, libuv pool threads and the
-maintenance thread therefore read in parallel under WAL. `release_memory()` closes every thread's
-idle connection; the next read reopens it. `configure_connection` sets each connection to:
+Each thread reads on its own connection; a busy writer retries, then leaves the store alone.
+
+A write that stays busy for 10 s gives up. The workspace then skips the store for 30 s and keeps its
+results in memory.
+
+<details>
+<summary>Connection settings</summary>
+
+`ContentStore` holds `connection: ThreadConnection`, one connection per thread and database path
+from the thread-local `THREAD_CONNECTIONS`. Rayon workers, libuv pool threads and the maintenance
+thread thus read in parallel under WAL. `release_memory()` closes idle connections; the next read
+reopens them.
+
+`configure_connection` sets each connection to:
 
 ```sql
 PRAGMA foreign_keys=ON;
@@ -53,66 +88,99 @@ PRAGMA mmap_size=0;
 PRAGMA journal_size_limit=16777216;
 ```
 
-It also sets a 128-entry statement cache and a busy handler, `wait_for_writer`, that waits up to
-`BUSY_TIMEOUT` (250 ms) for the write lock on each attempt.
+It also sets a 128-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
+`BUSY_TIMEOUT` (250 ms) per attempt for the write lock.
 
-Every write runs under `retry_busy`: a `Busy` attempt is rolled back and re-run whole after a
-jittered backoff that doubles from 2 ms to 200 ms. After `BUSY_DEADLINE` (10 s) of waiting the
-write returns `StoreError::Busy`. An `OperationDeadline` makes all the writes of one operation (an
-apply's publication passes, a snapshot's batches) share one deadline.
+</details>
 
-A workspace whose write ended `Busy` leaves the store alone for `STORE_BUSY_COOLDOWN` (30 s). Its
-results stay in memory and the first apply after the cooldown publishes them. A workspace result's
-`workspaceProfile` reports `storageRetries` and `storageRetryWaitNanoseconds`.
+<details>
+<summary>Retry, give-up and cooldown details</summary>
+
+1. **Retry.** Every write runs under `retry_busy`: a `Busy` attempt rolls back and re-runs whole
+   after jittered backoff, doubling from 2 ms to 200 ms.
+2. **Give up.** After `BUSY_DEADLINE` (10 s) the write returns `StoreError::Busy`. An
+   `OperationDeadline` shares one deadline across an operation's writes (an apply's publication
+   passes, a snapshot's batches).
+3. **Cool down.** The workspace skips the store for `STORE_BUSY_COOLDOWN` (30 s), keeping results in
+   memory; the first apply afterwards publishes them.
+
+A workspace result's `workspaceProfile` reports `storageRetries` and `storageRetryWaitNanoseconds`.
+
+</details>
 
 ## Hashes, strings and paths
 
-A `HashKey` is an algorithm and four signed 64-bit lanes, each eight digest bytes read with
-`i64::from_be_bytes`. Algorithms are `HASH_SHA256` (1), `HASH_GIT_SHA1` (2) and `HASH_GIT_SHA256`
-(3). A SHA-1 is zero-padded to 32 bytes. Test: `hash_lanes_are_stable_and_sha1_is_padded`.
+Hashes, text and paths are each stored once and referenced by integer ID.
 
-`hashes(hash_id, algorithm_id, lane0..lane3)` stores each identity once, and every other table
-references `hash_id`. Its only index is `hashes_by_prefix ON hashes(algorithm_id, lane0)`; lookups
-use it and compare the other three lanes. There is no unique index on the full identity. Writers
-insert a hash only where it does not exist yet, inside `BEGIN IMMEDIATE`, which serializes them.
-Test: `hash_lookup_index_contains_only_algorithm_and_first_lane`.
+- **`hashes`:** each hash identity once; other tables reference its `hash_id`.
+- **`strings`:** text interned per domain.
+- **`paths`:** whole workspace-relative paths, one `path_id` across snapshots and workspaces.
 
-`strings(domain_id, content_hash_id, collision_ordinal, value)` interns text per domain (path,
-repository, owner, path component, clause key). Interning looks the text up by its SHA-256, compares
-the stored value, and gives differing text with the same hash the next `collision_ordinal`. The text
-itself is never indexed.
+<details>
+<summary>Hash encoding and lookup</summary>
 
-`paths` interns whole workspace-relative paths, so a path has one `path_id` across snapshots and
-workspaces.
+A `HashKey` is an algorithm (`HASH_SHA256` 1, `HASH_GIT_SHA1` 2, `HASH_GIT_SHA256` 3) and four
+signed 64-bit lanes, each eight digest bytes read with `i64::from_be_bytes`. SHA-1 is zero-padded to
+32 bytes (test: `hash_lanes_are_stable_and_sha1_is_padded`).
+
+- **`hashes(hash_id, algorithm_id, lane0..lane3)`:** its only index is
+  `hashes_by_prefix ON hashes(algorithm_id, lane0)`; lookups compare the other three lanes. With no
+  unique index on the full identity, writers insert missing hashes inside `BEGIN IMMEDIATE`, which
+  serializes them (test: `hash_lookup_index_contains_only_algorithm_and_first_lane`).
+- **`strings(domain_id, content_hash_id, collision_ordinal, value)`:** the domains are path,
+  repository, owner, path component and clause key. Lookup is by SHA-256, then value; differing text
+  with the same hash gets the next `collision_ordinal`. Text is never indexed.
+
+</details>
 
 ## Objects
 
-`source_objects` holds each source once under its SHA-256, with its raw length, codec (1, Zstandard)
-and frame. `tape_objects` holds one tape per source, `grammar_id`, `grammar_version` and
-`tape_format_version`; the grammar version is the grammar build identity. Every frame is an
-independent level-3 Zstandard frame, so one object is read without another. Both tables carry a
+Each source and tape is stored once, as an independent compressed frame checked on every read.
+
+- **`source_objects`:** each source under its SHA-256.
+- **`tape_objects`:** one syntax tape per source and grammar.
+- **`source_aliases`:** a Git blob ID mapped to its source.
+
+<details>
+<summary>Columns, aliases and integrity checks</summary>
+
+- **`source_objects`** stores raw length, codec (1, Zstandard) and frame.
+- **`tape_objects`** stores one tape per source, `grammar_id`, `grammar_version` (the grammar build
+  identity) and `tape_format_version`.
+
+Each frame is an independent level-3 Zstandard frame, readable alone. Both tables carry a
 `created_generation` for collection.
 
-`source_aliases` maps a Git blob ID to the source it names. Publication adds an alias when a file's
-evaluated bytes hash to its committed blob, whoever supplied them (repository index or host edit),
-and hashes only files whose path is clean in the worktree (`clean_blob_alias`). An alias that would
-name different bytes fails the publication as corrupt.
+Publication adds an alias when evaluated bytes, from a repository index or host edit, hash to the
+committed blob. Only files whose path is clean in the worktree are hashed (`clean_blob_alias`). An
+alias naming different bytes fails publication as corrupt.
 
-Reads check the codec, the raw length and the SHA-256 against the row and fail with
-`StoreError::Corrupt` on a mismatch. Test: `corrupt_zstandard_frames_fail_closed`. A stored tape
-that does not load is parsed again.
+Reads check codec, raw length and SHA-256 against the row, failing with `StoreError::Corrupt` (test:
+`corrupt_zstandard_frames_fail_closed`). A stored tape that does not load is parsed again.
+
+</details>
 
 ### Documents of a file
 
-A file can be several documents. Its primary document is its own tree over its bytes; an embedder
-can derive more, such as Blade's compiled view or a Vue component's script program.
+A file can be several documents: its primary tree over its own bytes, plus any an embedder derives,
+such as Blade's compiled view or a Vue component's script program.
+
+Derived documents are ordinary source and tape objects. `file_documents` links them to the primary
+tape.
+
+<details>
+<summary>How derived documents are stored</summary>
 
 Every tape holds one source, one grammar and one tree (tape format 7, magic `TMPTAPE7`). A derived
-document is stored as ordinary objects: its text is a `source_objects` row and its tree a
-`tape_objects` row over that text, with the primary tape's grammar version and format. Its grammar
-ID is the dialect's tape tag with bit 8 set and, above it, a fingerprint of the placeholders its
-source map omits (0 for none). One text can therefore hold several derived tapes, never a primary's,
-and derived documents with the same text and omissions share one (`document_grammar_id`).
+document is ordinary objects:
+
+- **Text:** a `source_objects` row.
+- **Tree:** a `tape_objects` row over that text, with the primary tape's grammar version and format.
+- **Grammar ID:** the dialect's tape tag with bit 8 set, topped by a fingerprint of the placeholders
+  its source map omits (0 for none).
+
+So one text can hold several derived tapes, never a primary's; derived documents with the same text
+and omissions share one (`document_grammar_id`).
 
 `file_documents` relates derived documents to the primary tape:
 
@@ -130,86 +198,147 @@ CREATE TABLE file_documents (
 ) STRICT, WITHOUT ROWID;
 ```
 
-The key is the primary tape, not a path: a file's documents follow from its source, grammar version
-and tape format. Ordinal 0 is the primary and has no row, so a single-language file has none.
-`parent_ordinal` names the document a row was derived from. `role_id` is 1 for an embedded document
-(one byte-exact slice of its parent) and 2 for a generated one. `via_id` is the first eight bytes of
-the SHA-256 of the embedding's registry name, read as a nonnegative integer (`via_code`).
-`source_map` holds the persisted segments; `host_errors` holds the parent byte ranges the document
-cannot be read through, as little-endian `u32` pairs.
+Keyed by primary tape, not path, a file's documents follow from its source, grammar version and tape
+format. Ordinal 0, the primary, has no row, so a single-language file has none.
+
+- **`parent_ordinal`:** the document this one derives from.
+- **`role_id`:** 1 embedded (a byte-exact slice of its parent), 2 generated.
+- **`via_id`:** first eight bytes of the SHA-256 of the embedding's registry name, as a nonnegative
+  integer (`via_code`).
+- **`source_map`:** the persisted segments.
+- **`host_errors`:** parent byte ranges the document cannot be read through, as little-endian `u32`
+  pairs.
+
+</details>
+
+<details>
+<summary>Publication and loading</summary>
 
 Publication writes a new primary tape, its derived sources and tapes, and their rows in one
-transaction; a tape already stored keeps the rows written with it. Loading reads a primary tape, its
-rows and its derived objects in bulk (`file_documents_bulk`). If any part is missing or fails its
-checks, the file is parsed again rather than restored without its derived documents. Each derived
-tape gets its own search index, and a clause over a derived document consults that document's index.
+transaction; a tape already stored keeps its rows. Loading reads a primary tape, its rows and its
+derived objects in bulk (`file_documents_bulk`). If any part is missing or fails its checks, the file
+is parsed again rather than restored without its derived documents.
+
+Each derived tape gets its own search index, which clauses over that document consult.
+
+</details>
 
 ## Git snapshots and overlays
 
-Discovery (`native/src/git_workspace.rs`) reads repositories, indexes, attributes and worktree state
-with `gix`; production code runs no `git` binary.
+A snapshot records what a commit holds; a workspace's overlay records what it evaluated on top.
 
-Discovery leaves out the built-in ignores (`BUILTIN_IGNORE`: `.git/`, `node_modules/`, `target/`,
-`tmp/`, `__pycache__/`) and what `.rerailignore` names. `.rerailignore` uses Git ignore syntax with
-negation; a negation cannot bring back a built-in ignore. These rules decide only which files the
-store may restore, never which files a repository index evaluates. A gitlink (submodule) entry is
-recorded as a nested path and not descended into.
+- **Snapshot** (`snapshots`, `snapshot_files`): a commit's paths mapped to sources and tapes, shared
+  by workspaces on that commit.
+- **Overlay** (`workspace_overlay`): a workspace's paths mapped to the sources and tapes it evaluated.
+- **Discovery** (`native/src/git_workspace.rs`) reads repositories, indexes, attributes and worktree
+  state with `gix`; production code runs no `git` binary.
 
-`git_trees` and `git_tree_entries` store each Git tree's entries under interned names. A tree is
-complete when its row has `complete=1` and still has the `entry_count` its publication wrote, so a
-partial entry set is republished. Publication packs missing trees whole into transactions of up to
-`GIT_TREE_BATCH_ENTRIES` (512) entries; a larger tree is written alone.
+<details>
+<summary>Ignore rules</summary>
 
-`snapshots` is unique on root tree, scanner version, grammar set and tape format, so workspaces on
-the same commit share one snapshot; `snapshot_files` maps its paths to sources and tapes.
-`publish_snapshot` registers the workspace in the snapshot's own transaction, and a snapshot needs a
-published root tree (test: `snapshots_require_a_published_root_tree`).
+Discovery skips:
 
-`workspaces` records each workspace's root, repository (the Git common directory), owner
-(`rerail:<pid>:<worktree>`), snapshot, lease and state (1 active, 2 retiring).
-`workspace_overlay` maps a workspace's paths to the sources and tapes it evaluated.
+- built-in ignores (`BUILTIN_IGNORE`: `.git/`, `node_modules/`, `target/`, `tmp/`, `__pycache__/`);
+- `.rerailignore` paths, in Git ignore syntax with negation. A negation cannot restore a built-in
+  ignore.
 
-A clean file's committed blob is its alias without reading the file (`clean_source_alias`). Before a
-restore, `holds_blob_bytes` confirms the worktree still holds the blob's bytes: one `lstat` while
-the stat matches the index entry, a hash otherwise. The conversions `filter`, `ident` and
-`working-tree-encoding` always force the hash, since they can change bytes without changing the
-size. Publication promotes clean files from the overlay into the snapshot
-(`promote_overlay_files_to_snapshot`, at most 64 paths).
+These rules limit only what the store may restore, never what a repository index evaluates. A
+gitlink (submodule) is recorded as a nested path, not descended into.
+
+</details>
+
+<details>
+<summary>Tables and clean-file checks</summary>
+
+- **`git_trees`, `git_tree_entries`:** each Git tree's entries under interned names. A tree is
+  complete when its row has `complete=1` and still has the `entry_count` publication wrote, so
+  partial entry sets are republished. Missing trees are packed whole into transactions of up to
+  `GIT_TREE_BATCH_ENTRIES` (512) entries; a larger tree is written alone.
+- **`snapshots`:** unique on root tree, scanner version, grammar set and tape format, so workspaces
+  on one commit share a snapshot. `publish_snapshot` registers the workspace in the snapshot's own
+  transaction and requires a published root tree (test: `snapshots_require_a_published_root_tree`).
+- **`workspaces`:** root, repository (Git common directory), owner (`rerail:<pid>:<worktree>`),
+  snapshot, lease and state (1 active, 2 retiring).
+
+A clean file's committed blob is its alias, found without reading the file (`clean_source_alias`).
+Before a restore, `holds_blob_bytes` confirms the worktree still holds the blob's bytes: one `lstat`
+while the stat matches the index entry, else a hash. The conversions `filter`, `ident` and
+`working-tree-encoding` always force the hash, as they can change bytes without changing size.
+
+Publication promotes clean overlay files into the snapshot (`promote_overlay_files_to_snapshot`, at
+most 64 paths).
+
+</details>
 
 ## Results and reuse
 
-`candidate_catalogs` identifies a rule catalog: a SHA-256 over the code-rule catalog, grammar set,
-scanner version and tape format (`CandidateCatalogIdentity`). `candidate_checks` names one clause of
-a catalog by rule (policy hash) and clause key.
+Rule results are cached per file content and context; completion records mark which clean trees may
+reuse them.
 
-Per-file results are stored in `context_check_results(source_id, context_hash_id, check_id, codec_id,
-raw_length, frame)`. The context (`file_context`) is everything besides content a file's results
-depend on: its path, language, Python module and nearest `package.json`, plus any calls-closure
-stamp (`result_context`). `local_check_results(source_id, check_id, ...)` is still in the schema and
-collection still deletes from it, but nothing writes it. `LocalResultCache` keeps up to 32 MiB of
-decoded results per process.
+- **Context results** (`context_check_results`): one file's results for one clause, keyed by source
+  and context.
+- **Completion record:** `completeStorageRevisionAsync()` marks the clean trees a finished index
+  covered.
+- **Restore:** a repository index restores a clean file only with results for every clause and its
+  blob's bytes still present. It reads and evaluates the rest.
 
-`completeStorageRevisionAsync()` records a completed index. In a Git worktree it writes
-`completed_directory_reuse(tree_hash_id, prefix, package_hash_id, catalog_hash_id)` for each clean
-tree, plus the workspace's row in `completed_workspace_revisions` (`complete_directories`). The
-package hash covers what the tree's files read outside it: the Python package markers of its
-ancestors and the `package.json` its ECMAScript files inherit. This write is a cache: when it fails
-the audit keeps its results and loses only the reuse.
+Scan budgets: [Reference](reference.md#scan-and-settings-controls). Result pages are not stored;
+`resultPageAsync()` pages an in-memory `ResultPageIndex`.
 
-A repository index (`index.rs`) walks the files the host selects and asks which clean trees have a
-completion record for the current catalog (`reusable_directory_prefixes`). Under those prefixes it
-resolves clean files' aliases (`stored_sources_by_alias`) and their results
-(`local_check_results_by_key`) in bulk. It restores a file only when it has results for every clause
-and still holds its blob's bytes. Listing and restoring evaluate nothing. The rest is read in chunks
-of at most `INDEX_BATCH_FILES` (32) files, stopping once a chunk holds `INDEX_BATCH_BYTES` (1 MiB).
-Each chunk is published, and its sources and tapes are released, before it returns. The scan budgets
-are in [Reference](reference.md#scan-and-settings-controls).
+<details>
+<summary>Catalog and result tables</summary>
 
-Result pages are not stored: `resultPageAsync()` pages an in-memory `ResultPageIndex`.
+- **`candidate_catalogs`:** a rule catalog's identity, a SHA-256 over the code-rule catalog, grammar
+  set, scanner version and tape format (`CandidateCatalogIdentity`).
+- **`candidate_checks`:** one clause of a catalog, by rule (policy hash) and clause key.
+- **`context_check_results(source_id, context_hash_id, check_id, codec_id, raw_length, frame)`:**
+  per-file results. The context (`file_context`) is all non-content inputs: path, language, Python
+  module, nearest `package.json` and any calls-closure stamp (`result_context`).
+- **`local_check_results(source_id, check_id, ...)`:** still in the schema and still collected, but
+  never written.
+
+`LocalResultCache` keeps up to 32 MiB of decoded results per process.
+
+</details>
+
+<details>
+<summary>Completion records</summary>
+
+In a Git worktree, `completeStorageRevisionAsync()` writes
+`completed_directory_reuse(tree_hash_id, prefix, package_hash_id, catalog_hash_id)` per clean tree,
+plus the workspace's `completed_workspace_revisions` row (`complete_directories`).
+
+The package hash covers what the tree's files read outside it: ancestors' Python package markers and
+the inherited `package.json` of its ECMAScript files. If the write fails, the audit keeps its
+results and loses only reuse.
+
+</details>
+
+<details>
+<summary>How a repository index restores files</summary>
+
+A repository index (`index.rs`):
+
+1. Walks the host-selected files and finds clean trees with a completion record for the current
+   catalog (`reusable_directory_prefixes`).
+2. Under those prefixes, bulk-resolves clean files' aliases (`stored_sources_by_alias`) and results
+   (`local_check_results_by_key`).
+3. Restores a file only with results for every clause and its blob's bytes still present. Listing
+   and restoring evaluate nothing.
+4. Reads the rest in chunks of at most `INDEX_BATCH_FILES` (32) files, closing a chunk at
+   `INDEX_BATCH_BYTES` (1 MiB). Each chunk is published, and its sources and tapes released, before
+   it returns.
+
+</details>
 
 ## Kind search index
 
-The search index tells, without decoding a tape, whether a node kind occurs in it:
+The search index tells, without decoding a tape, whether a node kind occurs in it.
+
+When every AST clause's root kinds are absent from a tape, restoring the file skips decoding it.
+
+<details>
+<summary>Schema, lookup answers and index building</summary>
 
 ```sql
 CREATE TABLE search_index_sets (
@@ -224,78 +353,110 @@ CREATE VIRTUAL TABLE search_kind_fts USING fts5(
 );
 ```
 
-`search_kind_fts` is a contentless FTS5 table with one document per tape (`rowid` is the tape ID)
-and one kind token per preorder node. It does not depend on the rule catalog. The trigger
-`delete_tape_search_index` removes a tape's document when the tape is deleted.
+`search_kind_fts` is contentless FTS5: one document per tape (`rowid` is the tape ID), one kind
+token per preorder node, independent of the rule catalog. The trigger `delete_tape_search_index`
+drops a tape's document with the tape.
 
-The maintenance thread builds the index after publication, never during it. It reads tapes without
-an index set through a keyset cursor (`tapes_without_search_index_after`), 64 at a time, for about
-one second per wake. It writes each batch in one transaction (`put_search_indexes_bulk`). A tape this
-build cannot decode gets an incomplete set and leaves the backlog.
-
-`get_search_kind_presence_bulk` answers each lookup as `Present`, `Absent`, `SyntaxErrors` or
-`Unknown`. Only a complete, error-free set at the requested index version can answer `Absent`; a
-missing, stale or incomplete set is `Unknown`. When every AST clause's root kinds are `Absent`,
+`get_search_kind_presence_bulk` answers `Present`, `Absent`, `SyntaxErrors` or `Unknown`. Only a
+complete, error-free set at the requested index version answers `Absent`; missing, stale or
+incomplete sets give `Unknown`. When every AST clause's root kinds are `Absent`,
 `restore_persisted_file` skips decoding the tape and records no witnesses.
+
+The maintenance thread builds indexes after publication, never during it. It reads unindexed tapes
+via a keyset cursor (`tapes_without_search_index_after`), 64 at a time, for about one second per
+wake, writing each batch in one transaction (`put_search_indexes_bulk`). A tape this build cannot
+decode gets an incomplete set, leaving the backlog.
+
+</details>
 
 ## Overlay publication
 
-`publish_overlay_files` publishes 1 to `MAX_PUBLICATION_BATCH` (64) files of one workspace. It takes
-no write lock for work it can do outside one:
+`publish_overlay_files` publishes 1 to `MAX_PUBLICATION_BATCH` (64) files of one workspace, doing
+all it can outside the write lock.
 
-1. It validates each file and hashes its source and tape on the worker pool.
-2. In one deferred read transaction it looks up the stored sources and tapes, paths, catalogs and
-   checks (three bulk statements).
-3. It compresses only the sources and tapes the store lacks.
+Hashing, lookups and compression run without the lock. An object pass and a relationship pass then
+write under it.
 
-If anything is missing, an object pass writes it under `BEGIN IMMEDIATE`. Each statement takes the
-whole batch: identities as a JSON parameter, frames as bound BLOBs. Each joins rows by full identity,
-never by an ID read earlier. The statements insert, in order: hashes, strings, paths, catalogs,
-checks, sources, aliases, tapes and derived documents.
+Publication alone does not make results reusable: a repository index restores only under a
+completion record (above), written after the whole index is published.
 
-A pass that would run more than ten data statements fails. After the pass a new read checks that
-every row exists. A collection between the read and the write can delete rows the pass relied on;
-the next pass writes them again. Publication fails after eight passes without completing.
+<details>
+<summary>Work outside the lock, the two write passes, and tests</summary>
 
-The relationship pass then writes the overlay rows, any new result-context hashes, and
-`context_check_results`, chunked to SQLite's variable limit, again in at most ten statements. Under
-the write lock it first checks that every path, source, tape, catalog and check ID it prepared is
-still current (`relationship_references_current`). If one is not, the whole publication restarts,
-at most eight times.
+Without a write lock it:
 
-Every pass runs under `retry_busy`. Cancellation is checked between passes and before the commit;
-an uncommitted pass rolls back and committed passes stay valid. Publication returns its statement,
-pass, retry and timing counts in `PublicationResult`. Tests: the ten-statement budget in
-`overlay_publication_replaces_payload_and_candidates_atomically`, no hashing under the write lock in
-`relationship_revalidation_does_not_hash_payloads_under_write_lock`, and the reconciliation tests
-`reconciliation_reprepares_source_collected_after_the_read` and
-`reconciliation_revalidates_path_collected_before_relationship_write`.
+1. Validates each file and hashes its source and tape on the worker pool.
+2. Looks up stored sources, tapes, paths, catalogs and checks in one deferred read transaction
+   (three bulk statements).
+3. Compresses only the sources and tapes the store lacks.
 
-Publication does not make results reusable. A repository index restores only under a completion
-record (above), written after the whole index is published.
+**Object pass.** Anything missing is written under `BEGIN IMMEDIATE`. Each statement takes the whole
+batch (identities as a JSON parameter, frames as bound BLOBs) and joins by full identity, never by an
+ID read earlier. Order: hashes, strings, paths, catalogs, checks, sources, aliases, tapes, derived
+documents.
+
+A pass needing over ten data statements fails. A fresh read then checks every row exists, since a
+collection between read and write can delete rows the pass relied on; the next pass rewrites them.
+Publication fails after eight incomplete passes.
+
+**Relationship pass.** It writes overlay rows, new result-context hashes and `context_check_results`,
+chunked to SQLite's variable limit, in at most ten statements. Under the write lock it first checks
+every prepared path, source, tape, catalog and check ID is still current
+(`relationship_references_current`); otherwise the whole publication restarts, at most eight times.
+
+Every pass runs under `retry_busy`. Cancellation is checked between passes and before commit: an
+uncommitted pass rolls back; committed passes stay valid. `PublicationResult` reports statement,
+pass, retry and timing counts.
+
+Tests:
+
+- ten-statement budget: `overlay_publication_replaces_payload_and_candidates_atomically`;
+- no hashing under the write lock:
+  `relationship_revalidation_does_not_hash_payloads_under_write_lock`;
+- reconciliation: `reconciliation_reprepares_source_collected_after_the_read`,
+  `reconciliation_revalidates_path_collected_before_relationship_write`.
+
+</details>
 
 ## Maintenance and collection
 
-Each process keeps one `ContentStore` and one maintenance thread (`rerail-store-maintenance`) per
-store path (`shared_content_store`). The thread wakes every 30 seconds and does three things:
+A maintenance thread per store renews leases, builds search indexes and collects unreferenced rows
+when the store grows.
 
-- It renews the leases of its registered workspaces to 120 seconds ahead, in one statement.
-- It runs one collection pass when the store's capacity state is not `Normal`.
-- It builds search indexes.
+Each process keeps one `ContentStore` and maintenance thread (`rerail-store-maintenance`) per store
+path (`shared_content_store`). Every 30 seconds the thread:
 
-`capacity()` sums the database file and its `-wal` and `-shm` files. The thresholds are
-`STORE_SOFT_LIMIT` (7 GiB, `Collect`), `STORE_HARD_LIMIT` (9 GiB, `RejectWrites`) and
-`STORE_ABSOLUTE_LIMIT` (10 GiB, `OverBudget`). Below 7 GiB nothing is collected. From 9 GiB new
-sources, tapes and search indexes are refused. Test: `capacity_thresholds_are_exact`.
+- renews its workspaces' leases to 120 seconds ahead, in one statement;
+- runs one collection pass if the capacity state is not `Normal`;
+- builds search indexes.
+
+Collection starts at 7 GiB; from 9 GiB new sources, tapes and search indexes are refused. A closed
+workspace stops being renewed, so its lease expires and collection retires it.
+
+<details>
+<summary>Capacity thresholds</summary>
+
+`capacity()` sums the database, `-wal` and `-shm` files (test: `capacity_thresholds_are_exact`):
+
+| Threshold              | Size   | State          | Effect                                      |
+| ---------------------- | ------ | -------------- | ------------------------------------------- |
+| `STORE_SOFT_LIMIT`     | 7 GiB  | `Collect`      | collection starts; nothing collected below  |
+| `STORE_HARD_LIMIT`     | 9 GiB  | `RejectWrites` | new sources, tapes, search indexes refused  |
+| `STORE_ABSOLUTE_LIMIT` | 10 GiB | `OverBudget`   |                                             |
+
+</details>
+
+<details>
+<summary>Collection order and safeguards</summary>
 
 Database relationships are the only liveness authority; there are no reference counts.
-`collect(now, batch)` takes at most `MAX_COLLECTION_BATCH` (256) rows per statement and runs one
-`BEGIN IMMEDIATE` transaction in this order:
+`collect(now, batch)` takes at most `MAX_COLLECTION_BATCH` (256) rows per statement, in one
+`BEGIN IMMEDIATE` transaction, in this order:
 
 1. Expired `object_pins`.
 2. Workspaces whose lease expired become retiring; their overlay rows go, then the workspace and its
    `completed_workspace_revisions` row.
-3. The files of one snapshot no workspace references, then the snapshot once it is empty.
+3. The files of one snapshot no workspace references, then the snapshot once empty.
 4. Tapes no snapshot file, overlay, pin or `file_documents.document_tape_id` references. A deleted
    primary tape takes its `file_documents` rows, search index set and FTS document with it, so a
    later pass deletes the derived tapes no row names.
@@ -306,25 +467,35 @@ Database relationships are the only liveness authority; there are no reference c
    `GIT_TREE_BATCH_ENTRIES` budget (always at least one tree).
 8. Unreferenced paths, strings and hashes.
 
-Collection deletes only objects whose `created_generation` is older than the store's generation,
-then increments it. An object published since the last pass therefore survives this one. After the
-commit it runs `PRAGMA wal_checkpoint(PASSIVE)` and `PRAGMA incremental_vacuum(128)` and clears the
-process's caches.
+Collection deletes only objects with `created_generation` older than the store's generation, then
+increments it, so objects published since the last pass survive. After commit it runs
+`PRAGMA wal_checkpoint(PASSIVE)` and `PRAGMA incremental_vacuum(128)` and clears process caches.
 
-Every reference probe uses an index; test `collect_statements_never_scan_inside_correlated_subqueries`
-checks each statement's query plan. A closed workspace is no longer renewed, so its lease runs out
-and collection retires it. `retire_workspace` and the pin API (`pin_source`, `pin_tape`,
-`release_pins`) exist but have no production caller.
+Every reference probe uses an index; `collect_statements_never_scan_inside_correlated_subqueries`
+checks each statement's query plan.
+
+`retire_workspace` and the pin API (`pin_source`, `pin_tape`, `release_pins`) have no production
+caller.
+
+</details>
 
 ## Memory
 
-- The decompressed read cache holds up to 32 MiB of sources and tapes with a 30-second sliding
-  lifetime (`DEFAULT_READ_CACHE_BYTES`, `DEFAULT_DECOMPRESSED_CACHE_TTL`). Entries live in one
-  anonymous mapping twice that size.
-- When the mapping fills, live entries are copied into a replacement and the old mapping stays
-  readable until its readers drop it. There are at most two mappings, and each gets `MADV_DONTNEED`
-  before `munmap`. An entry larger than the limit, or one that arrives while a retired mapping is
-  still in use, is kept on the heap.
-- `LocalResultCache` holds up to 32 MiB of decoded results.
-- Each connection's SQLite page cache is 1 MiB.
-- `release_memory()` clears both caches and closes idle connections.
+Each process bounds its caches and connections; `release_memory()` frees them.
+
+- **Read cache:** up to 32 MiB of decompressed sources and tapes, 30-second sliding lifetime.
+- **`LocalResultCache`:** up to 32 MiB of decoded results.
+- **Connections:** 1 MiB SQLite page cache each.
+- **`release_memory()`** clears both caches and closes idle connections.
+
+<details>
+<summary>How the read cache maps memory</summary>
+
+The read cache limits are `DEFAULT_READ_CACHE_BYTES` and `DEFAULT_DECOMPRESSED_CACHE_TTL`. Entries
+live in one anonymous mapping twice the size limit.
+
+When full, live entries move to a replacement mapping; the old one stays readable until its readers
+drop it. At most two exist, each given `MADV_DONTNEED` before `munmap`. An entry over the limit, or
+arriving while a retired mapping is in use, goes on the heap.
+
+</details>

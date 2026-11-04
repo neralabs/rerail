@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Checks the code your coding agent writes against your rules while it works, and steers it back in the same session",
   "license": "Apache-2.0",
   "publishConfig": {
@@ -82,6 +82,7 @@
     "build:js": "npm run build:ts && npm run build:omp && npm run build:events && npm run build:cursor && npm run build:claude && npm run build:codex && npm run build:ui",
     "build:clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build:ui": "node scripts/build/copy-ui.mjs",
+    "build:docs-site": "node --import tsx scripts/build/docs-site.mjs",
     "ensure:sqlite": "node scripts/build/ensure-sqlite.mjs",
     "build:native": "node scripts/build/require-cargo.mjs && node scripts/build/require-lfs.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "build:ts": "tsc -p tsconfig.build.json && esbuild src/presentation/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/presentation/session-presentation.js",
@@ -174,6 +175,9 @@
     "@vitest/coverage-v8": "^5.0.5",
     "drizzle-kit": "^0.31.11",
     "esbuild": "0.28.2",
+    "highlight.js": "11.12.0",
+    "marked": "18.0.11",
+    "node-html-markdown": "2.0.0",
     "smol-toml": "1.9.1",
     "tsx": "4.23.15",
     "typescript": "5.9.3",

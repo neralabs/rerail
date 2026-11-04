@@ -1,1 +1,0 @@
-`rerail update` ignores a repository's `.npmrc` when it checks for a version, runs no install scripts, and checks npm registry signatures and provenance before running the new version. The package ships an `npm-shrinkwrap.json`, so installs get the dependency versions Rerail was tested with. On macOS the device secret no longer appears in process arguments.

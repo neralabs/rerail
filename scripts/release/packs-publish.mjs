@@ -30,16 +30,26 @@ function releasedCommit() {
   return git(["rev-parse", "HEAD"]);
 }
 
-/** Fails unless an anonymous reader gets `name@version`, retrying while the registry's cache catches up. */
+/**
+ * How long an anonymous reader may take to see a version just published: npm says a publish "may take a few minutes to
+ * become available", and packs often took longer than the 25 seconds this once waited, failing the run after each
+ * publish.
+ */
+const VISIBLE_WITHIN_MS = 3 * 60_000;
+const VISIBLE_POLL_MS = 10_000;
+
+/** Fails unless an anonymous reader gets `name@version` within VISIBLE_WITHIN_MS, retrying while the registry's cache catches up. */
 async function assertPublic(name, version) {
   const url = `${REGISTRY}/${name.replace("/", "%2f")}/${version}`;
+  const deadline = Date.now() + VISIBLE_WITHIN_MS;
   let status;
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    if (attempt > 0) await new Promise((done) => setTimeout(done, 5000));
+  for (;;) {
     status = (await fetch(url, { headers: { accept: "application/json" } })).status;
-    if (status === 200) return;
+    if (status === 200 || Date.now() >= deadline) break;
+    await new Promise((done) => setTimeout(done, VISIBLE_POLL_MS));
   }
-  throw new Error(`${name}@${version} answers an anonymous request with ${status}: it is not public. Run npm access set status=public ${name}`);
+  if (status === 200) return;
+  throw new Error(`${name}@${version} answers an anonymous request with ${status} ${VISIBLE_WITHIN_MS / 60_000} minutes after its publish: it is not public. Run npm access set status=public ${name}`);
 }
 
 /**

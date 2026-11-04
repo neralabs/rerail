@@ -1,1 +1,0 @@
-Settings → Coding agents in the dashboard and `rerail status` say whether each connected coding agent's tools can read Rerail's data, and why: kept out with Claude Code's sandbox on, file tools only with it off or in the Cursor CLI, open in Codex, the Cursor editor, OMP and Pi. Rerail changes no agent's permissions.

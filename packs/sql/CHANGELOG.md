@@ -1,5 +1,11 @@
 # @neralabs/rerail-pack-sql
 
+## 0.1.5 (2026-11-04)
+
+21 rules, 19 of them on by default.
+
+- 2 new rules: `sqlfluff-al05-aliasing-unused` and `sqlfluff-rf01-references-from` start in Steer.
+
 ## 0.1.4
 
 ### Patch Changes

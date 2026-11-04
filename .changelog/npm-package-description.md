@@ -1,1 +1,0 @@
-The npm package describes Rerail as it is today ("Checks the code your coding agent writes against your rules while it works, and steers it back in the same session"), with keywords for the coding agents it works with, and gives Pi's package gallery a preview image (`pi.image`).

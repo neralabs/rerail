@@ -208,6 +208,24 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
 }
 
 /**
+ * A read-only open that never changes the file: where `openRerailDatabase({ readonly: true })` would run this build's
+ * schema steps first (a writable open), this refuses, saying so. For commands that only read the person's database
+ * from another build or process (`rerail scan`), so a checkout build never migrates the installed Rerail's file. A
+ * file newer than this build reads, or one this build cannot read at all, is refused as any open refuses it.
+ */
+export function openRerailDatabaseAsIs(path: string): RerailDatabase {
+  const migrations = RERAIL_MIGRATIONS;
+  const database = openChecked(path, true, migrations, schemaVersionOf(migrations));
+  const upgrade = upgradeBeforeReading(path, database, migrations);
+  if (upgrade === undefined) return database;
+  database.$client.close();
+  throw new Error(
+    `${path} needs ${upgrade} before this Rerail can read it, and this command never changes it. Run it with the Rerail `
+      + "this computer runs (rerail), or start Rerail first (rerail daemon start), which upgrades it.",
+  );
+}
+
+/**
  * What a writable open must do before this build reads the file a read-only `database` holds, or undefined when it
  * reads the file as it is. Throws, closing `database`, for a pending step that raises the floor.
  */

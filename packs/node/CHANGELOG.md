@@ -1,5 +1,12 @@
 # @neralabs/rerail-pack-node
 
+## 0.1.6 (2026-11-04)
+
+37 rules, 11 of them on by default.
+
+- 37 new rules from eslint-plugin-n: 11 start in Steer and 26 off.
+- Set-up now recommends the pack for a repository with a Node.js server framework (`express`, `koa`, `fastify`, `@hapi/hapi`, `@nestjs/core`, `restify`, `@adonisjs/core`, `sails`, `@feathersjs/feathers`, `moleculer`) or `electron` dependency, or with `.cjs`, `.mjs`, `.cts` or `.mts` files outside tests, scripts, fixtures and configuration. An `@types/node` dependency alone, which browser projects carry for tooling, does not.
+
 ## 0.1.5
 
 ### Patch Changes

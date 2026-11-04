@@ -1,5 +1,12 @@
 # @neralabs/rerail-pack-python
 
+## 0.1.6 (2026-11-04)
+
+537 rules, 318 of them on by default.
+
+- 401 new rules (11 from Bandit and 390 from Ruff): 206 start in Steer and 195 off.
+- `ruff-f822-undefined-export` now reports an undefined name in an `__all__` entry written in parentheses (`[((("a")))]`) and in a bare tuple value (`__all__ = "a", "b"`, `__all__ += "c", "d"`), as Ruff does.
+
 ## 0.1.5
 
 ### Patch Changes
