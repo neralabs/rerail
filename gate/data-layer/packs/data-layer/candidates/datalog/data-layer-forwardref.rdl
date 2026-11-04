@@ -1,12 +1,9 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
 .decl child(p: node, c: node, i: int)
-.decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
 .decl op(n: node, s: sym)
-.decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.input doc, node, child, text, op
 .kindset k0 = "function_definition" | "module"
 .kindset k1 = "assignment"
 .decl blocked12(low: node, high: node)
@@ -33,7 +30,7 @@
 .decl u13(n: node)
 .decl u37(n: node)
 .decl u61(n: node)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("annotation").
 in_scope($d) :- doc($d, $p, _), @glob($p, "api/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").

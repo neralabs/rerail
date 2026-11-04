@@ -1,12 +1,8 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
-.decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.input doc, node, field, text
 .decl name(n: node, s: sym)
 name($n, $s) :- text($n, $s).
 name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
@@ -24,7 +20,7 @@ name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x
 .decl out_scope(d: int)
 .decl u17(n: node)
 .decl u18(n: node)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").

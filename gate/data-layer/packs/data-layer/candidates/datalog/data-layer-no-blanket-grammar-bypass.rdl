@@ -1,17 +1,15 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
 .decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.decl syntax_error(d: int)
+.input doc, node, field, text, line, syntax_error
 .decl in_scope(d: int)
 .decl names0(s: sym)
 .decl names1(s: sym)
 .decl out_scope(d: int)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("execute_grammar").
 names0("execute_grammar_async").
 names0("execute_grammar_direct").
@@ -148,5 +146,5 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
-violation("data-layer-no-blanket-grammar-bypass", "public-methods", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), names0($v2), doc($d, $p, $m), names1($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-no-blanket-grammar-bypass", "public-methods", "NGB001", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), names0($v2), doc($d, $p, $m), names1($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 .output violation

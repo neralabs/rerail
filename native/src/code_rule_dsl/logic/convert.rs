@@ -442,6 +442,13 @@ impl Emitter {
         // as testing a name, the only text the relations hold.
         let name_kinds = names.as_ref().is_none_or(|k| k.iter().all(|k| matches!(k.as_str(), "identifier" | "attribute" | "dotted_name" | "type_identifier" | "field_identifier")));
         if !text_kinds && name_kinds {
+            // Operators and keywords are anonymous tokens, which no relation holds as a node.
+            if names.is_none()
+                && let Some(Shape::Names(set)) = shape(&hir)
+                && set.iter().any(|w| !w.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') || KEYWORDS.contains(&w.as_str()))
+            {
+                return gap("a regex on an anonymous token");
+            }
             if names.is_none() {
                 self.approx.insert("a regex on a node of any kind as a name".into());
             }
@@ -514,13 +521,32 @@ impl Emitter {
     pub(in crate::code_rule_dsl) fn rule(&mut self, head: &str, columns: &str, body: Body) {
         let name = head.split('(').next().unwrap_or(head).to_owned();
         self.decls.insert(name, columns.to_owned());
-        self.rules.push(format!("{head} :- {}.", body.join(", ")));
+        let rule = format!("{head} :- {}.", body.join(", "));
+        if !self.rules.contains(&rule) {
+            self.rules.push(rule);
+        }
     }
 
     /// The program: declarations, kind sets, facts, rules.
     pub(in crate::code_rule_dsl) fn program(&self, outputs: &[&str]) -> String {
         let mut out = String::new();
-        out.push_str(BASE);
+        // The base relations the rules read: one declared and not read has no statistics.
+        let mut text: String = self.rules.join("\n");
+        if self.uses_name {
+            text.push_str(NAME);
+        }
+        let read: Vec<&str> = BASE_RELATIONS.iter().copied().filter(|r| text.contains(&format!("{r}("))).collect();
+        for line in BASE.lines() {
+            if let Some(rel) = line.strip_prefix(".decl ").and_then(|d| d.split('(').next())
+                && read.contains(&rel)
+            {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        if !read.is_empty() {
+            out.push_str(&format!(".input {}\n", read.join(", ")));
+        }
         if self.never {
             out.push_str(".decl never(n: node)\n");
         }
@@ -558,8 +584,17 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl intval(n: node, v: int)
 .decl op(n: node, s: sym)
 .decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.decl syntax_error(d: int)
 ";
+
+const BASE_RELATIONS: [&str; 9] = ["doc", "node", "child", "field", "text", "intval", "op", "line", "syntax_error"];
+
+/// Python's keywords: tokens, never names.
+const KEYWORDS: [&str; 35] = [
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except",
+    "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
+    "while", "with", "yield",
+];
 
 /// The strings a path or module condition tests.
 const DOC: [&str; 2] = ["doc(_, $s, _)", "doc(_, _, $s)"];

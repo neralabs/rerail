@@ -1,12 +1,10 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
 .decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.decl syntax_error(d: int)
+.input doc, node, field, text, line, syntax_error
 .decl name(n: node, s: sym)
 name($n, $s) :- text($n, $s).
 name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
@@ -19,7 +17,7 @@ name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x
 .decl names1(s: sym)
 .decl names2(s: sym)
 .decl out_scope(d: int)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("_execute_grammar").
 names0("_execute_sql_or_schema_statement").
 names0("_execute_sql_or_schema_statement_async").
@@ -181,7 +179,7 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
-violation("data-layer-raw-execute-regression", "removed-calls", $p, $l) :- node($v1, $n, _, _, _), doc($v1, $v2, _), node(_, $n, "call", _, _), field($n, "function", $v3), node(_, $v3, "attribute", _, _), field($v3, "attribute", $v4), node(_, $v4, "identifier", _, _), text($v4, $v5), names0($v5), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-raw-execute-regression", "removed-calls", "RER001", $p, $l) :- node($v1, $n, _, _, _), doc($v1, $v2, _), node(_, $n, "call", _, _), field($n, "function", $v3), node(_, $v3, "attribute", _, _), field($v3, "attribute", $v4), node(_, $v4, "identifier", _, _), text($v4, $v5), names0($v5), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 m17($n) :- node(_, $n, "raise_statement", _, _).
 m17($n) :- node(_, $n, "call", _, _), field($n, "function", $v14), node(_, $v14, "attribute", _, _), field($v14, "attribute", $v15), name($v15, $v16), @prefix($v16, "_raise_").
 blocked19($low, $high) :- inside($low, $s, k1), node(_, $s, "function_definition", _, _), inside($s, $high, k1).

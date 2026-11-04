@@ -257,7 +257,7 @@ enum View {
 
 impl Batch {
     /// Projects each document and interns the batch's strings; the documents' keys are distinct.
-    /// Returns the batch and its small relations (`doc`, `pkg`, `text`, `intval`, `op`).
+    /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`).
     fn build(store: &ContentStore, documents: Vec<Document>) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>)> {
         let mut documents = documents;
         documents.sort_by_key(|d| d.key);
@@ -275,6 +275,8 @@ impl Batch {
         };
         // Rows with string indexes; the indexes become atoms once the batch's strings are interned.
         let (mut doc, mut pkg, mut text, mut intval, mut op) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`).
+        let mut errors = Vec::new();
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
             let tag = (d.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
@@ -286,6 +288,9 @@ impl Batch {
             let key = i64::from(d.key);
             doc.push([key, string(&d.path) as i64, string(&module(&d.path)) as i64]);
             pkg.push([key, string(&package(&d.path)) as i64]);
+            if d.facts.syntax_errors {
+                errors.push(key);
+            }
             let f = &*d.facts;
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
@@ -343,6 +348,7 @@ impl Batch {
         let relations = vec![
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", relation(&["d", "p"], &mut pkg.iter().map(|&[d, p]| vec![d, atom(p)]))),
+            ("syntax_error", relation(&["d"], &mut errors.iter().map(|&d| vec![d]))),
             ("text", relation(&["n", "s"], &mut text.iter().map(|&[n, s]| vec![n, atom(s)]))),
             ("intval", relation(&["n", "v"], &mut intval.iter().map(|&[n, v]| vec![n, v]))),
             ("op", relation(&["n", "s"], &mut op.iter().map(|&[n, s]| vec![n, atom(s)]))),

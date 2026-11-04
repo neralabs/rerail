@@ -1,12 +1,10 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
 .decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.decl syntax_error(d: int)
+.input doc, node, field, text, line, syntax_error
 .decl name(n: node, s: sym)
 name($n, $s) :- text($n, $s).
 name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
@@ -57,7 +55,7 @@ name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x
 .decl u20(n: node)
 .decl u67(n: node)
 .decl u81(n: node)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("impl/common/l2070_server_plan/backend_profiles.py").
 names0("impl/common/l2070_server_plan/backend_traits.py").
 names1("is_document_backend").
@@ -94,7 +92,7 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
 m5($n) :- node($v3, $n, _, _, _), doc($v3, $v4, _), names0($v4).
 m10($n) :- node($v8, $n, _, _, _), doc($v8, $v9, _), names2($v9).
-violation("data-layer-serverplan-dispatch-architecture", "backend-family", $p, $l) :- node($v1, $n, _, _, _), doc($v1, $v2, _), !m5($n), node(_, $n, "attribute", _, _), field($n, "attribute", $v6), node(_, $v6, "identifier", _, _), text($v6, $v7), names1($v7), !m10($n), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-serverplan-dispatch-architecture", "backend-family", "SPD001", $p, $l) :- node($v1, $n, _, _, _), doc($v1, $v2, _), !m5($n), node(_, $n, "attribute", _, _), field($n, "attribute", $v6), node(_, $v6, "identifier", _, _), text($v6, $v7), names1($v7), !m10($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 m15($n) :- node($v13, $n, _, _, _), doc($v13, $v14, _), names0($v14).
 m25($n) :- field($n, "attribute", $v22), node(_, $v22, "identifier", _, _), text($v22, $v23), names3($v23).
 m25($n) :- field($n, "object", $v24), u20($v24).

@@ -3,10 +3,7 @@
 .decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
-.decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.input doc, node, child, field, text
 .decl in_scope(d: int)
 .decl m10(n: node)
 .decl m11(n: node)
@@ -22,7 +19,7 @@
 .decl out_scope(d: int)
 .decl u2(n: node)
 .decl u5(n: node)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("self").
 in_scope($d) :- doc($d, $p, _), @glob($p, "api/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").

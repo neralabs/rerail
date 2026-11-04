@@ -1,18 +1,19 @@
-166/562 clauses converted
+165/562 clauses converted
 
 gaps (clauses):
     113  a regex over file content or paths
      52  another clause kind
      39  semantic value
      31  regex ^[^_].*_
-     16  compare
      16  semantic layout
      14  budget
+     14  compare
      13  nthChild other than a fixed position
-     13  regex (?i)^[rub]*f
+     12  regex (?i)^[rub]*f
      10  utility call
       7  a regex on the text of module (PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow)
       6  regex ^_*(?:Async|Lazy)
+      5  a regex on an anonymous token
       4  a regex on the text of module (import\ |from\ )
       4  a regex on the text of module (open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)
       4  comment nodes (not in node)
@@ -46,7 +47,6 @@ gaps (clauses):
       1  a regex on the text of module ((?<LOCATION>run_write_plan_workflow_async\(\
 \ \ \ \ \ \ \ \ \ \ \ \ self\._async_conn\(\),\
 \ \ \ \ \ \ \ \ \ \ \ \ SyncWritePlanWorkflow))
-      1  a regex on the text of module (__init__|render\(|str|Sql)
       1  a regex on the text of module (_execute_sql_or_schema_statement)
       1  a regex on the text of module (_execute_sql_or_schema_statement_async)
       1  a regex on the text of module (_is_schema_ddl_statement)
@@ -69,11 +69,11 @@ gaps (clauses):
 
 approximations (rules):
       3  a metavariable twice: equal names
-     24  a regex on a node of any kind as a name
+     23  a regex on a node of any kind as a name
      39  neighbours among named children
-      2  nthChild among named children
+      1  nthChild among named children
       3  patterns by named children
-      5  siblings among named children
+      4  siblings among named children
 
 per rule:
   data-layer-admin-async-purity: 0/3
@@ -83,7 +83,7 @@ per rule:
   data-layer-async-sync-delegation: 0/13
   data-layer-backend-coupling: 0/2
   data-layer-backend-type-strings: 0/13
-  data-layer-classvar-check: 1/1
+  data-layer-classvar-check: 0/1
   data-layer-conn-or-txn-union: 0/2
   data-layer-connection-caches: 0/48
   data-layer-data-layer-compat-aliases: 0/2

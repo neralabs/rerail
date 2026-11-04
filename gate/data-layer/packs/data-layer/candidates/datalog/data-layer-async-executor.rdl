@@ -1,15 +1,8 @@
 .decl doc(d: int, path: sym, module: sym)
-.decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl child(p: node, c: node, i: int)
-.decl field(p: node, f: sym, c: node)
-.decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
-.decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.input doc
 .decl in_scope(d: int)
 .decl out_scope(d: int)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/sqlite/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/postgres/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/mariadb/**/*.py").

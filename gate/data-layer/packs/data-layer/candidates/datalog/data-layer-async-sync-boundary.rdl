@@ -1,12 +1,11 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
 .decl op(n: node, s: sym)
 .decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.decl syntax_error(d: int)
+.input doc, node, field, text, op, line, syntax_error
 .decl name(n: node, s: sym)
 name($n, $s) :- text($n, $s).
 name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
@@ -346,7 +345,7 @@ name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x
 .decl t79(s: sym)
 .decl t90(s: sym)
 .decl t91(s: sym)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("asyncio.run").
 names0("asyncio.run_coroutine_threadsafe").
 names1("test_versioned_column_evolution_e2e").
@@ -487,7 +486,7 @@ t6($s) :- doc(_, $s, _), @contains($s, "integration_tests/").
 t6($s) :- doc(_, _, $s), @contains($s, "integration_tests/").
 t7($s) :- doc(_, $s, _), t6($s).
 t7($s) :- doc(_, _, $s), t6($s).
-violation("data-layer-async-sync-boundary", "sync-wraps", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v1), name($v1, $v2), names0($v2), !m5($n), doc($d, $p, $m), !t7($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v1), name($v1, $v2), names0($v2), !m5($n), doc($d, $p, $m), !t7($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked11($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m12($n) :- inside($n, $v10, k0), !blocked11($n, $v10), node(_, $v10, "function_definition", _, _), op($v10, "async").
 blocked14($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -538,7 +537,7 @@ t18($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t18($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t19($s) :- doc(_, $s, _), t18($s).
 t19($s) :- doc(_, _, $s), t18($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-0", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v8), name($v8, $v9), names0($v9), !m12($n), !m17($n), doc($d, $p, $m), @suffix($p, "conform/l7000_versioned/test_column_evolution_versioned_e2e.py"), !t19($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-0", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v8), name($v8, $v9), names0($v9), !m12($n), !m17($n), doc($d, $p, $m), @suffix($p, "conform/l7000_versioned/test_column_evolution_versioned_e2e.py"), !t19($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked23($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m24($n) :- inside($n, $v22, k0), !blocked23($n, $v22), node(_, $v22, "function_definition", _, _), op($v22, "async").
 blocked26($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -589,7 +588,7 @@ t30($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t30($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t31($s) :- doc(_, $s, _), t30($s).
 t31($s) :- doc(_, _, $s), t30($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-1", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v20), name($v20, $v21), names0($v21), !m24($n), !m29($n), doc($d, $p, $m), @suffix($p, "conform/l9800_rippling/test_async_handler_support.py"), !t31($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-1", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v20), name($v20, $v21), names0($v21), !m24($n), !m29($n), doc($d, $p, $m), @suffix($p, "conform/l9800_rippling/test_async_handler_support.py"), !t31($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked35($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m36($n) :- inside($n, $v34, k0), !blocked35($n, $v34), node(_, $v34, "function_definition", _, _), op($v34, "async").
 blocked38($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -640,7 +639,7 @@ t42($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t42($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t43($s) :- doc(_, $s, _), t42($s).
 t43($s) :- doc(_, _, $s), t42($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-3", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v32), name($v32, $v33), names0($v33), !m36($n), !m41($n), doc($d, $p, $m), @suffix($p, "impl/common/l1000_cache/invalidation_broadcast.py"), !t43($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-3", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v32), name($v32, $v33), names0($v33), !m36($n), !m41($n), doc($d, $p, $m), @suffix($p, "impl/common/l1000_cache/invalidation_broadcast.py"), !t43($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked47($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m48($n) :- inside($n, $v46, k0), !blocked47($n, $v46), node(_, $v46, "function_definition", _, _), op($v46, "async").
 blocked50($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -691,7 +690,7 @@ t54($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t54($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t55($s) :- doc(_, $s, _), t54($s).
 t55($s) :- doc(_, _, $s), t54($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-4", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v44), name($v44, $v45), names0($v45), !m48($n), !m53($n), doc($d, $p, $m), @suffix($p, "impl/common/l2070_server_plan/base_server_plan.py"), !t55($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-4", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v44), name($v44, $v45), names0($v45), !m48($n), !m53($n), doc($d, $p, $m), @suffix($p, "impl/common/l2070_server_plan/base_server_plan.py"), !t55($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked59($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m60($n) :- inside($n, $v58, k0), !blocked59($n, $v58), node(_, $v58, "function_definition", _, _), op($v58, "async").
 blocked62($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -742,7 +741,7 @@ t66($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t66($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t67($s) :- doc(_, $s, _), t66($s).
 t67($s) :- doc(_, _, $s), t66($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-5", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v56), name($v56, $v57), names0($v57), !m60($n), !m65($n), doc($d, $p, $m), @suffix($p, "impl/common/l2550_storage_backend/backend.py"), !t67($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-5", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v56), name($v56, $v57), names0($v57), !m60($n), !m65($n), doc($d, $p, $m), @suffix($p, "impl/common/l2550_storage_backend/backend.py"), !t67($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked71($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m72($n) :- inside($n, $v70, k0), !blocked71($n, $v70), node(_, $v70, "function_definition", _, _), op($v70, "async").
 blocked74($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -793,7 +792,7 @@ t78($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t78($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t79($s) :- doc(_, $s, _), t78($s).
 t79($s) :- doc(_, _, $s), t78($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-6", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v68), name($v68, $v69), names0($v69), !m72($n), !m77($n), doc($d, $p, $m), @suffix($p, "impl/l1570_llm_client/client.py"), !t79($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-6", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v68), name($v68, $v69), names0($v69), !m72($n), !m77($n), doc($d, $p, $m), @suffix($p, "impl/l1570_llm_client/client.py"), !t79($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked83($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m84($n) :- inside($n, $v82, k0), !blocked83($n, $v82), node(_, $v82, "function_definition", _, _), op($v82, "async").
 blocked86($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -844,7 +843,7 @@ t90($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t90($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t91($s) :- doc(_, $s, _), t90($s).
 t91($s) :- doc(_, _, $s), t90($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-7", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v80), name($v80, $v81), names0($v81), !m84($n), !m89($n), doc($d, $p, $m), @suffix($p, "impl/mariadb/connection.py"), !t91($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-7", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v80), name($v80, $v81), names0($v81), !m84($n), !m89($n), doc($d, $p, $m), @suffix($p, "impl/mariadb/connection.py"), !t91($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked95($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m96($n) :- inside($n, $v94, k0), !blocked95($n, $v94), node(_, $v94, "function_definition", _, _), op($v94, "async").
 blocked98($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -895,7 +894,7 @@ t102($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t102($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t103($s) :- doc(_, $s, _), t102($s).
 t103($s) :- doc(_, _, $s), t102($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-8", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v92), name($v92, $v93), names0($v93), !m96($n), !m101($n), doc($d, $p, $m), @suffix($p, "impl/postgres/connection.py"), !t103($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-8", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v92), name($v92, $v93), names0($v93), !m96($n), !m101($n), doc($d, $p, $m), @suffix($p, "impl/postgres/connection.py"), !t103($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked107($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m108($n) :- inside($n, $v106, k0), !blocked107($n, $v106), node(_, $v106, "function_definition", _, _), op($v106, "async").
 blocked110($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -946,7 +945,7 @@ t114($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t114($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t115($s) :- doc(_, $s, _), t114($s).
 t115($s) :- doc(_, _, $s), t114($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-10", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v104), name($v104, $v105), names0($v105), !m108($n), !m113($n), doc($d, $p, $m), @suffix($p, "l2000_connection/async_executor.py"), !t115($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-10", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v104), name($v104, $v105), names0($v105), !m108($n), !m113($n), doc($d, $p, $m), @suffix($p, "l2000_connection/async_executor.py"), !t115($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked119($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m120($n) :- inside($n, $v118, k0), !blocked119($n, $v118), node(_, $v118, "function_definition", _, _), op($v118, "async").
 blocked122($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -997,7 +996,7 @@ t126($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t126($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t127($s) :- doc(_, $s, _), t126($s).
 t127($s) :- doc(_, _, $s), t126($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-11", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v116), name($v116, $v117), names0($v117), !m120($n), !m125($n), doc($d, $p, $m), @suffix($p, "l2000_connection/connection_pool.py"), !t127($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-11", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v116), name($v116, $v117), names0($v117), !m120($n), !m125($n), doc($d, $p, $m), @suffix($p, "l2000_connection/connection_pool.py"), !t127($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked131($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m132($n) :- inside($n, $v130, k0), !blocked131($n, $v130), node(_, $v130, "function_definition", _, _), op($v130, "async").
 blocked134($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -1048,7 +1047,7 @@ t138($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t138($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t139($s) :- doc(_, $s, _), t138($s).
 t139($s) :- doc(_, _, $s), t138($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-12", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v128), name($v128, $v129), names0($v129), !m132($n), !m137($n), doc($d, $p, $m), @suffix($p, "l2050_transaction/transaction.py"), !t139($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-12", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v128), name($v128, $v129), names0($v129), !m132($n), !m137($n), doc($d, $p, $m), @suffix($p, "l2050_transaction/transaction.py"), !t139($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked143($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m144($n) :- inside($n, $v142, k0), !blocked143($n, $v142), node(_, $v142, "function_definition", _, _), op($v142, "async").
 blocked146($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -1099,7 +1098,7 @@ t150($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t150($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t151($s) :- doc(_, $s, _), t150($s).
 t151($s) :- doc(_, _, $s), t150($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-13", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v140), name($v140, $v141), names0($v141), !m144($n), !m149($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/query_builder.py"), !t151($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-13", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v140), name($v140, $v141), names0($v141), !m144($n), !m149($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/query_builder.py"), !t151($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked155($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m156($n) :- inside($n, $v154, k0), !blocked155($n, $v154), node(_, $v154, "function_definition", _, _), op($v154, "async").
 blocked158($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -1150,7 +1149,7 @@ t162($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t162($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t163($s) :- doc(_, $s, _), t162($s).
 t163($s) :- doc(_, _, $s), t162($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-14", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v152), name($v152, $v153), names0($v153), !m156($n), !m161($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/tuple_query.py"), !t163($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-14", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v152), name($v152, $v153), names0($v153), !m156($n), !m161($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/tuple_query.py"), !t163($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked167($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m168($n) :- inside($n, $v166, k0), !blocked167($n, $v166), node(_, $v166, "function_definition", _, _), op($v166, "async").
 blocked170($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -1201,7 +1200,7 @@ t174($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t174($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t175($s) :- doc(_, $s, _), t174($s).
 t175($s) :- doc(_, _, $s), t174($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-25", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v164), name($v164, $v165), names0($v165), !m168($n), !m173($n), doc($d, $p, $m), @suffix($p, "l4170_inbound_bridge/process.py"), !t175($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-25", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v164), name($v164, $v165), names0($v165), !m168($n), !m173($n), doc($d, $p, $m), @suffix($p, "l4170_inbound_bridge/process.py"), !t175($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked179($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m180($n) :- inside($n, $v178, k0), !blocked179($n, $v178), node(_, $v178, "function_definition", _, _), op($v178, "async").
 blocked182($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -1252,7 +1251,7 @@ t186($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t186($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t187($s) :- doc(_, $s, _), t186($s).
 t187($s) :- doc(_, _, $s), t186($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-26", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v176), name($v176, $v177), names0($v177), !m180($n), !m185($n), doc($d, $p, $m), @suffix($p, "l4200_event_pipeline/persistent_metrics.py"), !t187($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-26", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v176), name($v176, $v177), names0($v177), !m180($n), !m185($n), doc($d, $p, $m), @suffix($p, "l4200_event_pipeline/persistent_metrics.py"), !t187($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked191($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m192($n) :- inside($n, $v190, k0), !blocked191($n, $v190), node(_, $v190, "function_definition", _, _), op($v190, "async").
 blocked194($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -1303,7 +1302,7 @@ t198($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t198($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t199($s) :- doc(_, $s, _), t198($s).
 t199($s) :- doc(_, _, $s), t198($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-29", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v188), name($v188, $v189), names0($v189), !m192($n), !m197($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/deferred_dispatch.py"), !t199($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-29", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v188), name($v188, $v189), names0($v189), !m192($n), !m197($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/deferred_dispatch.py"), !t199($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked203($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m204($n) :- inside($n, $v202, k0), !blocked203($n, $v202), node(_, $v202, "function_definition", _, _), op($v202, "async").
 blocked206($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -1354,7 +1353,7 @@ t210($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t210($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t211($s) :- doc(_, $s, _), t210($s).
 t211($s) :- doc(_, _, $s), t210($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-30", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v200), name($v200, $v201), names0($v201), !m204($n), !m209($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/dispatcher.py"), !t211($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-30", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v200), name($v200, $v201), names0($v201), !m204($n), !m209($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/dispatcher.py"), !t211($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked215($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m216($n) :- inside($n, $v214, k0), !blocked215($n, $v214), node(_, $v214, "function_definition", _, _), op($v214, "async").
 blocked218($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -1405,7 +1404,7 @@ t222($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t222($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t223($s) :- doc(_, $s, _), t222($s).
 t223($s) :- doc(_, _, $s), t222($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-31", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v212), name($v212, $v213), names0($v213), !m216($n), !m221($n), doc($d, $p, $m), @suffix($p, "l6600_cleanup/reaper.py"), !t223($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-31", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v212), name($v212, $v213), names0($v213), !m216($n), !m221($n), doc($d, $p, $m), @suffix($p, "l6600_cleanup/reaper.py"), !t223($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked227($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m228($n) :- inside($n, $v226, k0), !blocked227($n, $v226), node(_, $v226, "function_definition", _, _), op($v226, "async").
 blocked230($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
@@ -1456,7 +1455,7 @@ t234($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t234($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t235($s) :- doc(_, $s, _), t234($s).
 t235($s) :- doc(_, _, $s), t234($s).
-violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-32", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v224), name($v224, $v225), names0($v225), !m228($n), !m233($n), doc($d, $p, $m), @suffix($p, "l8000_admin/tools/ipc_tools.py"), !t235($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "sync-wraps-allowed-file-32", "SYNC_WRAPS_ASYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v224), name($v224, $v225), names0($v225), !m228($n), !m233($n), doc($d, $p, $m), @suffix($p, "l8000_admin/tools/ipc_tools.py"), !t235($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked239($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 t240($s) :- doc(_, $s, _), @suffix($s, "conform/l7000_versioned/test_column_evolution_versioned_e2e.py").
 t240($s) :- doc(_, _, $s), @suffix($s, "conform/l7000_versioned/test_column_evolution_versioned_e2e.py").
@@ -1542,7 +1541,7 @@ t240($s) :- doc(_, $s, _), @contains($s, "integration_tests/").
 t240($s) :- doc(_, _, $s), @contains($s, "integration_tests/").
 t241($s) :- doc(_, $s, _), t240($s).
 t241($s) :- doc(_, _, $s), t240($s).
-violation("data-layer-async-sync-boundary", "async-wraps", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v236), name($v236, $v237), names18($v237), inside($n, $v238, k0), !blocked239($n, $v238), node(_, $v238, "function_definition", _, _), op($v238, "async"), doc($d, $p, $m), !t241($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v236), name($v236, $v237), names18($v237), inside($n, $v238, k0), !blocked239($n, $v238), node(_, $v238, "function_definition", _, _), op($v238, "async"), doc($d, $p, $m), !t241($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked245($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked247($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m250($n) :- inside($n, $v246, k0), !blocked247($n, $v246), node(_, $v246, "function_definition", _, _), field($v246, "name", $v248), node(_, $v248, "identifier", _, _), text($v248, $v249), names1($v249).
@@ -1592,7 +1591,7 @@ t251($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t251($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t252($s) :- doc(_, $s, _), t251($s).
 t252($s) :- doc(_, _, $s), t251($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-0", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v242), name($v242, $v243), names18($v243), inside($n, $v244, k0), !blocked245($n, $v244), node(_, $v244, "function_definition", _, _), op($v244, "async"), !m250($n), doc($d, $p, $m), @suffix($p, "conform/l7000_versioned/test_column_evolution_versioned_e2e.py"), !t252($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-0", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v242), name($v242, $v243), names18($v243), inside($n, $v244, k0), !blocked245($n, $v244), node(_, $v244, "function_definition", _, _), op($v244, "async"), !m250($n), doc($d, $p, $m), @suffix($p, "conform/l7000_versioned/test_column_evolution_versioned_e2e.py"), !t252($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked256($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked258($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m261($n) :- inside($n, $v257, k0), !blocked258($n, $v257), node(_, $v257, "function_definition", _, _), field($v257, "name", $v259), node(_, $v259, "identifier", _, _), text($v259, $v260), names2($v260).
@@ -1642,7 +1641,7 @@ t262($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t262($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t263($s) :- doc(_, $s, _), t262($s).
 t263($s) :- doc(_, _, $s), t262($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-1", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v253), name($v253, $v254), names18($v254), inside($n, $v255, k0), !blocked256($n, $v255), node(_, $v255, "function_definition", _, _), op($v255, "async"), !m261($n), doc($d, $p, $m), @suffix($p, "conform/l9800_rippling/test_async_handler_support.py"), !t263($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-1", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v253), name($v253, $v254), names18($v254), inside($n, $v255, k0), !blocked256($n, $v255), node(_, $v255, "function_definition", _, _), op($v255, "async"), !m261($n), doc($d, $p, $m), @suffix($p, "conform/l9800_rippling/test_async_handler_support.py"), !t263($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked267($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked269($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m272($n) :- inside($n, $v268, k0), !blocked269($n, $v268), node(_, $v268, "function_definition", _, _), field($v268, "name", $v270), node(_, $v270, "identifier", _, _), text($v270, $v271), names3($v271).
@@ -1692,7 +1691,7 @@ t273($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t273($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t274($s) :- doc(_, $s, _), t273($s).
 t274($s) :- doc(_, _, $s), t273($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-3", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v264), name($v264, $v265), names18($v265), inside($n, $v266, k0), !blocked267($n, $v266), node(_, $v266, "function_definition", _, _), op($v266, "async"), !m272($n), doc($d, $p, $m), @suffix($p, "impl/common/l1000_cache/invalidation_broadcast.py"), !t274($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-3", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v264), name($v264, $v265), names18($v265), inside($n, $v266, k0), !blocked267($n, $v266), node(_, $v266, "function_definition", _, _), op($v266, "async"), !m272($n), doc($d, $p, $m), @suffix($p, "impl/common/l1000_cache/invalidation_broadcast.py"), !t274($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked278($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked280($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m283($n) :- inside($n, $v279, k0), !blocked280($n, $v279), node(_, $v279, "function_definition", _, _), field($v279, "name", $v281), node(_, $v281, "identifier", _, _), text($v281, $v282), names4($v282).
@@ -1742,7 +1741,7 @@ t284($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t284($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t285($s) :- doc(_, $s, _), t284($s).
 t285($s) :- doc(_, _, $s), t284($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-4", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v275), name($v275, $v276), names18($v276), inside($n, $v277, k0), !blocked278($n, $v277), node(_, $v277, "function_definition", _, _), op($v277, "async"), !m283($n), doc($d, $p, $m), @suffix($p, "impl/common/l2070_server_plan/base_server_plan.py"), !t285($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-4", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v275), name($v275, $v276), names18($v276), inside($n, $v277, k0), !blocked278($n, $v277), node(_, $v277, "function_definition", _, _), op($v277, "async"), !m283($n), doc($d, $p, $m), @suffix($p, "impl/common/l2070_server_plan/base_server_plan.py"), !t285($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked289($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked291($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m294($n) :- inside($n, $v290, k0), !blocked291($n, $v290), node(_, $v290, "function_definition", _, _), field($v290, "name", $v292), node(_, $v292, "identifier", _, _), text($v292, $v293), names5($v293).
@@ -1792,7 +1791,7 @@ t295($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t295($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t296($s) :- doc(_, $s, _), t295($s).
 t296($s) :- doc(_, _, $s), t295($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-5", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v286), name($v286, $v287), names18($v287), inside($n, $v288, k0), !blocked289($n, $v288), node(_, $v288, "function_definition", _, _), op($v288, "async"), !m294($n), doc($d, $p, $m), @suffix($p, "impl/common/l2550_storage_backend/backend.py"), !t296($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-5", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v286), name($v286, $v287), names18($v287), inside($n, $v288, k0), !blocked289($n, $v288), node(_, $v288, "function_definition", _, _), op($v288, "async"), !m294($n), doc($d, $p, $m), @suffix($p, "impl/common/l2550_storage_backend/backend.py"), !t296($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked300($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked302($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m305($n) :- inside($n, $v301, k0), !blocked302($n, $v301), node(_, $v301, "function_definition", _, _), field($v301, "name", $v303), node(_, $v303, "identifier", _, _), text($v303, $v304), names6($v304).
@@ -1842,7 +1841,7 @@ t306($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t306($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t307($s) :- doc(_, $s, _), t306($s).
 t307($s) :- doc(_, _, $s), t306($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-6", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v297), name($v297, $v298), names18($v298), inside($n, $v299, k0), !blocked300($n, $v299), node(_, $v299, "function_definition", _, _), op($v299, "async"), !m305($n), doc($d, $p, $m), @suffix($p, "impl/l1570_llm_client/client.py"), !t307($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-6", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v297), name($v297, $v298), names18($v298), inside($n, $v299, k0), !blocked300($n, $v299), node(_, $v299, "function_definition", _, _), op($v299, "async"), !m305($n), doc($d, $p, $m), @suffix($p, "impl/l1570_llm_client/client.py"), !t307($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked311($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked313($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m316($n) :- inside($n, $v312, k0), !blocked313($n, $v312), node(_, $v312, "function_definition", _, _), field($v312, "name", $v314), node(_, $v314, "identifier", _, _), text($v314, $v315), names7($v315).
@@ -1892,7 +1891,7 @@ t317($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t317($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t318($s) :- doc(_, $s, _), t317($s).
 t318($s) :- doc(_, _, $s), t317($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-7", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v308), name($v308, $v309), names18($v309), inside($n, $v310, k0), !blocked311($n, $v310), node(_, $v310, "function_definition", _, _), op($v310, "async"), !m316($n), doc($d, $p, $m), @suffix($p, "impl/mariadb/connection.py"), !t318($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-7", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v308), name($v308, $v309), names18($v309), inside($n, $v310, k0), !blocked311($n, $v310), node(_, $v310, "function_definition", _, _), op($v310, "async"), !m316($n), doc($d, $p, $m), @suffix($p, "impl/mariadb/connection.py"), !t318($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked322($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked324($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m327($n) :- inside($n, $v323, k0), !blocked324($n, $v323), node(_, $v323, "function_definition", _, _), field($v323, "name", $v325), node(_, $v325, "identifier", _, _), text($v325, $v326), names8($v326).
@@ -1942,7 +1941,7 @@ t328($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t328($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t329($s) :- doc(_, $s, _), t328($s).
 t329($s) :- doc(_, _, $s), t328($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-8", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v319), name($v319, $v320), names18($v320), inside($n, $v321, k0), !blocked322($n, $v321), node(_, $v321, "function_definition", _, _), op($v321, "async"), !m327($n), doc($d, $p, $m), @suffix($p, "impl/postgres/connection.py"), !t329($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-8", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v319), name($v319, $v320), names18($v320), inside($n, $v321, k0), !blocked322($n, $v321), node(_, $v321, "function_definition", _, _), op($v321, "async"), !m327($n), doc($d, $p, $m), @suffix($p, "impl/postgres/connection.py"), !t329($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked333($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked335($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m338($n) :- inside($n, $v334, k0), !blocked335($n, $v334), node(_, $v334, "function_definition", _, _), field($v334, "name", $v336), node(_, $v336, "identifier", _, _), text($v336, $v337), names6($v337).
@@ -1992,7 +1991,7 @@ t339($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t339($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t340($s) :- doc(_, $s, _), t339($s).
 t340($s) :- doc(_, _, $s), t339($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-10", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v330), name($v330, $v331), names18($v331), inside($n, $v332, k0), !blocked333($n, $v332), node(_, $v332, "function_definition", _, _), op($v332, "async"), !m338($n), doc($d, $p, $m), @suffix($p, "l2000_connection/async_executor.py"), !t340($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-10", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v330), name($v330, $v331), names18($v331), inside($n, $v332, k0), !blocked333($n, $v332), node(_, $v332, "function_definition", _, _), op($v332, "async"), !m338($n), doc($d, $p, $m), @suffix($p, "l2000_connection/async_executor.py"), !t340($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked344($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked346($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m349($n) :- inside($n, $v345, k0), !blocked346($n, $v345), node(_, $v345, "function_definition", _, _), field($v345, "name", $v347), node(_, $v347, "identifier", _, _), text($v347, $v348), names9($v348).
@@ -2042,7 +2041,7 @@ t350($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t350($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t351($s) :- doc(_, $s, _), t350($s).
 t351($s) :- doc(_, _, $s), t350($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-11", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v341), name($v341, $v342), names18($v342), inside($n, $v343, k0), !blocked344($n, $v343), node(_, $v343, "function_definition", _, _), op($v343, "async"), !m349($n), doc($d, $p, $m), @suffix($p, "l2000_connection/connection_pool.py"), !t351($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-11", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v341), name($v341, $v342), names18($v342), inside($n, $v343, k0), !blocked344($n, $v343), node(_, $v343, "function_definition", _, _), op($v343, "async"), !m349($n), doc($d, $p, $m), @suffix($p, "l2000_connection/connection_pool.py"), !t351($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked355($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked357($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m360($n) :- inside($n, $v356, k0), !blocked357($n, $v356), node(_, $v356, "function_definition", _, _), field($v356, "name", $v358), node(_, $v358, "identifier", _, _), text($v358, $v359), names10($v359).
@@ -2092,7 +2091,7 @@ t361($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t361($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t362($s) :- doc(_, $s, _), t361($s).
 t362($s) :- doc(_, _, $s), t361($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-12", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v352), name($v352, $v353), names18($v353), inside($n, $v354, k0), !blocked355($n, $v354), node(_, $v354, "function_definition", _, _), op($v354, "async"), !m360($n), doc($d, $p, $m), @suffix($p, "l2050_transaction/transaction.py"), !t362($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-12", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v352), name($v352, $v353), names18($v353), inside($n, $v354, k0), !blocked355($n, $v354), node(_, $v354, "function_definition", _, _), op($v354, "async"), !m360($n), doc($d, $p, $m), @suffix($p, "l2050_transaction/transaction.py"), !t362($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked366($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked368($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m371($n) :- inside($n, $v367, k0), !blocked368($n, $v367), node(_, $v367, "function_definition", _, _), field($v367, "name", $v369), node(_, $v369, "identifier", _, _), text($v369, $v370), names11($v370).
@@ -2142,7 +2141,7 @@ t372($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t372($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t373($s) :- doc(_, $s, _), t372($s).
 t373($s) :- doc(_, _, $s), t372($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-13", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v363), name($v363, $v364), names18($v364), inside($n, $v365, k0), !blocked366($n, $v365), node(_, $v365, "function_definition", _, _), op($v365, "async"), !m371($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/query_builder.py"), !t373($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-13", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v363), name($v363, $v364), names18($v364), inside($n, $v365, k0), !blocked366($n, $v365), node(_, $v365, "function_definition", _, _), op($v365, "async"), !m371($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/query_builder.py"), !t373($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked377($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked379($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m382($n) :- inside($n, $v378, k0), !blocked379($n, $v378), node(_, $v378, "function_definition", _, _), field($v378, "name", $v380), node(_, $v380, "identifier", _, _), text($v380, $v381), names12($v381).
@@ -2192,7 +2191,7 @@ t383($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t383($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t384($s) :- doc(_, $s, _), t383($s).
 t384($s) :- doc(_, _, $s), t383($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-14", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v374), name($v374, $v375), names18($v375), inside($n, $v376, k0), !blocked377($n, $v376), node(_, $v376, "function_definition", _, _), op($v376, "async"), !m382($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/tuple_query.py"), !t384($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-14", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v374), name($v374, $v375), names18($v375), inside($n, $v376, k0), !blocked377($n, $v376), node(_, $v376, "function_definition", _, _), op($v376, "async"), !m382($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/tuple_query.py"), !t384($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked388($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked390($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m393($n) :- inside($n, $v389, k0), !blocked390($n, $v389), node(_, $v389, "function_definition", _, _), field($v389, "name", $v391), node(_, $v391, "identifier", _, _), text($v391, $v392), names6($v392).
@@ -2242,7 +2241,7 @@ t394($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t394($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t395($s) :- doc(_, $s, _), t394($s).
 t395($s) :- doc(_, _, $s), t394($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-25", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v385), name($v385, $v386), names18($v386), inside($n, $v387, k0), !blocked388($n, $v387), node(_, $v387, "function_definition", _, _), op($v387, "async"), !m393($n), doc($d, $p, $m), @suffix($p, "l4170_inbound_bridge/process.py"), !t395($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-25", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v385), name($v385, $v386), names18($v386), inside($n, $v387, k0), !blocked388($n, $v387), node(_, $v387, "function_definition", _, _), op($v387, "async"), !m393($n), doc($d, $p, $m), @suffix($p, "l4170_inbound_bridge/process.py"), !t395($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked399($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked401($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m404($n) :- inside($n, $v400, k0), !blocked401($n, $v400), node(_, $v400, "function_definition", _, _), field($v400, "name", $v402), node(_, $v402, "identifier", _, _), text($v402, $v403), names13($v403).
@@ -2292,7 +2291,7 @@ t405($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t405($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t406($s) :- doc(_, $s, _), t405($s).
 t406($s) :- doc(_, _, $s), t405($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-26", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v396), name($v396, $v397), names18($v397), inside($n, $v398, k0), !blocked399($n, $v398), node(_, $v398, "function_definition", _, _), op($v398, "async"), !m404($n), doc($d, $p, $m), @suffix($p, "l4200_event_pipeline/persistent_metrics.py"), !t406($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-26", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v396), name($v396, $v397), names18($v397), inside($n, $v398, k0), !blocked399($n, $v398), node(_, $v398, "function_definition", _, _), op($v398, "async"), !m404($n), doc($d, $p, $m), @suffix($p, "l4200_event_pipeline/persistent_metrics.py"), !t406($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked410($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked412($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m415($n) :- inside($n, $v411, k0), !blocked412($n, $v411), node(_, $v411, "function_definition", _, _), field($v411, "name", $v413), node(_, $v413, "identifier", _, _), text($v413, $v414), names14($v414).
@@ -2342,7 +2341,7 @@ t416($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t416($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t417($s) :- doc(_, $s, _), t416($s).
 t417($s) :- doc(_, _, $s), t416($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-29", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v407), name($v407, $v408), names18($v408), inside($n, $v409, k0), !blocked410($n, $v409), node(_, $v409, "function_definition", _, _), op($v409, "async"), !m415($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/deferred_dispatch.py"), !t417($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-29", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v407), name($v407, $v408), names18($v408), inside($n, $v409, k0), !blocked410($n, $v409), node(_, $v409, "function_definition", _, _), op($v409, "async"), !m415($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/deferred_dispatch.py"), !t417($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked421($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked423($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m426($n) :- inside($n, $v422, k0), !blocked423($n, $v422), node(_, $v422, "function_definition", _, _), field($v422, "name", $v424), node(_, $v424, "identifier", _, _), text($v424, $v425), names15($v425).
@@ -2392,7 +2391,7 @@ t427($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t427($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t428($s) :- doc(_, $s, _), t427($s).
 t428($s) :- doc(_, _, $s), t427($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-30", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v418), name($v418, $v419), names18($v419), inside($n, $v420, k0), !blocked421($n, $v420), node(_, $v420, "function_definition", _, _), op($v420, "async"), !m426($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/dispatcher.py"), !t428($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-30", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v418), name($v418, $v419), names18($v419), inside($n, $v420, k0), !blocked421($n, $v420), node(_, $v420, "function_definition", _, _), op($v420, "async"), !m426($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/dispatcher.py"), !t428($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked432($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked434($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m437($n) :- inside($n, $v433, k0), !blocked434($n, $v433), node(_, $v433, "function_definition", _, _), field($v433, "name", $v435), node(_, $v435, "identifier", _, _), text($v435, $v436), names16($v436).
@@ -2442,7 +2441,7 @@ t438($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t438($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t439($s) :- doc(_, $s, _), t438($s).
 t439($s) :- doc(_, _, $s), t438($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-31", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v429), name($v429, $v430), names18($v430), inside($n, $v431, k0), !blocked432($n, $v431), node(_, $v431, "function_definition", _, _), op($v431, "async"), !m437($n), doc($d, $p, $m), @suffix($p, "l6600_cleanup/reaper.py"), !t439($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-31", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v429), name($v429, $v430), names18($v430), inside($n, $v431, k0), !blocked432($n, $v431), node(_, $v431, "function_definition", _, _), op($v431, "async"), !m437($n), doc($d, $p, $m), @suffix($p, "l6600_cleanup/reaper.py"), !t439($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked443($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked445($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m448($n) :- inside($n, $v444, k0), !blocked445($n, $v444), node(_, $v444, "function_definition", _, _), field($v444, "name", $v446), node(_, $v446, "identifier", _, _), text($v446, $v447), names17($v447).
@@ -2492,7 +2491,7 @@ t449($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t449($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t450($s) :- doc(_, $s, _), t449($s).
 t450($s) :- doc(_, _, $s), t449($s).
-violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-32", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v440), name($v440, $v441), names18($v441), inside($n, $v442, k0), !blocked443($n, $v442), node(_, $v442, "function_definition", _, _), op($v442, "async"), !m448($n), doc($d, $p, $m), @suffix($p, "l8000_admin/tools/ipc_tools.py"), !t450($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "async-wraps-allowed-file-32", "ASYNC_WRAPS_SYNC", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v440), name($v440, $v441), names18($v441), inside($n, $v442, k0), !blocked443($n, $v442), node(_, $v442, "function_definition", _, _), op($v442, "async"), !m448($n), doc($d, $p, $m), @suffix($p, "l8000_admin/tools/ipc_tools.py"), !t450($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked454($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 t455($s) :- doc(_, $s, _), @suffix($s, "conform/l7000_versioned/test_column_evolution_versioned_e2e.py").
 t455($s) :- doc(_, _, $s), @suffix($s, "conform/l7000_versioned/test_column_evolution_versioned_e2e.py").
@@ -2578,7 +2577,7 @@ t455($s) :- doc(_, $s, _), @contains($s, "integration_tests/").
 t455($s) :- doc(_, _, $s), @contains($s, "integration_tests/").
 t456($s) :- doc(_, $s, _), t455($s).
 t456($s) :- doc(_, _, $s), t455($s).
-violation("data-layer-async-sync-boundary", "executor", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v451), name($v451, $v452), @suffix($v452, "run_in_executor"), inside($n, $v453, k0), !blocked454($n, $v453), node(_, $v453, "function_definition", _, _), op($v453, "async"), doc($d, $p, $m), !t456($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v451), name($v451, $v452), @suffix($v452, "run_in_executor"), inside($n, $v453, k0), !blocked454($n, $v453), node(_, $v453, "function_definition", _, _), op($v453, "async"), doc($d, $p, $m), !t456($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked460($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked462($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m465($n) :- inside($n, $v461, k0), !blocked462($n, $v461), node(_, $v461, "function_definition", _, _), field($v461, "name", $v463), node(_, $v463, "identifier", _, _), text($v463, $v464), names1($v464).
@@ -2628,7 +2627,7 @@ t466($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t466($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t467($s) :- doc(_, $s, _), t466($s).
 t467($s) :- doc(_, _, $s), t466($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-0", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v457), name($v457, $v458), @suffix($v458, "run_in_executor"), inside($n, $v459, k0), !blocked460($n, $v459), node(_, $v459, "function_definition", _, _), op($v459, "async"), !m465($n), doc($d, $p, $m), @suffix($p, "conform/l7000_versioned/test_column_evolution_versioned_e2e.py"), !t467($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-0", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v457), name($v457, $v458), @suffix($v458, "run_in_executor"), inside($n, $v459, k0), !blocked460($n, $v459), node(_, $v459, "function_definition", _, _), op($v459, "async"), !m465($n), doc($d, $p, $m), @suffix($p, "conform/l7000_versioned/test_column_evolution_versioned_e2e.py"), !t467($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked471($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked473($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m476($n) :- inside($n, $v472, k0), !blocked473($n, $v472), node(_, $v472, "function_definition", _, _), field($v472, "name", $v474), node(_, $v474, "identifier", _, _), text($v474, $v475), names2($v475).
@@ -2678,7 +2677,7 @@ t477($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t477($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t478($s) :- doc(_, $s, _), t477($s).
 t478($s) :- doc(_, _, $s), t477($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-1", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v468), name($v468, $v469), @suffix($v469, "run_in_executor"), inside($n, $v470, k0), !blocked471($n, $v470), node(_, $v470, "function_definition", _, _), op($v470, "async"), !m476($n), doc($d, $p, $m), @suffix($p, "conform/l9800_rippling/test_async_handler_support.py"), !t478($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-1", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v468), name($v468, $v469), @suffix($v469, "run_in_executor"), inside($n, $v470, k0), !blocked471($n, $v470), node(_, $v470, "function_definition", _, _), op($v470, "async"), !m476($n), doc($d, $p, $m), @suffix($p, "conform/l9800_rippling/test_async_handler_support.py"), !t478($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked482($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked484($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m487($n) :- inside($n, $v483, k0), !blocked484($n, $v483), node(_, $v483, "function_definition", _, _), field($v483, "name", $v485), node(_, $v485, "identifier", _, _), text($v485, $v486), names3($v486).
@@ -2728,7 +2727,7 @@ t488($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t488($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t489($s) :- doc(_, $s, _), t488($s).
 t489($s) :- doc(_, _, $s), t488($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-3", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v479), name($v479, $v480), @suffix($v480, "run_in_executor"), inside($n, $v481, k0), !blocked482($n, $v481), node(_, $v481, "function_definition", _, _), op($v481, "async"), !m487($n), doc($d, $p, $m), @suffix($p, "impl/common/l1000_cache/invalidation_broadcast.py"), !t489($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-3", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v479), name($v479, $v480), @suffix($v480, "run_in_executor"), inside($n, $v481, k0), !blocked482($n, $v481), node(_, $v481, "function_definition", _, _), op($v481, "async"), !m487($n), doc($d, $p, $m), @suffix($p, "impl/common/l1000_cache/invalidation_broadcast.py"), !t489($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked493($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked495($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m498($n) :- inside($n, $v494, k0), !blocked495($n, $v494), node(_, $v494, "function_definition", _, _), field($v494, "name", $v496), node(_, $v496, "identifier", _, _), text($v496, $v497), names4($v497).
@@ -2778,7 +2777,7 @@ t499($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t499($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t500($s) :- doc(_, $s, _), t499($s).
 t500($s) :- doc(_, _, $s), t499($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-4", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v490), name($v490, $v491), @suffix($v491, "run_in_executor"), inside($n, $v492, k0), !blocked493($n, $v492), node(_, $v492, "function_definition", _, _), op($v492, "async"), !m498($n), doc($d, $p, $m), @suffix($p, "impl/common/l2070_server_plan/base_server_plan.py"), !t500($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-4", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v490), name($v490, $v491), @suffix($v491, "run_in_executor"), inside($n, $v492, k0), !blocked493($n, $v492), node(_, $v492, "function_definition", _, _), op($v492, "async"), !m498($n), doc($d, $p, $m), @suffix($p, "impl/common/l2070_server_plan/base_server_plan.py"), !t500($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked504($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked506($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m509($n) :- inside($n, $v505, k0), !blocked506($n, $v505), node(_, $v505, "function_definition", _, _), field($v505, "name", $v507), node(_, $v507, "identifier", _, _), text($v507, $v508), names5($v508).
@@ -2828,7 +2827,7 @@ t510($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t510($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t511($s) :- doc(_, $s, _), t510($s).
 t511($s) :- doc(_, _, $s), t510($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-5", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v501), name($v501, $v502), @suffix($v502, "run_in_executor"), inside($n, $v503, k0), !blocked504($n, $v503), node(_, $v503, "function_definition", _, _), op($v503, "async"), !m509($n), doc($d, $p, $m), @suffix($p, "impl/common/l2550_storage_backend/backend.py"), !t511($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-5", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v501), name($v501, $v502), @suffix($v502, "run_in_executor"), inside($n, $v503, k0), !blocked504($n, $v503), node(_, $v503, "function_definition", _, _), op($v503, "async"), !m509($n), doc($d, $p, $m), @suffix($p, "impl/common/l2550_storage_backend/backend.py"), !t511($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked515($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked517($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m520($n) :- inside($n, $v516, k0), !blocked517($n, $v516), node(_, $v516, "function_definition", _, _), field($v516, "name", $v518), node(_, $v518, "identifier", _, _), text($v518, $v519), names6($v519).
@@ -2878,7 +2877,7 @@ t521($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t521($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t522($s) :- doc(_, $s, _), t521($s).
 t522($s) :- doc(_, _, $s), t521($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-6", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v512), name($v512, $v513), @suffix($v513, "run_in_executor"), inside($n, $v514, k0), !blocked515($n, $v514), node(_, $v514, "function_definition", _, _), op($v514, "async"), !m520($n), doc($d, $p, $m), @suffix($p, "impl/l1570_llm_client/client.py"), !t522($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-6", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v512), name($v512, $v513), @suffix($v513, "run_in_executor"), inside($n, $v514, k0), !blocked515($n, $v514), node(_, $v514, "function_definition", _, _), op($v514, "async"), !m520($n), doc($d, $p, $m), @suffix($p, "impl/l1570_llm_client/client.py"), !t522($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked526($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked528($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m531($n) :- inside($n, $v527, k0), !blocked528($n, $v527), node(_, $v527, "function_definition", _, _), field($v527, "name", $v529), node(_, $v529, "identifier", _, _), text($v529, $v530), names7($v530).
@@ -2928,7 +2927,7 @@ t532($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t532($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t533($s) :- doc(_, $s, _), t532($s).
 t533($s) :- doc(_, _, $s), t532($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-7", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v523), name($v523, $v524), @suffix($v524, "run_in_executor"), inside($n, $v525, k0), !blocked526($n, $v525), node(_, $v525, "function_definition", _, _), op($v525, "async"), !m531($n), doc($d, $p, $m), @suffix($p, "impl/mariadb/connection.py"), !t533($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-7", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v523), name($v523, $v524), @suffix($v524, "run_in_executor"), inside($n, $v525, k0), !blocked526($n, $v525), node(_, $v525, "function_definition", _, _), op($v525, "async"), !m531($n), doc($d, $p, $m), @suffix($p, "impl/mariadb/connection.py"), !t533($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked537($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked539($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m542($n) :- inside($n, $v538, k0), !blocked539($n, $v538), node(_, $v538, "function_definition", _, _), field($v538, "name", $v540), node(_, $v540, "identifier", _, _), text($v540, $v541), names8($v541).
@@ -2978,7 +2977,7 @@ t543($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t543($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t544($s) :- doc(_, $s, _), t543($s).
 t544($s) :- doc(_, _, $s), t543($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-8", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v534), name($v534, $v535), @suffix($v535, "run_in_executor"), inside($n, $v536, k0), !blocked537($n, $v536), node(_, $v536, "function_definition", _, _), op($v536, "async"), !m542($n), doc($d, $p, $m), @suffix($p, "impl/postgres/connection.py"), !t544($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-8", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v534), name($v534, $v535), @suffix($v535, "run_in_executor"), inside($n, $v536, k0), !blocked537($n, $v536), node(_, $v536, "function_definition", _, _), op($v536, "async"), !m542($n), doc($d, $p, $m), @suffix($p, "impl/postgres/connection.py"), !t544($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked548($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked550($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m553($n) :- inside($n, $v549, k0), !blocked550($n, $v549), node(_, $v549, "function_definition", _, _), field($v549, "name", $v551), node(_, $v551, "identifier", _, _), text($v551, $v552), names6($v552).
@@ -3028,7 +3027,7 @@ t554($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t554($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t555($s) :- doc(_, $s, _), t554($s).
 t555($s) :- doc(_, _, $s), t554($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-10", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v545), name($v545, $v546), @suffix($v546, "run_in_executor"), inside($n, $v547, k0), !blocked548($n, $v547), node(_, $v547, "function_definition", _, _), op($v547, "async"), !m553($n), doc($d, $p, $m), @suffix($p, "l2000_connection/async_executor.py"), !t555($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-10", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v545), name($v545, $v546), @suffix($v546, "run_in_executor"), inside($n, $v547, k0), !blocked548($n, $v547), node(_, $v547, "function_definition", _, _), op($v547, "async"), !m553($n), doc($d, $p, $m), @suffix($p, "l2000_connection/async_executor.py"), !t555($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked559($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked561($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m564($n) :- inside($n, $v560, k0), !blocked561($n, $v560), node(_, $v560, "function_definition", _, _), field($v560, "name", $v562), node(_, $v562, "identifier", _, _), text($v562, $v563), names9($v563).
@@ -3078,7 +3077,7 @@ t565($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t565($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t566($s) :- doc(_, $s, _), t565($s).
 t566($s) :- doc(_, _, $s), t565($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-11", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v556), name($v556, $v557), @suffix($v557, "run_in_executor"), inside($n, $v558, k0), !blocked559($n, $v558), node(_, $v558, "function_definition", _, _), op($v558, "async"), !m564($n), doc($d, $p, $m), @suffix($p, "l2000_connection/connection_pool.py"), !t566($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-11", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v556), name($v556, $v557), @suffix($v557, "run_in_executor"), inside($n, $v558, k0), !blocked559($n, $v558), node(_, $v558, "function_definition", _, _), op($v558, "async"), !m564($n), doc($d, $p, $m), @suffix($p, "l2000_connection/connection_pool.py"), !t566($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked570($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked572($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m575($n) :- inside($n, $v571, k0), !blocked572($n, $v571), node(_, $v571, "function_definition", _, _), field($v571, "name", $v573), node(_, $v573, "identifier", _, _), text($v573, $v574), names10($v574).
@@ -3128,7 +3127,7 @@ t576($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t576($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t577($s) :- doc(_, $s, _), t576($s).
 t577($s) :- doc(_, _, $s), t576($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-12", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v567), name($v567, $v568), @suffix($v568, "run_in_executor"), inside($n, $v569, k0), !blocked570($n, $v569), node(_, $v569, "function_definition", _, _), op($v569, "async"), !m575($n), doc($d, $p, $m), @suffix($p, "l2050_transaction/transaction.py"), !t577($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-12", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v567), name($v567, $v568), @suffix($v568, "run_in_executor"), inside($n, $v569, k0), !blocked570($n, $v569), node(_, $v569, "function_definition", _, _), op($v569, "async"), !m575($n), doc($d, $p, $m), @suffix($p, "l2050_transaction/transaction.py"), !t577($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked581($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked583($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m586($n) :- inside($n, $v582, k0), !blocked583($n, $v582), node(_, $v582, "function_definition", _, _), field($v582, "name", $v584), node(_, $v584, "identifier", _, _), text($v584, $v585), names11($v585).
@@ -3178,7 +3177,7 @@ t587($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t587($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t588($s) :- doc(_, $s, _), t587($s).
 t588($s) :- doc(_, _, $s), t587($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-13", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v578), name($v578, $v579), @suffix($v579, "run_in_executor"), inside($n, $v580, k0), !blocked581($n, $v580), node(_, $v580, "function_definition", _, _), op($v580, "async"), !m586($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/query_builder.py"), !t588($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-13", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v578), name($v578, $v579), @suffix($v579, "run_in_executor"), inside($n, $v580, k0), !blocked581($n, $v580), node(_, $v580, "function_definition", _, _), op($v580, "async"), !m586($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/query_builder.py"), !t588($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked592($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked594($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m597($n) :- inside($n, $v593, k0), !blocked594($n, $v593), node(_, $v593, "function_definition", _, _), field($v593, "name", $v595), node(_, $v595, "identifier", _, _), text($v595, $v596), names12($v596).
@@ -3228,7 +3227,7 @@ t598($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t598($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t599($s) :- doc(_, $s, _), t598($s).
 t599($s) :- doc(_, _, $s), t598($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-14", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v589), name($v589, $v590), @suffix($v590, "run_in_executor"), inside($n, $v591, k0), !blocked592($n, $v591), node(_, $v591, "function_definition", _, _), op($v591, "async"), !m597($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/tuple_query.py"), !t599($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-14", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v589), name($v589, $v590), @suffix($v590, "run_in_executor"), inside($n, $v591, k0), !blocked592($n, $v591), node(_, $v591, "function_definition", _, _), op($v591, "async"), !m597($n), doc($d, $p, $m), @suffix($p, "l2060_query_builder/tuple_query.py"), !t599($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked603($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked605($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m608($n) :- inside($n, $v604, k0), !blocked605($n, $v604), node(_, $v604, "function_definition", _, _), field($v604, "name", $v606), node(_, $v606, "identifier", _, _), text($v606, $v607), names6($v607).
@@ -3278,7 +3277,7 @@ t609($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t609($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t610($s) :- doc(_, $s, _), t609($s).
 t610($s) :- doc(_, _, $s), t609($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-25", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v600), name($v600, $v601), @suffix($v601, "run_in_executor"), inside($n, $v602, k0), !blocked603($n, $v602), node(_, $v602, "function_definition", _, _), op($v602, "async"), !m608($n), doc($d, $p, $m), @suffix($p, "l4170_inbound_bridge/process.py"), !t610($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-25", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v600), name($v600, $v601), @suffix($v601, "run_in_executor"), inside($n, $v602, k0), !blocked603($n, $v602), node(_, $v602, "function_definition", _, _), op($v602, "async"), !m608($n), doc($d, $p, $m), @suffix($p, "l4170_inbound_bridge/process.py"), !t610($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked614($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked616($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m619($n) :- inside($n, $v615, k0), !blocked616($n, $v615), node(_, $v615, "function_definition", _, _), field($v615, "name", $v617), node(_, $v617, "identifier", _, _), text($v617, $v618), names13($v618).
@@ -3328,7 +3327,7 @@ t620($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t620($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t621($s) :- doc(_, $s, _), t620($s).
 t621($s) :- doc(_, _, $s), t620($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-26", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v611), name($v611, $v612), @suffix($v612, "run_in_executor"), inside($n, $v613, k0), !blocked614($n, $v613), node(_, $v613, "function_definition", _, _), op($v613, "async"), !m619($n), doc($d, $p, $m), @suffix($p, "l4200_event_pipeline/persistent_metrics.py"), !t621($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-26", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v611), name($v611, $v612), @suffix($v612, "run_in_executor"), inside($n, $v613, k0), !blocked614($n, $v613), node(_, $v613, "function_definition", _, _), op($v613, "async"), !m619($n), doc($d, $p, $m), @suffix($p, "l4200_event_pipeline/persistent_metrics.py"), !t621($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked625($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked627($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m630($n) :- inside($n, $v626, k0), !blocked627($n, $v626), node(_, $v626, "function_definition", _, _), field($v626, "name", $v628), node(_, $v628, "identifier", _, _), text($v628, $v629), names14($v629).
@@ -3378,7 +3377,7 @@ t631($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t631($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t632($s) :- doc(_, $s, _), t631($s).
 t632($s) :- doc(_, _, $s), t631($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-29", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v622), name($v622, $v623), @suffix($v623, "run_in_executor"), inside($n, $v624, k0), !blocked625($n, $v624), node(_, $v624, "function_definition", _, _), op($v624, "async"), !m630($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/deferred_dispatch.py"), !t632($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-29", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v622), name($v622, $v623), @suffix($v623, "run_in_executor"), inside($n, $v624, k0), !blocked625($n, $v624), node(_, $v624, "function_definition", _, _), op($v624, "async"), !m630($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/deferred_dispatch.py"), !t632($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked636($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked638($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m641($n) :- inside($n, $v637, k0), !blocked638($n, $v637), node(_, $v637, "function_definition", _, _), field($v637, "name", $v639), node(_, $v639, "identifier", _, _), text($v639, $v640), names15($v640).
@@ -3428,7 +3427,7 @@ t642($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t642($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t643($s) :- doc(_, $s, _), t642($s).
 t643($s) :- doc(_, _, $s), t642($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-30", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v633), name($v633, $v634), @suffix($v634, "run_in_executor"), inside($n, $v635, k0), !blocked636($n, $v635), node(_, $v635, "function_definition", _, _), op($v635, "async"), !m641($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/dispatcher.py"), !t643($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-30", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v633), name($v633, $v634), @suffix($v634, "run_in_executor"), inside($n, $v635, k0), !blocked636($n, $v635), node(_, $v635, "function_definition", _, _), op($v635, "async"), !m641($n), doc($d, $p, $m), @suffix($p, "l5000_subscriptions/dispatcher.py"), !t643($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked647($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked649($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m652($n) :- inside($n, $v648, k0), !blocked649($n, $v648), node(_, $v648, "function_definition", _, _), field($v648, "name", $v650), node(_, $v650, "identifier", _, _), text($v650, $v651), names16($v651).
@@ -3478,7 +3477,7 @@ t653($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t653($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t654($s) :- doc(_, $s, _), t653($s).
 t654($s) :- doc(_, _, $s), t653($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-31", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v644), name($v644, $v645), @suffix($v645, "run_in_executor"), inside($n, $v646, k0), !blocked647($n, $v646), node(_, $v646, "function_definition", _, _), op($v646, "async"), !m652($n), doc($d, $p, $m), @suffix($p, "l6600_cleanup/reaper.py"), !t654($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-31", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v644), name($v644, $v645), @suffix($v645, "run_in_executor"), inside($n, $v646, k0), !blocked647($n, $v646), node(_, $v646, "function_definition", _, _), op($v646, "async"), !m652($n), doc($d, $p, $m), @suffix($p, "l6600_cleanup/reaper.py"), !t654($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked658($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 blocked660($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
 m663($n) :- inside($n, $v659, k0), !blocked660($n, $v659), node(_, $v659, "function_definition", _, _), field($v659, "name", $v661), node(_, $v661, "identifier", _, _), text($v661, $v662), names17($v662).
@@ -3528,5 +3527,5 @@ t664($s) :- doc(_, $s, _), @suffix($s, "l4300_ipc/server_mixin.py").
 t664($s) :- doc(_, _, $s), @suffix($s, "l4300_ipc/server_mixin.py").
 t665($s) :- doc(_, $s, _), t664($s).
 t665($s) :- doc(_, _, $s), t664($s).
-violation("data-layer-async-sync-boundary", "executor-allowed-file-32", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v655), name($v655, $v656), @suffix($v656, "run_in_executor"), inside($n, $v657, k0), !blocked658($n, $v657), node(_, $v657, "function_definition", _, _), op($v657, "async"), !m663($n), doc($d, $p, $m), @suffix($p, "l8000_admin/tools/ipc_tools.py"), !t665($p), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-async-sync-boundary", "executor-allowed-file-32", "EXECUTOR_ESCAPE", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v655), name($v655, $v656), @suffix($v656, "run_in_executor"), inside($n, $v657, k0), !blocked658($n, $v657), node(_, $v657, "function_definition", _, _), op($v657, "async"), !m663($n), doc($d, $p, $m), @suffix($p, "l8000_admin/tools/ipc_tools.py"), !t665($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 .output violation

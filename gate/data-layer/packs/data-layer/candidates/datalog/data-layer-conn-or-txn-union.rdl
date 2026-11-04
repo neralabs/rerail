@@ -3,10 +3,7 @@
 .decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
-.decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.input doc, node, child, field, text
 .kindset k0 = "class_definition"
 .decl blocked100(low: node, high: node)
 .decl blocked106(low: node, high: node)
@@ -56,7 +53,7 @@
 .decl out_scope(d: int)
 .decl u147(n: node)
 .decl u71(n: node)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("_get_metadata_id_for_revision").
 names0("_lookup_doltdb_metadata_by_revision_id").
 names0("_revision_id_from_metadata_id").

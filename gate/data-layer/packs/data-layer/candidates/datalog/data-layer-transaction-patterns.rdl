@@ -1,12 +1,8 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
 .decl child(p: node, c: node, i: int)
-.decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
-.decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.input doc, node, child, text
 .decl in_scope(d: int)
 .decl m100(n: node)
 .decl m105(n: node)
@@ -240,7 +236,7 @@
 .decl u73(n: node)
 .decl u91(n: node)
 .decl u97(n: node)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 t21("conn").
 names0("ConnectionId").
 t45("conn").

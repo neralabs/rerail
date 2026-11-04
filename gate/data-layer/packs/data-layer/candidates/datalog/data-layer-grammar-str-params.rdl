@@ -3,260 +3,54 @@
 .decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
 .decl op(n: node, s: sym)
-.decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.input doc, node, child, field, text, op
 .decl name(n: node, s: sym)
 name($n, $s) :- text($n, $s).
 name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
 .kindset k0 = "function_definition"
 .kindset k1 = "class_definition"
-.kindset k2 = "module"
-.decl blocked106(low: node, high: node)
-.decl blocked115(low: node, high: node)
-.decl blocked124(low: node, high: node)
-.decl blocked133(low: node, high: node)
-.decl blocked142(low: node, high: node)
-.decl blocked151(low: node, high: node)
-.decl blocked160(low: node, high: node)
-.decl blocked169(low: node, high: node)
-.decl blocked178(low: node, high: node)
-.decl blocked187(low: node, high: node)
-.decl blocked196(low: node, high: node)
-.decl blocked205(low: node, high: node)
-.decl blocked214(low: node, high: node)
-.decl blocked223(low: node, high: node)
-.decl blocked232(low: node, high: node)
-.decl blocked241(low: node, high: node)
-.decl blocked250(low: node, high: node)
-.decl blocked259(low: node, high: node)
-.decl blocked268(low: node, high: node)
-.decl blocked277(low: node, high: node)
-.decl blocked282(low: node, high: node)
-.decl blocked286(low: node, high: node)
-.decl blocked319(low: node, high: node)
-.decl blocked397(low: node, high: node)
-.decl blocked406(low: node, high: node)
-.decl blocked415(low: node, high: node)
-.decl blocked424(low: node, high: node)
-.decl blocked43(low: node, high: node)
-.decl blocked433(low: node, high: node)
-.decl blocked442(low: node, high: node)
-.decl blocked451(low: node, high: node)
-.decl blocked460(low: node, high: node)
-.decl blocked469(low: node, high: node)
-.decl blocked478(low: node, high: node)
-.decl blocked487(low: node, high: node)
-.decl blocked496(low: node, high: node)
-.decl blocked505(low: node, high: node)
-.decl blocked514(low: node, high: node)
-.decl blocked52(low: node, high: node)
-.decl blocked523(low: node, high: node)
-.decl blocked532(low: node, high: node)
-.decl blocked541(low: node, high: node)
-.decl blocked550(low: node, high: node)
-.decl blocked559(low: node, high: node)
-.decl blocked568(low: node, high: node)
-.decl blocked577(low: node, high: node)
-.decl blocked586(low: node, high: node)
-.decl blocked595(low: node, high: node)
-.decl blocked604(low: node, high: node)
-.decl blocked61(low: node, high: node)
-.decl blocked613(low: node, high: node)
-.decl blocked622(low: node, high: node)
-.decl blocked631(low: node, high: node)
-.decl blocked649(low: node, high: node)
-.decl blocked70(low: node, high: node)
-.decl blocked727(low: node, high: node)
-.decl blocked736(low: node, high: node)
-.decl blocked745(low: node, high: node)
-.decl blocked754(low: node, high: node)
-.decl blocked763(low: node, high: node)
-.decl blocked772(low: node, high: node)
-.decl blocked781(low: node, high: node)
-.decl blocked79(low: node, high: node)
-.decl blocked790(low: node, high: node)
-.decl blocked799(low: node, high: node)
-.decl blocked808(low: node, high: node)
-.decl blocked817(low: node, high: node)
-.decl blocked826(low: node, high: node)
-.decl blocked835(low: node, high: node)
-.decl blocked844(low: node, high: node)
-.decl blocked853(low: node, high: node)
-.decl blocked862(low: node, high: node)
-.decl blocked871(low: node, high: node)
-.decl blocked88(low: node, high: node)
-.decl blocked880(low: node, high: node)
-.decl blocked889(low: node, high: node)
-.decl blocked898(low: node, high: node)
-.decl blocked907(low: node, high: node)
-.decl blocked916(low: node, high: node)
-.decl blocked925(low: node, high: node)
-.decl blocked934(low: node, high: node)
-.decl blocked943(low: node, high: node)
-.decl blocked952(low: node, high: node)
-.decl blocked961(low: node, high: node)
-.decl blocked97(low: node, high: node)
+.decl blocked20(low: node, high: node)
 .decl in_scope(d: int)
-.decl m12(n: node)
-.decl m16(n: node)
-.decl m19(n: node)
-.decl m21(n: node)
 .decl m23(n: node)
-.decl m24(n: node)
-.decl m280(n: node)
-.decl m289(n: node)
-.decl m297(n: node)
-.decl m30(n: node)
-.decl m305(n: node)
-.decl m306(n: node)
 .decl m31(n: node)
-.decl m322(n: node)
-.decl m330(n: node)
-.decl m338(n: node)
-.decl m339(n: node)
-.decl m347(n: node)
-.decl m348(n: node)
-.decl m358(n: node)
-.decl m36(n: node)
-.decl m366(n: node)
-.decl m370(n: node)
-.decl m373(n: node)
-.decl m375(n: node)
-.decl m377(n: node)
-.decl m378(n: node)
-.decl m384(n: node)
-.decl m385(n: node)
-.decl m390(n: node)
+.decl m39(n: node)
 .decl m4(n: node)
-.decl m634(n: node)
-.decl m652(n: node)
-.decl m660(n: node)
-.decl m668(n: node)
-.decl m669(n: node)
-.decl m677(n: node)
-.decl m678(n: node)
-.decl m688(n: node)
-.decl m696(n: node)
-.decl m700(n: node)
-.decl m703(n: node)
-.decl m705(n: node)
-.decl m707(n: node)
-.decl m708(n: node)
-.decl m714(n: node)
-.decl m715(n: node)
-.decl m720(n: node)
-.decl m964(n: node)
+.decl m40(n: node)
+.decl m48(n: node)
+.decl m49(n: node)
+.decl m59(n: node)
 .decl names0(s: sym)
 .decl names1(s: sym)
-.decl names10(s: sym)
-.decl names11(s: sym)
-.decl names12(s: sym)
-.decl names13(s: sym)
-.decl names14(s: sym)
-.decl names15(s: sym)
-.decl names16(s: sym)
-.decl names17(s: sym)
-.decl names18(s: sym)
-.decl names19(s: sym)
 .decl names2(s: sym)
-.decl names20(s: sym)
-.decl names21(s: sym)
-.decl names22(s: sym)
-.decl names23(s: sym)
-.decl names24(s: sym)
-.decl names25(s: sym)
-.decl names26(s: sym)
-.decl names27(s: sym)
-.decl names28(s: sym)
-.decl names29(s: sym)
 .decl names3(s: sym)
-.decl names30(s: sym)
-.decl names31(s: sym)
-.decl names32(s: sym)
-.decl names33(s: sym)
-.decl names34(s: sym)
-.decl names35(s: sym)
-.decl names36(s: sym)
-.decl names37(s: sym)
-.decl names38(s: sym)
-.decl names39(s: sym)
 .decl names4(s: sym)
-.decl names40(s: sym)
-.decl names5(s: sym)
-.decl names6(s: sym)
-.decl names7(s: sym)
-.decl names8(s: sym)
-.decl names9(s: sym)
 .decl out_scope(d: int)
-.decl t293(s: sym)
-.decl t296(s: sym)
-.decl t326(s: sym)
-.decl t329(s: sym)
-.decl t656(s: sym)
-.decl t659(s: sym)
+.decl t27(s: sym)
+.decl t30(s: sym)
 .decl u1(n: node)
-.decl u355(n: node)
-.decl u360(n: node)
+.decl u56(n: node)
 .decl u6(n: node)
-.decl u685(n: node)
-.decl u690(n: node)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl u61(n: node)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("self").
 names1("str").
-names2("|").
-names3("generation_type").
+names2("render").
+names3("CheckExpressionLexer").
+names3("SqlAdminToolRawStatement").
+names3("SqlColumnConstraint").
+names3("SqlColumnType").
+names3("SqlEscapedLiteral").
+names3("SqlExplain").
+names3("SqlFragment").
+names3("SqlHybridSearchQuery").
+names3("SqlIntegerLiteral").
+names3("SqlPreRenderedFragment").
+names3("SqlQuotedIdentifier").
+names3("SqlTypeRef").
+names3("ViewDefinition").
+names3("sql_ddl_comment").
 names4("__init__").
-names5("SqlAlterColumnAddIdentity").
-names6("value").
-names7("SqlAlterColumnSet").
-names8("SqlAlterTableSet").
-names9("key").
-names10("SqlAlterTableSetOption").
-names11("operation").
-names12("SqlBootstrapProtectTrigger").
-names13("session_id").
-names14("event").
-names15("SqlCreateTriggerIfNotExists").
-names16("timing").
-names17("SqlCreateTriggerStmt").
-names18("name").
-names19("SqlCteDefinitionGrammar").
-names20("SqlJoinType").
-names21("mode").
-names22("SqlMatchAgainstExpr").
-names23("SqlPgCreateBeforeTrigger").
-names24("SqlSetSessionVar").
-names25("SqlSysVar").
-names26("SqlSystemTableRef").
-names27("language").
-names28("SqlTsQueryExpr").
-names29("config").
-names30("TsVectorConfig").
-names31("file_path").
-names32("sql_load_data_infile").
-names33("arg").
-names34("sql_pragma").
-names35("sql_pragma_set").
-names36("definition").
-names37("sql_schema_view_definition").
-names38("CheckExpressionLexer").
-names38("SqlAdminToolRawStatement").
-names38("SqlColumnConstraint").
-names38("SqlColumnType").
-names38("SqlEscapedLiteral").
-names38("SqlExplain").
-names38("SqlFragment").
-names38("SqlHybridSearchQuery").
-names38("SqlIntegerLiteral").
-names38("SqlPreRenderedFragment").
-names38("SqlQuotedIdentifier").
-names38("SqlTypeRef").
-names38("ViewDefinition").
-names38("sql_ddl_comment").
-names39("render").
-names40("+").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2100_sql_grammar/**/*.py").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
@@ -266,280 +60,20 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 m4($n) :- node(_, $n, "identifier", _, _), text($n, $v3), names0($v3).
-m12($n) :- field($n, "left", $v10), u6($v10).
-m12($n) :- field($n, "right", $v11), u6($v11).
-m16($n) :- node(_, $n, "identifier", _, _), text($n, $v7), names1($v7).
-m16($n) :- node(_, $n, "binary_operator", _, _), field($n, "operator", $v8), name($v8, $v9), names2($v9), m12($n).
-m16($n) :- node(_, $n, "union_type", _, _), child($n, $v13, _), u6($v13).
-m16($n) :- node(_, $n, "type", _, _), child($n, $v14, _), u6($v14).
-m16($n) :- node(_, $n, "parenthesized_expression", _, _), child($n, $v15, _), u6($v15).
-u6($n) :- m16($n).
-m19($n) :- node(_, $n, "identifier", _, _), text($n, $v18), names0($v18).
-m21($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v2, _), node(_, $v2, "identifier", _, _), !m4($v2), field($n, "type", $v5), u6($v5).
-m21($n) :- node(_, $n, "typed_default_parameter", _, _), field($n, "name", $v17), node(_, $v17, "identifier", _, _), !m19($v17), field($n, "type", $v20), u6($v20).
-m23($n) :- node(_, $n, "list_splat_pattern", _, _).
-m23($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
-m24($n) :- node(_, $n, "list_splat_pattern", _, _).
-m24($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
-m24($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v22, _), m23($v22).
-m30($n) :- node(_, $n, "positional_separator", _, _).
-m30($n) :- node(_, $n, "keyword_separator", _, _).
-m30($n) :- node(_, $n, "list_splat_pattern", _, _).
-m30($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v29, _), node(_, $v29, "list_splat_pattern", _, _).
-m31($n) :- child($v26, $n, $v27), child($v26, $v25, $v28), $v28 < $v27, m30($v25).
-m36($n) :- child($v33, $n, $v34), child($v33, $v32, $v35), $v34 < $v35, node(_, $v32, "positional_separator", _, _).
-blocked43($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked52($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked61($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked70($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked79($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked88($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked97($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked106($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked115($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked124($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked133($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked142($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked151($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked160($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked169($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked178($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked187($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked196($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked205($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked214($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked223($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked232($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked241($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked250($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked259($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked268($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked277($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m280($n) :- child($n, $v37, _), node(_, $v37, "identifier", _, _), text($v37, $v38), names3($v38), inside($n, $v39, k0), node(_, $v39, "function_definition", _, _), field($v39, "name", $v40), node(_, $v40, "identifier", _, _), text($v40, $v41), names4($v41), !op($v39, "async"), inside($v39, $v42, k1), !blocked43($v39, $v42), node(_, $v42, "class_definition", _, _), field($v42, "name", $v44), node(_, $v44, "identifier", _, _), text($v44, $v45), names5($v45).
-m280($n) :- child($n, $v46, _), node(_, $v46, "identifier", _, _), text($v46, $v47), names6($v47), inside($n, $v48, k0), node(_, $v48, "function_definition", _, _), field($v48, "name", $v49), node(_, $v49, "identifier", _, _), text($v49, $v50), names4($v50), !op($v48, "async"), inside($v48, $v51, k1), !blocked52($v48, $v51), node(_, $v51, "class_definition", _, _), field($v51, "name", $v53), node(_, $v53, "identifier", _, _), text($v53, $v54), names7($v54).
-m280($n) :- child($n, $v55, _), node(_, $v55, "identifier", _, _), text($v55, $v56), names6($v56), inside($n, $v57, k0), node(_, $v57, "function_definition", _, _), field($v57, "name", $v58), node(_, $v58, "identifier", _, _), text($v58, $v59), names4($v59), !op($v57, "async"), inside($v57, $v60, k1), !blocked61($v57, $v60), node(_, $v60, "class_definition", _, _), field($v60, "name", $v62), node(_, $v62, "identifier", _, _), text($v62, $v63), names8($v63).
-m280($n) :- child($n, $v64, _), node(_, $v64, "identifier", _, _), text($v64, $v65), names9($v65), inside($n, $v66, k0), node(_, $v66, "function_definition", _, _), field($v66, "name", $v67), node(_, $v67, "identifier", _, _), text($v67, $v68), names4($v68), !op($v66, "async"), inside($v66, $v69, k1), !blocked70($v66, $v69), node(_, $v69, "class_definition", _, _), field($v69, "name", $v71), node(_, $v71, "identifier", _, _), text($v71, $v72), names10($v72).
-m280($n) :- child($n, $v73, _), node(_, $v73, "identifier", _, _), text($v73, $v74), names11($v74), inside($n, $v75, k0), node(_, $v75, "function_definition", _, _), field($v75, "name", $v76), node(_, $v76, "identifier", _, _), text($v76, $v77), names4($v77), !op($v75, "async"), inside($v75, $v78, k1), !blocked79($v75, $v78), node(_, $v78, "class_definition", _, _), field($v78, "name", $v80), node(_, $v80, "identifier", _, _), text($v80, $v81), names12($v81).
-m280($n) :- child($n, $v82, _), node(_, $v82, "identifier", _, _), text($v82, $v83), names13($v83), inside($n, $v84, k0), node(_, $v84, "function_definition", _, _), field($v84, "name", $v85), node(_, $v85, "identifier", _, _), text($v85, $v86), names4($v86), !op($v84, "async"), inside($v84, $v87, k1), !blocked88($v84, $v87), node(_, $v87, "class_definition", _, _), field($v87, "name", $v89), node(_, $v89, "identifier", _, _), text($v89, $v90), names12($v90).
-m280($n) :- child($n, $v91, _), node(_, $v91, "identifier", _, _), text($v91, $v92), names14($v92), inside($n, $v93, k0), node(_, $v93, "function_definition", _, _), field($v93, "name", $v94), node(_, $v94, "identifier", _, _), text($v94, $v95), names4($v95), !op($v93, "async"), inside($v93, $v96, k1), !blocked97($v93, $v96), node(_, $v96, "class_definition", _, _), field($v96, "name", $v98), node(_, $v98, "identifier", _, _), text($v98, $v99), names15($v99).
-m280($n) :- child($n, $v100, _), node(_, $v100, "identifier", _, _), text($v100, $v101), names16($v101), inside($n, $v102, k0), node(_, $v102, "function_definition", _, _), field($v102, "name", $v103), node(_, $v103, "identifier", _, _), text($v103, $v104), names4($v104), !op($v102, "async"), inside($v102, $v105, k1), !blocked106($v102, $v105), node(_, $v105, "class_definition", _, _), field($v105, "name", $v107), node(_, $v107, "identifier", _, _), text($v107, $v108), names15($v108).
-m280($n) :- child($n, $v109, _), node(_, $v109, "identifier", _, _), text($v109, $v110), names14($v110), inside($n, $v111, k0), node(_, $v111, "function_definition", _, _), field($v111, "name", $v112), node(_, $v112, "identifier", _, _), text($v112, $v113), names4($v113), !op($v111, "async"), inside($v111, $v114, k1), !blocked115($v111, $v114), node(_, $v114, "class_definition", _, _), field($v114, "name", $v116), node(_, $v116, "identifier", _, _), text($v116, $v117), names17($v117).
-m280($n) :- child($n, $v118, _), node(_, $v118, "identifier", _, _), text($v118, $v119), names16($v119), inside($n, $v120, k0), node(_, $v120, "function_definition", _, _), field($v120, "name", $v121), node(_, $v121, "identifier", _, _), text($v121, $v122), names4($v122), !op($v120, "async"), inside($v120, $v123, k1), !blocked124($v120, $v123), node(_, $v123, "class_definition", _, _), field($v123, "name", $v125), node(_, $v125, "identifier", _, _), text($v125, $v126), names17($v126).
-m280($n) :- child($n, $v127, _), node(_, $v127, "identifier", _, _), text($v127, $v128), names18($v128), inside($n, $v129, k0), node(_, $v129, "function_definition", _, _), field($v129, "name", $v130), node(_, $v130, "identifier", _, _), text($v130, $v131), names4($v131), !op($v129, "async"), inside($v129, $v132, k1), !blocked133($v129, $v132), node(_, $v132, "class_definition", _, _), field($v132, "name", $v134), node(_, $v134, "identifier", _, _), text($v134, $v135), names19($v135).
-m280($n) :- child($n, $v136, _), node(_, $v136, "identifier", _, _), text($v136, $v137), names18($v137), inside($n, $v138, k0), node(_, $v138, "function_definition", _, _), field($v138, "name", $v139), node(_, $v139, "identifier", _, _), text($v139, $v140), names4($v140), !op($v138, "async"), inside($v138, $v141, k1), !blocked142($v138, $v141), node(_, $v141, "class_definition", _, _), field($v141, "name", $v143), node(_, $v143, "identifier", _, _), text($v143, $v144), names20($v144).
-m280($n) :- child($n, $v145, _), node(_, $v145, "identifier", _, _), text($v145, $v146), names21($v146), inside($n, $v147, k0), node(_, $v147, "function_definition", _, _), field($v147, "name", $v148), node(_, $v148, "identifier", _, _), text($v148, $v149), names4($v149), !op($v147, "async"), inside($v147, $v150, k1), !blocked151($v147, $v150), node(_, $v150, "class_definition", _, _), field($v150, "name", $v152), node(_, $v152, "identifier", _, _), text($v152, $v153), names22($v153).
-m280($n) :- child($n, $v154, _), node(_, $v154, "identifier", _, _), text($v154, $v155), names14($v155), inside($n, $v156, k0), node(_, $v156, "function_definition", _, _), field($v156, "name", $v157), node(_, $v157, "identifier", _, _), text($v157, $v158), names4($v158), !op($v156, "async"), inside($v156, $v159, k1), !blocked160($v156, $v159), node(_, $v159, "class_definition", _, _), field($v159, "name", $v161), node(_, $v161, "identifier", _, _), text($v161, $v162), names23($v162).
-m280($n) :- child($n, $v163, _), node(_, $v163, "identifier", _, _), text($v163, $v164), names18($v164), inside($n, $v165, k0), node(_, $v165, "function_definition", _, _), field($v165, "name", $v166), node(_, $v166, "identifier", _, _), text($v166, $v167), names4($v167), !op($v165, "async"), inside($v165, $v168, k1), !blocked169($v165, $v168), node(_, $v168, "class_definition", _, _), field($v168, "name", $v170), node(_, $v170, "identifier", _, _), text($v170, $v171), names24($v171).
-m280($n) :- child($n, $v172, _), node(_, $v172, "identifier", _, _), text($v172, $v173), names6($v173), inside($n, $v174, k0), node(_, $v174, "function_definition", _, _), field($v174, "name", $v175), node(_, $v175, "identifier", _, _), text($v175, $v176), names4($v176), !op($v174, "async"), inside($v174, $v177, k1), !blocked178($v174, $v177), node(_, $v177, "class_definition", _, _), field($v177, "name", $v179), node(_, $v179, "identifier", _, _), text($v179, $v180), names24($v180).
-m280($n) :- child($n, $v181, _), node(_, $v181, "identifier", _, _), text($v181, $v182), names18($v182), inside($n, $v183, k0), node(_, $v183, "function_definition", _, _), field($v183, "name", $v184), node(_, $v184, "identifier", _, _), text($v184, $v185), names4($v185), !op($v183, "async"), inside($v183, $v186, k1), !blocked187($v183, $v186), node(_, $v186, "class_definition", _, _), field($v186, "name", $v188), node(_, $v188, "identifier", _, _), text($v188, $v189), names25($v189).
-m280($n) :- child($n, $v190, _), node(_, $v190, "identifier", _, _), text($v190, $v191), names18($v191), inside($n, $v192, k0), node(_, $v192, "function_definition", _, _), field($v192, "name", $v193), node(_, $v193, "identifier", _, _), text($v193, $v194), names4($v194), !op($v192, "async"), inside($v192, $v195, k1), !blocked196($v192, $v195), node(_, $v195, "class_definition", _, _), field($v195, "name", $v197), node(_, $v197, "identifier", _, _), text($v197, $v198), names26($v198).
-m280($n) :- child($n, $v199, _), node(_, $v199, "identifier", _, _), text($v199, $v200), names27($v200), inside($n, $v201, k0), node(_, $v201, "function_definition", _, _), field($v201, "name", $v202), node(_, $v202, "identifier", _, _), text($v202, $v203), names4($v203), !op($v201, "async"), inside($v201, $v204, k1), !blocked205($v201, $v204), node(_, $v204, "class_definition", _, _), field($v204, "name", $v206), node(_, $v206, "identifier", _, _), text($v206, $v207), names28($v207).
-m280($n) :- child($n, $v208, _), node(_, $v208, "identifier", _, _), text($v208, $v209), names21($v209), inside($n, $v210, k0), node(_, $v210, "function_definition", _, _), field($v210, "name", $v211), node(_, $v211, "identifier", _, _), text($v211, $v212), names4($v212), !op($v210, "async"), inside($v210, $v213, k1), !blocked214($v210, $v213), node(_, $v213, "class_definition", _, _), field($v213, "name", $v215), node(_, $v215, "identifier", _, _), text($v215, $v216), names28($v216).
-m280($n) :- child($n, $v217, _), node(_, $v217, "identifier", _, _), text($v217, $v218), names29($v218), inside($n, $v219, k0), node(_, $v219, "function_definition", _, _), field($v219, "name", $v220), node(_, $v220, "identifier", _, _), text($v220, $v221), names4($v221), !op($v219, "async"), inside($v219, $v222, k1), !blocked223($v219, $v222), node(_, $v222, "class_definition", _, _), field($v222, "name", $v224), node(_, $v224, "identifier", _, _), text($v224, $v225), names30($v225).
-m280($n) :- child($n, $v226, _), node(_, $v226, "identifier", _, _), text($v226, $v227), names31($v227), inside($n, $v228, k0), node(_, $v228, "function_definition", _, _), field($v228, "name", $v229), node(_, $v229, "identifier", _, _), text($v229, $v230), names4($v230), !op($v228, "async"), inside($v228, $v231, k1), !blocked232($v228, $v231), node(_, $v231, "class_definition", _, _), field($v231, "name", $v233), node(_, $v233, "identifier", _, _), text($v233, $v234), names32($v234).
-m280($n) :- child($n, $v235, _), node(_, $v235, "identifier", _, _), text($v235, $v236), names33($v236), inside($n, $v237, k0), node(_, $v237, "function_definition", _, _), field($v237, "name", $v238), node(_, $v238, "identifier", _, _), text($v238, $v239), names4($v239), !op($v237, "async"), inside($v237, $v240, k1), !blocked241($v237, $v240), node(_, $v240, "class_definition", _, _), field($v240, "name", $v242), node(_, $v242, "identifier", _, _), text($v242, $v243), names34($v243).
-m280($n) :- child($n, $v244, _), node(_, $v244, "identifier", _, _), text($v244, $v245), names18($v245), inside($n, $v246, k0), node(_, $v246, "function_definition", _, _), field($v246, "name", $v247), node(_, $v247, "identifier", _, _), text($v247, $v248), names4($v248), !op($v246, "async"), inside($v246, $v249, k1), !blocked250($v246, $v249), node(_, $v249, "class_definition", _, _), field($v249, "name", $v251), node(_, $v251, "identifier", _, _), text($v251, $v252), names34($v252).
-m280($n) :- child($n, $v253, _), node(_, $v253, "identifier", _, _), text($v253, $v254), names18($v254), inside($n, $v255, k0), node(_, $v255, "function_definition", _, _), field($v255, "name", $v256), node(_, $v256, "identifier", _, _), text($v256, $v257), names4($v257), !op($v255, "async"), inside($v255, $v258, k1), !blocked259($v255, $v258), node(_, $v258, "class_definition", _, _), field($v258, "name", $v260), node(_, $v260, "identifier", _, _), text($v260, $v261), names35($v261).
-m280($n) :- child($n, $v262, _), node(_, $v262, "identifier", _, _), text($v262, $v263), names6($v263), inside($n, $v264, k0), node(_, $v264, "function_definition", _, _), field($v264, "name", $v265), node(_, $v265, "identifier", _, _), text($v265, $v266), names4($v266), !op($v264, "async"), inside($v264, $v267, k1), !blocked268($v264, $v267), node(_, $v267, "class_definition", _, _), field($v267, "name", $v269), node(_, $v269, "identifier", _, _), text($v269, $v270), names35($v270).
-m280($n) :- child($n, $v271, _), node(_, $v271, "identifier", _, _), text($v271, $v272), names36($v272), inside($n, $v273, k0), node(_, $v273, "function_definition", _, _), field($v273, "name", $v274), node(_, $v274, "identifier", _, _), text($v274, $v275), names4($v275), !op($v273, "async"), inside($v273, $v276, k1), !blocked277($v273, $v276), node(_, $v276, "class_definition", _, _), field($v276, "name", $v278), node(_, $v278, "identifier", _, _), text($v278, $v279), names37($v279).
-u1($n) :- m21($n), !m24($n), !m31($n), !m36($n), !m280($n).
-blocked282($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
-blocked286($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m289($n) :- field($n, "name", $v287), node(_, $v287, "identifier", _, _), text($v287, $v288), names38($v288).
-t293($s) :- text(_, $s), @prefix($s, "Sql").
-t293($s) :- text(_, $s), @prefix($s, "_Sql").
-t296($s) :- name(_, $s), @prefix($s, "Sql").
-t296($s) :- name(_, $s), @prefix($s, "_Sql").
-m297($n) :- node(_, $n, "identifier", _, _), text($n, $v292), t293($v292).
-m297($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v294), name($v294, $v295), t296($v295).
-m305($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v300), node(_, $v300, "identifier", _, _), text($v300, $v301), names39($v301), !op($n, "async").
-m305($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v302), node(_, $v302, "function_definition", _, _), field($v302, "name", $v303), node(_, $v303, "identifier", _, _), text($v303, $v304), names39($v304), !op($v302, "async").
-m306($n) :- field($n, "superclasses", $v290), child($v290, $v291, _), m297($v291).
-m306($n) :- field($n, "body", $v298), child($v298, $v299, _), m305($v299).
-blocked319($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m322($n) :- field($n, "name", $v320), node(_, $v320, "identifier", _, _), text($v320, $v321), names38($v321).
-t326($s) :- text(_, $s), @prefix($s, "Sql").
-t326($s) :- text(_, $s), @prefix($s, "_Sql").
-t329($s) :- name(_, $s), @prefix($s, "Sql").
-t329($s) :- name(_, $s), @prefix($s, "_Sql").
-m330($n) :- node(_, $n, "identifier", _, _), text($n, $v325), t326($v325).
-m330($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v327), name($v327, $v328), t329($v328).
-m338($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v333), node(_, $v333, "identifier", _, _), text($v333, $v334), names39($v334), !op($n, "async").
-m338($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v335), node(_, $v335, "function_definition", _, _), field($v335, "name", $v336), node(_, $v336, "identifier", _, _), text($v336, $v337), names39($v337), !op($v335, "async").
-m339($n) :- field($n, "superclasses", $v323), child($v323, $v324, _), m330($v324).
-m339($n) :- field($n, "body", $v331), child($v331, $v332, _), m338($v332).
-m347($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v342), node(_, $v342, "identifier", _, _), text($v342, $v343), names4($v343), !op($n, "async").
-m347($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v344), node(_, $v344, "function_definition", _, _), field($v344, "name", $v345), node(_, $v345, "identifier", _, _), text($v345, $v346), names4($v346), !op($v344, "async").
-m348($n) :- field($n, "body", $v340), child($v340, $v341, _), m347($v341).
-m358($n) :- node(_, $n, "identifier", _, _), text($n, $v357), names0($v357).
-m366($n) :- field($n, "left", $v364), u360($v364).
-m366($n) :- field($n, "right", $v365), u360($v365).
-m370($n) :- node(_, $n, "identifier", _, _), text($n, $v361), names1($v361).
-m370($n) :- node(_, $n, "binary_operator", _, _), field($n, "operator", $v362), name($v362, $v363), names2($v363), m366($n).
-m370($n) :- node(_, $n, "union_type", _, _), child($n, $v367, _), u360($v367).
-m370($n) :- node(_, $n, "type", _, _), child($n, $v368, _), u360($v368).
-m370($n) :- node(_, $n, "parenthesized_expression", _, _), child($n, $v369, _), u360($v369).
-u360($n) :- m370($n).
-m373($n) :- node(_, $n, "identifier", _, _), text($n, $v372), names0($v372).
-m375($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v356, _), node(_, $v356, "identifier", _, _), !m358($v356), field($n, "type", $v359), u360($v359).
-m375($n) :- node(_, $n, "typed_default_parameter", _, _), field($n, "name", $v371), node(_, $v371, "identifier", _, _), !m373($v371), field($n, "type", $v374), u360($v374).
-m377($n) :- node(_, $n, "list_splat_pattern", _, _).
-m377($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
-m378($n) :- node(_, $n, "list_splat_pattern", _, _).
-m378($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
-m378($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v376, _), m377($v376).
-m384($n) :- node(_, $n, "positional_separator", _, _).
-m384($n) :- node(_, $n, "keyword_separator", _, _).
-m384($n) :- node(_, $n, "list_splat_pattern", _, _).
-m384($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v383, _), node(_, $v383, "list_splat_pattern", _, _).
-m385($n) :- child($v380, $n, $v381), child($v380, $v379, $v382), $v382 < $v381, m384($v379).
-m390($n) :- child($v387, $n, $v388), child($v387, $v386, $v389), $v388 < $v389, node(_, $v386, "positional_separator", _, _).
-blocked397($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked406($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked415($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked424($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked433($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked442($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked451($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked460($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked469($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked478($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked487($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked496($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked505($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked514($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked523($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked532($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked541($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked550($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked559($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked568($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked577($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked586($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked595($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked604($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked613($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked622($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked631($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m634($n) :- child($n, $v391, _), node(_, $v391, "identifier", _, _), text($v391, $v392), names3($v392), inside($n, $v393, k0), node(_, $v393, "function_definition", _, _), field($v393, "name", $v394), node(_, $v394, "identifier", _, _), text($v394, $v395), names4($v395), !op($v393, "async"), inside($v393, $v396, k1), !blocked397($v393, $v396), node(_, $v396, "class_definition", _, _), field($v396, "name", $v398), node(_, $v398, "identifier", _, _), text($v398, $v399), names5($v399).
-m634($n) :- child($n, $v400, _), node(_, $v400, "identifier", _, _), text($v400, $v401), names6($v401), inside($n, $v402, k0), node(_, $v402, "function_definition", _, _), field($v402, "name", $v403), node(_, $v403, "identifier", _, _), text($v403, $v404), names4($v404), !op($v402, "async"), inside($v402, $v405, k1), !blocked406($v402, $v405), node(_, $v405, "class_definition", _, _), field($v405, "name", $v407), node(_, $v407, "identifier", _, _), text($v407, $v408), names7($v408).
-m634($n) :- child($n, $v409, _), node(_, $v409, "identifier", _, _), text($v409, $v410), names6($v410), inside($n, $v411, k0), node(_, $v411, "function_definition", _, _), field($v411, "name", $v412), node(_, $v412, "identifier", _, _), text($v412, $v413), names4($v413), !op($v411, "async"), inside($v411, $v414, k1), !blocked415($v411, $v414), node(_, $v414, "class_definition", _, _), field($v414, "name", $v416), node(_, $v416, "identifier", _, _), text($v416, $v417), names8($v417).
-m634($n) :- child($n, $v418, _), node(_, $v418, "identifier", _, _), text($v418, $v419), names9($v419), inside($n, $v420, k0), node(_, $v420, "function_definition", _, _), field($v420, "name", $v421), node(_, $v421, "identifier", _, _), text($v421, $v422), names4($v422), !op($v420, "async"), inside($v420, $v423, k1), !blocked424($v420, $v423), node(_, $v423, "class_definition", _, _), field($v423, "name", $v425), node(_, $v425, "identifier", _, _), text($v425, $v426), names10($v426).
-m634($n) :- child($n, $v427, _), node(_, $v427, "identifier", _, _), text($v427, $v428), names11($v428), inside($n, $v429, k0), node(_, $v429, "function_definition", _, _), field($v429, "name", $v430), node(_, $v430, "identifier", _, _), text($v430, $v431), names4($v431), !op($v429, "async"), inside($v429, $v432, k1), !blocked433($v429, $v432), node(_, $v432, "class_definition", _, _), field($v432, "name", $v434), node(_, $v434, "identifier", _, _), text($v434, $v435), names12($v435).
-m634($n) :- child($n, $v436, _), node(_, $v436, "identifier", _, _), text($v436, $v437), names13($v437), inside($n, $v438, k0), node(_, $v438, "function_definition", _, _), field($v438, "name", $v439), node(_, $v439, "identifier", _, _), text($v439, $v440), names4($v440), !op($v438, "async"), inside($v438, $v441, k1), !blocked442($v438, $v441), node(_, $v441, "class_definition", _, _), field($v441, "name", $v443), node(_, $v443, "identifier", _, _), text($v443, $v444), names12($v444).
-m634($n) :- child($n, $v445, _), node(_, $v445, "identifier", _, _), text($v445, $v446), names14($v446), inside($n, $v447, k0), node(_, $v447, "function_definition", _, _), field($v447, "name", $v448), node(_, $v448, "identifier", _, _), text($v448, $v449), names4($v449), !op($v447, "async"), inside($v447, $v450, k1), !blocked451($v447, $v450), node(_, $v450, "class_definition", _, _), field($v450, "name", $v452), node(_, $v452, "identifier", _, _), text($v452, $v453), names15($v453).
-m634($n) :- child($n, $v454, _), node(_, $v454, "identifier", _, _), text($v454, $v455), names16($v455), inside($n, $v456, k0), node(_, $v456, "function_definition", _, _), field($v456, "name", $v457), node(_, $v457, "identifier", _, _), text($v457, $v458), names4($v458), !op($v456, "async"), inside($v456, $v459, k1), !blocked460($v456, $v459), node(_, $v459, "class_definition", _, _), field($v459, "name", $v461), node(_, $v461, "identifier", _, _), text($v461, $v462), names15($v462).
-m634($n) :- child($n, $v463, _), node(_, $v463, "identifier", _, _), text($v463, $v464), names14($v464), inside($n, $v465, k0), node(_, $v465, "function_definition", _, _), field($v465, "name", $v466), node(_, $v466, "identifier", _, _), text($v466, $v467), names4($v467), !op($v465, "async"), inside($v465, $v468, k1), !blocked469($v465, $v468), node(_, $v468, "class_definition", _, _), field($v468, "name", $v470), node(_, $v470, "identifier", _, _), text($v470, $v471), names17($v471).
-m634($n) :- child($n, $v472, _), node(_, $v472, "identifier", _, _), text($v472, $v473), names16($v473), inside($n, $v474, k0), node(_, $v474, "function_definition", _, _), field($v474, "name", $v475), node(_, $v475, "identifier", _, _), text($v475, $v476), names4($v476), !op($v474, "async"), inside($v474, $v477, k1), !blocked478($v474, $v477), node(_, $v477, "class_definition", _, _), field($v477, "name", $v479), node(_, $v479, "identifier", _, _), text($v479, $v480), names17($v480).
-m634($n) :- child($n, $v481, _), node(_, $v481, "identifier", _, _), text($v481, $v482), names18($v482), inside($n, $v483, k0), node(_, $v483, "function_definition", _, _), field($v483, "name", $v484), node(_, $v484, "identifier", _, _), text($v484, $v485), names4($v485), !op($v483, "async"), inside($v483, $v486, k1), !blocked487($v483, $v486), node(_, $v486, "class_definition", _, _), field($v486, "name", $v488), node(_, $v488, "identifier", _, _), text($v488, $v489), names19($v489).
-m634($n) :- child($n, $v490, _), node(_, $v490, "identifier", _, _), text($v490, $v491), names18($v491), inside($n, $v492, k0), node(_, $v492, "function_definition", _, _), field($v492, "name", $v493), node(_, $v493, "identifier", _, _), text($v493, $v494), names4($v494), !op($v492, "async"), inside($v492, $v495, k1), !blocked496($v492, $v495), node(_, $v495, "class_definition", _, _), field($v495, "name", $v497), node(_, $v497, "identifier", _, _), text($v497, $v498), names20($v498).
-m634($n) :- child($n, $v499, _), node(_, $v499, "identifier", _, _), text($v499, $v500), names21($v500), inside($n, $v501, k0), node(_, $v501, "function_definition", _, _), field($v501, "name", $v502), node(_, $v502, "identifier", _, _), text($v502, $v503), names4($v503), !op($v501, "async"), inside($v501, $v504, k1), !blocked505($v501, $v504), node(_, $v504, "class_definition", _, _), field($v504, "name", $v506), node(_, $v506, "identifier", _, _), text($v506, $v507), names22($v507).
-m634($n) :- child($n, $v508, _), node(_, $v508, "identifier", _, _), text($v508, $v509), names14($v509), inside($n, $v510, k0), node(_, $v510, "function_definition", _, _), field($v510, "name", $v511), node(_, $v511, "identifier", _, _), text($v511, $v512), names4($v512), !op($v510, "async"), inside($v510, $v513, k1), !blocked514($v510, $v513), node(_, $v513, "class_definition", _, _), field($v513, "name", $v515), node(_, $v515, "identifier", _, _), text($v515, $v516), names23($v516).
-m634($n) :- child($n, $v517, _), node(_, $v517, "identifier", _, _), text($v517, $v518), names18($v518), inside($n, $v519, k0), node(_, $v519, "function_definition", _, _), field($v519, "name", $v520), node(_, $v520, "identifier", _, _), text($v520, $v521), names4($v521), !op($v519, "async"), inside($v519, $v522, k1), !blocked523($v519, $v522), node(_, $v522, "class_definition", _, _), field($v522, "name", $v524), node(_, $v524, "identifier", _, _), text($v524, $v525), names24($v525).
-m634($n) :- child($n, $v526, _), node(_, $v526, "identifier", _, _), text($v526, $v527), names6($v527), inside($n, $v528, k0), node(_, $v528, "function_definition", _, _), field($v528, "name", $v529), node(_, $v529, "identifier", _, _), text($v529, $v530), names4($v530), !op($v528, "async"), inside($v528, $v531, k1), !blocked532($v528, $v531), node(_, $v531, "class_definition", _, _), field($v531, "name", $v533), node(_, $v533, "identifier", _, _), text($v533, $v534), names24($v534).
-m634($n) :- child($n, $v535, _), node(_, $v535, "identifier", _, _), text($v535, $v536), names18($v536), inside($n, $v537, k0), node(_, $v537, "function_definition", _, _), field($v537, "name", $v538), node(_, $v538, "identifier", _, _), text($v538, $v539), names4($v539), !op($v537, "async"), inside($v537, $v540, k1), !blocked541($v537, $v540), node(_, $v540, "class_definition", _, _), field($v540, "name", $v542), node(_, $v542, "identifier", _, _), text($v542, $v543), names25($v543).
-m634($n) :- child($n, $v544, _), node(_, $v544, "identifier", _, _), text($v544, $v545), names18($v545), inside($n, $v546, k0), node(_, $v546, "function_definition", _, _), field($v546, "name", $v547), node(_, $v547, "identifier", _, _), text($v547, $v548), names4($v548), !op($v546, "async"), inside($v546, $v549, k1), !blocked550($v546, $v549), node(_, $v549, "class_definition", _, _), field($v549, "name", $v551), node(_, $v551, "identifier", _, _), text($v551, $v552), names26($v552).
-m634($n) :- child($n, $v553, _), node(_, $v553, "identifier", _, _), text($v553, $v554), names27($v554), inside($n, $v555, k0), node(_, $v555, "function_definition", _, _), field($v555, "name", $v556), node(_, $v556, "identifier", _, _), text($v556, $v557), names4($v557), !op($v555, "async"), inside($v555, $v558, k1), !blocked559($v555, $v558), node(_, $v558, "class_definition", _, _), field($v558, "name", $v560), node(_, $v560, "identifier", _, _), text($v560, $v561), names28($v561).
-m634($n) :- child($n, $v562, _), node(_, $v562, "identifier", _, _), text($v562, $v563), names21($v563), inside($n, $v564, k0), node(_, $v564, "function_definition", _, _), field($v564, "name", $v565), node(_, $v565, "identifier", _, _), text($v565, $v566), names4($v566), !op($v564, "async"), inside($v564, $v567, k1), !blocked568($v564, $v567), node(_, $v567, "class_definition", _, _), field($v567, "name", $v569), node(_, $v569, "identifier", _, _), text($v569, $v570), names28($v570).
-m634($n) :- child($n, $v571, _), node(_, $v571, "identifier", _, _), text($v571, $v572), names29($v572), inside($n, $v573, k0), node(_, $v573, "function_definition", _, _), field($v573, "name", $v574), node(_, $v574, "identifier", _, _), text($v574, $v575), names4($v575), !op($v573, "async"), inside($v573, $v576, k1), !blocked577($v573, $v576), node(_, $v576, "class_definition", _, _), field($v576, "name", $v578), node(_, $v578, "identifier", _, _), text($v578, $v579), names30($v579).
-m634($n) :- child($n, $v580, _), node(_, $v580, "identifier", _, _), text($v580, $v581), names31($v581), inside($n, $v582, k0), node(_, $v582, "function_definition", _, _), field($v582, "name", $v583), node(_, $v583, "identifier", _, _), text($v583, $v584), names4($v584), !op($v582, "async"), inside($v582, $v585, k1), !blocked586($v582, $v585), node(_, $v585, "class_definition", _, _), field($v585, "name", $v587), node(_, $v587, "identifier", _, _), text($v587, $v588), names32($v588).
-m634($n) :- child($n, $v589, _), node(_, $v589, "identifier", _, _), text($v589, $v590), names33($v590), inside($n, $v591, k0), node(_, $v591, "function_definition", _, _), field($v591, "name", $v592), node(_, $v592, "identifier", _, _), text($v592, $v593), names4($v593), !op($v591, "async"), inside($v591, $v594, k1), !blocked595($v591, $v594), node(_, $v594, "class_definition", _, _), field($v594, "name", $v596), node(_, $v596, "identifier", _, _), text($v596, $v597), names34($v597).
-m634($n) :- child($n, $v598, _), node(_, $v598, "identifier", _, _), text($v598, $v599), names18($v599), inside($n, $v600, k0), node(_, $v600, "function_definition", _, _), field($v600, "name", $v601), node(_, $v601, "identifier", _, _), text($v601, $v602), names4($v602), !op($v600, "async"), inside($v600, $v603, k1), !blocked604($v600, $v603), node(_, $v603, "class_definition", _, _), field($v603, "name", $v605), node(_, $v605, "identifier", _, _), text($v605, $v606), names34($v606).
-m634($n) :- child($n, $v607, _), node(_, $v607, "identifier", _, _), text($v607, $v608), names18($v608), inside($n, $v609, k0), node(_, $v609, "function_definition", _, _), field($v609, "name", $v610), node(_, $v610, "identifier", _, _), text($v610, $v611), names4($v611), !op($v609, "async"), inside($v609, $v612, k1), !blocked613($v609, $v612), node(_, $v612, "class_definition", _, _), field($v612, "name", $v614), node(_, $v614, "identifier", _, _), text($v614, $v615), names35($v615).
-m634($n) :- child($n, $v616, _), node(_, $v616, "identifier", _, _), text($v616, $v617), names6($v617), inside($n, $v618, k0), node(_, $v618, "function_definition", _, _), field($v618, "name", $v619), node(_, $v619, "identifier", _, _), text($v619, $v620), names4($v620), !op($v618, "async"), inside($v618, $v621, k1), !blocked622($v618, $v621), node(_, $v621, "class_definition", _, _), field($v621, "name", $v623), node(_, $v623, "identifier", _, _), text($v623, $v624), names35($v624).
-m634($n) :- child($n, $v625, _), node(_, $v625, "identifier", _, _), text($v625, $v626), names36($v626), inside($n, $v627, k0), node(_, $v627, "function_definition", _, _), field($v627, "name", $v628), node(_, $v628, "identifier", _, _), text($v628, $v629), names4($v629), !op($v627, "async"), inside($v627, $v630, k1), !blocked631($v627, $v630), node(_, $v630, "class_definition", _, _), field($v630, "name", $v632), node(_, $v632, "identifier", _, _), text($v632, $v633), names37($v633).
-u355($n) :- m375($n), !m378($n), !m385($n), !m390($n), !m634($n).
-blocked649($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m652($n) :- field($n, "name", $v650), node(_, $v650, "identifier", _, _), text($v650, $v651), names38($v651).
-t656($s) :- text(_, $s), @prefix($s, "Sql").
-t656($s) :- text(_, $s), @prefix($s, "_Sql").
-t659($s) :- name(_, $s), @prefix($s, "Sql").
-t659($s) :- name(_, $s), @prefix($s, "_Sql").
-m660($n) :- node(_, $n, "identifier", _, _), text($n, $v655), t656($v655).
-m660($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v657), name($v657, $v658), t659($v658).
-m668($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v663), node(_, $v663, "identifier", _, _), text($v663, $v664), names39($v664), !op($n, "async").
-m668($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v665), node(_, $v665, "function_definition", _, _), field($v665, "name", $v666), node(_, $v666, "identifier", _, _), text($v666, $v667), names39($v667), !op($v665, "async").
-m669($n) :- field($n, "superclasses", $v653), child($v653, $v654, _), m660($v654).
-m669($n) :- field($n, "body", $v661), child($v661, $v662, _), m668($v662).
-m677($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v672), node(_, $v672, "identifier", _, _), text($v672, $v673), names4($v673), !op($n, "async").
-m677($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v674), node(_, $v674, "function_definition", _, _), field($v674, "name", $v675), node(_, $v675, "identifier", _, _), text($v675, $v676), names4($v676), !op($v674, "async").
-m678($n) :- field($n, "body", $v670), child($v670, $v671, _), m677($v671).
-m688($n) :- node(_, $n, "identifier", _, _), text($n, $v687), names0($v687).
-m696($n) :- field($n, "left", $v694), u690($v694).
-m696($n) :- field($n, "right", $v695), u690($v695).
-m700($n) :- node(_, $n, "identifier", _, _), text($n, $v691), names1($v691).
-m700($n) :- node(_, $n, "binary_operator", _, _), field($n, "operator", $v692), name($v692, $v693), names2($v693), m696($n).
-m700($n) :- node(_, $n, "union_type", _, _), child($n, $v697, _), u690($v697).
-m700($n) :- node(_, $n, "type", _, _), child($n, $v698, _), u690($v698).
-m700($n) :- node(_, $n, "parenthesized_expression", _, _), child($n, $v699, _), u690($v699).
-u690($n) :- m700($n).
-m703($n) :- node(_, $n, "identifier", _, _), text($n, $v702), names0($v702).
-m705($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v686, _), node(_, $v686, "identifier", _, _), !m688($v686), field($n, "type", $v689), u690($v689).
-m705($n) :- node(_, $n, "typed_default_parameter", _, _), field($n, "name", $v701), node(_, $v701, "identifier", _, _), !m703($v701), field($n, "type", $v704), u690($v704).
-m707($n) :- node(_, $n, "list_splat_pattern", _, _).
-m707($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
-m708($n) :- node(_, $n, "list_splat_pattern", _, _).
-m708($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
-m708($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v706, _), m707($v706).
-m714($n) :- node(_, $n, "positional_separator", _, _).
-m714($n) :- node(_, $n, "keyword_separator", _, _).
-m714($n) :- node(_, $n, "list_splat_pattern", _, _).
-m714($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v713, _), node(_, $v713, "list_splat_pattern", _, _).
-m715($n) :- child($v710, $n, $v711), child($v710, $v709, $v712), $v712 < $v711, m714($v709).
-m720($n) :- child($v717, $n, $v718), child($v717, $v716, $v719), $v718 < $v719, node(_, $v716, "positional_separator", _, _).
-blocked727($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked736($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked745($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked754($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked763($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked772($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked781($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked790($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked799($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked808($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked817($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked826($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked835($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked844($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked853($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked862($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked871($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked880($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked889($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked898($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked907($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked916($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked925($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked934($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked943($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked952($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-blocked961($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m964($n) :- child($n, $v721, _), node(_, $v721, "identifier", _, _), text($v721, $v722), names3($v722), inside($n, $v723, k0), node(_, $v723, "function_definition", _, _), field($v723, "name", $v724), node(_, $v724, "identifier", _, _), text($v724, $v725), names4($v725), !op($v723, "async"), inside($v723, $v726, k1), !blocked727($v723, $v726), node(_, $v726, "class_definition", _, _), field($v726, "name", $v728), node(_, $v728, "identifier", _, _), text($v728, $v729), names5($v729).
-m964($n) :- child($n, $v730, _), node(_, $v730, "identifier", _, _), text($v730, $v731), names6($v731), inside($n, $v732, k0), node(_, $v732, "function_definition", _, _), field($v732, "name", $v733), node(_, $v733, "identifier", _, _), text($v733, $v734), names4($v734), !op($v732, "async"), inside($v732, $v735, k1), !blocked736($v732, $v735), node(_, $v735, "class_definition", _, _), field($v735, "name", $v737), node(_, $v737, "identifier", _, _), text($v737, $v738), names7($v738).
-m964($n) :- child($n, $v739, _), node(_, $v739, "identifier", _, _), text($v739, $v740), names6($v740), inside($n, $v741, k0), node(_, $v741, "function_definition", _, _), field($v741, "name", $v742), node(_, $v742, "identifier", _, _), text($v742, $v743), names4($v743), !op($v741, "async"), inside($v741, $v744, k1), !blocked745($v741, $v744), node(_, $v744, "class_definition", _, _), field($v744, "name", $v746), node(_, $v746, "identifier", _, _), text($v746, $v747), names8($v747).
-m964($n) :- child($n, $v748, _), node(_, $v748, "identifier", _, _), text($v748, $v749), names9($v749), inside($n, $v750, k0), node(_, $v750, "function_definition", _, _), field($v750, "name", $v751), node(_, $v751, "identifier", _, _), text($v751, $v752), names4($v752), !op($v750, "async"), inside($v750, $v753, k1), !blocked754($v750, $v753), node(_, $v753, "class_definition", _, _), field($v753, "name", $v755), node(_, $v755, "identifier", _, _), text($v755, $v756), names10($v756).
-m964($n) :- child($n, $v757, _), node(_, $v757, "identifier", _, _), text($v757, $v758), names11($v758), inside($n, $v759, k0), node(_, $v759, "function_definition", _, _), field($v759, "name", $v760), node(_, $v760, "identifier", _, _), text($v760, $v761), names4($v761), !op($v759, "async"), inside($v759, $v762, k1), !blocked763($v759, $v762), node(_, $v762, "class_definition", _, _), field($v762, "name", $v764), node(_, $v764, "identifier", _, _), text($v764, $v765), names12($v765).
-m964($n) :- child($n, $v766, _), node(_, $v766, "identifier", _, _), text($v766, $v767), names13($v767), inside($n, $v768, k0), node(_, $v768, "function_definition", _, _), field($v768, "name", $v769), node(_, $v769, "identifier", _, _), text($v769, $v770), names4($v770), !op($v768, "async"), inside($v768, $v771, k1), !blocked772($v768, $v771), node(_, $v771, "class_definition", _, _), field($v771, "name", $v773), node(_, $v773, "identifier", _, _), text($v773, $v774), names12($v774).
-m964($n) :- child($n, $v775, _), node(_, $v775, "identifier", _, _), text($v775, $v776), names14($v776), inside($n, $v777, k0), node(_, $v777, "function_definition", _, _), field($v777, "name", $v778), node(_, $v778, "identifier", _, _), text($v778, $v779), names4($v779), !op($v777, "async"), inside($v777, $v780, k1), !blocked781($v777, $v780), node(_, $v780, "class_definition", _, _), field($v780, "name", $v782), node(_, $v782, "identifier", _, _), text($v782, $v783), names15($v783).
-m964($n) :- child($n, $v784, _), node(_, $v784, "identifier", _, _), text($v784, $v785), names16($v785), inside($n, $v786, k0), node(_, $v786, "function_definition", _, _), field($v786, "name", $v787), node(_, $v787, "identifier", _, _), text($v787, $v788), names4($v788), !op($v786, "async"), inside($v786, $v789, k1), !blocked790($v786, $v789), node(_, $v789, "class_definition", _, _), field($v789, "name", $v791), node(_, $v791, "identifier", _, _), text($v791, $v792), names15($v792).
-m964($n) :- child($n, $v793, _), node(_, $v793, "identifier", _, _), text($v793, $v794), names14($v794), inside($n, $v795, k0), node(_, $v795, "function_definition", _, _), field($v795, "name", $v796), node(_, $v796, "identifier", _, _), text($v796, $v797), names4($v797), !op($v795, "async"), inside($v795, $v798, k1), !blocked799($v795, $v798), node(_, $v798, "class_definition", _, _), field($v798, "name", $v800), node(_, $v800, "identifier", _, _), text($v800, $v801), names17($v801).
-m964($n) :- child($n, $v802, _), node(_, $v802, "identifier", _, _), text($v802, $v803), names16($v803), inside($n, $v804, k0), node(_, $v804, "function_definition", _, _), field($v804, "name", $v805), node(_, $v805, "identifier", _, _), text($v805, $v806), names4($v806), !op($v804, "async"), inside($v804, $v807, k1), !blocked808($v804, $v807), node(_, $v807, "class_definition", _, _), field($v807, "name", $v809), node(_, $v809, "identifier", _, _), text($v809, $v810), names17($v810).
-m964($n) :- child($n, $v811, _), node(_, $v811, "identifier", _, _), text($v811, $v812), names18($v812), inside($n, $v813, k0), node(_, $v813, "function_definition", _, _), field($v813, "name", $v814), node(_, $v814, "identifier", _, _), text($v814, $v815), names4($v815), !op($v813, "async"), inside($v813, $v816, k1), !blocked817($v813, $v816), node(_, $v816, "class_definition", _, _), field($v816, "name", $v818), node(_, $v818, "identifier", _, _), text($v818, $v819), names19($v819).
-m964($n) :- child($n, $v820, _), node(_, $v820, "identifier", _, _), text($v820, $v821), names18($v821), inside($n, $v822, k0), node(_, $v822, "function_definition", _, _), field($v822, "name", $v823), node(_, $v823, "identifier", _, _), text($v823, $v824), names4($v824), !op($v822, "async"), inside($v822, $v825, k1), !blocked826($v822, $v825), node(_, $v825, "class_definition", _, _), field($v825, "name", $v827), node(_, $v827, "identifier", _, _), text($v827, $v828), names20($v828).
-m964($n) :- child($n, $v829, _), node(_, $v829, "identifier", _, _), text($v829, $v830), names21($v830), inside($n, $v831, k0), node(_, $v831, "function_definition", _, _), field($v831, "name", $v832), node(_, $v832, "identifier", _, _), text($v832, $v833), names4($v833), !op($v831, "async"), inside($v831, $v834, k1), !blocked835($v831, $v834), node(_, $v834, "class_definition", _, _), field($v834, "name", $v836), node(_, $v836, "identifier", _, _), text($v836, $v837), names22($v837).
-m964($n) :- child($n, $v838, _), node(_, $v838, "identifier", _, _), text($v838, $v839), names14($v839), inside($n, $v840, k0), node(_, $v840, "function_definition", _, _), field($v840, "name", $v841), node(_, $v841, "identifier", _, _), text($v841, $v842), names4($v842), !op($v840, "async"), inside($v840, $v843, k1), !blocked844($v840, $v843), node(_, $v843, "class_definition", _, _), field($v843, "name", $v845), node(_, $v845, "identifier", _, _), text($v845, $v846), names23($v846).
-m964($n) :- child($n, $v847, _), node(_, $v847, "identifier", _, _), text($v847, $v848), names18($v848), inside($n, $v849, k0), node(_, $v849, "function_definition", _, _), field($v849, "name", $v850), node(_, $v850, "identifier", _, _), text($v850, $v851), names4($v851), !op($v849, "async"), inside($v849, $v852, k1), !blocked853($v849, $v852), node(_, $v852, "class_definition", _, _), field($v852, "name", $v854), node(_, $v854, "identifier", _, _), text($v854, $v855), names24($v855).
-m964($n) :- child($n, $v856, _), node(_, $v856, "identifier", _, _), text($v856, $v857), names6($v857), inside($n, $v858, k0), node(_, $v858, "function_definition", _, _), field($v858, "name", $v859), node(_, $v859, "identifier", _, _), text($v859, $v860), names4($v860), !op($v858, "async"), inside($v858, $v861, k1), !blocked862($v858, $v861), node(_, $v861, "class_definition", _, _), field($v861, "name", $v863), node(_, $v863, "identifier", _, _), text($v863, $v864), names24($v864).
-m964($n) :- child($n, $v865, _), node(_, $v865, "identifier", _, _), text($v865, $v866), names18($v866), inside($n, $v867, k0), node(_, $v867, "function_definition", _, _), field($v867, "name", $v868), node(_, $v868, "identifier", _, _), text($v868, $v869), names4($v869), !op($v867, "async"), inside($v867, $v870, k1), !blocked871($v867, $v870), node(_, $v870, "class_definition", _, _), field($v870, "name", $v872), node(_, $v872, "identifier", _, _), text($v872, $v873), names25($v873).
-m964($n) :- child($n, $v874, _), node(_, $v874, "identifier", _, _), text($v874, $v875), names18($v875), inside($n, $v876, k0), node(_, $v876, "function_definition", _, _), field($v876, "name", $v877), node(_, $v877, "identifier", _, _), text($v877, $v878), names4($v878), !op($v876, "async"), inside($v876, $v879, k1), !blocked880($v876, $v879), node(_, $v879, "class_definition", _, _), field($v879, "name", $v881), node(_, $v881, "identifier", _, _), text($v881, $v882), names26($v882).
-m964($n) :- child($n, $v883, _), node(_, $v883, "identifier", _, _), text($v883, $v884), names27($v884), inside($n, $v885, k0), node(_, $v885, "function_definition", _, _), field($v885, "name", $v886), node(_, $v886, "identifier", _, _), text($v886, $v887), names4($v887), !op($v885, "async"), inside($v885, $v888, k1), !blocked889($v885, $v888), node(_, $v888, "class_definition", _, _), field($v888, "name", $v890), node(_, $v890, "identifier", _, _), text($v890, $v891), names28($v891).
-m964($n) :- child($n, $v892, _), node(_, $v892, "identifier", _, _), text($v892, $v893), names21($v893), inside($n, $v894, k0), node(_, $v894, "function_definition", _, _), field($v894, "name", $v895), node(_, $v895, "identifier", _, _), text($v895, $v896), names4($v896), !op($v894, "async"), inside($v894, $v897, k1), !blocked898($v894, $v897), node(_, $v897, "class_definition", _, _), field($v897, "name", $v899), node(_, $v899, "identifier", _, _), text($v899, $v900), names28($v900).
-m964($n) :- child($n, $v901, _), node(_, $v901, "identifier", _, _), text($v901, $v902), names29($v902), inside($n, $v903, k0), node(_, $v903, "function_definition", _, _), field($v903, "name", $v904), node(_, $v904, "identifier", _, _), text($v904, $v905), names4($v905), !op($v903, "async"), inside($v903, $v906, k1), !blocked907($v903, $v906), node(_, $v906, "class_definition", _, _), field($v906, "name", $v908), node(_, $v908, "identifier", _, _), text($v908, $v909), names30($v909).
-m964($n) :- child($n, $v910, _), node(_, $v910, "identifier", _, _), text($v910, $v911), names31($v911), inside($n, $v912, k0), node(_, $v912, "function_definition", _, _), field($v912, "name", $v913), node(_, $v913, "identifier", _, _), text($v913, $v914), names4($v914), !op($v912, "async"), inside($v912, $v915, k1), !blocked916($v912, $v915), node(_, $v915, "class_definition", _, _), field($v915, "name", $v917), node(_, $v917, "identifier", _, _), text($v917, $v918), names32($v918).
-m964($n) :- child($n, $v919, _), node(_, $v919, "identifier", _, _), text($v919, $v920), names33($v920), inside($n, $v921, k0), node(_, $v921, "function_definition", _, _), field($v921, "name", $v922), node(_, $v922, "identifier", _, _), text($v922, $v923), names4($v923), !op($v921, "async"), inside($v921, $v924, k1), !blocked925($v921, $v924), node(_, $v924, "class_definition", _, _), field($v924, "name", $v926), node(_, $v926, "identifier", _, _), text($v926, $v927), names34($v927).
-m964($n) :- child($n, $v928, _), node(_, $v928, "identifier", _, _), text($v928, $v929), names18($v929), inside($n, $v930, k0), node(_, $v930, "function_definition", _, _), field($v930, "name", $v931), node(_, $v931, "identifier", _, _), text($v931, $v932), names4($v932), !op($v930, "async"), inside($v930, $v933, k1), !blocked934($v930, $v933), node(_, $v933, "class_definition", _, _), field($v933, "name", $v935), node(_, $v935, "identifier", _, _), text($v935, $v936), names34($v936).
-m964($n) :- child($n, $v937, _), node(_, $v937, "identifier", _, _), text($v937, $v938), names18($v938), inside($n, $v939, k0), node(_, $v939, "function_definition", _, _), field($v939, "name", $v940), node(_, $v940, "identifier", _, _), text($v940, $v941), names4($v941), !op($v939, "async"), inside($v939, $v942, k1), !blocked943($v939, $v942), node(_, $v942, "class_definition", _, _), field($v942, "name", $v944), node(_, $v944, "identifier", _, _), text($v944, $v945), names35($v945).
-m964($n) :- child($n, $v946, _), node(_, $v946, "identifier", _, _), text($v946, $v947), names6($v947), inside($n, $v948, k0), node(_, $v948, "function_definition", _, _), field($v948, "name", $v949), node(_, $v949, "identifier", _, _), text($v949, $v950), names4($v950), !op($v948, "async"), inside($v948, $v951, k1), !blocked952($v948, $v951), node(_, $v951, "class_definition", _, _), field($v951, "name", $v953), node(_, $v953, "identifier", _, _), text($v953, $v954), names35($v954).
-m964($n) :- child($n, $v955, _), node(_, $v955, "identifier", _, _), text($v955, $v956), names36($v956), inside($n, $v957, k0), node(_, $v957, "function_definition", _, _), field($v957, "name", $v958), node(_, $v958, "identifier", _, _), text($v958, $v959), names4($v959), !op($v957, "async"), inside($v957, $v960, k1), !blocked961($v957, $v960), node(_, $v960, "class_definition", _, _), field($v960, "name", $v962), node(_, $v962, "identifier", _, _), text($v962, $v963), names37($v963).
-u685($n) :- m705($n), !m708($n), !m715($n), !m720($n), !m964($n).
+blocked20($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m23($n) :- field($n, "name", $v21), node(_, $v21, "identifier", _, _), text($v21, $v22), names3($v22).
+t27($s) :- text(_, $s), @prefix($s, "Sql").
+t27($s) :- text(_, $s), @prefix($s, "_Sql").
+t30($s) :- name(_, $s), @prefix($s, "Sql").
+t30($s) :- name(_, $s), @prefix($s, "_Sql").
+m31($n) :- node(_, $n, "identifier", _, _), text($n, $v26), t27($v26).
+m31($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v28), name($v28, $v29), t30($v29).
+m39($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v34), node(_, $v34, "identifier", _, _), text($v34, $v35), names2($v35), !op($n, "async").
+m39($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v36), node(_, $v36, "function_definition", _, _), field($v36, "name", $v37), node(_, $v37, "identifier", _, _), text($v37, $v38), names2($v38), !op($v36, "async").
+m40($n) :- field($n, "superclasses", $v24), child($v24, $v25, _), m31($v25).
+m40($n) :- field($n, "body", $v32), child($v32, $v33, _), m39($v33).
+m48($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v43), node(_, $v43, "identifier", _, _), text($v43, $v44), names4($v44), !op($n, "async").
+m48($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v45), node(_, $v45, "function_definition", _, _), field($v45, "name", $v46), node(_, $v46, "identifier", _, _), text($v46, $v47), names4($v47), !op($v45, "async").
+m49($n) :- field($n, "body", $v41), child($v41, $v42, _), m48($v42).
+m59($n) :- node(_, $n, "identifier", _, _), text($n, $v58), names0($v58).
 .output violation

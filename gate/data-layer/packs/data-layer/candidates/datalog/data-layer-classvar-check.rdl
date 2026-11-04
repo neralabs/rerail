@@ -1,33 +1,14 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
-.decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
-.decl name(n: node, s: sym)
-name($n, $s) :- text($n, $s).
-name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
-.kindset k0 = "function_definition"
+.input doc, node, field, text
 .decl in_scope(d: int)
-.decl m16(n: node)
-.decl m22(n: node)
 .decl m4(n: node)
 .decl names0(s: sym)
-.decl names1(s: sym)
-.decl names2(s: sym)
-.decl names3(s: sym)
 .decl out_scope(d: int)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("ClassVar").
-names1("!=").
-names1("==").
-names1("is").
-names1("is not").
-names2("get_origin").
-names3("is_classvar_annotation").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
@@ -131,8 +112,4 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 m4($n) :- node(_, $n, "identifier", _, _), text($n, $v1), names0($v1).
 m4($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v2), node(_, $v2, "identifier", _, _), text($v2, $v3), names0($v3).
-m16($n) :- node(_, $n, "identifier", _, _), text($n, $v13), names2($v13).
-m16($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v14), node(_, $v14, "identifier", _, _), text($v14, $v15), names2($v15).
-m22($n) :- inside($n, $v19, k0), node(_, $v19, "function_definition", _, _), !op($v19, "async"), field($v19, "name", $v20), node(_, $v20, "identifier", _, _), text($v20, $v21), names3($v21).
-violation("data-layer-classvar-check", "comparison", $p, $l) :- m4($n), child($v6, $n, $v7), child($v6, $v5, $v8), $v7 = @add($v8, 1), name($v5, $v9), names1($v9), child($v10, $n, _), node(_, $v10, "comparison_operator", _, _), child($v10, $v11, _), node(_, $v11, "call", _, _), child(_, $v11, 0), field($v11, "function", $v12), m16($v12), child($v10, $v17, _), name($v17, $v18), names1($v18), !m22($n), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 .output violation

@@ -3,10 +3,9 @@
 .decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
 .decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.decl syntax_error(d: int)
+.input doc, node, child, field, text, line, syntax_error
 .decl name(n: node, s: sym)
 name($n, $s) :- text($n, $s).
 name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
@@ -16,7 +15,7 @@ name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x
 .decl out_scope(d: int)
 .decl t13(s: sym)
 .decl t7(s: sym)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("commit").
 names0("commit_async").
 names0("commit_branch").
@@ -37,5 +36,5 @@ t13($s) :- name(_, $s), @suffix($s, "VersionedWriteTransaction").
 t13($s) :- name(_, $s), @suffix($s, "LazyVersionedWriteTransactionSparse").
 m14($n) :- child($v3, $n, _), node(_, $v3, "block", _, _), field($v4, "body", $v3), node(_, $v4, "class_definition", _, _), field($v4, "name", $v5), name($v5, $v6), t7($v6).
 m14($n) :- child($v8, $n, _), node(_, $v8, "decorated_definition", _, _), child($v9, $v8, _), node(_, $v9, "block", _, _), field($v10, "body", $v9), node(_, $v10, "class_definition", _, _), field($v10, "name", $v11), name($v11, $v12), t13($v12).
-violation("data-layer-versioned-lifecycle-legacy-surfaces", "methods", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), names0($v2), m14($n), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-versioned-lifecycle-legacy-surfaces", "methods", "VLL001", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), names0($v2), m14($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 .output violation

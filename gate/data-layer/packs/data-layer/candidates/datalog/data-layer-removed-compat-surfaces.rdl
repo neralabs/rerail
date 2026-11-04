@@ -3,10 +3,9 @@
 .decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
 .decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.decl syntax_error(d: int)
+.input doc, node, child, field, text, line, syntax_error
 .decl name(n: node, s: sym)
 name($n, $s) :- text($n, $s).
 name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
@@ -17,7 +16,7 @@ name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x
 .decl m8(n: node)
 .decl names0(s: sym)
 .decl out_scope(d: int)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("AdvisoryLockCoordinator").
 names0("ApplicationTickProvider").
 names0("ApplyClaimedTimersConfig").
@@ -71,7 +70,7 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 m5($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v1), name($v1, $v2), names0($v2).
 m5($n) :- node(_, $n, "class_definition", _, _), field($n, "name", $v3), name($v3, $v4), names0($v4).
-violation("data-layer-removed-compat-surfaces", "definitions", $p, $l) :- m5($n), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-removed-compat-surfaces", "definitions", "RCS001", $p, $l) :- m5($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 m8($n) :- node(_, $n, "import_statement", _, _).
 m8($n) :- node(_, $n, "import_from_statement", _, _).
 m8($n) :- node(_, $n, "global_statement", _, _).
@@ -86,6 +85,6 @@ m18($n) :- child($v14, $n, _), node(_, $v14, "lambda_parameters", _, _).
 m18($n) :- field($v15, "name", $n), node(_, $v15, "default_parameter", _, _).
 m18($n) :- field($v16, "name", $n), node(_, $v16, "typed_default_parameter", _, _).
 m18($n) :- child($v17, $n, _), node(_, $v17, "typed_parameter", _, _).
-violation("data-layer-removed-compat-surfaces", "names", $p, $l) :- node(_, $n, "identifier", _, _), text($n, $v6), names0($v6), !m18($n), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
-violation("data-layer-removed-compat-surfaces", "attributes", $p, $l) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v19), node(_, $v19, "identifier", _, _), text($v19, $v20), names0($v20), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-removed-compat-surfaces", "names", "RCS001", $p, $l) :- node(_, $n, "identifier", _, _), text($n, $v6), names0($v6), !m18($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-removed-compat-surfaces", "attributes", "RCS001", $p, $l) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v19), node(_, $v19, "identifier", _, _), text($v19, $v20), names0($v20), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 .output violation

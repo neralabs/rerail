@@ -1,12 +1,8 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
-.decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.input doc, node, field, text
 .decl in_scope(d: int)
 .decl m10(n: node)
 .decl m17(n: node)
@@ -18,7 +14,7 @@
 .decl names5(s: sym)
 .decl out_scope(d: int)
 .decl t6(s: sym)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("annotation").
 names1("f").
 names2("model_fields").

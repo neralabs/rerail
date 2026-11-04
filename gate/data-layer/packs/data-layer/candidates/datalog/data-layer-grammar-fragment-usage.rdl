@@ -1,12 +1,10 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
 .decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.decl syntax_error(d: int)
+.input doc, node, field, text, line, syntax_error
 .decl name(n: node, s: sym)
 name($n, $s) :- text($n, $s).
 name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
@@ -27,7 +25,7 @@ name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x
 .decl u25(n: node)
 .decl u30(n: node)
 .decl u7(n: node)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("SqlDeferredRenderable").
 names0("SqlPreRenderedFragment").
 names1("__init__").
@@ -48,12 +46,12 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
-violation("data-layer-grammar-fragment-usage", "forbidden-class", $p, $l) :- node(_, $n, "class_definition", _, _), field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), names0($v2), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-grammar-fragment-usage", "forbidden-class", "sqlfragment_usage", $p, $l) :- node(_, $n, "class_definition", _, _), field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), names0($v2), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 blocked6($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
 m10($n) :- field($n, "name", $v8), node(_, $v8, "identifier", _, _), text($v8, $v9), names2($v9).
 t13($s) :- name(_, $s), @prefix($s, "Sql").
 t13($s) :- name(_, $s), @prefix($s, "_Sql").
 m21($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v16), node(_, $v16, "identifier", _, _), text($v16, $v17), names3($v17).
 m21($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v18), node(_, $v18, "function_definition", _, _), field($v18, "name", $v19), node(_, $v19, "identifier", _, _), text($v19, $v20), names3($v20).
-violation("data-layer-grammar-fragment-usage", "syntax-error", $p, $l) :- node(_, $n, "module", _, _), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-grammar-fragment-usage", "syntax-error", "python_parse_error", $p, 1) :- node(_, $n, "module", _, _), node($d, $n, _, _, _), in_scope($d), syntax_error($d), !out_scope($d), doc($d, $p, _).
 .output violation

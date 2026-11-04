@@ -3,10 +3,7 @@
 .decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.decl intval(n: node, v: int)
-.decl op(n: node, s: sym)
-.decl line(n: node, l: int)
-.input doc, node, child, field, text, intval, op, line
+.input doc, node, child, field, text
 .kindset k0 = "with_statement"
 .decl blocked20(low: node, high: node)
 .decl blocked43(low: node, high: node)
@@ -40,7 +37,7 @@
 .decl u50(n: node)
 .decl u71(n: node)
 .decl u93(n: node)
-.decl violation(rule: sym, clause: sym, path: sym, line: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 names0("resolved_value").
 names1("open_provider_read_plan").
 names1("open_provider_versioned_read_plan").
