@@ -2139,6 +2139,21 @@
           "source": "def unrelated():\n    return 1\n"
         }
       ]
+    },
+    {
+      "id": "purity-transitive-inherited-method",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\nfrom impl.helper import Parent\nclass Child(Parent):\n    @pure_lazy\n    def derive(self, tx):\n        return self.inspect_runtime(tx)\n"
+        },
+        {
+          "path": "impl/helper.py",
+          "source": "class Parent:\n    def inspect_runtime(self, tx):\n        return tx._conn\n"
+        }
+      ]
     }
   ]
 }

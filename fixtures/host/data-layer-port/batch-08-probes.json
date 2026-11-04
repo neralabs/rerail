@@ -6285,6 +6285,37 @@
           "policyEntries": "[{\"body_hash\": \"7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced\", \"cache_lifetime\": \"process\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l1234_policy_test.sample.derive\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 4, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd\"}]"
         }
       }
+    },
+    {
+      "test": "probe:batch8:purity-transitive-inherited-method",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_paths",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/main.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy\nfrom impl.helper import Parent\nclass Child(Parent):\n    @pure_lazy\n    def derive(self, tx):\n        return self.inspect_runtime(tx)\n"
+        },
+        {
+          "path": "impl/helper.py",
+          "source": "class Parent:\n    def inspect_runtime(self, tx):\n        return tx._conn\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_paths"
+        }
+      }
     }
   ]
 }
