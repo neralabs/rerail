@@ -1,162 +1,192 @@
-// core: what the binary provides. Everything here is native; every other library is Datalog over these.
+// core: what the binary provides. Every relation here is `.input`: the Rerail binary supplies its rows, and
+// there are no rules for it. Every other library is Datalog over these.
 // Tape relations are read in place from the parse tape (decision 0026); none is a table of rows per node.
 //
-// How to read this file
-//   A `.native` line declares a relation that the Rerail binary computes itself; there are no rules for it here.
-//   Rules in other libraries (tsx/names, python/names, …) and in policies use these relations exactly like
-//   relations they derive themselves: `kind($n, "call")` is a body atom whichever side implements it.
-//   Column types: `node` is a syntax-tree node, `sym` an interned string, `int` a number, `set` a named set
-//   (a `.kindset`, `.set` or unary relation) passed as an argument.
-//
-// What lives here, and why it is native rather than Datalog
-//   1. The tape: per-file syntax facts. The parser already produced them; Datalog cannot parse source text.
-//   2. Tree structure: ancestor/sibling questions answered from node offsets on the tape, in constant or
-//      logarithmic time. The same questions in Datalog would be recursive closures over every parent edge.
-//   3. Matcher atoms: escape hatches to the pattern matcher for constructs with no Datalog lowering yet.
-//   4. Value builtins: string functions (`@cat`, `@join`, …) that compute a new value; Datalog has no arithmetic
-//      on strings, so these are functions, not relations.
-//   5. Repository inputs: readers for files that are not source code (tsconfig.json, package.json, Git tree,
-//      policy options). Reading and parsing JSON is IO, which Datalog cannot do.
+// The language is Soufflé Datalog. Rules, `.decl`, `.input`, `.output`, `.type`, `.functor`, `#include`,
+// `!`, `_`, `count : { … }`, `match` and `@functors` mean what they mean in Soufflé. Four additions, each
+// described where it is used:
+//   1. Patterns:  n ~ `code pattern`  matches a node against the language's grammar (matcher atoms, below).
+//   2. Captures:  named regex groups in match("…(?<X>…)…", s) bind X (value functions and captures, below).
+//   3. must, may: three-valued relations, for facts that may be unknown (the tsx and python libraries).
+//   4. Findings and fixes: .violation, fix, `=> edits` and .edit (edits, below; the page's Fixes section).
+// Plus the policy header directives (.policy, .mode, .scope, .budget, …), which are settings, not logic.
 //
 // Names used below: `d` a document id, `n`/`p`/`c`/`a` nodes, `s`/`v`/`k` symbols.
+
+// ---- types -------------------------------------------------------------------------------------------------------
+// A node is a syntax-tree node: an id on the tape. A span is a piece of one node's text, made by a regex capture
+// (see `match` below). Relations that read source text (text, line, the edits) take either: `loc`.
+.type node <: number
+.type span <: number
+.type loc = node | span
 
 // ---- the tape ----------------------------------------------------------------------------------------------------
 // Facts about documents. A document is one parsed source file; `d` is its integer id.
 // doc(d, "src/app/main.py", "app.main"): the module name is derived from the path; "" when the file has none.
-.native doc(d: int, path: sym, module: sym)          // one row per document; module is the dotted module name, or ""
+.decl doc(d: number, path: symbol, module: symbol)  // one row per document; module is the dotted module name, or ""
 // pkg(d, "app") for src/app/main.py: the dotted Python package holding the document.
-.native pkg(d: int, p: sym)                          // the package a document belongs to (Python)
+.decl pkg(d: number, p: symbol)                          // the package a document belongs to (Python)
 // For "src/app/main.py": path_part(d, "src"), path_part(d, "app"), path_part(d, "main.py"). Lets rules test
 // "is this file under a `tests` directory" without regex on the whole path.
-.native path_part(d: int, s: sym)                    // each directory of the document's path, and its file name
+.decl path_part(d: number, s: symbol)                    // each directory of the document's path, and its file name
 // file_name(d, "main.py") for the same document.
-.native file_name(d: int, s: sym)                    // the last component of the document's path
+.decl file_name(d: number, s: symbol)                    // the last component of the document's path
 // Every node of every document, with its grammar kind and byte range [start, end). Offsets are what the
-// tree builtins below compare: a is an ancestor of n exactly when a's range encloses n's.
-.native node(d: int, n: node, kind: sym, start: int, end: int)
+// tree relations below compare: a is an ancestor of n exactly when a's range encloses n's.
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 // kind(n, "call_expression"): the tree-sitter node type. Kind names are the grammar's own (see .language).
-.native kind(n: node, k: sym)                        // a node's grammar kind
+.decl kind(n: node, k: symbol)                           // a node's grammar kind
 // In `f(x)`: field(call, "function", f) and field(call, "arguments", args). Field names come from the grammar.
-.native field(p: node, f: sym, c: node)              // c is p's child in field f
+.decl field(p: node, f: symbol, c: node)                 // c is p's child in field f
 // In `f(a, b)`, the argument list has child(args, a, 0) and child(args, b, 1). Anonymous tokens (`(`, `,`)
 // are not named children and are not counted.
-.native child(p: node, c: node, i: int)              // c is p's i-th named child, from 0
+.decl child(p: node, c: node, i: number)                 // c is p's i-th named child, from 0
 // text(n, "foo") for the identifier `foo`. Interned, so equal texts compare as equal symbols cheaply.
-.native text(n: node, s: sym)                        // source text, interned
+.decl text(n: loc, s: symbol)                            // source text, interned
 // In `a + b`, op(binary, "+"); in `async def f()`, op(def, "async"). These tokens have no node of their own.
-.native op(n: node, s: sym)                          // an anonymous token child: operators, `async`
+.decl op(n: node, s: symbol)                             // an anonymous token child: operators, `async`
 // docof(n, d): the document node n was parsed from. Joins a node to doc(d, path, module).
-.native docof(n: node, d: int)
+.decl docof(n: loc, d: number)
 // line(n, 12): used in messages ("at line {outer.line}") and line-based suppressions.
-.native line(n: node, l: int)                        // 1-based start line
+.decl line(n: loc, l: number)                            // 1-based start line
 // value(n, "a\nb") for the literal "a\\nb"; value(n, "255") for 0xff. Lets rules compare literals by meaning.
-.native value(n: node, v: sym)                       // static value of a literal: strings unescaped, numbers normalised
+.decl value(n: node, v: symbol)  // static value of a literal: strings unescaped, numbers normalised
 // string_value(n, "react") for the literal 'react' or "react": contents without quotes.
-.native string_value(n: node, v: sym)                // a string literal's contents
+.decl string_value(n: node, v: symbol)                   // a string literal's contents
 // With `const M = "react"; import(M)`, static_value(arg, "react"). Follows only constants in the same file.
-.native static_value(n: node, v: sym)                // value after following file-local constant bindings
+.decl static_value(n: node, v: symbol)                   // value after following file-local constant bindings
 // value_type("12", "int") for Python, "number" for TypeScript: the type of a value produced by `value`.
-.native value_type(v: sym, t: sym)                   // "str", "int", "string", "number", …
+.decl value_type(v: symbol, t: symbol)                   // "str", "int", "string", "number", …
+.input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line
+.input value, string_value, static_value, value_type
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
 // would materialise every (node, ancestor) pair; on the tape each question is a range comparison.
 // In `function f() { g(); }`: within(call_g, body), within(call_g, f), but not within(f, call_g).
-.native within(n: node, a: node)                     // n is strictly below a
-// within(call, f, fn_scope): call is inside f with no nested function in between, i.e. f is the call's own
-// function, not an outer one. Lowers JSON's `inside` with a `stopBy` rule.
-.native within(n: node, a: node, stop: set)          // ... and no node of `stop` lies strictly between them
+.decl within(n: node, a: node)                           // n is strictly below a
+//
+// within_stop, precedes_stop and nearest take a stop set as their last argument: the name of a unary relation of kinds
+// (`scope`, `fdef`) or of nodes (`render_stop`), or one kind written as a string ("program"). This is the one
+// place a relation is passed as an argument, which Soufflé has no form for; the alternative, a recursive climb
+// per stop set, is what these relations exist to avoid.
+// within_stop(call, f, fn_scope): call is inside f with no nested function in between, i.e. f is the call's
+// own function, not an outer one. Lowers JSON's `inside` with a `stopBy` rule.
+.decl within_stop(n: node, a: node, stop: relation)      // n below a, and no node of `stop` strictly between them
 // nearest(ref, s, block_scope): s is the innermost enclosing block. The set may be a derived relation too
-// (tsx/jsx uses nearest($c, $p, render_stop)), so "climb until X" needs no recursion.
-.native nearest(n: node, a: node, set: set)          // a: n's nearest strict ancestor in `set` (kindset or relation)
+// (tsx/jsx uses nearest(c, p, render_stop)), so "climb until X" needs no recursion.
+.decl nearest(n: node, a: node, set: relation)           // a: n's nearest strict ancestor in `set`
 // In `a(); b(); c();` as siblings: precedes(a, c) holds; next_sibling(a, b) holds, next_sibling(a, c) does not.
-.native precedes(a: node, b: node)                   // a ends before b starts, same parent
-.native next_sibling(a: node, b: node)               // b is the named sibling right after a
+.decl precedes(a: node, b: node)                         // a ends before b starts, same parent
+.decl next_sibling(a: node, b: node)                     // b is the named sibling right after a
+// precedes_stop(a, b, stop): as precedes, with no sibling of `stop` between them. Lowers JSON's `precedes` and
+// `follows` with a `stopBy` rule.
+.decl precedes_stop(a: node, b: node, stop: relation)
 // Python `x: "List[int]"`: parsed(str, "annotation", root) gives the tree of the code inside the string, so
 // rules can resolve names in string annotations. Native because it runs the parser on the string's contents.
-.native parsed(s: node, grammar: sym, root: node)    // root of string s parsed as `grammar` ("annotation", …)
+.decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation", …)
 // spread(n) for `*args` in `f(*args)` and `...xs` in `[...xs]`: positions after a spread are not fixed, so
 // argument-matching rules must treat the call as open.
-.native spread(n: node)                              // a spread element or argument (`*args`, `...xs`)
+.decl spread(n: node)                                    // a spread element or argument (`*args`, `...xs`)
+// split_dot("os.path.join", "os.path", "join"): q is m.x, split at the last dot. A relation, not a function,
+// so it runs whichever way round its columns are bound (see @dot below for building a name).
+.decl split_dot(q: symbol, m: symbol, x: symbol)
+.input within, within_stop, nearest, precedes, next_sibling, precedes_stop, parsed, spread, split_dot
 
 // ---- matcher atoms ---------------------------------------------------------------------------------------------
-// Not relations: body forms that hand a node to the existing pattern matcher. Used when a JSON rule is
-// translated and part of it has no Datalog form yet.
-// text_rule(d, {…}) a document-level regex rule (forbid.regex)
-// $n ~ `pattern`      the node matches a code pattern of the clause's language; $X in the pattern binds Datalog $X
-//                     e.g. $c ~ `exec($ARG)` matches calls of exec and binds $ARG to the argument node.
-// ast($n, { … })     a matcher term with no Datalog lowering on this page; compiled to a transducer program
+// Body forms that hand a node to the pattern matcher. Not Soufflé: addition 1.
+//
+// n ~ `pattern`   n matches a code pattern of the policy's language (ast-grep's pattern syntax). Each $X in the
+//                 pattern binds the Datalog variable X to the node it matched; $$$X binds X to a list of nodes,
+//                 usable only in fix templates. n may be bound or not.
+//                 e.g. c ~ `exec($ARG)` matches calls of exec and binds ARG to the argument node.
+//                 Variables bound by patterns are written in capitals by convention; nothing else is.
+// text_rule(d, {…})  a document-level regex rule (forbid.regex), from a translated JSON rule
+// ast(n, { … })   a JSON matcher term with no Datalog form yet; compiled to a transducer program
 
-// ---- value builtins ($v = @f(...), never a body atom) ---------------------------------------------------------
-// Functions that compute a symbol from symbols. They appear on the right of `=` or as an argument, never as a
-// fact to match: `$q = @cat($m, $x)`, `doc(_, @join($d, $s), $m)`. Native because strings are opaque to Datalog.
-// @cat(a, b)       "a.b" (a == "" gives b); invertible: $q = @cat($m, $x) splits at the last dot
-//                  e.g. @cat("os", "path") = "os.path"; with $q bound to "os.path.join", $m = "os.path", $x = "join".
-// @qname(m, x)     "m#x", a symbol in module m (TypeScript)
-//                  e.g. @qname("react", "memo") = "react#memo". `#` because TS module names contain dots and slashes.
-// @pkg_up(q, k)    q with its last k dotted segments removed ("" past the root)
-//                  e.g. @pkg_up("a.b.c", 1) = "a.b": resolves Python relative imports (`from .. import x`).
-// @head(q)         the first dotted segment
-//                  e.g. @head("os.path") = "os": the name `import os.path` binds.
-// @len(s)          length in characters
-// @dir(p), @join(dir, rel)    path parent; join and normalise (".." resolved)
-//                  e.g. @join(@dir("src/a/b.ts"), "../c") = "src/c": resolves `import "../c"` from src/a/b.ts.
-// @concat(a, b)    raw concatenation
-//                  e.g. @concat("src/c", ".tsx") = "src/c.tsx": tries file extensions.
-// @re(s, pat)      the first capture group of pat's leftmost match in s; no value when it does not match
-//                  e.g. @re("use_foo", "^use_(.*)") = "foo".
-// @glob_sub(pat, to, s)   tsconfig `paths`: s matched against pat ("@/*"), its * substituted into to; "" if no match
-//                  e.g. @glob_sub("@/*", "src/*", "@/lib/x") = "src/lib/x".
-// @package_of(spec)        "react-router-dom/server" -> "react-router-dom/server" (subpath kept), "@a/b/c" -> "@a/b/c"
-//                  Names the package entry point a bare specifier imports, as the target symbol's module.
-// $s =~ "re"       regex test (on a node: its text); runs on the vocabulary, so it is cheap to filter by
-//                  "On the vocabulary": tested once per distinct interned string, not once per node.
+// ---- value functions and captures --------------------------------------------------------------------------------
+// Soufflé built-ins used here: cat(a, b) concatenation, strlen(s), to_number(s), to_string(n), contains(a, b),
+// and match(re, s).
+//
+// match("re", s)  s matches the regex re as a whole, as in Soufflé: write `.*` where the text may go on, so
+//                 match("test_.*", name) is "starts with test_". On a node or span, s is its text.
+//                 It runs on the vocabulary: tested once per distinct interned string, not once per node.
+//                 Addition 2, captures: a named group (?<X>…) binds the variable X to what it matched, from
+//                 the first match (leftmost, then as the regex engine resolves alternatives).
+//                   On a node or span, X is a span: it has text and line, can be a finding's `at`, and can be
+//                   the target of an edit. On a symbol, X is a symbol.
+//                   A group that takes no part in the match (an unmatched `(?<X>…)?`) gives no row.
+//                   Inside `!` or `count : { … }`, groups bind only there, like any variable.
+//                 e.g. match("use_(?<x>.*)", "use_foo") binds x = "foo".
+// match_all("re", s)  one row per non-overlapping match of re anywhere in s, with that match's groups bound.
+//
+// User functors, declared as in Soufflé and written @name(…). They compute a symbol from symbols.
+.functor dot(a: symbol, b: symbol): symbol               // "a.b" ("" . b gives b): @dot("os", "path") = "os.path"
+// @qname("react", "memo") = "react#memo": a symbol in a TypeScript module. `#` because TS module names contain
+// dots and slashes.
+.functor qname(m: symbol, x: symbol): symbol
+// @pkg_up("a.b.c", 1) = "a.b": q with its last k dotted segments removed ("" past the root). Resolves Python
+// relative imports (`from .. import x`).
+.functor pkg_up(q: symbol, k: number): symbol
+.functor head(q: symbol): symbol                         // the first dotted segment: @head("os.path") = "os"
+// @join(@dir("src/a/b.ts"), "../c") = "src/c": path parent; join and normalise (".." resolved). Resolves
+// `import "../c"` from src/a/b.ts.
+.functor dir(p: symbol): symbol
+.functor join(dir: symbol, rel: symbol): symbol
+// @glob_sub("@/*", "src/*", "@/lib/x") = "src/lib/x": tsconfig `paths`. s is matched against pat and its *
+// substituted into to; "" if it does not match.
+.functor glob_sub(pat: symbol, to: symbol, s: symbol): symbol
+// @package_of("react-router-dom/server") = "react-router-dom/server" (subpath kept), "@a/b/c" -> "@a/b/c".
+// Names the package entry point a bare specifier imports, as the target symbol's module.
+.functor package_of(spec: symbol): symbol
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
 // Facts from the repository that are not source code. Each reader parses one kind of file (JSON configs,
 // the Git tree, the policy) and is native because that is IO and format parsing, not logic.
 // file("src/c.tsx"): the file exists. Import resolution tests candidate paths against this.
-.native file(path: sym)                              // a file in the scanned tree (Git tree facts)
+.decl file(path: symbol)                                 // a file in the scanned tree (Git tree facts)
 // tsconfig("web", "web/src") for web/tsconfig.json with "baseUrl": "src". `extends` chains are merged first.
-.native tsconfig(dir: sym, base_url: sym)            // tsconfig.json / jsconfig.json, `extends` followed
+.decl tsconfig(dir: symbol, base_url: symbol)            // tsconfig.json / jsconfig.json, `extends` followed
 // tsconfig_for("web/src/a.ts", "web"): the nearest tsconfig.json in or above its directory.
-.native tsconfig_for(path: sym, dir: sym)            // the tsconfig directory that governs a file
+.decl tsconfig_for(path: symbol, dir: symbol)            // the tsconfig directory that governs a file
 // "paths": {"@/*": ["src/*"]} in web/tsconfig.json gives tsconfig_path("web", "@/*", "src/*"), one row per target.
-.native tsconfig_path(dir: sym, pattern: sym, target: sym)
+.decl tsconfig_path(dir: symbol, pattern: symbol, target: symbol)
 // package("packages/ui", "@acme/ui") from packages/ui/package.json: maps a workspace package name to its directory.
-.native package(dir: sym, name: sym)                 // package.json name
+.decl package(dir: symbol, name: symbol)                 // package.json name
 // "exports": {"./button": "./src/button.ts"} in @acme/ui's package.json gives
 // package_export("@acme/ui", "./button", "./src/button.ts").
-.native package_export(name: sym, subpath: sym, target: sym)
+.decl package_export(name: symbol, subpath: symbol, target: symbol)
 // Python: in `cast("Foo", x)` or `TypeVar("T", bound="Foo")`, the string is a type. Native because the list of
 // positions follows Ruff's own table, not anything visible in the tree.
-.native string_annotation(s: node)                   // a string Ruff reads as a type definition
+.decl string_annotation(s: node)                         // a string Ruff reads as a type definition
 // option("max_depth", "3"): a policy's tunable, so one rule text serves repositories with different settings.
-.native option(name: sym, v: sym)                    // a rule option's configured value (rerail.policy/v1 `options`)
+.decl option(name: symbol, v: symbol)  // a rule option's configured value (rerail.policy/v1 `options`)
 // signed_list("allow/exec.txt", "scripts/build.py"): approved exceptions; the signature check is native so a
 // rule cannot accept an edited list.
-.native signed_list(path: sym, entry: sym)           // entries of a signed allowlist; refused if the signature fails
+.decl signed_list(path: symbol, entry: symbol)  // entries of a signed allowlist; refused if the signature fails
+.input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, string_annotation, option
+.input signed_list
 
 // ---- edits (native applier) -----------------------------------------------------------------------------------
-// A fix is a set of edits. Rules derive edits like any other rows: a rule ending in `=> e1, e2` contributes those
-// edits to the fix in its head (see the "Fixes" section of the syntax page). These four are the only edits the
-// binary applies; every other edit (ensure_import, remove_alias, hoist, rename, unwrap, …) is Datalog in a library
-// and expands to these.
+// Addition 4. A fix is a set of edits. Rules derive edits like any other rows: a rule ending in `=> e1, e2`
+// contributes those edits to the fix in its head (see the "Fixes" section of the syntax page). These four are
+// the only edits the binary applies; every other edit (ensure_import, remove_alias, hoist, rename, unwrap, …)
+// is Datalog in a library and expands to these.
 //
 // The applier is native because it works on bytes, not facts. For one fix it:
 //   1. turns each edit into a byte range in the edited node's file (a fix may edit several files);
-//   2. fills templates: in `…`, $X is variable X's value (a node's source text, or a sym); $$$X is a list
-//      variable bound by a pattern atom; the text is reindented to where it lands, as ast-grep's fix does;
+//   2. fills templates: in `…`, $x is variable x's value (a node's or span's source text, or a symbol); $$$X is a
+//      list variable bound by a pattern; the text is reindented to where it lands, as ast-grep's fix does;
 //   3. drops the whole fix if two of its edits overlap, or the same node gets two different texts;
 //   4. applies all files or none, reparses them, and drops the fix if any no longer parses.
 // After a fix is applied, Rerail re-checks the edited files; the finding must be gone (checked in rule tests).
 //
-// replace(n, `$A or $B`): n's source span becomes the text.
-.native edit replace(n: node, text: sym)
+// replace(n, `$A or $B`): n's source (a node or a captured span) becomes the text.
+.edit replace(n: loc, text: symbol)                      // built in
 // delete(n): remove n. In a list (arguments, parameters, import names, JSX children, dict entries) one separator
 // goes with it; a statement alone on its lines takes its lines with it, so no blank line is left behind.
-.native edit delete(n: node)
+.edit delete(n: loc)                                     // built in
 // insert_before(n, `x = 1`) / insert_after(n, …): new text as n's sibling. Before or after a statement it goes on
 // its own line at n's indentation; in a list it gets a separator.
-.native edit insert_before(n: node, text: sym)
-.native edit insert_after(n: node, text: sym)
+.edit insert_before(n: node, text: symbol)               // built in
+.edit insert_after(n: node, text: symbol)                // built in

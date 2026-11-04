@@ -15,6 +15,7 @@ w('''<div class="col">
   <div style="display:grid;gap:14px">
     <h1>Rerail logic: rules as Datalog</h1>
     <p class="lede">A proposal for how Rerail rules are written. It replaces today's <code>rerail.policy/v1</code> JSON with one text format, <code>.rr</code>, and moves name, import and call resolution out of the binary into libraries written in the same format.</p>
+    <p class="lede">The format is <a href="https://souffle-lang.github.io/">Soufflé</a> Datalog with four additions for code: syntax patterns, regex captures that bind variables, findings with fixes, and relations that may be unknown.</p>
   </div>
   <h2>Why change</h2>
 ''')
@@ -26,11 +27,11 @@ row("The JSON is hard to read and write", [
  ("json", open(os.path.join(HERE, "..", "..", "..", "packs", "python", "rules", "bandit-b102-exec-used.json")).read(),
   "Today: packs/python/rules/bandit-b102-exec-used.json"),
  ("rr", '''
-.use python/names        // sym_of: what an expression refers to
-B102($c) :- kind($c, "call"), field($c, "function", $f), sym_of($f, "builtins.exec").
-B102($c) :- kind($c, "call"), field($c, "function", $f),
-    kind($f, "parenthesized_expression"),
-    child($f, $g, 0), sym_of($g, "builtins.exec").     // (exec)(src)
+#include "python/names.rr"   // sym_of: what an expression refers to
+B102(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, "builtins.exec").
+B102(c) :- kind(c, "call"), field(c, "function", f),
+    kind(f, "parenthesized_expression"),
+    child(f, g, 0), sym_of(g, "builtins.exec").     // (exec)(src)
 ''', ".rr: the same check"),
 ])
 
@@ -58,9 +59,9 @@ if _LAYERED_MODULE_RE.match(first_segment):     # l1000_schema, l9600_graphs, �
  ("rr", '''
 // Import i, in module a, loads module b, and b already leads back to a through imports that run
 // at import time. Moving i to the top of a would close the cycle a → b → … → a.
-cycle($i) :- local_import($i), module_of($i, $a), loads($i, $b),
-    $b != $a, !pkg_above($a, $b),
-    reaches($b, $a).
+cycle(i) :- local_import(i), module_of(i, a), loads(i, b),
+    b != a, !pkg_above(a, b),
+    reaches(b, a).
 ''', ".rr: function-level-imports.b2.rr"),
 ])
 
@@ -73,13 +74,13 @@ row("Resolution logic ships in the binary", [
 ''', "Today: the rule asks; native/src/code_rule_dsl/{scope,calls,import_target,module_graph} answers (≈28k lines of Rust)"),
  ("rr", '''
 // walk: start at the name's own scope and move outward, skipping class bodies, until a scope binds it.
-walk($n, $x, $s) :- nameref($n, $x), nearest($n, $s, scope).
-walk($n, $x, $p) :- walk($n, $x, $s), !bound_in($s, $x), nearest($s, $p, fscope).
-look($n, $x, $s) :- walk($n, $x, $s), bound_in($s, $x).   // the scope that binds it
+walk(n, x, s) :- nameref(n, x), nearest(n, s, scope).
+walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), nearest(s, p, fscope).
+look(n, x, s) :- walk(n, x, s), bound_in(s, x).   // the scope that binds it
 // sym_of: an imported name gives the module path; a local def its qualified name; else a builtin.
-sym_of($n, $q) :- qn($n, $q0), resolve_export($q0, $q).
-sym_of($n, $q) :- look($n, $x, $s), defn($s, $x, $f), qualname($f, $q).
-sym_of($n, $q) :- builtin_ref($n, $x), $q = @cat("builtins", $x).
+sym_of(n, q) :- qn(n, q0), resolve_export(q0, q).
+sym_of(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
+sym_of(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
 ''', ".rr: lib/python/names.rr ({{lib_py_lines}} lines for all Python libraries)"),
 ])
 
@@ -109,14 +110,15 @@ row("Libraries are Datalog; the binary keeps the basics", [
     "The binary provides facts about the tree and a few operations on it. Everything that interprets the language, such as scopes, imports, calls and JSX, is Datalog that ships as data. A library change is a text change to a <code>.rr</code> file, with no new release.",
 ], [
  ("rr", '''
-.native kind(n: node, k: sym)              // a node's grammar kind
-.native field(p: node, f: sym, c: node)    // c is p's child in field f
-.native within(n: node, a: node)           // n is somewhere below a
-.native replace(n: node, text: sym)        // an edit, for fixes
+.decl kind(n: node, k: symbol)             // a node's grammar kind
+.decl field(p: node, f: symbol, c: node)   // c is p's child in field f
+.decl within(n: node, a: node)             // n is somewhere below a
+.input kind, field, within                 // rows come from the binary
+.edit replace(n: loc, text: symbol)        // an edit, for fixes
 ''', "lib/core.rr: native, in the binary"),
  ("rr", '''
 // python/names: `len(xs)` with no local `len` refers to the builtin.
-sym_of($n, $q) :- builtin_ref($n, $x), $q = @cat("builtins", $x).
+sym_of(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
 ''', "lib/python/names.rr: Datalog, shipped as data"),
 ])
 
@@ -144,7 +146,7 @@ row("Fixes are rules", [
 ''', "Today: one template"),
  ("rr", '''
 // Hoist a function-level import, but only if it closes no cycle and is a plain statement.
-hoist_import($i, "deferred-no-cycle") :- plain_stmt($i), !clash($i) => hoist($i).
+hoist_import(i, "deferred-no-cycle") :- plain_stmt(i), !clash(i) => hoist(i).
 ''', ".rr"),
  ("diff", '''
   import os
@@ -188,25 +190,25 @@ export function App() {
 row("How it works", [
     '''<ol class="steps">
         <li><code>router_el(e)</code>: the tag of element <code>e</code> is a name imported from a react-router package, and the imported name is one of the router exports (<code>BrowserRouter</code>, <code>MemoryRouter</code>, …). It follows the import, so <code>import { BrowserRouter as R }</code> counts.</li>
-        <li><code>stop(n)</code>: where the climb up the tree ends. A function or attribute (the set <code>barrier</code>), any router element, or a component element, meaning a tag that is not a lowercase HTML tag.</li>
+        <li><code>stop(n)</code>: where the climb up the tree ends. A function or attribute (the relation <code>barrier</code>), any router element, or a component element, meaning a tag that is not a lowercase HTML tag.</li>
         <li><code>NESTED_ROUTER_JSX(inner)</code>: <code>inner</code> is a router, and the nearest <code>stop</code> above it is also a router. <code>&lt;main&gt;</code> and <code>&lt;&gt;…&lt;/&gt;</code> are not stops, so the climb passes through them.</li>
       </ol>''',
     "For the first <code>&lt;MemoryRouter&gt;</code>: climbing up, <code>&lt;main&gt;</code> is not a stop and <code>&lt;BrowserRouter&gt;</code> is, and it is a router, so the rule reports it. For the second, the nearest stop is <code>&lt;Layout&gt;</code>, which is not a router, so it reports nothing.",
 ], [
  ("rr", '''
 // 1. router_el(e): e's tag refers to a router export of a react-router package.
-router_el($e) :- tag($e, $t), kind($t, "identifier"), ref_site($t, $s),
-    imported($s, $m, $x), $m in router_module, $x in router_export.
+router_el(e) :- tag(e, t), kind(t, "identifier"), ref_site(t, s),
+    imported(s, m, x), router_module(m), router_export(x).
 
 // 2. stop(n): the climb ends at functions and attributes, at routers, and at components.
-stop($n) :- kind($n, $k), $k in barrier.
-stop($n) :- router_el($n).
-stop($e) :- kind($e, "jsx_element"), !router_el($e), tag($e, $t),
-    !(kind($t, "identifier"), text($t, $s), $s =~ "^[a-z]").     // not <div>, <main>, …
+stop(n) :- kind(n, k), barrier(k).
+stop(n) :- router_el(n).
+stop(e) :- kind(e, "jsx_element"), !router_el(e), tag(e, t),     // not <div>, <main>, …
+    count : { kind(t, "identifier"), text(t, s), match("[a-z].*", s) } = 0.
 
 // 3. The finding: the nearest stop above a router is a router.
-NESTED_ROUTER_JSX($inner) :- router_el($inner),
-    nearest($inner, $outer, stop), router_el($outer).
+NESTED_ROUTER_JSX(inner) :- router_el(inner),
+    nearest(inner, outer, stop), router_el(outer).
 ''', "The three relations, from nested-routers.b1.rr"),
 ])
 
@@ -229,10 +231,11 @@ w('''  <section style="display:grid;gap:10px">
       <div class="stat"><b>{{rules}}</b><span>pack rules translated from JSON</span></div>
       <div class="stat"><b>{{json_mb}} → {{rr_mb}}</b><span>pretty JSON → .rr, comments excluded</span></div>
       <div class="stat"><b>{{atom_rules}}</b><span>rules still holding an untranslated JSON piece</span></div>
+      <div class="stat"><b>{{ungrounded}}</b><span>generated rules not yet grounded, marked in the output</span></div>
       <div class="stat"><b>{{dl_py_lines}} → {{dl_rr_code}}</b><span>data-layer lines: Python → .rr logic</span></div>
     </div>
     <ul class="tight">
-      <li>Every pack rule has a machine translation. Where a JSON construct has no .rr form yet, it stays as an <code>ast($n, {…})</code> piece.</li>
+      <li>Every pack rule has a machine translation. Where a JSON construct has no .rr form yet, it stays as an <code>ast(n, {…})</code> piece.</li>
       <li>Six data-layer checks, function-level-imports and the router rule are written by hand in their final form, beside the Python they replace.</li>
       <li>Nothing has been compiled or run: there is no .rr parser or engine yet. Known problems found by reading are listed in <code>docs/rule-syntax/OPEN-ISSUES.md</code>.</li>
     </ul>
@@ -241,7 +244,7 @@ w('''  <section style="display:grid;gap:10px">
   <section style="display:grid;gap:10px">
     <h2>How to read this page</h2>
     <ul class="tight">
-      <li><a href="#syntax">Syntax</a>: Datalog from the start, then each part of the format, fixes, and possible findings.</li>
+      <li><a href="#syntax">Syntax</a>: Datalog from the start, then what is added to Soufflé, each part of the format, fixes, and possible findings.</li>
       <li><a href="#library">Library</a>: the Datalog libraries and the native core they stand on.</li>
       <li><a href="#packs">Pack rules</a>: every shipped rule, today's JSON beside its .rr.</li>
       <li><a href="#data-layer">Data-layer rules</a>: the hand-written rules, each beside the JSON port and the Python linter.</li>

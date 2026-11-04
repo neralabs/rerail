@@ -1,13 +1,13 @@
 # Library needs beyond the stated interface
 
-The six data-layer rule files use these relations and builtins, which the `python/*` interface did not list. All four are now in the libraries: `path_part`, `file_name` and `@re` in `lib/core.rr`, and `cmp` in `lib/python/names.rr`.
+The six data-layer rule files use these relations and builtins, which the `python/*` interface did not list. All four are now in the libraries: `path_part`, `file_name` and regex captures (`match` with named groups) in `lib/core.rr`, and `cmp` in `lib/python/names.rr`.
 
 | Name | Signature | Meaning | Kind | Used by |
 |---|---|---|---|---|
 | `path_part` | `path_part(d: int, s: sym)` | `s` is a component of document `d`'s repository-relative path: each directory, and the file name | native | layer-violations |
 | `file_name` | `file_name(d: int, s: sym)` | `s` is the last component of document `d`'s path | native | layer-violations |
 | `cmp` | `cmp(c: node, op: sym, l: node, r: node)` | `c` is a comparison with exactly one operator `op` (`==`, `is`, `in`, `not in`, …) between operands `l` and `r`. Chained comparisons have no row | Datalog over the tape (operator tokens) | post-op-no-internal-dispatch |
-| `@re` | `$v = @re(s, pattern)` | value builtin: the first capture group of `pattern`'s leftmost match in `s`; no row when it does not match | native | all but swallowed-exceptions |
+| `match` captures | `match(".*?\\.l(?<t>\\d{4})_.*", m)` | Soufflé's whole-string `match`; each named group binds a variable (a string here); no row when it does not match | native | all but swallowed-exceptions |
 
 ## Directive and operator forms the files assume
 

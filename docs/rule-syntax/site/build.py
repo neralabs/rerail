@@ -73,16 +73,17 @@ def main():
     libs = {}
     for mod, kind, blurb in LIBS:
         libs[mod] = {"kind": kind, "src": read(os.path.join(RS, "lib", mod + ".rr")), "blurb": blurb}
-    n_native = sum(len(re.findall(r"^\.native\s", l["src"], re.M)) for l in libs.values())
+    n_native = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for l in libs.values() if l["kind"] == "native")
     n_datalog = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for m, l in libs.items() if l["kind"] == "datalog")
 
-    packs, total_json, total_rr, atom_rules, n_rules = [], 0, 0, 0, 0
+    packs, total_json, total_rr, atom_rules, n_rules, ungrounded = [], 0, 0, 0, 0, 0
     for pdir in sorted(glob.glob(os.path.join(ROOT, "packs", "*", "rules"))):
         name = pdir.split(os.sep)[-2]
         rules = []
         for f in sorted(glob.glob(os.path.join(pdir, "*.json"))):
             doc = json.loads(read(f))
-            rr, u = translate.translate(doc)
+            rr, u, ug = translate.translate(doc)
+            ungrounded += ug
             pretty = json.dumps(doc, indent=2, ensure_ascii=False)
             rules.append({"id": doc.get("id", os.path.basename(f)), "d": doc.get("description", ""), "m": doc.get("mode", "log"),
                           "j": compact(doc), "r": rr, "u": u, "jl": pretty.count("\n") + 1, "rl": rr.count("\n")})
@@ -155,7 +156,7 @@ def main():
              "router_json_lines": str(router_pretty.count("\n") + 1), "router_b1_code": str(code_lines(b1)),
              "dl_py_lines": f"{dl_py:,}", "dl_rr_code": f"{dl_rr:,}",
              "lib_py_lines": f"{lib_lines('python/'):,}", "lib_tsx_lines": f"{lib_lines('tsx/'):,}", "json_mb": f"{total_json / 1e6:.1f} MB", "rr_mb": f"{total_rr / 1e6:.1f} MB",
-             "atom_rules": f"{atom_rules:,}", "lib_native": str(n_native), "lib_datalog": str(n_datalog)}
+             "atom_rules": f"{atom_rules:,}", "ungrounded": f"{ungrounded:,}", "lib_native": str(n_native), "lib_datalog": str(n_datalog)}
 
     def embed(obj):
         return compact(obj).replace("</", "<\\/")

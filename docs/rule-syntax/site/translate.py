@@ -1,11 +1,17 @@
-"""Render a rerail.policy/v1 JSON document as Rerail logic (.rr) text.
+"""Render a rerail.policy/v1 JSON document as Rerail logic (.rr) text, in Soufflé form.
 
 Display translation for the syntax page. Structural terms lower to Datalog over the core tape relations;
-terms without a lowering here stay as matcher atoms, `ast($n, {...})`, which the engine compiles as it does today.
+terms without a lowering here stay as matcher atoms, `ast(n, {...})`, which the engine compiles as it does today.
+
+Variables: the JSON's ast-grep metavariables keep their names (FUNC, OBJ: capitals); variables the translation
+introduces are lower case (n, k1, q2). A helper relation that reads a metavariable its caller binds (ast-grep
+shares metavariables across utils) takes it as an extra column, and every call passes it on.
 """
 
 import json
 import re
+
+from souffle import check_rule, whole
 
 LANG_LIB = {
     "python": "python",
@@ -13,7 +19,7 @@ LANG_LIB = {
     "javascript": "tsx",
     "tsx": "tsx",
 }
-SIMPLE_KEYS = {"kind"}
+INLINE_MAX = 4      # alternatives written as a disjunction; more become a relation of facts
 
 
 def q(s):
@@ -51,22 +57,94 @@ def compact(obj):
     return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 
 
+def mv(name):
+    """A JSON metavariable reference ("$X", "X", "$$$X") as a Datalog variable."""
+    return str(name).lstrip("$")
+
+
+def match(pattern, subject):
+    if not isinstance(pattern, str):     # e.g. {"$option": …}: no .rr form yet
+        return f"ast({subject}, {compact({'regex': pattern})})"
+    return f"match({q(whole(pattern))}, {subject})"
+
+
+def _balanced(s):
+    d = 0
+    instr = False
+    for i, ch in enumerate(s):
+        if ch == '"' and (i == 0 or s[i - 1] != "\\"):
+            instr = not instr
+        if instr:
+            continue
+        if ch in "({[":
+            d += 1
+        elif ch in ")}]":
+            d -= 1
+            if d == 0 and i != len(s) - 1:
+                return False
+    return d == 0
+
+
+def is_atom(s):
+    return bool(re.match(r"^[a-z_][A-Za-z0-9_]*\(", s)) and s.endswith(")") and _balanced(s[s.index("("):])
+
+
+def disj_atoms(s):
+    """The branches of `(a ; b ; c)` when each is a single atom; else None."""
+    if not (s.startswith("(") and s.endswith(")") and _balanced(s)):
+        return None
+    parts, d, cur, instr = [], 0, "", False
+    for i, ch in enumerate(s[1:-1]):
+        if ch == '"':
+            instr = not instr
+        if not instr:
+            if ch in "({[":
+                d += 1
+            elif ch in ")}]":
+                d -= 1
+            elif ch == ";" and d == 0:
+                parts.append(cur.strip())
+                cur = ""
+                continue
+        cur += ch
+    parts.append(cur.strip())
+    return parts if len(parts) > 1 and all(is_atom(p) for p in parts) else None
+
+
+def negate(lits):
+    """!(…) in Soufflé form: one atom, a disjunction of atoms (De Morgan), or an aggregate."""
+    if len(lits) == 1 and is_atom(lits[0]):
+        return ["!" + lits[0]]
+    if len(lits) == 1 and disj_atoms(lits[0]):
+        return ["!" + a for a in disj_atoms(lits[0])]
+    return ["count : { " + ", ".join(lits) + " } = 0"]
+
+
 class Program:
     def __init__(self, lang):
         self.lang = lang
-        self.rules = []  # (head, [literals])
+        self.rules = []  # (head, [literals]) or ("#facts", name, values)
         self.decls = {}  # name -> signature
         self.uses = set()
         self.untranslated = 0
         self.helpers = 0
         self.names = set()
         self.notes = {}  # name -> comment lines printed above its .decl
+        self.numeric = set()  # metavariables bound to a count
 
     def helper(self, base, note):
         self.helpers += 1
         name = f"{base}_{self.helpers}"
         self.decls[name] = f".decl {name}(n: node)"
         self.notes[name] = [f"// {name}(n): {note}"]
+        return name
+
+    def facts(self, base, col, values, note):
+        self.helpers += 1
+        name = f"{base}_{self.helpers}"
+        self.decls[name] = f".decl {name}({col}: symbol)"
+        self.notes[name] = [f"// {name}: {note}"]
+        self.rules.append(("#facts", name, list(values)))
         return name
 
     def use(self, module):
@@ -80,7 +158,18 @@ class Vars:
 
     def fresh(self, p):
         self.n += 1
-        return f"${p}{self.n}"
+        return f"{p}{self.n}"
+
+
+def one_of(prog, vs, fmt, values, p, note):
+    """fmt with one `{}`: an atom per value. One value: the atom; a few: a disjunction; many: a relation of facts."""
+    if len(values) == 1:
+        return fmt.format(q(values[0]))
+    if len(values) <= INLINE_MAX:
+        return "(" + " ; ".join(fmt.format(q(x)) for x in values) + ")"
+    name = prog.facts("set", "v", values, note)
+    x = vs.fresh(p)
+    return f"{fmt.format(x)}, {name}({x})"
 
 
 def lower(prog, rule, v, vs, skip=()):
@@ -97,13 +186,13 @@ def lower(prog, rule, v, vs, skip=()):
             lits.append(f"kind({v}, {q(val)})")
         elif k == "regex" and isinstance(val, dict) and "$option" in val:
             o = vs.fresh("o")
-            lits.append(f"option({q(val['$option'])}, {o}), {v} =~ {o}")
+            lits.append(f"option({q(val['$option'])}, {o}), match({o}, {v})")
         elif k == "regex":
-            lits.append(f"{v} =~ {q(val)}")
+            lits.append(match(val, v))
         elif k == "spread" and isinstance(val, bool):
             lits.append(f"spread({v})" if val else f"!spread({v})")
         elif k == "capture" and isinstance(val, str):
-            lits.append(f"${val} = {v}")
+            lits.append(f"{mv(val)} = {v}")
         elif k == "compare" and isinstance(val, dict) and {"left", "op", "right"} <= set(val):
             lits.extend(compare(val, vs))
         elif k == "count" and isinstance(val, dict):
@@ -123,9 +212,9 @@ def lower(prog, rule, v, vs, skip=()):
         elif k == "matches" and isinstance(val, dict) and len(val) == 1:
             name, args = next(iter(val.items()))
             prog.names.add(snake(name))
-            lits.append(f"{snake(name)}({v}, {', '.join(str(a) for a in args.values())})")
+            lits.append(f"{snake(name)}({v}, {', '.join(mv(a) for a in args.values())})")
         elif k == "notRegex":
-            lits.append(f"!({v} =~ {q(val)})")
+            lits.append("!" + match(val, v))
         elif k == "pattern" and isinstance(val, str):
             lits.append(f"{v} ~ {tick(val)}")
         elif k == "value" and isinstance(val, dict) and (len(val) > 1 or "type" in val):
@@ -135,7 +224,7 @@ def lower(prog, rule, v, vs, skip=()):
                 if op == "follow":
                     continue
                 if op == "regex":
-                    lits.append(f"{x} =~ {q(arg)}")
+                    lits.append(match(arg, x))
                 elif op == "eq":
                     lits.append(f"{x} = {q(arg)}")
                 elif op == "type":
@@ -158,15 +247,14 @@ def lower(prog, rule, v, vs, skip=()):
                 sym = {"ne": "!=", "lt": "<", "le": "<=", "gt": ">", "ge": ">="}[op]
                 lits.append(f"value({v}, {x}), {x} {sym} {q(arg)}")
             elif op == "in" and isinstance(arg, list):
-                x = vs.fresh("v")
-                lits.append(f"value({v}, {x}), {x} in {{{', '.join(q(a) for a in arg)}}}")
+                lits.append(one_of(prog, vs, f"value({v}, {{}})", arg, "v", "the JSON `value.in` list"))
             elif op == "regex":
                 x = vs.fresh("v")
-                lits.append(f"value({v}, {x}), {x} =~ {q(arg)}")
+                lits.append(f"value({v}, {x}), {match(arg, x)}")
             elif op in ("startsWith", "endsWith", "contains") and isinstance(arg, str):
                 x = vs.fresh("v")
                 pat = {"startsWith": "^" + re.escape(arg), "endsWith": re.escape(arg) + "$", "contains": re.escape(arg)}[op]
-                lits.append(f"value({v}, {x}), {x} =~ {q(pat)}")
+                lits.append(f"value({v}, {x}), {match(pat, x)}")
             else:
                 rest[k] = val
         elif k in ("has", "inside", "precedes", "follows") and isinstance(val, dict):
@@ -177,11 +265,7 @@ def lower(prog, rule, v, vs, skip=()):
         elif k == "any" and isinstance(val, list):
             lits.extend(alternatives(prog, val, v, vs))
         elif k == "not":
-            inner = lower(prog, val, v, vs)
-            if len(inner) == 1 and re.match(r"^[a-z_][a-z0-9_]*\(", inner[0]):
-                lits.append("!" + inner[0])
-            else:
-                lits.append("!(" + ", ".join(inner) + ")")
+            lits.extend(negate(lower(prog, val, v, vs)))
         elif k == "matches" and isinstance(val, str):
             prog.names.add(snake(val))
             lits.append(f"{snake(val)}({v})")
@@ -200,7 +284,9 @@ def lower(prog, rule, v, vs, skip=()):
 
 
 def compare(c, vs):
-    l, r, op = "$" + str(c["left"]), "$" + str(c["right"]), str(c["op"])
+    if not isinstance(c["op"], str):     # e.g. {"$option": …}: no .rr form yet
+        return [f"ast({mv(c['left'])}, {compact({'compare': c})})"]
+    l, r, op = mv(c["left"]), mv(c["right"]), str(c["op"])
     a, b = vs.fresh("t"), vs.fresh("t")
     reader = "text" if c.get("text", "node") in ("node", "text") else "value"
     if op == "eq":
@@ -210,16 +296,21 @@ def compare(c, vs):
 
 
 def count(prog, c, v, vs):
-    inner = {k: x for k, x in c.items() if k not in ("min", "max", "eq")}
-    body = lower(prog, inner, v, Vars())
+    inner = {k: x for k, x in c.items() if k not in ("min", "max", "eq", "as", "offset")}
+    body = lower(prog, inner, v, vs)     # the same counter: a reused name would join with the outer variable
     k = vs.fresh("k")
-    lits = [f"{k} = count {{ {', '.join(body)} }}"]
-    if "eq" in c:
-        lits.append(f"{k} = {c['eq']}")
-    if "min" in c:
-        lits.append(f"{k} >= {c['min']}")
-    if "max" in c:
-        lits.append(f"{k} <= {c['max']}")
+    lits = [f"{k} = count : {{ {', '.join(body)} }}"]
+    if isinstance(c.get("as"), str):     # the count, as a metavariable the message can print
+        off = c.get("offset", 0)
+        lits.append(f"{mv(c['as'])} = {k}" + (f" + {off}" if off else ""))
+        prog.numeric.add(mv(c["as"]))
+    for key, op in (("eq", "="), ("min", ">="), ("max", "<=")):
+        if key in c:
+            if isinstance(c[key], (int, float)):
+                lits.append(f"{k} {op} {c[key]}")
+            else:                       # e.g. {"$option": …}: no .rr form yet
+                prog.untranslated += 1
+                lits.append(f"ast({v}, {compact({'count': {key: c[key]}})})")
     return lits
 
 
@@ -228,10 +319,10 @@ def nth_child(prog, c, v, vs):
     order = f"precedes({v}, {s})" if c.get("reverse") else f"precedes({s}, {v})"
     if "ofRule" in c:
         rel = prog.helper("counted", "the siblings the JSON `nthChild.ofRule` counts")
-        prog.rules.append((f"{rel}($n)", lower(prog, c["ofRule"], "$n", Vars())))
+        prog.rules.append((f"{rel}(n)", lower(prog, c["ofRule"], "n", Vars())))
         return [f"child({p}, {v}, _), {rel}({v})",
-                f"{k} = count {{ child({p}, {s}, _), {order}, {rel}({s}) }}", f"{k} = {c['position'] - 1}"]
-    return [f"child({p}, {v}, _), {k} = count {{ child({p}, {s}, _), {order} }}", f"{k} = {c['position'] - 1}"]
+                f"{k} = count : {{ child({p}, {s}, _), {order}, {rel}({s}) }}", f"{k} = {c['position'] - 1}"]
+    return [f"child({p}, {v}, _), {k} = count : {{ child({p}, {s}, _), {order} }}", f"{k} = {c['position'] - 1}"]
 
 
 def site_filters(prog, filters, s, vs):
@@ -240,8 +331,7 @@ def site_filters(prog, filters, s, vs):
         if bk == "form" and isinstance(bv, str):
             lits.append(f"site_form({s}, {q(bv)})")
         elif bk == "form" and isinstance(bv, list):
-            f = vs.fresh("f")
-            lits.append(f"site_form({s}, {f}), {f} in {{{', '.join(q(x) for x in bv)}}}")
+            lits.append(one_of(prog, vs, f"site_form({s}, {{}})", bv, "f", "binding forms the JSON accepts"))
         elif bk in ("site",):
             lits.extend(lower(prog, bv, s, vs))
         elif bk == "value":
@@ -253,8 +343,7 @@ def site_filters(prog, filters, s, vs):
             lits.append(f"site_{bk}({s}, {x})")
             lits.extend(lower(prog, bv, x, vs))
         elif isinstance(bv, list) and all(isinstance(x, str) for x in bv):
-            x = vs.fresh("f")
-            lits.append(f"site_{snake(bk)}({s}, {x}), {x} in {{{', '.join(q(y) for y in bv)}}}")
+            lits.append(one_of(prog, vs, f"site_{snake(bk)}({s}, {{}})", bv, "f", f"the JSON `binds.{bk}` list"))
         elif bv is True:
             lits.append(f"site_{snake(bk)}({s})")
         elif bv is False:
@@ -274,10 +363,10 @@ def option_cases(prog, name, rule, v):
         keys.append(case)
         bodies = body if isinstance(body, list) else [body]
         for b in bodies:
-            prog.rules.append((f"{rel}($n)", [f"option({q(name)}, {q(case)})"] + lower(prog, b, "$n", Vars())))
+            prog.rules.append((f"{rel}(n)", [f"option({q(name)}, {q(case)})"] + lower(prog, b, "n", Vars())))
     if "default" in rule:
-        guard = f"!some {{ option({q(name)}, $o), $o in {{{', '.join(q(k) for k in keys)}}} }}"
-        prog.rules.append((f"{rel}($n)", [guard] + lower(prog, rule["default"], "$n", Vars())))
+        guard = [f"!option({q(name)}, {q(k)})" for k in keys]
+        prog.rules.append((f"{rel}(n)", guard + lower(prog, rule["default"], "n", Vars())))
     return [f"{rel}({v})"]
 
 
@@ -285,23 +374,16 @@ def kinds_only(alts):
     return all(isinstance(a, dict) and set(a) == {"kind"} for a in alts)
 
 
-def value_eq_only(alts):
-    return all(isinstance(a, dict) and set(a) == {"value"} and isinstance(a["value"], dict)
-               and set(a["value"]) == {"eq"} for a in alts)
-
-
 def grouped(prog, alts, v, vs):
-    """One body per alternative, with plain kind and value alternatives folded into set tests."""
+    """One body per alternative, with plain kind and value alternatives folded into one literal each."""
     kinds = [a["kind"] for a in alts if isinstance(a, dict) and set(a) == {"kind"} and isinstance(a["kind"], str)]
     vals = [a["value"]["eq"] for a in alts if isinstance(a, dict) and set(a) == {"value"}
             and isinstance(a["value"], dict) and set(a["value"]) == {"eq"}]
     bodies = []
     if len(kinds) > 1:
-        k = vs.fresh("k")
-        bodies.append([f"kind({v}, {k}), {k} in {{{', '.join(q(x) for x in kinds)}}}"])
+        bodies.append([one_of(prog, vs, f"kind({v}, {{}})", kinds, "k", "node kinds from a JSON `any`")])
     if len(vals) > 1:
-        x = vs.fresh("v")
-        bodies.append([f"value({v}, {x}), {x} in {{{', '.join(q(y) for y in vals)}}}"])
+        bodies.append([one_of(prog, vs, f"value({v}, {{}})", vals, "v", "values from a JSON `any`")])
     for a in alts:
         folded = (len(kinds) > 1 and isinstance(a, dict) and set(a) == {"kind"} and isinstance(a.get("kind"), str)) or \
                  (len(vals) > 1 and isinstance(a, dict) and set(a) == {"value"} and isinstance(a["value"], dict)
@@ -316,22 +398,24 @@ def alternatives(prog, alts, v, vs):
     if len(bodies) == 1:
         return bodies[0]
     name = prog.helper("alt", "the JSON `any`: n matches if any one of these rules does")
-    for body in grouped(prog, alts, "$n", Vars()):
-        prog.rules.append((f"{name}($n)", body))
+    for body in grouped(prog, alts, "n", Vars()):
+        prog.rules.append((f"{name}(n)", body))
     return [f"{name}({v})"]
 
 
 def stop_set(prog, stop):
+    """The stop argument of within_stop / precedes_stop: one kind, a relation of kinds, or a helper relation."""
     if isinstance(stop, dict) and set(stop) == {"kind"}:
-        return "{" + q(stop["kind"]) + "}"
+        return q(stop["kind"])
     if isinstance(stop, dict) and set(stop) == {"any"} and kinds_only(stop["any"]):
-        return "{" + ", ".join(q(a["kind"]) for a in stop["any"]) + "}"
+        return prog.facts("stop", "kind", [a["kind"] for a in stop["any"]],
+                          "the kinds of the JSON `stopBy` rule: the tree search stops at these nodes")
     name = prog.helper("stop", "the JSON `stopBy` rule: the tree search stops at these nodes")
     if isinstance(stop, dict) and set(stop) == {"any"}:
-        for body in grouped(prog, stop["any"], "$n", Vars()):
-            prog.rules.append((f"{name}($n)", body))
+        for body in grouped(prog, stop["any"], "n", Vars()):
+            prog.rules.append((f"{name}(n)", body))
     else:
-        prog.rules.append((f"{name}($n)", lower(prog, stop, "$n", Vars())))
+        prog.rules.append((f"{name}(n)", lower(prog, stop, "n", Vars())))
     return name
 
 
@@ -339,16 +423,17 @@ def relation(prog, k, sub, v, vs):
     f = sub.get("field")
     stop = sub.get("stopBy", "neighbor")
     c = vs.fresh("c" if k == "has" else "p" if k == "inside" else "s")
-    fld = f", field: {q(f)}" if f else ""
     lits = []
     if k in ("has", "inside"):
         lo, hi = (c, v) if k == "has" else (v, c)
         if stop == "neighbor":
             lits.append(f"field({hi}, {q(f)}, {lo})" if f else f"child({hi}, {lo}, _)")
         elif stop == "end":
-            lits.append(f"within({lo}, {hi}{fld})")
+            lits.append(f"within({lo}, {hi})")
         else:
-            lits.append(f"within({lo}, {hi}, {stop_set(prog, stop)}{fld})")
+            lits.append(f"within_stop({lo}, {hi}, {stop_set(prog, stop)})")
+        if f and stop != "neighbor":
+            lits.append(f"field(_, {q(f)}, {lo})")
     else:
         a, b = (v, c) if k == "precedes" else (c, v)
         if stop == "neighbor":
@@ -356,7 +441,7 @@ def relation(prog, k, sub, v, vs):
         elif stop == "end":
             lits.append(f"precedes({a}, {b})")
         else:
-            lits.append(f"precedes({a}, {b}, {stop_set(prog, stop)})")
+            lits.append(f"precedes_stop({a}, {b}, {stop_set(prog, stop)})")
     lits.extend(lower(prog, sub, c, vs, skip=("field", "stopBy")))
     return lits
 
@@ -367,16 +452,15 @@ def resolves(prog, r, v, vs):
     for k, val in r.items():
         if k == "imported" and isinstance(val, list):
             prog.use("names")
-            x = vs.fresh("q")
-            lits.append(f"imported_sym({v}, {x}), {x} in {{{', '.join(q(s) for s in val)}}}")
+            lits.append(one_of(prog, vs, f"imported_sym({v}, {{}})", val, "q", "symbols from the JSON `resolves.imported`"))
         elif k == "import" and isinstance(val, list):
             prog.use("names")
-            x = vs.fresh("q")
             if r.get("prefix"):
+                x = vs.fresh("q")
                 alt = "|".join(re.escape(s) for s in val)
-                lits.append(f"sym_of({v}, {x}), {x} =~ {q('^(' + alt + r')(\.|$)')}")
+                lits.append(f"sym_of({v}, {x}), {match('^(' + alt + r')(\.|$)', x)}")
             else:
-                lits.append(f"sym_of({v}, {x}), {x} in {{{', '.join(q(s) for s in val)}}}")
+                lits.append(one_of(prog, vs, f"sym_of({v}, {{}})", val, "q", "symbols from the JSON `resolves.import`"))
         elif k == "prefix":
             continue
         elif k == "directives" and isinstance(val, str):
@@ -384,8 +468,7 @@ def resolves(prog, r, v, vs):
         elif k == "global":
             prog.use("names")
             if isinstance(val, list):
-                x = vs.fresh("g")
-                lits.append(f"global_ref({v}, {x}), {x} in {{{', '.join(q(s) for s in val)}}}")
+                lits.append(one_of(prog, vs, f"global_ref({v}, {{}})", val, "g", "names from the JSON `resolves.global`"))
             else:
                 lits.append(f"global_ref({v}, _)")
         elif k == "unresolved" and val is True:
@@ -428,41 +511,65 @@ def render_util(prog, name, rule, out):
     params = rule.get("params") if isinstance(rule, dict) else None
     if params:
         rule = rule["rule"] if "rule" in rule else {k: v for k, v in rule.items() if k != "params"}
-        args = ", ".join("$" + p for p in params)
+        args = ", ".join(params)
         prog.decls[rel] = f".decl {rel}(n: node, {', '.join(p.lower() + ': node' for p in params)})"
         prog.notes[rel] = [f"// {rel}(n, …): the JSON util `{name}`, called with `matches` and arguments {', '.join(params)}"]
-        out.append((f"{rel}($n, {args})", lower(prog, rule, "$n", Vars())))
+        out.append((f"{rel}(n, {args})", lower(prog, rule, "n", Vars())))
         return
     prog.decls[rel] = f".decl {rel}(n: node)"
     prog.notes[rel] = [f"// {rel}(n): the JSON util `{name}`, used where the JSON says `matches: {q(name)}`"]
     if isinstance(rule, dict) and set(rule) == {"any"} and isinstance(rule["any"], list):
-        for body in grouped(prog, rule["any"], "$n", Vars()):
-            out.append((f"{rel}($n)", body))
+        for body in grouped(prog, rule["any"], "n", Vars()):
+            out.append((f"{rel}(n)", body))
     else:
-        out.append((f"{rel}($n)", lower(prog, rule, "$n", Vars())))
+        out.append((f"{rel}(n)", lower(prog, rule, "n", Vars())))
 
 
 def fix_edits(viol):
     """Today's ast fix template as a native edit: replace the witness, or the capture `range` names."""
     fx = viol.get("fix")
     if isinstance(fx, str):
-        return [f"replace($n, {tick(fx)})"]
+        return [f"replace(n, {tick(fx)})"]
     if isinstance(fx, dict) and isinstance(fx.get("template"), str):
         rng = fx.get("range", "")
-        target = "$" + rng[len("capture."):] if rng.startswith("capture.") else "$n"
+        target = rng[len("capture."):] if rng.startswith("capture.") else "n"
         return [f"replace({target}, {tick(fx['template'])})"]
     return None
 
 
-def violation_lines(viol, rel, ast=False):
+def message_vars(msg):
+    """The metavariables a JSON message interpolates ($X, $$$X), in order."""
+    if not isinstance(msg, str):
+        return []
+    return list(dict.fromkeys(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", msg)))
+
+
+def violation_columns(viol):
+    """Metavariables that become columns of the finding: `each`, a capture anchor, and those in the message."""
+    cols = []
+    if isinstance(viol.get("each"), str):
+        cols.append(mv(viol["each"]))
+    anchor = viol.get("anchor") or ""
+    if anchor.startswith("capture."):
+        cols.append(anchor[len("capture."):])
+    cols += message_vars(viol.get("message", ""))
+    return list(dict.fromkeys(cols))
+
+
+def violation_lines(viol, rel, cols, ast=False, numeric=()):
     code = viol.get("code", rel)
     msg = viol.get("message", "")
-    head = f".violation {rel}(at: node)"
+    for c in sorted(cols, key=len, reverse=True) if isinstance(msg, str) else ():
+        msg = re.sub(r"\$\$?\$?" + c + r"\b", "{" + c.lower() + "}", msg)
+    colsig = "".join(f", {c.lower()}: {'number' if c in numeric else 'loc'}" for c in cols)
+    head = f".violation {rel}(at: node{colsig})"
     if code != rel:
         head += f" code {q(code)}"
     lines = [f"{head} {q(msg)}"]
     anchor = viol.get("anchor")
-    if anchor and anchor != "witness.span":
+    if anchor and anchor.startswith("capture."):
+        lines.append(f"    anchor {anchor[len('capture.'):].lower()}")
+    elif anchor and anchor != "witness.span":
         lines.append(f"    anchor {anchor.replace('witness.', '')}")
     for tool, spec in (viol.get("suppress") or {}).items():
         names = spec.get("codes") or spec.get("rules") or []
@@ -472,9 +579,119 @@ def violation_lines(viol, rel, ast=False):
             lines.append(f"    suppress {tool}")
     if "fix" in viol and not ast:
         lines.append(f"    fix {compact(viol['fix'])}")
-    if "each" in viol:
+    if "each" in viol and not isinstance(viol["each"], str):
         lines.append(f"    each {compact(viol['each'])}")
     return lines
+
+
+# ---- shared metavariables -------------------------------------------------------------------------------------
+
+def _mask_ticks(s):
+    return re.sub(r"`+[^`]*`+", lambda m: " " * len(m.group(0)), s)
+
+
+def _upper_vars(s):
+    return set(re.findall(r"(?<![\w$\"@])([A-Z][A-Z0-9_]*)\b(?!\s*\()", _mask_ticks(_strip_strings(s))))
+
+
+def _strip_strings(s):
+    return re.sub(r'"(?:[^"\\]|\\.)*"', '""', s)
+
+
+def _binders(s):
+    """Metavariables a rule body binds itself: in a pattern, by a capture `X = …`, or by a named regex group."""
+    out = set()
+    for t in re.findall(r"~\s*(`+)(.*?)\1", s):
+        out |= set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", t[1]))
+    out |= set(re.findall(r"(?<![\w$])([A-Z][A-Z0-9_]*)\s*=\s*[a-z0-9]", _mask_ticks(_strip_strings(s))))
+    out |= set(re.findall(r"\(\?P?<([A-Za-z_]\w*)>", s))
+    for b in re.findall(r'"bind": \{([^}]*)\}', s):       # an ast(…) atom's argument binding
+        out |= set(re.findall(r'"([A-Z_][A-Z0-9_]*)":', b))
+    return out
+
+
+def _calls(s, name):
+    """Spans of calls to relation `name` in s (outside ticks and strings)."""
+    masked = _mask_ticks(_strip_strings_keep(s))
+    out = []
+    for m in re.finditer(r"(?<![\w.])" + name + r"\(", masked):
+        d = 0
+        for j in range(m.end() - 1, len(masked)):
+            if masked[j] == "(":
+                d += 1
+            elif masked[j] == ")":
+                d -= 1
+                if d == 0:
+                    out.append((m.start(), j))
+                    break
+    return out
+
+
+def _strip_strings_keep(s):
+    return re.sub(r'"(?:[^"\\]|\\.)*"', lambda m: '"' + " " * (len(m.group(0)) - 2) + '"', s)
+
+
+def share_metavariables(entries, helpers):
+    """ast-grep keeps one set of metavariables per match, shared by the rule and every util it calls; Datalog
+    variables belong to one rule. So a helper relation gets a column for each metavariable that crosses its
+    boundary: one it reads but does not bind (passed in), and one it binds that a caller uses (passed out).
+    Each call passes the caller's variable of that name, or `_` where the caller does not use it."""
+    rules = []
+    for e in entries:
+        text = ", ".join(e["lits"])
+        masked = _mask_ticks(_strip_strings_keep(text))
+        calls = set(re.findall(r"(?<![\w.])([a-z_]\w*)\(", masked)) & helpers
+        rules.append({"e": e, "owner": e["head"].split("(")[0], "head": _upper_vars(e["head"].split("(", 1)[1]),
+                      "up": _upper_vars(text) | set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", " ".join(e.get("edits") or []))),
+                      "binds": _binders(text), "calls": calls})
+    by_owner = {}
+    for r in rules:
+        by_owner.setdefault(r["owner"], []).append(r)
+    callers = {h: [] for h in helpers}
+    for r in rules:
+        for h in r["calls"]:
+            callers[h].append(r)
+    provides = {h: set() for h in helpers}
+    free_in = {h: set() for h in helpers}
+    needed = {h: set() for h in helpers}
+    iface = {h: set() for h in helpers}
+    for _ in range(50):
+        old = {h: (set(provides[h]), set(free_in[h]), set(needed[h])) for h in helpers}
+        for h in helpers:
+            for r in by_owner.get(h, ()):
+                bound = r["binds"] | set().union(*[provides[g] & iface[g] for g in r["calls"]] or [set()])
+                provides[h] |= r["binds"] | set().union(*[provides[g] for g in r["calls"]] or [set()])
+                use = r["up"] | set().union(*[free_in[g] for g in r["calls"]] or [set()])
+                free_in[h] |= use - bound
+        for h in helpers:
+            for r in callers[h]:
+                own = iface.get(r["owner"], set()) | needed.get(r["owner"], set())
+                others = set().union(*[iface[g] for g in r["calls"] if g != h] or [set()])
+                needed[h] |= r["head"] | r["up"] | others | own
+        for h in helpers:
+            iface[h] = free_in[h] | (needed[h] & provides[h])
+        if all(old[h] == (provides[h], free_in[h], needed[h]) for h in helpers):
+            break
+    order = {h: sorted(iface[h]) for h in helpers}
+    share_metavariables.inputs = {h: set(free_in[h]) for h in helpers}
+    for r in rules:
+        e = r["e"]
+        if order.get(r["owner"]):
+            e["head"] = e["head"][:-1] + ", " + ", ".join(order[r["owner"]]) + ")"
+        hit = [h for h in r["calls"] if order[h]]
+        if not hit:
+            continue
+        relevant = r["head"] | r["up"] | iface.get(r["owner"], set())
+        new = []
+        for l in e["lits"]:
+            for h in hit:
+                rel = relevant | set().union(*[iface[g] for g in r["calls"] if g != h] or [set()])
+                args = ", ".join(v if v in rel else "_" for v in order[h])
+                for _, b in reversed(_calls(l, h)):
+                    l = l[:b] + ", " + args + l[b:]
+            new.append(l)
+        e["lits"] = new
+    return order
 
 
 def translate(doc):
@@ -500,6 +717,7 @@ def translate(doc):
 
     body = []
     seen_rel = set()
+    fix_rels = set()
     for c in clauses:
         cid = c.get("id", "clause")
         if "define" in c:
@@ -510,7 +728,7 @@ def translate(doc):
             if d.get("options"):
                 body.append(("opt", f".options {compact(d['options'])}"))
             for h, lits in utils:
-                body.append(("rule", (h, lits)))
+                body.append(("rule", {"head": h, "lits": lits}))
             continue
         forbid = c.get("forbid", {})
         viol = c.get("violation", {})
@@ -520,25 +738,29 @@ def translate(doc):
         seen_rel.add(rel)
         if "ast" not in forbid:
             body.append(("note", [f"// {rel}: a finding from a text rule. It has no AST pattern, so it stays as JSON."]))
-            body.append(("viol", violation_lines(viol, rel)))
-            body.append(("raw", f"{rel}($d) :- text_rule($d, {compact(forbid)})."))
+            body.append(("viol", violation_lines(viol, rel, [])))
+            body.append(("raw", f"{rel}(d) :- text_rule(d, {compact(forbid)})."))
             prog.untranslated += 1
             continue
         a = forbid["ast"]
         local = []
         for name, rule in (a.get("utils") or {}).items():
             render_util(prog, name, rule, local)
+        cols = violation_columns(viol)
         note = [f"// {rel}(n): a finding at node n, from clause `{cid}`.",
                 "// Each rule below is one way the JSON `rule` can match."]
+        if cols:
+            note.append(f"// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one "
+                        f"finding per distinct row.")
         opts = {k: v for k, v in a.items() if k not in ("language", "rule", "utils", "constraints")}
-        vl = violation_lines(viol, rel, ast=True)
+        vl = violation_lines(viol, rel, cols, ast=True)
         edits = fix_edits(viol)
         if edits:
             note.append("// `=> replace(…)` is today's fix template: the edit suggested with each finding.")
         if opts:
             vl.append(f"    options {compact(opts)}")
         if a.get("constraints"):
-            note.append(f"// The JSON `constraints` on {', '.join('$' + k for k in a['constraints'])} are added to every rule.")
+            note.append(f"// The JSON `constraints` on {', '.join(a['constraints'])} are added to every rule.")
         if opts:
             note.append("// `options` carries JSON settings that have no .rr form yet.")
         body.append(("note", note))
@@ -546,54 +768,109 @@ def translate(doc):
         rule = a.get("rule", {})
         vs = Vars()
         if isinstance(rule, dict) and set(rule) == {"any"} and isinstance(rule["any"], list):
-            bodies = grouped(prog, rule["any"], "$n", vs)
+            bodies = grouped(prog, rule["any"], "n", vs)
         else:
-            bodies = [lower(prog, rule, "$n", vs)]
+            bodies = [lower(prog, rule, "n", vs)]
         cons = []
         for var, crule in (a.get("constraints") or {}).items():
-            cons.extend(lower(prog, crule, "$" + var, vs))
+            cons.extend(lower(prog, crule, mv(var), vs))
+        hd = f"{rel}(n{''.join(', ' + c for c in cols)})"
         for b in bodies:
-            body.append(("rule", (f"{rel}($n)", b + cons, edits)))
+            body.append(("rule", {"head": hd, "lits": b + cons, "edits": edits}))
         for h, lits in local:
-            body.append(("rule", (h, lits)))
+            body.append(("rule", {"head": h, "lits": lits}))
+
+    # Helper relations (utils, alternatives, stop sets) share the JSON's metavariables with their callers.
+    entries = [item for kind, item in body if kind == "rule"]
+    helper_entries = [{"head": r[0], "lits": r[1]} for r in prog.rules if r[0] != "#facts"]
+    helpers = set(prog.decls)
+    params = share_metavariables(entries + helper_entries, helpers)
+    for name, ps in params.items():
+        if ps and name in prog.decls:
+            prog.decls[name] = prog.decls[name][:-1] + "".join(
+                f", {p.lower()}: {'number' if p in prog.numeric else 'loc'}" for p in ps) + ")"
+            ins = [p for p in ps if p in share_metavariables.inputs[name]]
+            outs = [p for p in ps if p not in ins]
+            if ins:
+                prog.notes.setdefault(name, []).append(f"//   {', '.join(ins)}: metavariable{'s' if len(ins) > 1 else ''} "
+                                                       f"of the calling rule, passed in (bound by the caller)")
+            if outs:
+                prog.notes.setdefault(name, []).append(f"//   {', '.join(outs)}: metavariable{'s' if len(outs) > 1 else ''} "
+                                                       f"this relation binds for the calling rule")
+    hi = iter(helper_entries)
+    helper_rules = [r if r[0] == "#facts" else (lambda e: (e["head"], e["lits"]))(next(hi)) for r in prog.rules]
 
     out = head + ["// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.", ""]
     if prog.uses:
-        out += [f".use {u}" for u in sorted(prog.uses)] + [""]
+        out += [f'#include "{u}.rr"' for u in sorted(prog.uses)] + [""]
     declared = set()
-    pending_helpers = list(prog.rules)
+    ungrounded = 0
+
+    def emit_rule(h, lits, edits=None):
+        nonlocal ungrounded
+        text = wrap(h, lits, edits=edits)
+        inputs = getattr(share_metavariables, "inputs", {}).get(h.split("(")[0], ())
+        bad = check_rule(text, fix_rels, inputs)
+        if "n" in bad and h.split("(", 1)[1].startswith("n"):
+            # A helper that only tests the node it is given (`!kind(n, …)`, a regex): n ranges over all nodes.
+            lits = [f"node(_, n, _, _, _)"] + list(lits)
+            text = wrap(h, lits, edits=edits)
+            bad = check_rule(text, fix_rels, inputs)
+        if bad:
+            ungrounded += 1
+            name = h.split("(")[0]
+            outs = set(params.get(name, ())) - set(inputs)
+            if set(bad) <= outs:
+                out.append(f"// Not grounded: this alternative binds no {', '.join(bad)}. ast-grep leaves such a "
+                           f"metavariable empty; Datalog has no empty value.")
+            else:
+                out.append(f"// Not grounded: no positive atom binds {', '.join(bad)}.")
+        out.append(text)
+
+    def emit_decl(name):
+        if name in prog.decls and name not in declared:
+            if out[-1] != "":
+                out.append("")
+            out.extend(prog.notes.get(name, []))
+            out.append(prog.decls[name])
+            declared.add(name)
+
     for kind, item in body:
         if kind == "rule":
-            h, lits, *ed = item
-            name = h.split("(")[0]
-            if name in prog.decls and name not in declared:
-                if out[-1] != "":
-                    out.append("")
-                out.extend(prog.notes.get(name, []))
-                out.append(prog.decls[name])
-                declared.add(name)
-            out.append(wrap(h, lits, edits=ed[0] if ed else None))
+            emit_decl(item["head"].split("(")[0])
+            emit_rule(item["head"], item["lits"], item.get("edits"))
         elif kind == "note":
             if out[-1] != "":
                 out.append("")
             out.extend(item)
         elif kind == "viol":
-            out.extend(item)
+            first = item[0]
+            for c in prog.numeric:
+                first = re.sub(r"\b" + c.lower() + r": loc\b", c.lower() + ": number", first)
+            out.extend([first] + item[1:])
         else:
             out.append(item)
-    if pending_helpers:
+    if helper_rules:
         out.append("")
-        for h, lits in pending_helpers:
-            name = h.split("(")[0]
-            if name not in declared:
-                if out[-1] != "":
-                    out.append("")
-                out.extend(prog.notes.get(name, []))
-                out.append(prog.decls[name])
-                declared.add(name)
-            out.append(wrap(h, lits))
+        for r in helper_rules:
+            if r[0] == "#facts":
+                _, name, vals = r
+                emit_decl(name)
+                line = ""
+                for v in vals:
+                    f = f"{name}({q(v)})."
+                    if line and len(line) + len(f) + 1 > 88:
+                        out.append(line)
+                        line = ""
+                    line = (line + " " + f).strip()
+                if line:
+                    out.append(line)
+                continue
+            h, lits = r
+            emit_decl(h.split("(")[0])
+            emit_rule(h, lits)
     if any("ast(" in l for l in out if not l.lstrip().startswith("//")):
         i = out.index("") if "" in out else len(out)
-        out.insert(i, "// ast($n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.")
+        out.insert(i, "// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.")
     text = "\n".join(out).rstrip() + "\n"
-    return text, prog.untranslated
+    return text, prog.untranslated, ungrounded

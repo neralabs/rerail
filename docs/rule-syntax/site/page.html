@@ -258,17 +258,19 @@ const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&
 const MAX_LINES = 2500;
 
 // ---------- statements and definitions ----------
-const DIRECTIVE_WORDS = new Set(["must", "may", "some", "first", "count", "if", "or", "in", "and", "code", "anchor", "suppress", "fix", "options", "each", "revision", "by", "at", "safe"]);
-const isDecl = s => s.kind === "decl" || s.kind === "native" || s.kind === "edit";
+const DIRECTIVE_WORDS = new Set(["must", "may", "count", "min", "max", "sum", "mean", "code", "anchor", "suppress", "fix", "options", "each", "revision", "by", "at", "safe"]);
+const TYPE_WORDS = new Set(["node", "span", "loc", "symbol", "number", "relation"]);
+const BUILTIN_FNS = new Set(["match", "match_all", "cat", "strlen", "substr", "to_number", "to_string", "contains", "ord"]);
+const isDecl = s => s.kind === "decl" || s.kind === "native" || s.kind === "edit" || s.kind === "functor";
 function statements(src) {
   const lines = src.split("\n"); const out = []; let cur = null;
   lines.forEach((ln, i) => {
     const t = ln.replace(/\/\/.*$/, "").trimEnd();
     if (cur === null) {
       if (!t.trim() || /^\s/.test(ln)) return;
-      const m = t.match(/^(?:\.(decl|native|violation|edit)\s+)?(?:(?:must|may|edit)\s+)?([A-Za-z_]\w*)\s*\(/);
+      const m = t.match(/^(?:\.(decl|native|violation|edit|functor)\s+)?(?:(?:must|may|edit)\s+)?([A-Za-z_]\w*)\s*\(/);
       cur = { start: i, end: i, kind: m ? (m[1] || "rule") : "other", name: m ? m[2] : null };
-      if (t.startsWith(".") && !(m && m[1])) { cur.kind = "directive"; cur.name = null; }
+      if ((t.startsWith(".") || t.startsWith("#")) && !(m && m[1])) { cur.kind = "directive"; cur.name = null; }
     }
     if (cur) {
       cur.end = i;
@@ -302,7 +304,7 @@ for (const [mod, lib] of Object.entries(LIBS)) {
 function usesOf(src) {
   const set = new Set(["core"]);
   const add = m => { if (set.has(m) || !LIBS[m]) return; set.add(m); for (const u of usesOf(LIBS[m].src)) set.add(u); };
-  for (const m of src.matchAll(/^\.use\s+([\w/]+)/gm)) add(m[1]);
+  for (const m of src.matchAll(/^#include\s+"([\w/]+)\.rr"/gm)) add(m[1]);
   return set;
 }
 function resolveLib(name, uses, lang) {
@@ -315,11 +317,15 @@ function resolveLib(name, uses, lang) {
 }
 
 // ---------- highlighting ----------
-const RR_TOKEN = /(\/\/.*$)|("(?:[^"\\]|\\.)*")|(```\s.*?\s```|``\s.*?\s``|`(?:[^`\\]|\\.)*`)|(\$[A-Za-z_]\w*)|(@[A-Za-z_]\w*)|(:-|=>|=~|!=|<=|>=)|(\bast(?=\())|(\b-?\d+(?:\.\d+)?\b)|(\b[A-Za-z_]\w*)(?=\s*\()|(\b[A-Za-z_]\w*\b)/g;
+// Soufflé form: a bare name in an atom is a variable (c-var); a name before `(` is a relation, a stop-set argument
+// that names a known relation links to it too. `$X` appears only inside backtick patterns and templates.
+const RR_TOKEN = /(\/\/.*$)|("(?:[^"\\]|\\.)*")|(```\s.*?\s```|``\s.*?\s``|`(?:[^`\\]|\\.)*`)|(\$[A-Za-z_]\w*)|(@[A-Za-z_]\w*)|(:-|=>|!=|<=|>=|~)|(\bast(?=\())|(\b-?\d+(?:\.\d+)?\b)|(\b[A-Za-z_]\w*)(?=\s*\()|(\b[A-Za-z_]\w*\b)/g;
+const DIR_CONT = /^\s+(?:suppress|anchor|options|each|code)\b/;
 function hlRR(line, ctx) {
   let out = "", last = 0;
-  const dm = line.match(/^(\s*)(\.[a-z_]+)/);
+  const dm = line.match(/^(\s*)(\.[a-z_]+|#include)/);
   if (dm) { out += esc(dm[1]) + `<span class="c-dir">${esc(dm[2])}</span>`; last = dm[0].length; }
+  const inDir = !!dm || DIR_CONT.test(line);
   const fm = !dm && line.match(/^(\s+)fix(\s+)(?:safe(\s+))?([a-z_]\w*)(?=\s+")/);
   if (fm) {
     out += `${fm[1]}<span class="c-kw">fix</span>${fm[2]}` + (fm[3] ? `<span class="c-kw">safe</span>${fm[3]}` : "") + relLink(fm[4], ctx);
@@ -338,11 +344,20 @@ function hlRR(line, ctx) {
     else if (op) out += `<span class="c-op">${esc(op)}</span>`;
     else if (atom) out += `<span class="c-atom" title="Matcher atom: a term with no Datalog lowering here">ast</span>`;
     else if (num) out += `<span class="c-num">${esc(num)}</span>`;
-    else if (rel) out += relLink(rel, ctx);
-    else if (word) out += DIRECTIVE_WORDS.has(word) || ["true", "false"].includes(word) ? `<span class="c-kw">${word}</span>` : esc(word);
+    else if (rel) out += BUILTIN_FNS.has(rel) ? `<span class="c-bi">${rel}</span>` : relLink(rel, ctx);
+    else if (word) out += wordHtml(word, ctx, inDir);
     last = m.index + tok.length;
   }
   return out + esc(line.slice(last));
+}
+function wordHtml(word, ctx, inDir) {
+  if (DIRECTIVE_WORDS.has(word) || ["true", "false"].includes(word)) return `<span class="c-kw">${word}</span>`;
+  if (TYPE_WORDS.has(word)) return `<span class="c-kw">${word}</span>`;
+  if (inDir) return esc(word);
+  if (word === "_") return esc(word);
+  // A stop-set argument names a relation (`nearest(f, s, scope)`); anything else is a variable.
+  if (ctx && ((ctx.local && ctx.local.has(word)) || DEFINERS.has(word))) return relLink(word, ctx);
+  return `<span class="c-var">${esc(word)}</span>`;
 }
 function relLink(name, ctx) {
   if (DIRECTIVE_WORDS.has(name)) return `<span class="c-kw">${name}</span>`;

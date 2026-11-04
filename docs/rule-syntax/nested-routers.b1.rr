@@ -17,50 +17,58 @@
 // stop is its stopBy list, and the violation is its top-level rule.
 
 // The packages and export names that count as a router: the JSON's string list and its name regex, as sets.
-.set router_module = "react-router" | "react-router-dom" | "react-router/dom"
-                   | "react-router-dom/server" | "react-router/dom/server" | "react-router/server"
-.set router_export = "BrowserRouter" | "HashRouter" | "MemoryRouter" | "Router" | "RouterProvider"
-                   | "HistoryRouter" | "unstable_HistoryRouter" | "StaticRouter"
-// Kind sets: grammar node kinds, usable with nearest() and with `$k in …`.
-.kindset import_stmt = "import_statement"
+.decl router_module(v: symbol)
+router_module("react-router"). router_module("react-router-dom").
+router_module("react-router/dom"). router_module("react-router-dom/server").
+router_module("react-router/dom/server"). router_module("react-router/server").
+.decl router_export(v: symbol)
+router_export("BrowserRouter"). router_export("HashRouter").
+router_export("MemoryRouter"). router_export("Router").
+router_export("RouterProvider"). router_export("HistoryRouter").
+router_export("unstable_HistoryRouter"). router_export("StaticRouter").
+// Kind sets: grammar node kinds, as one-column relations, usable with nearest() and as atoms.
+.decl import_stmt(kind: symbol)
+import_stmt("import_statement").
 // Nodes that end the climb: entering a function or a JSX attribute means the inner router is not rendered as a
 // direct child any more (it is in a callback or a prop), so the JSON stops there.
-.kindset barrier     = "arrow_function" | "function_expression" | "function_declaration"
-                     | "method_definition" | "jsx_attribute"
+.decl barrier(kind: symbol)
+barrier("arrow_function"). barrier("function_expression").
+barrier("function_declaration"). barrier("method_definition").
+barrier("jsx_attribute").
 
 // The tag name of a JSX element. Fragments (<>…</>) have none.
 // `<X>…</X>` keeps its name under the opening tag; `<X/>` has it directly. The JSON's two router-element branches.
 .decl tag(e: node, t: node)
-tag($e, $t) :- kind($e, "jsx_element"), field($e, "open_tag", $o), field($o, "name", $t).
-tag($e, $t) :- kind($e, "jsx_self_closing_element"), field($e, "name", $t).
+tag(e, t) :- kind(e, "jsx_element"), field(e, "open_tag", o), field(o, "name", t).
+tag(e, t) :- kind(e, "jsx_self_closing_element"), field(e, "name", t).
 
 // `import { x as y } from "m"`: the specifier binds y to m's export x.
 // x is the imported name (the specifier's `name` field), so an alias such as `BrowserRouter as R` still counts.
 // nearest(…, import_stmt) climbs from the specifier to its import statement; the JSON's `inside … stopBy: end`.
-.decl imported(spec: node, m: sym, x: sym)
-imported($s, $m, $x) :- kind($s, "import_specifier"), field($s, "name", $n), text($n, $x),
-    nearest($s, $i, import_stmt), field($i, "source", $src), string_value($src, $m).
+.decl imported(spec: node, m: symbol, x: symbol)
+imported(s, m, x) :- kind(s, "import_specifier"), field(s, "name", n), text(n, x),
+    nearest(s, i, import_stmt), field(i, "source", src), string_value(src, m).
 
 // router_el(e): e is a JSX element whose tag is an identifier bound by an import of a router export.
 // ref_site follows the tag to the specifier that declares it: a local variable named BrowserRouter does not count.
 // Member tags such as <RR.BrowserRouter> are not identifiers, so this version misses them, as the JSON does.
 .decl router_el(e: node)
-router_el($e) :- tag($e, $t), kind($t, "identifier"), ref_site($t, $s),
-    imported($s, $m, $x), $m in router_module, $x in router_export.
+router_el(e) :- tag(e, t), kind(t, "identifier"), ref_site(t, s),
+    imported(s, m, x), router_module(m), router_export(x).
 
 // Climbing from a router, the first of these ends the climb. The stop node itself is tested, as stopBy does.
 // A barrier ends it without a finding. A router ends it with one. A composite (component) element ends it because
 // what a component does with its children is unknown here. Host elements (<div>) and fragments let the climb pass.
 .decl stop(n: node)
-stop($n) :- kind($n, $k), $k in barrier.
-stop($n) :- router_el($n).
+stop(n) :- kind(n, k), barrier(k).
+stop(n) :- router_el(n).
 // The negated group is "the tag is not an identifier starting with a lowercase letter": component tags (<Layout>)
 // and member tags (<Foo.Bar>) stop the climb; <div> does not. Fragments have no tag, so tag() fails and they pass.
-stop($e) :- kind($e, "jsx_element"), !router_el($e), tag($e, $t),          // a composite element:
-    !(kind($t, "identifier"), text($t, $s), $s =~ "^[a-z]").                //   not a lowercase host tag
+stop(e) :- kind(e, "jsx_element"), !router_el(e), tag(e, t),          // a composite element:
+    count : { kind(t, "identifier"), text(t, s), match("[a-z].*", s) } = 0.                //   not a lowercase host tag
 
 // The finding: an inner router whose closest stop ancestor is a router. nearest() returns only the first stop node
-// above $inner, so a router inside <Layout> inside another router is not reported (the accurate version handles that case).
+// above inner, so a router inside <Layout> inside another router is not reported (the accurate version handles that case).
 .violation NESTED_ROUTER_JSX(at: node)
     "Remove this inner router and use the outer router for its children."
-NESTED_ROUTER_JSX($inner) :- router_el($inner), nearest($inner, $outer, stop), router_el($outer).
+NESTED_ROUTER_JSX(inner) :- router_el(inner), nearest(inner, outer, stop), router_el(outer).

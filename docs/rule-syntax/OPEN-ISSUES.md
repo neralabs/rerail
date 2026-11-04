@@ -28,12 +28,13 @@ confirm once a parser and engine exist. None is fixed yet.
 3. names: `site_latest` misses a later `def`/`class` (strict `within` against the statement itself).
 4. imports ↔ names depend on each other with one `.use`; imports reads `def_name`, `qualname`, `type_checking_block`.
 5. imports: `exports` → `resolve_export` → `!… exports …` is negation through recursion: not stratifiable.
-6. kindset `fdef` is function-or-lambda in imports, function-only in names and calls; calls uses undeclared `fscope`.
+6. Fixed in the Soufflé conversion: `fdef` (function-or-lambda in imports, function-only elsewhere) is now `fn_or_lambda` in
+   imports, and each library declares a relation once.
 7. calls: `isasync` duplicates `is_async`; a library carries `.output`; the W5 `ASYNC_BLOCKING` comment has no rules.
 8. calls: `posarg` counts all argument children, so keyword or splat arguments before it shift the index.
 9. flow: `stmt_of`/`before` cover `block` nodes only (no module level); `in_branch` leaves out loop bodies.
 10. names: `nonlocal` targets the nearest function, not the nearest one binding the name; `scope_name` uses any
-    enclosing class; `rel_base` lacks the `$p != ""` guard.
+    enclosing class; `rel_base` lacks the `p != ""` guard.
 
 ## Rule files
 1. post-op-no-internal-dispatch 001: "first comparison" uses `precedes`, which needs a shared parent. Needs a
@@ -42,9 +43,18 @@ confirm once a parser and engine exist. None is fixed yet.
    `_load_python_module_uncached`. b2 matches via `scope_name`, which adds a `Class.` prefix.
 3. function-level-imports b1: the message uses `{scope}`, not a column of the violation.
 4. function-level-imports b1: findings keyed by statement, so `import os, sys` counts once; the oracle counts two.
-5. function-level-imports b2: redefines `import_time`, `runs`, `reaches`, now in python/imports, with a different
-   `.demand`.
+5. Fixed: function-level-imports b2 no longer redefines `import_time`, `runs`, `reaches`; it uses python/imports.
 6. public-api-triples: `direct_wrapper_bypasses_lazy_owner` accepts a listed set of `*_lazy` helpers (oracle: any
    `*_lazy`/`lazy_*`, one finding per group); `same_params` drops `self`/`cls`; `exemplar` uses the smallest name.
 7. plan-scope-side-effects: the `may fx` regex runs on the receiver's whole text, arguments included.
 8. swallowed-exceptions: the body summary says "other statements" where the oracle lists the first five types.
+
+## Soufflé form
+1. Generated pack rules: 432 rules in 119 policies are not grounded (a variable only negated or compared). Most
+   are `any` alternatives that leave a metavariable the message or a later literal uses empty. Each is marked
+   `// Not grounded: …` in the output; a translator that splits such alternatives or adds `_` columns would fix them.
+2. Relation names share one namespace per program (rule file, includes, core). `site/check_rr.py` reports duplicate
+   declarations and ungrounded rules in the hand files; it prints ok today.
+3. Additions to Soufflé that an engine must support: pattern atoms `` n ~ `…` ``, named-group captures in `match`
+   (span or symbol), `match_all`, `must, may` relations, `.violation`/`fix`/`=>`/`.edit`, and a relation name
+   as the stop-set argument of `within_stop`, `nearest`, `precedes_stop`.

@@ -22,65 +22,77 @@
 //   3. bridge() and api_exempt() are the Python linter's hard-coded allowlist for api_impl; whitebox is conform_impl's.
 //   4. layer_group / group_allows come from LAYER_GROUPS.yaml as input facts and drive group_dependency.
 //   5. internal_import is not a finding: .output publishes it as counts for the ratchet's metrics.
-// Path tests read whole path components: path_part($d, "tests") is true when some directory of d's path is `tests`,
+// Path tests read whole path components: path_part(d, "tests") is true when some directory of d's path is `tests`,
 // which is the Python linter's `"tests" in source_file.parts`.
 
-.use python/imports
+#include "python/imports.rr"
 //   import_alias(i, a, module, name, local)   module absolute, relative imports resolved
-.use python/names
+#include "python/names.rr"
 //   type_checking_block(b)
 
-// fdef: plain defs (async defs included). Used only to tell deferred imports from module-level ones in the metrics.
-.kindset fdef = "function_definition"
+// fdef (python/names): plain defs, async defs included. Used only to tell deferred imports from module-level ones
+// in the metrics.
 // Directories whose files the layer-number rule applies to (Python linter check_layer_dependency: "api" or "impl" in parts).
-.set app            = "api" | "impl"
+.decl app(v: symbol)
+app("api"). app("impl").
 // Directories exempt from the layer-number rule: tests, and the shims/aggregators the Python linter names one by one.
-.set layer_free_dir = "tests" | "l0500_ts_models" | "l2070_server_plan" | "l3000_schema_builder"
+.decl layer_free_dir(v: symbol)
+layer_free_dir("tests"). layer_free_dir("l0500_ts_models").
+layer_free_dir("l2070_server_plan"). layer_free_dir("l3000_schema_builder").
 // Files in l7200_versioned_transactions allowed to import higher layers (graph and history types as base classes).
-.set vt_file        = "versioned_lazy_mixin.py" | "versioned_transactions.py" | "plan_revision_history_query.py"
+.decl vt_file(v: symbol)
+vt_file("versioned_lazy_mixin.py"). vt_file("versioned_transactions.py").
+vt_file("plan_revision_history_query.py").
 // Paths never checked against LAYER_GROUPS.yaml.
-.set group_skip     = "tests" | "__pycache__" | ".venv" | "conform"
+.decl group_skip(v: symbol)
+group_skip("tests"). group_skip("__pycache__"). group_skip(".venv").
+group_skip("conform").
 
 // edge(i, d, m): import statement i in document d imports module m, outside TYPE_CHECKING.
 // tc(i): import i sits under `if TYPE_CHECKING:` (anywhere below its body, however deeply nested).
 // The Python linter skips these before every check (_check_import_violations), and so does edge.
 .decl tc(i: node)
-tc($i) :- import_alias($i, _, _, _, _), within($i, $b), type_checking_block($b).
-.decl edge(i: node, d: int, m: sym)
+tc(i) :- import_alias(i, _, _, _, _), within(i, b), type_checking_block(b).
+.decl edge(i: node, d: number, m: symbol)
 // import_alias gives one row per imported name; edge keeps only (statement, module), so `from m import a, b` is one
-// edge, as in the Python linter's ImportFrom handling. $m != "" drops rows whose module could not be resolved.
-edge($i, $d, $m) :- import_alias($i, _, $m, _, _), $m != "", !tc($i), docof($i, $d).
+// edge, as in the Python linter's ImportFrom handling. m != "" drops rows whose module could not be resolved.
+edge(i, d, m) :- import_alias(i, _, m, _, _), m != "", !tc(i), docof(i, d).
 
 // Ratchet metrics internal_module_level / internal_deferred / internal_type_checking: api.* and impl.* imports
 // by style, TYPE_CHECKING ones included. Counted, never reported.
-.decl internal_import(i: node, m: sym, style: sym)
+.decl internal_import(i: node, m: symbol, style: symbol)
 .output internal_import
 // Mirrors the Python linter's classify_import_style: TYPE_CHECKING first, then "inside some function", else module level.
-// The first {} order matters: a deferred import under TYPE_CHECKING counts as type_checking.
-internal_import($i, $m, $s) :- import_alias($i, _, $m, _, _), $m =~ "^(api|impl)\.",
-    $s = first { "type_checking" if tc($i); "deferred" if nearest($i, _, fdef); "module_level" }.
+// The order matters, so each rule requires the earlier ones to fail: a deferred import under TYPE_CHECKING
+// counts as type_checking.
+internal_import(i, m, "type_checking") :- internal_alias(i, m), tc(i).
+internal_import(i, m, "deferred")      :- internal_alias(i, m), !tc(i), nearest(i, _, fdef).
+internal_import(i, m, "module_level")  :- internal_alias(i, m), !tc(i), !nearest(i, _, fdef).
+.decl internal_alias(i: node, m: symbol)
+internal_alias(i, m) :- import_alias(i, _, m, _, _), match("(api|impl)\..*", m).
 
 // layer_dependency: a file in layer lNNNN imports from a higher-numbered layer.
 // Python linter: check_layer_dependency. Each negated test below is one of its early returns.
-.violation layer_dependency(at: node, src: sym, dst: sym, module: sym)
+.violation layer_dependency(at: node, src: symbol, dst: symbol, module: symbol)
     "Layer {src} importing from higher layer {dst}: {module}"
 // Line 1: the file is under api/ or impl/.   Line 2: not under tests/ or one of the exempt layer directories.
 // Line 3: not one of the three versioned-transaction files.
-// Line 4: $s is the importing file's layer: the digits of the first `lNNNN_` segment of its dotted module name
-//   (the Python linter's extract_layer_number reads path parts the same way). $t is the imported module's layer: the first
+// Line 4: s is the importing file's layer: the digits of the first `lNNNN_` segment of its dotted module name
+//   (the Python linter's extract_layer_number reads path parts the same way). t is the imported module's layer: the first
 //   `.lNNNN_` segment, which needs a dot before it, as the Python linter's re.search does, so a top-level
-//   `import l9600_graphs` has no $t and is never a layer_dependency. No layer on either side: no row.
+//   `import l9600_graphs` has no t and is never a layer_dependency. No layer on either side: no row.
 // Line 5: the one pairwise exemption: the SQL grammar (l2100) may use the SQL dialect (l2200).
-layer_dependency($i, $s, $t, $m) :- edge($i, $d, $m), some { path_part($d, $p), $p in app },
-    !some { path_part($d, $p), $p in layer_free_dir },
-    !( path_part($d, "l7200_versioned_transactions"), file_name($d, $f), $f in vt_file ),
-    doc($d, _, $q), $s = @re($q, "(?:^|\.)l(\d{4})_"), $t = @re($m, "\.l(\d{4})_"), $t > $s,   // 4 digits: text order
-    !( path_part($d, "l2100_sql_grammar"), $t = "2200" ).
+layer_dependency(i, s, t, m) :- edge(i, d, m), path_part(d, top), app(top),
+    count : { path_part(d, p), layer_free_dir(p) } = 0,
+    count : { path_part(d, "l7200_versioned_transactions"), file_name(d, f), vt_file(f) } = 0,
+    doc(d, _, q), match("(?:|.*?\.)l(?<s>\d{4})_.*", q), match(".*?\.l(?<t>\d{4})_.*", m),
+    t > s,   // 4 digits: text order
+    count : { path_part(d, "l2100_sql_grammar"), t = "2200" } = 0.
 
 // api/ files allowed to reach impl/: (file name, a directory on its path; "" for any).
 // The Python linter's allowed_api_impl_bridges list of (filename, layer_dir) tuples, one fact per tuple. Several facts share a
 // line to keep the list short; each `bridge(…).` is a separate fact.
-.decl bridge(file: sym, dir: sym)     // hard-coded in check_layer_violations.py:736-829
+.decl bridge(file: symbol, dir: symbol)  // hard-coded in check_layer_violations.py:736-829
 bridge("validation.py", "l4000_permissions").  bridge("validation.py", "l4100_queue").  bridge("logged_table.py", "").
 bridge("fts_search_manager.py", "l5100_fts").  bridge("versioned_operations.py", "l7250_versioned_operations").
 bridge("versioned_transactions.py", "l7200_versioned_transactions").  bridge("diff_types.py", "l7250_versioned_operations").
@@ -102,64 +114,87 @@ bridge("query_spec.py", "l2060_query_builder").  bridge("cursor_pagination.py", 
 bridge("sql_graph_runtime.py", "l9700_graph_query").  bridge("queue_definition.py", "l4100_queue").
 bridge("versioned_connection.py", "l7000_versioned_schema").  bridge("dynamic_import.py", "_internal").
 // The l2070_batching facade files, also allowed: one rule covers them all instead of one fact per file.
-.set batching_facade = "executor.py" | "intent_diff_bytes.py" | "intent_embedding.py" | "intent_fts_search.py"
-    | "intent_infrastructure.py" | "intent_query_extended.py" | "permission_filter.py" | "plan_helpers.py"
-    | "plan_runtime.py" | "lazy_runtime.py" | "resolve_branch_steps.py" | "server_query_builder.py" | "versioned_select_steps.py"
-bridge($f, "l2070_batching") :- $f in batching_facade.
+.decl batching_facade(v: symbol)
+batching_facade("executor.py"). batching_facade("intent_diff_bytes.py").
+batching_facade("intent_embedding.py"). batching_facade("intent_fts_search.py").
+batching_facade("intent_infrastructure.py").
+batching_facade("intent_query_extended.py"). batching_facade("permission_filter.py").
+batching_facade("plan_helpers.py"). batching_facade("plan_runtime.py").
+batching_facade("lazy_runtime.py"). batching_facade("resolve_branch_steps.py").
+batching_facade("server_query_builder.py").
+batching_facade("versioned_select_steps.py").
+bridge(f, "l2070_batching") :- batching_facade(f).
 
 // api_exempt(d): document d may import impl/ although it is under api/. One rule per early return of the Python linter's
 // check_api_impl_separation: TypeScript bridge, metadata, tests, admin tools, event-pipeline bridges, the
 // connection factory, and the bridge() list (a "" directory matches any path; otherwise the directory must appear).
-.decl api_exempt(d: int)
-api_exempt($d) :- path_part($d, "l9900_ts_models").
-api_exempt($d) :- path_part($d, "l3200_metadata").
-api_exempt($d) :- path_part($d, "tests"), path_part($d, "api").
-api_exempt($d) :- path_part($d, "l8000_admin"), path_part($d, "tools").
-api_exempt($d) :- path_part($d, "l4200_event_pipeline"), path_part($d, "bridges").
-api_exempt($d) :- file_name($d, "connection_factory.py"), path_part($d, "l2000_connection").
-api_exempt($d) :- file_name($d, $f), bridge($f, "").
-api_exempt($d) :- file_name($d, $f), bridge($f, $p), path_part($d, $p).
+.decl api_exempt(d: number)
+api_exempt(d) :- path_part(d, "l9900_ts_models").
+api_exempt(d) :- path_part(d, "l3200_metadata").
+api_exempt(d) :- path_part(d, "tests"), path_part(d, "api").
+api_exempt(d) :- path_part(d, "l8000_admin"), path_part(d, "tools").
+api_exempt(d) :- path_part(d, "l4200_event_pipeline"), path_part(d, "bridges").
+api_exempt(d) :- file_name(d, "connection_factory.py"), path_part(d, "l2000_connection").
+api_exempt(d) :- file_name(d, f), bridge(f, "").
+api_exempt(d) :- file_name(d, f), bridge(f, p), path_part(d, p).
 
 // api_impl: an api/ file (not an __init__.py, not exempt) imports a module under impl.
-.violation api_impl(at: node, module: sym) "api/ modules cannot import from impl/ (except api/__init__.py): {module}"
-api_impl($i, $m) :- edge($i, $d, $m), $m =~ "^impl\.", path_part($d, "api"), !file_name($d, "__init__.py"), !api_exempt($d).
+.violation api_impl(at: node, module: symbol) "api/ modules cannot import from impl/ (except api/__init__.py): {module}"
+api_impl(i, m) :- edge(i, d, m), match("impl\..*", m), path_part(d, "api"), !file_name(d, "__init__.py"), !api_exempt(d).
 
 // White-box conform tests allowed to import impl/ (the Python linter's whitebox_test_files set, matched by file name only).
-.set whitebox = "test_migration_ddl_bugs_round2.py" | "test_permission_evolution.py" | "test_schema_drift_e2e.py"
-    | "test_permission_introspection.py" | "test_uuid_introspection.py" | "test_uuid_validation.py" | "test_fts_validation.py"
-    | "test_neo4j_validation.py" | "test_permission_validation.py" | "test_log_table_export_import.py" | "test_bulk_loader.py"
-    | "test_export_import.py" | "test_incremental_export_import.py" | "test_cross_backend_import.py" | "test_rbac_integration.py"
-    | "test_rbac_provider.py" | "test_rbac_schema.py" | "test_rbac_polymorphic.py" | "test_rbac_foreign_keys.py"
-    | "test_rbac_audit_integration.py" | "test_permission_row_filter.py" | "test_permission_cache.py" | "test_permission_events.py"
-    | "test_permission_share.py" | "test_permission_ownership.py" | "test_permission_pagination.py"
-    | "test_permission_column_filter.py" | "test_permission_audit.py" | "test_permission_noop.py"
-    | "test_polymorphic_inheritance.py" | "test_config.py" | "test_bugbot_regressions.py" | "test_fts_basic.py"
-    | "test_fts_pagination.py" | "test_object_history.py" | "test_log_model_registry.py" | "test_versioned_operations.py"
-    | "test_materialization_jobs.py" | "test_sparse_backend_incremental.py" | "test_sql_roundtrip_efficiency.py"
-    | "test_materialization.py" | "test_security_regression.py" | "test_vector_query_analysis.py" | "bench_all_backends.py"
-    | "test_pgvector_e2e.py" | "test_pgvector_low_level.py" | "test_pgvector_migrations.py" | "test_pgvector_stress.py"
-    | "test_pgvector_vs_hnsw_comparison.py"
+.decl whitebox(v: symbol)
+whitebox("test_migration_ddl_bugs_round2.py").
+whitebox("test_permission_evolution.py"). whitebox("test_schema_drift_e2e.py").
+whitebox("test_permission_introspection.py"). whitebox("test_uuid_introspection.py").
+whitebox("test_uuid_validation.py"). whitebox("test_fts_validation.py").
+whitebox("test_neo4j_validation.py"). whitebox("test_permission_validation.py").
+whitebox("test_log_table_export_import.py"). whitebox("test_bulk_loader.py").
+whitebox("test_export_import.py"). whitebox("test_incremental_export_import.py").
+whitebox("test_cross_backend_import.py"). whitebox("test_rbac_integration.py").
+whitebox("test_rbac_provider.py"). whitebox("test_rbac_schema.py").
+whitebox("test_rbac_polymorphic.py"). whitebox("test_rbac_foreign_keys.py").
+whitebox("test_rbac_audit_integration.py"). whitebox("test_permission_row_filter.py").
+whitebox("test_permission_cache.py"). whitebox("test_permission_events.py").
+whitebox("test_permission_share.py"). whitebox("test_permission_ownership.py").
+whitebox("test_permission_pagination.py").
+whitebox("test_permission_column_filter.py"). whitebox("test_permission_audit.py").
+whitebox("test_permission_noop.py"). whitebox("test_polymorphic_inheritance.py").
+whitebox("test_config.py"). whitebox("test_bugbot_regressions.py").
+whitebox("test_fts_basic.py"). whitebox("test_fts_pagination.py").
+whitebox("test_object_history.py"). whitebox("test_log_model_registry.py").
+whitebox("test_versioned_operations.py"). whitebox("test_materialization_jobs.py").
+whitebox("test_sparse_backend_incremental.py").
+whitebox("test_sql_roundtrip_efficiency.py"). whitebox("test_materialization.py").
+whitebox("test_security_regression.py"). whitebox("test_vector_query_analysis.py").
+whitebox("bench_all_backends.py"). whitebox("test_pgvector_e2e.py").
+whitebox("test_pgvector_low_level.py"). whitebox("test_pgvector_migrations.py").
+whitebox("test_pgvector_stress.py"). whitebox("test_pgvector_vs_hnsw_comparison.py").
 
 // conform_impl: a conform/ test imports impl.*. conftest.py may, to build backends; so may the whitebox files.
 // Python linter: check_conform_imports. It does not require api/ or impl/ in the path, so conform/ files are checked here
 // even though the layer-number rule skips them.
-.violation conform_impl(at: node, module: sym) "conform/ tests must be backend-agnostic, cannot import from impl/: {module}"
-conform_impl($i, $m) :- edge($i, $d, $m), $m =~ "^impl\.", path_part($d, "conform"),
-    file_name($d, $f), $f != "conftest.py", !($f in whitebox).
+.violation conform_impl(at: node, module: symbol) "conform/ tests must be backend-agnostic, cannot import from impl/: {module}"
+conform_impl(i, m) :- edge(i, d, m), match("impl\..*", m), path_part(d, "conform"),
+    file_name(d, f), f != "conftest.py", !whitebox(f).
 
 // Input facts read from a policy file, not from the code: which layers form each group, and which groups each may use.
-// The Python linter adds "a group may import itself"; the rule gets that from $g != $h below.
-.input layer_group(layer: sym, group: sym)     // api/LAYER_GROUPS.yaml: groups.<g>.layers
-.input group_allows(group: sym, dep: sym)      // api/LAYER_GROUPS.yaml: groups.<g>.depends_on and cross_group_deps
+// The Python linter adds "a group may import itself"; the rule gets that from g != h below.
+// Both from api/LAYER_GROUPS.yaml: layer_group from groups.<g>.layers, group_allows from groups.<g>.depends_on
+// and cross_group_deps.
+.decl layer_group(layer: symbol, group: symbol)
+.decl group_allows(group: symbol, dep: symbol)
+.input layer_group(IO=file, filename="api/LAYER_GROUPS.yaml")
+.input group_allows(IO=file, filename="api/LAYER_GROUPS.yaml")
 
-.violation group_dependency(at: node, src: sym, dst: sym, module: sym)
+.violation group_dependency(at: node, src: symbol, dst: symbol, module: symbol)
     "Group violation: {src} imports from {dst}, which is not in its declared dependencies: {module}"
 // Python linter: _check_group_violation.
-// $a: the importing file's layer directory: the first path component that is `l` + 4 digits + …_… (l1000_schema),
+// a: the importing file's layer directory: the first path component that is `l` + 4 digits + …_… (l1000_schema),
 //   or the special directories `types` / `row_id`. Leftmost match = first such component, as the Python linter loops.
-// $b: the imported module's layer: the first dotted segment of the same shape.
+// b: the imported module's layer: the first dotted segment of the same shape.
 // Then both layers must be in a known group (layer_group); unknown layers give no row, as in the Python linter.
-group_dependency($i, $g, $h, $m) :- edge($i, $d, $m), !some { path_part($d, $p), $p in group_skip },
-    doc($d, $path, _), $a = @re($path, "(?:^|/)(l\d{4}[^/]*_[^/]*|types|row_id)(?:/|$)"),
-    $b = @re($m, "(?:^|\.)(l\d{4}[^.]*_[^.]*)"),
-    layer_group($a, $g), layer_group($b, $h), $g != $h, !group_allows($g, $h).
+group_dependency(i, g, h, m) :- edge(i, d, m), count : { path_part(d, p), group_skip(p) } = 0,
+    doc(d, path, _), match("(?:|.*?/)(?<a>l\d{4}[^/]*_[^/]*|types|row_id)(?:/.*)?", path),
+    match("(?:|.*?\.)(?<b>l\d{4}[^.]*_[^.]*).*", m),
+    layer_group(a, g), layer_group(b, h), g != h, !group_allows(g, h).

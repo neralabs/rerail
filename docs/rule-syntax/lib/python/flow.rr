@@ -8,19 +8,22 @@
 // stmt_of(n, st, body): st is the statement directly in block `body` that contains n (or is n).
 // e.g. in `def f():\n  x = g()\n  return x`, the call g() has st = the `x = g()` statement, body = f's block.
 // A node nested in several blocks gets one row per enclosing block.
-.decl stmt_of(n: node, st: node, body: node)      // the statement of `body` that holds n
-stmt_of($n, $st, $b) :- within($n, $st), child($b, $st, _), kind($b, "block").
-stmt_of($st, $st, $b) :- child($b, $st, _), kind($b, "block").
+.decl stmt_of(n: node, st: node, body: node)  // the statement of `body` that holds n
+stmt_of(n, st, b) :- within(n, st), child(b, st, _), kind(b, "block").
+stmt_of(st, st, b) :- child(b, st, _), kind(b, "block").
 // before(a, b): a and b sit in different statements of the same block, and a's statement comes first (child index
 // order). Says nothing about nodes in the same statement, or about whether a's statement is reached at all.
-.decl before(a: node, b: node)                    // a's statement runs before b's in their shared body
-before($a, $b) :- stmt_of($a, $sa, $body), stmt_of($b, $sb, $body), child($body, $sa, $i), child($body, $sb, $j), $i < $j.
+.decl before(a: node, b: node)  // a's statement runs before b's in their shared body
+before(a, b) :- stmt_of(a, sa, body), stmt_of(b, sb, body), child(body, sa, i), child(body, sb, j), i < j.
 // in_branch(n, b): n runs only on some paths: it is inside block b that is the body of an if/elif/else, a try or
 // except clause, or a match case. e.g. in `if c:\n  x = 1`, the assignment is in_branch of the if's block.
 // Loop bodies (for/while) are not included.
-.decl in_branch(n: node, b: node)                 // n is inside branch b of an if/try/match
-in_branch($n, $b) :- within($n, $b), kind($b, "block"), child($p, $b, _),
-    kind($p, $k), $k in {"if_statement", "elif_clause", "else_clause", "try_statement", "except_clause", "case_clause"}.
+.decl in_branch(n: node, b: node)  // n is inside branch b of an if/try/match
+in_branch(n, b) :- within(n, b), kind(b, "block"), child(p, b, _),
+    kind(p, k), branch_kind(k).
+.decl branch_kind(kind: symbol)
+branch_kind("if_statement"). branch_kind("elif_clause"). branch_kind("else_clause").
+branch_kind("try_statement"). branch_kind("except_clause"). branch_kind("case_clause").
 
 // ---- edits --------------------------------------------------------------------------------------------------------
 // An `.edit` is an edit defined in Datalog: rules for it end in `=> …` and expand to the native edits in core
@@ -30,6 +33,6 @@ in_branch($n, $b) :- within($n, $b), kind($b, "block"), child($p, $b, _),
 // remove_stmt(st): delete statement st without leaving an empty body. Python needs at least one statement in a
 // block, so `def f():\n    import x` becomes `def f():\n    pass`, not a syntax error.
 .edit remove_stmt(st: node)
-remove_stmt($st) :- child($b, $st, _), kind($b, "block"), some { child($b, $o, _), $o != $st } => delete($st).
-remove_stmt($st) :- child($b, $st, _), kind($b, "block"), !some { child($b, $o, _), $o != $st } => replace($st, `pass`).
-remove_stmt($st) :- child($m, $st, _), kind($m, "module") => delete($st).    // module level: an empty module is fine
+remove_stmt(st) :- child(b, st, _), kind(b, "block"), child(b, o, _), o != st => delete(st).
+remove_stmt(st) :- child(b, st, _), kind(b, "block"), count : { child(b, o, _), o != st } = 0 => replace(st, `pass`).
+remove_stmt(st) :- child(m, st, _), kind(m, "module") => delete(st).    // module level: an empty module is fine
