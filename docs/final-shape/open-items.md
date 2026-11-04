@@ -42,6 +42,12 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O41 | Phase 10 | Bounded cross-file rounds (k = 2) leave calls.rdl short of its fixpoint on the vtab corpus (a third file crossing adds 8 of 5,112 hop rows); the unconverged frontier is reported but not yet marked pending | open |
 | O42 | Phase 10 | `typing::{terms, declare, deps}` are built and tested alone; the typing programs do not yet produce or read terms, and the corpus runner reads no declarations or dependency summaries | open |
 | O39 | Phase 9 | S7's sample, cold on Metal: the footprint peaks at 871 MB (budget 500 MB) in the label runs (`3a.plan` and the roots' partition), after `WalkFrames` removed the 3,017 MB of interpreted retries (decision 0032). 2026-11-04: the roots are rules over the codes (decision 0033), with no node lists (70 M roots before) and no walk items; the peak (889 MB) now rises in the GPU run and the roots' partition. Roots that are walks no longer size each file for a backend that never runs (one packed batch per file, ~130 MB over the GPU run's): 752 MB, in the GPU run. The kernels keep no thread memory (the driver's scratch, decision 0034): 603 MB, 335 MB after the audit | open |
+| O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
+| O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
+| O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
+| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open |
+| O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
+| O65 | Phase 11 | Two data-layer stages outside the fragment: `call_paths` (a value cycle) and `block_results` (`NotStratifiable` over the tree) (t17) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -1186,3 +1192,49 @@ Nothing calls them yet:
   summaries for the imports it resolves. Nothing writes summaries yet: a summary is the
   cross-file part's exported signatures, printed as a stub.
 - **Variance:** variance for library types is not modelled. A check that needs it gives unknown.
+## O60. The matcher atom's captures
+
+The data-layer rules' relational inputs and budget evidence project captures (`capture.X`, `.startByte`, regex
+groups, `transform` text): 1,672 projections in 54 clauses of 14 rules (`gate/data-layer/census/`). §12's atom
+binds only the document and the node. The front end now reads `ast($D, $N, {…}, NAME: $v)` (a match that leaves
+`NAME` unbound gives no row); `logic::plan` still refuses every `ast` literal. **Closure:** the §3 lowering returns
+exported captures with each match.
+
+## O61. A builtin catalogue
+
+The data-layer programs (`cr/logic/programs/data_layer/`) use 30 builtins; only `@cat` is built. They are SQL's
+scalars (`@rx_matches` 224 uses, `@concat` 66, `@substr` 60, …), three string helpers (`@drop_components`,
+`@join_nonempty`, `@glob`), and tape builtins (`@within`, `@depth`, `@line`, `@id`, `@qualname`, `@class_path`,
+`@class_prefix`). **Closure:** a fixed catalogue, each entry marked value-creating or not (§12's fourth
+exclusion needs that mark), with `@rx_*` on §16's regex path.
+
+## O62. The shortlex-least route lattice
+
+Of the 70 recursions in the data-layer rules, 4 need a lattice beyond `set`, `flat`, `min` and `max`: `hierarchy`
+(internal-dead-code, public-api-triples) and the two sink searches (serverplan-state-tripwires), each the least
+route under (length, text). The native lattices are `i64`-valued, and `Min`'s widening jumps to its top, losing the
+route. Without `widen` the declaration fails `UnboundedLattice` (`internal_dead_code.hierarchy_unwidened.rdl`).
+**Closure:** a catalogue lattice bounded by its edge relation, or the length as a `min` lattice with the route in
+the findings layer (t17 § 6).
+
+## O63. Tree built-ins beyond `nearest`
+
+28 recursions in the data-layer rules are tree walks that `nearest` alone does not express: subtrees, the
+outermost function, depth (t17 § 3). The programs write them as `@within($x, $r) = 1` and `@depth($x)`, since a
+new literal would change `logic/plan`'s exhaustive matches. Two walks through chosen kinds (dispatch `annotations`,
+steps `payload_values`) remain Datalog recursion over tree edges, against §7. **Closure:** `within` and a
+kind-filtered climb/descent (the matcher's `inside`/`has` with `stopBy`) as tree built-ins.
+
+## O64. The data-layer's regex forbid clauses
+
+109 forbid clauses regex the file's text (108 with line options, 8 with a line state machine) and 4 its path, in
+14 rules; 9 rules have nothing else. `yaml::add` refuses them. PIAT §5.1 (`notes/t1` :446) found 107 expressible as
+AST rules, 2 needing line positions, 4 path-only. **Closure:** the rewrite, done for the gate's pack.
+
+## O65. Two data-layer stages outside the fragment
+
+serverplan-quality's `call_paths` carries dotted text along attribute chains (`path || suffix`), a cycle through a
+value-creating builtin that the front end does not check. `block_results` folds a JSON map in block order; over the
+tree it is a negation of `raises` in its own component (`serverplan_quality.block_results.rdl`), stratified only by
+depth. Both are declared inputs in the programs. **Closure:** a tape builtin for attribute-chain text, and a
+bottom-up tree fold (or per-file lattice in the dispatch, §7) for `block_results`.
