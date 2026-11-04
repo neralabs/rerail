@@ -126,7 +126,16 @@ fn annotations_use_canonical_unparse() {
 
 #[test]
 fn literal_metadata_has_canonical_json_without_source_execution() {
-    let source="('x', ('y', 3))";
-    let out=batch(&[Document{source:source.into(),requests:vec![Request{start:0,end:source.len(),kind:"tuple".into(),fields:vec!["literal_json".into()]}]}]).unwrap();
-    assert_eq!(out[0][0]["literal_json"],r#"["x",["y",3]]"#);
+    let source = "('x', ('y', 3))";
+    let out = batch(&[Document {
+        source: source.into(),
+        requests: vec![Request {
+            start: 0,
+            end: source.len(),
+            kind: "tuple".into(),
+            fields: vec!["literal_json".into()],
+        }],
+    }])
+    .unwrap();
+    assert_eq!(out[0][0]["literal_json"], r#"["x",["y",3]]"#);
 }

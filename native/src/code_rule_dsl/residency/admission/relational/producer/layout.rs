@@ -69,6 +69,7 @@ mod tests {
         let facts = Facts::build(&file).unwrap();
         let visible = Arc::new((0..facts.subtree_ends().len() as u32).collect());
         Demand {
+            python_ast: None,
             roots: vec![Root {
                 file: 0,
                 node: 0,

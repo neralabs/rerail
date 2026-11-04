@@ -35,6 +35,18 @@ fn verifies(public_key: &str, message: &str, signature: &str) -> bool {
 
 pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
     db.create_scalar_function(
+        "sha256",
+        1,
+        FunctionFlags::SQLITE_UTF8
+            | FunctionFlags::SQLITE_DETERMINISTIC
+            | FunctionFlags::SQLITE_INNOCUOUS,
+        |context| {
+            use sha2::{Digest, Sha256};
+            let text: Option<String> = context.get(0)?;
+            Ok(text.map(|s| format!("{:x}", Sha256::digest(s.as_bytes()))))
+        },
+    )?;
+    db.create_scalar_function(
         "verify_ed25519",
         3,
         FunctionFlags::SQLITE_UTF8
@@ -56,9 +68,14 @@ pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
 mod tests {
     #[test]
     fn hashes_signed_artifact_payloads() {
-        let db=rusqlite::Connection::open_in_memory().unwrap();
+        let db = rusqlite::Connection::open_in_memory().unwrap();
         super::register(&db).unwrap();
-        let actual:String=db.query_row("SELECT sha256('abc')",[],|r|r.get(0)).unwrap();
-        assert_eq!(actual,"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        let actual: String = db
+            .query_row("SELECT sha256('abc')", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            actual,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

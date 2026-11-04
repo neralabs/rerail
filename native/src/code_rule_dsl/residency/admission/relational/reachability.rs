@@ -185,6 +185,7 @@ mod tests {
             name: "reachable".into(),
             query: String::new(),
             indexes: vec![],
+            python_ast: None,
             reachability: Some(spec.clone()),
             deferred: Default::default(),
             stored_columns: vec![],

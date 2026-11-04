@@ -2,7 +2,9 @@
 //! their input tables and earlier stages in a fresh in-memory SQLite connection.
 use crate::code_rule_dsl::eval::{evidence::Rows, failure, violation_from_witness};
 use crate::code_rule_dsl::json::{hex_digest, invalid};
-use crate::code_rule_dsl::model::{CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Snapshot};
+use crate::code_rule_dsl::model::{
+    CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Snapshot,
+};
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use napi::Result;
 use rusqlite::Connection;
@@ -23,6 +25,7 @@ mod forest;
 mod inputs;
 mod insert;
 pub(in crate::code_rule_dsl) mod producer;
+pub(in crate::code_rule_dsl) mod python_ast;
 mod reachability;
 pub(in crate::code_rule_dsl) mod schema;
 mod source;
@@ -42,6 +45,7 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) query: String,
     pub(in crate::code_rule_dsl) indexes: Vec<Vec<String>>,
     pub(in crate::code_rule_dsl) reachability: Option<Reachability>,
+    pub(in crate::code_rule_dsl) python_ast: Option<python_ast::Spec>,
     pub(in crate::code_rule_dsl) deferred: BTreeMap<String, String>,
     pub(in crate::code_rule_dsl) stored_columns: Vec<String>,
     pub(in crate::code_rule_dsl) output_columns: Vec<String>,
@@ -98,7 +102,10 @@ fn sql_error(error: rusqlite::Error) -> napi::Error {
     invalid(format!("relational query: {error}"))
 }
 
-pub(in crate::code_rule_dsl) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
+pub(in crate::code_rule_dsl) fn connection(
+    max_pattern: usize,
+    work: Arc<AtomicUsize>,
+) -> Result<Database> {
     let db = validation_connection(max_pattern, work)?;
     db.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA analysis_limit=1000;")
         .map_err(sql_error)?;
@@ -251,7 +258,11 @@ pub(in crate::code_rule_dsl) fn inspect_fields(
     result
 }
 
-pub(in crate::code_rule_dsl) fn create_input(db: &Database, name: &str, fields: &[String]) -> Result<()> {
+pub(in crate::code_rule_dsl) fn create_input(
+    db: &Database,
+    name: &str,
+    fields: &[String],
+) -> Result<()> {
     db.storage
         .borrow_mut()
         .declare(db, name, input_schema(name, fields), true)
@@ -297,7 +308,8 @@ pub(in crate::code_rule_dsl) fn create_stage(
         });
     }
     #[cfg(feature = "code-rule-profile")]
-    let mut span = crate::code_rule_dsl::profile::trace::Span::start("sql-materialize", &stage.name);
+    let mut span =
+        crate::code_rule_dsl::profile::trace::Span::start("sql-materialize", &stage.name);
     #[cfg(feature = "code-rule-profile")]
     let work_before = work.load(Ordering::Relaxed);
     let physical = if materialize {
@@ -647,7 +659,8 @@ impl<'a> Session<'a> {
                 fields.len() + 3,
                 rows.witnesses.iter().map(|witness| {
                     use rusqlite::types::ValueRef;
-                    let location = crate::code_rule_dsl::violations::anchored_span(&input.anchor, witness).0;
+                    let location =
+                        crate::code_rule_dsl::violations::anchored_span(&input.anchor, witness).0;
                     let projected = witness.captures.projection();
                     let layout = projected.map(|p| &layouts[&p.schema_identity()]);
                     [
@@ -711,7 +724,8 @@ impl<'a> Session<'a> {
                             Sql::Text(edge.source_name.text().to_owned()),
                             Sql::Text(edge.target_name.text().to_owned()),
                             Sql::Integer(i64::from(
-                                edge.target.flags & crate::code_rule_dsl::calls::summary::CLASS != 0,
+                                edge.target.flags & crate::code_rule_dsl::calls::summary::CLASS
+                                    != 0,
                             )),
                         ]
                     }),
@@ -783,6 +797,16 @@ impl<'a> Session<'a> {
             #[cfg(feature = "code-rule-profile")]
             self.db.stage(&stage.name);
             columns(&self.db, &stage.query, &self.tables)?;
+            if let Some(spec) = &stage.python_ast {
+                columns(&self.db, &spec.roots, &self.tables)?;
+                return Ok(Some(python_ast::demand(
+                    &self.db,
+                    spec,
+                    &self.syntax_trees,
+                    &self.syntax_files,
+                    Arc::clone(&self.work),
+                )?));
+            }
             if let Some(spec) = stage.reachability.as_ref().filter(|s| s.syntax.is_some()) {
                 return Ok(Some(syntax::demand(
                     &self.db,
@@ -1032,5 +1056,7 @@ pub(in crate::code_rule_dsl) fn evaluate_prepared(
     prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause, Preparation) -> Result<()>,
 ) -> Vec<Evaluation> {
     use crate::code_rule_dsl::phase_clock;
-    phase_clock::timed(&phase_clock::RELATIONAL, || batch::evaluate_prepared(jobs, prepare))
+    phase_clock::timed(&phase_clock::RELATIONAL, || {
+        batch::evaluate_prepared(jobs, prepare)
+    })
 }

@@ -274,7 +274,14 @@ pub(in crate::code_rule_dsl) fn compile(
             let spec = object(value, &at)?;
             reject_unknown(
                 spec,
-                &["name", "query", "indexes", "reachability", "deferred"],
+                &[
+                    "name",
+                    "query",
+                    "indexes",
+                    "reachability",
+                    "deferred",
+                    "pythonAst",
+                ],
                 &at,
             )?;
             let name = non_empty_str(spec.get("name"), &format!("{at}/name"))?.to_owned();
@@ -285,6 +292,58 @@ pub(in crate::code_rule_dsl) fn compile(
                     "{at}/name must be a new relation identifier"
                 )));
             }
+            let python_ast = spec
+                .get("pythonAst")
+                .map(|value| -> Result<_> {
+                    if ["query", "indexes", "reachability", "deferred"]
+                        .iter()
+                        .any(|k| spec.contains_key(*k))
+                    {
+                        return Err(invalid(
+                            "pythonAst cannot declare SQL stages or reachability",
+                        ));
+                    }
+                    let shape = object(value, &format!("{at}/pythonAst"))?;
+                    reject_unknown(shape, &["roots", "syntax", "fields"], &at)?;
+                    let source = non_empty_str(shape.get("syntax"), &at)?.to_owned();
+                    if syntax.as_ref().is_none_or(|s| s.name != source) {
+                        return Err(invalid("pythonAst must name the declared syntax source"));
+                    }
+                    let fields = names(
+                        shape
+                            .get("fields")
+                            .ok_or_else(|| invalid("pythonAst requires fields"))?,
+                        &at,
+                    )?;
+                    if fields.is_empty()
+                        || fields
+                            .iter()
+                            .any(|f| !relational::python_ast::FIELDS.contains(&f.as_str()))
+                    {
+                        return Err(invalid("unknown canonical Python AST field"));
+                    }
+                    let roots = text(
+                        shape.get("roots"),
+                        &at,
+                        capabilities.limits.max_ast_pattern_bytes,
+                    )?;
+                    let (selected, reads, source_bytes) =
+                        relational::inspect_fields(&db, &roots, &tables)?;
+                    if selected != ["__path", "id"] {
+                        return Err(invalid("pythonAst roots must select __path,id in order"));
+                    }
+                    reads_source |= source_bytes;
+                    for (name, fields) in reads {
+                        input_fields.entry(name.clone()).or_default().extend(fields);
+                        last_uses.insert(name, index);
+                    }
+                    Ok(relational::python_ast::Spec {
+                        roots,
+                        syntax: source,
+                        fields,
+                    })
+                })
+                .transpose()?;
             let reachability = spec
                 .get("reachability")
                 .map(|value| -> Result<_> {
@@ -357,7 +416,9 @@ pub(in crate::code_rule_dsl) fn compile(
                     })
                 })
                 .transpose()?;
-            let query = if reachability.is_some() {
+            let query = if let Some(spec) = &python_ast {
+                relational::python_ast::shape(&spec.fields)
+            } else if reachability.is_some() {
                 "SELECT CAST(NULL AS TEXT) AS __path,NULL AS root,NULL AS node WHERE 0".to_owned()
             } else {
                 text(
@@ -445,6 +506,7 @@ pub(in crate::code_rule_dsl) fn compile(
                 query,
                 indexes,
                 reachability,
+                python_ast,
                 deferred,
                 stored_columns,
                 output_columns: columns,

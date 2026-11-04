@@ -191,12 +191,19 @@ impl Facts {
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.rows.len()
     }
-    pub(in crate::code_rule_dsl) fn read_ignores(&self) -> crate::code_rule_dsl::suppress::RerailIgnores {
+    pub(in crate::code_rule_dsl) fn read_ignores(
+        &self,
+    ) -> crate::code_rule_dsl::suppress::RerailIgnores {
         use ast_grep_core::Doc;
         let target = ast_grep_core::AstGrep::doc(self.doc.clone());
         crate::code_rule_dsl::suppress::RerailIgnores::read(&target.root(), self.doc.get_source())
     }
-    pub(in crate::code_rule_dsl) fn span(&self, start: usize, end: usize, excludes: &[String]) -> Option<Span> {
+    pub(in crate::code_rule_dsl) fn span(
+        &self,
+        start: usize,
+        end: usize,
+        excludes: &[String],
+    ) -> Option<Span> {
         // The preorder table is ordered by source start. Check only equal-start nodes.
         let at = self
             .rows
@@ -258,6 +265,25 @@ impl Facts {
         }
         cache.insert(key, Arc::clone(&index));
         Ok(index)
+    }
+    pub(super) fn python_ast_source(&self) -> String {
+        String::from_utf8(self.doc.transducer_source().to_vec()).expect("UTF-8 source")
+    }
+    pub(super) fn python_ast_request(
+        &self,
+        id: u32,
+        fields: Vec<String>,
+    ) -> Result<crate::code_rule_dsl::value::python_ast::Request> {
+        if self.positions.get(id as usize).is_none_or(Option::is_none) {
+            return Err(invalid("invalid Python AST root"));
+        }
+        let span = self.packed.span(id);
+        Ok(crate::code_rule_dsl::value::python_ast::Request {
+            start: span.start,
+            end: span.end,
+            kind: self.packed.kind(id).into(),
+            fields,
+        })
     }
     pub(in crate::code_rule_dsl) fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end
@@ -905,7 +931,10 @@ pub(in crate::code_rule_dsl) fn load(
     Ok(names)
 }
 
-pub(in crate::code_rule_dsl) fn prepare_trees(syntax: &Spec, files: &Files) -> Result<Vec<super::producer::Tree>> {
+pub(in crate::code_rule_dsl) fn prepare_trees(
+    syntax: &Spec,
+    files: &Files,
+) -> Result<Vec<super::producer::Tree>> {
     files
         .iter()
         .map(|(_, facts)| {
@@ -972,5 +1001,6 @@ pub(in crate::code_rule_dsl) fn demand(
         trees,
         paths,
         work,
+        python_ast: None,
     })
 }
