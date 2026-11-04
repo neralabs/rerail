@@ -37,7 +37,8 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O35 | Phase 4 / 9 | The Metal label run's interpreter workspace against the 256 MB buffer budget: S7's real files (results arena) | closed (2026-11-03): groups single-dispatch (O34); S7's 250 files agree on all four backends |
 | O36 | Phase 4 / 10 | Semantic leaves still refused as fact labels: shared bindings, binding predicates, multi-target sub-rules, `parse`, under-`not` unknowns (decision 0030) | open |
 | O37 | Phase 4 / 8 | The lowered B006 clause reports 4 mutable defaults on S7's `f010.py` that W does not (`Optional[…]`, `Annotated[…]` annotations); `the_slice_finds_ws_findings_on_real_files` ignored | open |
-| O38 | Phase 9 | The interpreter's per-lane transient workspace (lanes × states, sized before any task runs) exceeds the buffer budget for 5 of 39 interpreted S2 clauses and for 70 of 158 under `RERAIL_HOST_SWEEPS` | open |
+| O38 | Phase 9 | The interpreter's per-lane transient workspace (lanes × states, sized before any task runs) exceeds the buffer budget for 5 of 39 interpreted S2 clauses and for 70 of 158 under `RERAIL_HOST_SWEEPS`. 2026-11-04: tasks are implicit in segments and lanes are fitted to the free budget (decision 0033); 37 of 39 equal | closed |
+| O40 | Phase 9 | Two interpreted S2 clauses (ruff-async251, ruff-sim300) are recursive groups whose host rounds exceed the 200-launch limit (`BackendLaunchLimit`); their rounds belong on the device | open |
 | O39 | Phase 9 | S7's sample, cold on Metal: the footprint peaks at 871 MB (budget 500 MB) in the label runs (`3a.plan` and the roots' partition), after `WalkFrames` removed the 3,017 MB of interpreted retries (decision 0032). 2026-11-04: the roots are rules over the codes (decision 0033), with no node lists (70 M roots before) and no walk items; the peak (889 MB) now rises in the GPU run and the roots' partition | open |
 
 ## O1. Stale-fact detection after a crash
@@ -1096,4 +1097,18 @@ before it runs.
   lane count with states guessed and halved.
 - **Tests:** `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` counts the 5 refused
   clauses; the packed batch refuses the same ones (`RERAIL_PACKED_INTERPRETER`).
+- **Closed (2026-11-04, decision 0033 item 5):** an interpreted level builds no task records. Its
+  evaluations name their root segments, the device finds each task's root from them, and the lane
+  pool is sized from three quarters of the free buffer budget. 37 of 39 equal; the other two are
+  O40.
+
+## O40. Interpreted recursive groups run their rounds from the host
+
+Found at list step 28 (2026-11-04). ruff-async251 and ruff-sim300, interpreted, are recursive
+label groups: each round is a launch from the host, and they pass the 200-launch limit per
+evaluation (`KERNEL_LAUNCH_LIMIT`), so they are refused (`BackendLaunchLimit`). On Metal the same
+clauses run as fused groups whose rounds stay on the device.
+- **Shape to take:** the interpreter's rounds run on the device (the persistent dispatch and work
+  queue of the walks), not one host launch per round. Raising the limit is not the fix.
+- **Test:** `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` prints both.
 

@@ -31,7 +31,7 @@ struct Status { uint error,resultCount,captureCount,programCounter,finalCaptureC
 struct SharedArena { uint start,capacity; atomic_uint cursor; };
 struct EvaluationQuota { atomic_uint used; uint limit; };
 struct LazyArenaBlock { uint start,limit; atomic_uint state; uint reserved; };
-struct Evaluation { atomic_uint outcome; uint generation,failureArena,failureTask,failurePc; atomic_uint workUsed; uint workLimit,taskStart,taskCount; EvaluationQuota quotas[14]; LazyArenaBlock pending,capture,cursor,repeat,valueState,candidate,queryBucket,queryMember,queuedState,greedyEntry; };
+struct Evaluation { atomic_uint outcome; uint generation,failureArena,failureTask,failurePc; atomic_uint workUsed; uint workLimit,taskStart,taskCount,program,file,rootSegment,rootBase; EvaluationQuota quotas[14]; LazyArenaBlock pending,capture,cursor,repeat,valueState,candidate,queryBucket,queryMember,queuedState,greedyEntry; };
 struct GlobalArenas { SharedArena arenas[14]; atomic_uint taskCursor; uint reserved[3]; };
 struct Task { uint evaluation,ordinal,file,program,root,workLimit; };
 
@@ -144,8 +144,8 @@ uint apply_output(device const uint* programData,Program program,Task task,File 
 /*JIT_SUPPORT*/
 // A label bit set at `node`; whether it was clear.
 static bool label_mark(device atomic_uint* bits,uint node){uint bit=1u<<(node%32u);return (atomic_fetch_or_explicit(&bits[node/32u],bit,memory_order_relaxed)&bit)==0u;}
-void run_task_in(device const Task* tasks,constant BatchHeader& header,FILE_TABLE files,NODE_TABLE nodes,device const Program* programs,device const uint* words,device const ulong* longs,CHILD_TABLE children,device const Supertype* supertypes,device Pending* pending,device Link* captures,device Link* cursors,device RepeatLink* repeats,device uchar* schedulerStorage,device Result* results,device Status* statuses,device const ValueRecord* values,device const StringRecord* strings,device const NfaState* nfaStates,device const uint* nfaData,device const NfaRange* nfaRanges,device const LuaInstruction* luaInstructions,device const LuaMember* luaMembers,device const Assertion* assertions,device const uint* assertionData,device const uchar* stringBytes,device const uchar* source,device uint* valueWork,LINE_TABLE lineStarts,device FinalCapture* finalCaptures,device uchar* outputStorage,uint tid,device Evaluation& evaluation,device Evaluation& sharedEvaluation){
- if(tid>=header.taskCount)return;device Status& status=statuses[tid];status={};if(header.formatVersion!=FORMAT_VERSION){status.error=1u;return;}Task task=tasks[tid];device GlobalArenas& globalArenas=*((device GlobalArenas*)schedulerStorage);File file=files[task.file];Program program=programs[task.program];device QueryBucket* queryBuckets=(device QueryBucket*)(schedulerStorage+header.queryBucketByteStart);device QueryMember* queryMembers=(device QueryMember*)(schedulerStorage+header.queryMemberByteStart);device QueuedState* queuedStates=(device QueuedState*)(schedulerStorage+header.queuedStateByteStart);device GreedyEntry* greedyEntries=(device GreedyEntry*)(schedulerStorage+header.greedyEntryByteStart);
+void run_task_in(Task task,constant BatchHeader& header,FILE_TABLE files,NODE_TABLE nodes,device const Program* programs,device const uint* words,device const ulong* longs,CHILD_TABLE children,device const Supertype* supertypes,device Pending* pending,device Link* captures,device Link* cursors,device RepeatLink* repeats,device uchar* schedulerStorage,device Result* results,device Status& status,device const ValueRecord* values,device const StringRecord* strings,device const NfaState* nfaStates,device const uint* nfaData,device const NfaRange* nfaRanges,device const LuaInstruction* luaInstructions,device const LuaMember* luaMembers,device const Assertion* assertions,device const uint* assertionData,device const uchar* stringBytes,device const uchar* source,device uint* valueWork,LINE_TABLE lineStarts,device FinalCapture* finalCaptures,device uchar* outputStorage,device Evaluation& evaluation,device Evaluation& sharedEvaluation){
+ status={};if(header.formatVersion!=FORMAT_VERSION){status.error=1u;return;}device GlobalArenas& globalArenas=*((device GlobalArenas*)schedulerStorage);File file=files[task.file];Program program=programs[task.program];device QueryBucket* queryBuckets=(device QueryBucket*)(schedulerStorage+header.queryBucketByteStart);device QueryMember* queryMembers=(device QueryMember*)(schedulerStorage+header.queryMemberByteStart);device QueuedState* queuedStates=(device QueuedState*)(schedulerStorage+header.queuedStateByteStart);device GreedyEntry* greedyEntries=(device GreedyEntry*)(schedulerStorage+header.greedyEntryByteStart);
  uint valueCapacity=0u;Node valueRoot=nodes[task.root];uint valueSourceLength=valueRoot.sourceEnd-valueRoot.sourceStart;for(uint valueIndex=0u;valueIndex<program.valueCount;valueIndex++){ValueRecord value=values[program.valueStart+valueIndex];uint needed=0u;if(value.kind==2u)needed=value.stateCount*4u;else if(value.kind==3u){uint slots=value.operand>>2u,stride=2u+slots*3u;needed=(value.stateCount+1u)*(valueSourceLength+1u)*stride+slots*3u;}valueCapacity=max(valueCapacity,needed);}uint valueBase=0u;if(valueCapacity&&reserve_transient(evaluation.quotas[8],evaluation.valueState,valueCapacity,valueBase)){status.error=2u;return;}bool markChanged=false;uint pendingCount=0,captureCount=0,cursorCount=0,repeatCount=0,queryMemberCount=0,resultCount=0,candidateHead=0,localOrdinal=0,finalCaptureCount=0,propertyCount=0,outputByteCount=0,taskWork=0;Path initial={0u,task.root,task.root,0u,0u,0u,0u,0u,0u,0u,0u};bool initialPending=true;
  while(initialPending||pendingCount){Pending pendingItem;if(initialPending){pendingItem={0u,0u,initial};initialPending=false;}else pendingItem=pending[evaluation.pending.start+--pendingCount];Path path;if(pendingItem.kind==1u){if(pendingItem.greedySlot>=evaluation.quotas[7].limit)continue;device GreedyEntry& entry=greedyEntries[evaluation.greedyEntry.start+pendingItem.greedySlot];if(entry.occupied!=evaluation.generation)continue;path=entry.path;entry.occupied=evaluation.generation+1u;}else{path=pendingItem.path;if(evaluation.quotas[4].limit)queued_remove(path,task,program,words,queuedStates,captures,cursors,repeats,evaluation,globalArenas);}
   while(true){
@@ -188,14 +188,35 @@ void run_task_in(device const Task* tasks,constant BatchHeader& header,FILE_TABL
  status.resultCount=resultCount;status.captureCount=captureCount;status.finalCaptureCount=finalCaptureCount;status.propertyCount=propertyCount;status.outputByteCount=outputByteCount;status.reserved=taskWork|(markChanged?0x80000000u:0u);
 }
 
-void run_task(device const Task* tasks,constant BatchHeader& header,K_FILES files,K_NODES nodes,device const Program* programs,device const uint* words,device const ulong* longs,K_CHILDREN children,device const Supertype* supertypes,device Pending* pending,device Link* captures,device Link* cursors,device RepeatLink* repeats,device uchar* schedulerStorage,device Result* results,device Status* statuses,device const ValueRecord* values,device const StringRecord* strings,device const NfaState* nfaStates,device const uint* nfaData,device const NfaRange* nfaRanges,device const LuaInstruction* luaInstructions,device const LuaMember* luaMembers,device const Assertion* assertions,device const uint* assertionData,device const uchar* stringBytes,K_SOURCE source,device uint* valueWork,K_LINES lineStarts,device FinalCapture* finalCaptures,device uchar* outputStorage,uint tid,device Evaluation& evaluation,device Evaluation& sharedEvaluation){
 #ifdef RERAIL_RESIDENT
- if(tid>=header.taskCount){return;}
- DocView doc=files[tasks[tid].file];Slabs slabs={nodes,children,source,lineStarts};device const uchar* slab=tape_slab(slabs,doc.slab);
+// A resident task's work limit, as `PackedBatch` computes a task's (`MAX_WORK_PER_TASK`): the
+// root's subtree (its file, where the program repeats) times the evaluation's work per node (its
+// program's words times 4096; bit 31: the program repeats), within [4096, 2^26].
+inline uint resident_work(thread const Slabs& slabs,DocView doc,uint perNode,uint local){
+ ulong nodes=(perNode&0x80000000u)!=0u?doc.nodes:tape_size(slabs,doc,local);
+ return uint(clamp(nodes*ulong(perNode&0x7fffffffu),ulong(4096u),ulong(1u<<26u)));
+}
+// A resident label batch's task `index` (decision 0033): no task records. Its evaluation names
+// its program, its document and its roots' segments in `segs` (the run's, bound in place of the
+// tasks); the root is its evaluation's next, read in place.
+inline Task resident_task(device const uint4* segs,K_FILES files,thread const Slabs& slabs,device const Evaluation& evaluation,uint evaluationIndex,uint index){
+ DocView doc=files[evaluation.file];
+ uint i=evaluation.rootBase+(index-evaluation.taskStart);
+ uint4 seg=segs[root_segment(segs,evaluation.rootSegment,i)];
+ uint local=root_local(slabs,doc,segs,seg,i-seg.w);
+ return Task{evaluationIndex,index,evaluation.file,evaluation.program,doc.nodeBase+local,resident_work(slabs,doc,evaluation.workLimit,local)};
+}
+// The evaluation holding task `index`: tasks are numbered through the evaluations in order.
+inline uint resident_evaluation(device const Evaluation* evaluations,uint count,uint index){uint low=0u,high=count;while(high-low>1u){uint middle=(low+high)/2u;if(evaluations[middle].taskStart<=index)low=middle;else high=middle;}return low;}
+#endif
+
+void run_task(Task task,constant BatchHeader& header,K_FILES files,K_NODES nodes,device const Program* programs,device const uint* words,device const ulong* longs,K_CHILDREN children,device const Supertype* supertypes,device Pending* pending,device Link* captures,device Link* cursors,device RepeatLink* repeats,device uchar* schedulerStorage,device Result* results,device Status& status,device const ValueRecord* values,device const StringRecord* strings,device const NfaState* nfaStates,device const uint* nfaData,device const NfaRange* nfaRanges,device const LuaInstruction* luaInstructions,device const LuaMember* luaMembers,device const Assertion* assertions,device const uint* assertionData,device const uchar* stringBytes,K_SOURCE source,device uint* valueWork,K_LINES lineStarts,device FinalCapture* finalCaptures,device uchar* outputStorage,device Evaluation& evaluation,device Evaluation& sharedEvaluation){
+#ifdef RERAIL_RESIDENT
+ DocView doc=files[task.file];Slabs slabs={nodes,children,source,lineStarts};device const uchar* slab=tape_slab(slabs,doc.slab);
  NodeTable nodeTable={slabs,doc};ChildTable childTable={(device const uint*)(slab+doc.kids),doc.childBase,doc.nodeBase};LineTable lineTable={(device const uint*)(slab+doc.lines),doc.lineBase,doc.sourceBase};FileTable fileTable={files};
- run_task_in(tasks,header,fileTable,nodeTable,programs,words,longs,childTable,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,statuses,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,tape_slab(slabs,doc.slab)+doc.source-doc.sourceBase,valueWork,lineTable,finalCaptures,outputStorage,tid,evaluation,sharedEvaluation);
+ run_task_in(task,header,fileTable,nodeTable,programs,words,longs,childTable,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,status,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,tape_slab(slabs,doc.slab)+doc.source-doc.sourceBase,valueWork,lineTable,finalCaptures,outputStorage,evaluation,sharedEvaluation);
 #else
- run_task_in(tasks,header,files,nodes,programs,words,longs,children,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,statuses,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,source,valueWork,lineStarts,finalCaptures,outputStorage,tid,evaluation,sharedEvaluation);
+ run_task_in(task,header,files,nodes,programs,words,longs,children,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,status,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,source,valueWork,lineStarts,finalCaptures,outputStorage,evaluation,sharedEvaluation);
 #endif
 }
 
@@ -217,13 +238,31 @@ kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeade
     (lane.queryMember.limit&&ensure_lazy_block(lane.queryMember,globalArenas.arenas[5],ignored))||
     (lane.queuedState.limit&&ensure_lazy_block(lane.queuedState,globalArenas.arenas[6],ignored))||
     (lane.greedyEntry.limit&&ensure_lazy_block(lane.greedyEntry,globalArenas.arenas[7],ignored))){
+#ifdef RERAIL_RESIDENT
+  statuses[tid].error=2u;
+#else
   for(uint task=0u;task<header.taskCount;task++)statuses[task].error=2u;
+#endif
   return;
  }
+#ifdef RERAIL_RESIDENT
+ // A lane's status is its own, reused by its tasks; it keeps their first error (`label_sink`).
+ Slabs slabs={nodes,children,source,lineStarts};
+ uint firstError=0u;
+#endif
  while(true){
   uint task=atomic_fetch_add_explicit(&globalArenas.taskCursor,1u,memory_order_relaxed);
-  if(task>=header.taskCount)return;
+  if(task>=header.taskCount)break;
+#ifdef RERAIL_RESIDENT
+  uint evaluationIndex=resident_evaluation(evaluations,header.evaluationCount,task);
+  device Evaluation& evaluation=evaluations[evaluationIndex];
+  Task own=resident_task((device const uint4*)tasks,files,slabs,evaluation,evaluationIndex,task);
+  device Status& status=statuses[tid];
+#else
   device Evaluation& evaluation=evaluations[tasks[task].evaluation];
+  Task own=tasks[task];
+  device Status& status=statuses[task];
+#endif
   lane.generation+=2u;
   for(uint kind=0u;kind<=9u;kind++)lane.quotas[kind].limit=evaluation.quotas[kind].limit;
   atomic_store_explicit(&lane.quotas[1].used,0u,memory_order_relaxed);
@@ -235,6 +274,12 @@ kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeade
   atomic_store_explicit(&lane.quotas[7].used,0u,memory_order_relaxed);
   atomic_store_explicit(&lane.quotas[8].used,0u,memory_order_relaxed);
   atomic_store_explicit(&lane.quotas[9].used,0u,memory_order_relaxed);
-  run_task(tasks,header,files,nodes,programs,words,longs,children,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,statuses,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,source,valueWork,lineStarts,finalCaptures,outputStorage,task,lane,evaluation);
+  run_task(own,header,files,nodes,programs,words,longs,children,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,status,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,source,valueWork,lineStarts,finalCaptures,outputStorage,lane,evaluation);
+#ifdef RERAIL_RESIDENT
+  if(firstError==0u)firstError=status.error;
+#endif
  }
+#ifdef RERAIL_RESIDENT
+ statuses[tid].error=firstError;
+#endif
 }

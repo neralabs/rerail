@@ -362,7 +362,10 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
             });
             match (cpu, metal) {
                 (Ok(cpu), Ok(metal)) if cpu == metal => equal += 1,
-                (Ok(_), Err(Error::BackendCapacity | Error::BackendLaunchLimit)) => refused += 1,
+                (Ok(_), Err(error @ (Error::BackendCapacity | Error::BackendLaunchLimit))) => {
+                    refused += 1;
+                    eprintln!("  refused {policy}/{clause}: {error:?}");
+                }
                 (cpu, metal) => differ.push(format!("{policy}/{clause}: cpu {:?}, metal {:?}", cpu.as_ref().err(), metal.as_ref().err())),
             }
         }

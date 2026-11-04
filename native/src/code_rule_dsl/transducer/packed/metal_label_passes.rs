@@ -84,6 +84,19 @@ impl Roots {
             && entry.iter().all(|&(op, arg)| if op == super::super::KIND { code.kind == arg } else { class(arg) })
     }
 
+    /// This rule as the sweep tests it at a node's code (`sweep_admits`): {kind count or NONE,
+    /// kinds, test count, tests (op << 16 | argument)}. A sweep's passes have rules over codes.
+    fn device_rule(&self) -> Result<Vec<u32>, Error> {
+        let Self::Codes { kinds, entry, .. } = self else { return Err(Error::BackendFailure) };
+        let mut rule = match kinds {
+            None => vec![u32::MAX],
+            Some(kinds) => std::iter::once(kinds.len() as u32).chain(kinds.iter().map(|&kind| u32::from(kind))).collect(),
+        };
+        rule.push(entry.len() as u32);
+        rule.extend(entry.iter().map(|&(op, arg)| u32::from(op) << 16 | u32::from(arg)));
+        Ok(rule)
+    }
+
     /// The roots in file `file` on the host, ascending (the CPU's readers and the counters).
     pub(in crate::code_rule_dsl) fn nodes<'a>(&'a self, file: usize, tape: &'a TapeDoc) -> Box<dyn Iterator<Item = u32> + 'a> {
         match self {
@@ -155,6 +168,18 @@ impl Segments {
         let found = roots.segments(documents, self);
         self.by_rule.insert(std::sync::Arc::as_ptr(roots) as usize, found);
         found
+    }
+
+    /// A registered rule's header and, per document with roots, its first root's index in the
+    /// rule and how many.
+    fn by_doc(&self, roots: &std::sync::Arc<Roots>) -> Result<(u32, HashMap<u32, (u32, u32)>), Error> {
+        let &(header, _) = self.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)).ok_or(Error::BackendFailure)?;
+        let count = self.records[header as usize][0] as usize;
+        let mut docs = HashMap::<u32, (u32, u32)>::new();
+        for record in &self.records[header as usize + 1..header as usize + 1 + count] {
+            docs.entry(record[0]).and_modify(|(_, total)| *total += record[2]).or_insert((record[3], record[2]));
+        }
+        Ok((header, docs))
     }
 
     /// As the device reads them: listed starts offset past the records.
@@ -1522,6 +1547,16 @@ impl Runner<'_> {
     /// is encoded so the host never waits to grow it.
     fn size(&mut self, plan: &Plan<'_>) -> Result<(), Error> {
         let mut widest_seen: Option<(WorkspaceTotals, u32, u32, usize)> = None;
+        // Every pass's roots as segments, in one buffer for the run, before anything binds it.
+        let documents = self.tapes.table.documents.clone();
+        for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
+            if let Pass::Program { roots, .. } | Pass::Count { roots, .. } | Pass::Pattern { roots, .. } = pass {
+                self.segments.of(roots, &documents);
+            }
+        }
+        let segs = self.segments.words();
+        crate::code_rule_dsl::prof::count("size.segment_words", segs.len());
+        self.segs = Some(MappedBuffer::from_slice(self.device, &segs)?);
         // A sweeping group is one batch of all its programs, by its address; a level is one by
         // its own.
         let batches = plan.steps.iter().flat_map(|(recursive, levels)| {
@@ -1715,11 +1750,29 @@ impl Runner<'_> {
                     crate::code_rule_dsl::prof::count_named(format!("refused.{reason}"), 1);
                 }
             }
-            let (programs, anchors) = self.batch_inputs(&passes);
-            // The level's tasks over the resident documents: nothing of the tapes is packed.
-            let mut batch = crate::code_rule_dsl::prof::time("size.batch", || PackedBatch::new_resident(&programs, self.files, &anchors))?;
-            crate::code_rule_dsl::prof::count("size.tasks", batch.tasks.len());
-            if batch.tasks.is_empty() {
+            let programs = passes.iter().map(|(program, ..)| (*program).clone()).collect::<Vec<_>>();
+            // The level's programs over the resident documents: nothing of the tapes is packed,
+            // and no task is a record (decision 0033). An evaluation per (file, program) with
+            // roots; its tasks are its roots, which the device takes from the rule's segments.
+            let no_anchors = vec![vec![Vec::<u32>::new(); programs.len()]; self.files.len()];
+            let mut batch = crate::code_rule_dsl::prof::time("size.batch", || PackedBatch::new_resident(&programs, self.files, &no_anchors))?;
+            let mut specs = Vec::new();
+            {
+                let by_doc = passes
+                    .iter()
+                    .map(|(_, roots, ..)| self.segments.by_doc(roots))
+                    .collect::<Result<Vec<_>, Error>>()?;
+                for file in 0..self.files.len() {
+                    for (program, (header, docs)) in by_doc.iter().enumerate() {
+                        if let Some(&(base, count)) = docs.get(&(file as u32)) {
+                            specs.push([program as u32, file as u32, *header, base, count]);
+                        }
+                    }
+                }
+            }
+            let task_count = specs.iter().map(|spec| spec[4] as usize).sum::<usize>();
+            crate::code_rule_dsl::prof::count("size.tasks", task_count);
+            if task_count == 0 {
                 self.prepared.insert(key, None);
                 continue;
             }
@@ -1748,81 +1801,64 @@ impl Runner<'_> {
             // A sweep's rows are its labels (after the prefix's head); a level's, its scratch rows.
             (batch.header.mark_scratch, batch.header.mark_counts) =
                 if sweep.is_some() { (2, 0) } else { ((self.tapes.scratch_at / 4) as u32, (self.tapes.counts_at / 4) as u32) };
-            if let Some(levels) = sweep {
-                // Each program's and complement's place among a node's work: the group's order.
-                let (mut positions, mut ops) = (Vec::new(), Vec::new());
-                for (at, pass) in levels.iter().flatten().enumerate() {
+            // A sweep's work at a node: the group's programs and complements in order, each
+            // program with its rule (`label_sweep`), in place of a list of every node's work.
+            let sweep_table = sweep.map(|levels| {
+                let (mut entries, mut rules) = (Vec::new(), Vec::new());
+                let mut program = 0_u32;
+                for pass in levels.iter().flatten() {
                     match pass {
-                        Pass::Program { .. } => positions.push(at as u32),
-                        Pass::Complement { target, of } => ops.push((at as u32, [*target, *of])),
+                        Pass::Program { roots, .. } | Pass::Count { roots, .. } => {
+                            entries.push([0, program, 0, rules.len() as u32]);
+                            rules.extend(roots.device_rule()?);
+                            program += 1;
+                        }
+                        Pass::Complement { target, of } => entries.push([1, *target, *of, 0]),
                         _ => {}
                     }
                 }
-                // Entries per file: (node, place, item).
-                let mut entries = vec![Vec::new(); self.files.len()];
-                for (index, task) in batch.tasks.iter().enumerate() {
-                    entries[task.file as usize].push((task.root, positions[task.program as usize], index as u32));
-                }
-                for (file, entries) in batch.files.iter().zip(&mut entries) {
-                    for node in file.node_start..file.node_start + file.node_count {
-                        for (op, (at, _)) in ops.iter().enumerate() {
-                            entries.push((node, *at, 0x8000_0000 | op as u32));
-                        }
-                    }
-                }
-                let mut order = vec![0_u32];
-                for entries in &mut entries {
-                    entries.sort_unstable();
-                    order.push(order.last().copied().unwrap_or(0) + entries.len() as u32);
-                }
-                for (node, _, item) in entries.into_iter().flatten() {
-                    order.extend([item, node]);
-                }
-                order.extend(ops.iter().flat_map(|(_, op)| *op));
-                self.orders.insert(key, order);
-            }
+                // Rules follow the entries: their words are offset past them.
+                let offset = 1 + 4 * entries.len() as u32;
+                let mut table = vec![entries.len() as u32];
+                table.extend(entries.iter().flat_map(|entry| if entry[0] == 0 { [entry[0], entry[1], entry[2], entry[3] + offset] } else { *entry }));
+                table.extend(rules);
+                Ok::<_, Error>(table)
+            }).transpose()?;
             batch.header.supertype_count = self.tapes.supertype_count;
             let (lanes, states) = if sweep.is_some() { WIDE } else { self.lanes };
             batch.state_cap = states;
-            let totals = crate::code_rule_dsl::prof::time("size.assign", || batch.assign_workspace_with_result_limits_and_lanes(&programs, None, lanes))?;
+            // As many lanes as the free budget holds (O38), each with the states a task takes:
+            // a workspace is a fixed part and a part per lane, measured at one lane and at two.
+            let lanes = crate::code_rule_dsl::prof::time("size.lanes", || fit_lanes(&mut batch, &programs, &specs, lanes))?;
+            crate::code_rule_dsl::prof::count("size.lanes", lanes);
+            let totals = crate::code_rule_dsl::prof::time("size.assign", || batch.assign_resident(&programs, &specs, lanes))?;
             crate::code_rule_dsl::prof::count("size.evaluations", batch.evaluations.len());
-            let seen = (totals, batch.header.scheduler_byte_count, batch.header.workspace_byte_count, batch.tasks.len());
+            // A status a lane (`run_batch`'s resident form).
+            let seen = (totals, batch.header.scheduler_byte_count, batch.header.workspace_byte_count, batch.evaluation_lanes.len().max(1));
             widest_seen = Some(match widest_seen {
                 None => seen,
                 Some(old) => (old.0.widest(seen.0), old.1.max(seen.1), old.2.max(seen.2), old.3.max(seen.3)),
             });
-            let mut routes = vec![[0_u32; 2]; batch.tasks.len()];
-            for task in &batch.tasks {
-                let (_, _, mode, slot) = passes[task.program as usize];
-                routes[task.batch_ordinal as usize] = [mode, slot];
-            }
-            let mut tasks = bytes_of(&batch.tasks).to_vec();
-            if let Some(order) = self.orders.get(&key) {
-                tasks.extend_from_slice(bytes_of(order));
-            }
+            // Marking programs publish no results, so `label_sink` routes none.
+            let routes = [[0_u32; 2]];
+            // In the tasks' place: a level's roots' segments (the run's), a sweep's table.
+            let tasks = match &sweep_table {
+                Some(table) => MappedBuffer::from_slice(self.device, table)?,
+                None => MappedBuffer::wrap(self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone()),
+            };
             let prepared = Prepared {
-                tasks: MappedBuffer::from_slice(self.device, &tasks)?,
+                tasks,
                 header: MappedBuffer::from_slice(self.device, &[batch.header])?,
                 routes: MappedBuffer::from_slice(self.device, &routes)?,
                 program: crate::code_rule_dsl::prof::time("size.program_buffers", || self.engine.program_buffers(self.device, &batch))?,
                 arenas: batch.global_arenas,
-                task_count: batch.tasks.len(),
+                task_count,
                 result_capacity: batch.global_arenas.arenas[ArenaKind::Result as usize].capacity as usize,
                 evaluations: std::mem::take(&mut batch.evaluations),
                 lanes: std::mem::take(&mut batch.evaluation_lanes),
             };
             self.prepared.insert(key, Some(prepared));
         }
-        // The pattern passes' rules too, then every segment in one buffer.
-        let documents = self.tapes.table.documents.clone();
-        for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
-            if let Pass::Pattern { roots, .. } = pass {
-                self.segments.of(roots, &documents);
-            }
-        }
-        let segs = self.segments.words();
-        crate::code_rule_dsl::prof::count("size.segment_words", segs.len());
-        self.segs = Some(MappedBuffer::from_slice(self.device, &segs)?);
         if let Some((totals, scheduler_bytes, output_bytes, tasks)) = widest_seen {
             // Lanes times states is the arena: one over the buffer budget runs again with fewer states.
             let mut lease = crate::code_rule_dsl::prof::time("size.lease", || MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks))
@@ -1839,16 +1875,6 @@ impl Runner<'_> {
             });
         }
         Ok(())
-    }
-
-    /// The interpreted programs and their tasks' roots, per file (O39: a task per root, until the
-    /// interpreter takes its roots from segments as the walks do).
-    fn batch_inputs(&self, passes: &[(&Program, &std::sync::Arc<Roots>, u32, u32)]) -> (Vec<Program>, Vec<Vec<Vec<u32>>>) {
-        let programs = passes.iter().map(|(program, ..)| (*program).clone()).collect::<Vec<_>>();
-        let anchors = (0..self.files.len())
-            .map(|file| passes.iter().map(|(_, roots, ..)| roots.nodes(file, &self.files[file]).collect()).collect())
-            .collect();
-        (programs, anchors)
     }
 
     fn shape(&self) -> Shape {
@@ -2445,7 +2471,7 @@ impl Runner<'_> {
         let Some(Some(prepared)) = self.prepared.get(&level) else {
             return Ok(());
         };
-        let (tasks, lanes_count, capacity) = (prepared.task_count, prepared.lanes.len(), prepared.result_capacity);
+        let (lanes_count, capacity) = (prepared.lanes.len(), prepared.result_capacity);
         self.stage(level)?;
         let prepared = self.prepared.get(&level).and_then(Option::as_ref).expect("prepared");
         let routes = prepared.routes.buffer.clone();
@@ -2474,7 +2500,7 @@ impl Runner<'_> {
         let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
         let shape = Shape {
             result_arena: ArenaKind::Result as u32,
-            task_count: tasks as u32,
+            task_count: lanes_count as u32,
             ..self.shape()
         };
         self.kernel(
@@ -2490,10 +2516,32 @@ impl Runner<'_> {
                 (&flags, 0),
             ],
             shape,
-            capacity.max(tasks),
+            capacity.max(lanes_count),
         );
         Ok(())
     }
+}
+
+/// The share of the free buffer budget a level's lanes may take: the rest is the run's other
+/// buffers made after sizing (program buffers, walk and root records).
+const LANE_SHARE: (usize, usize) = (3, 4);
+
+/// The most lanes, up to `wanted`, whose workspace fits `LANE_SHARE` of the free buffer budget,
+/// each lane with its states (decision 0033, O38): lanes are sized from the space, not states
+/// halved until a fixed lane count fits. `BackendBudget` where not even one lane fits.
+fn fit_lanes(batch: &mut PackedBatch, programs: &[Program], specs: &[[u32; 5]], wanted: usize) -> Result<usize, Error> {
+    let mut bytes = |lanes: usize| -> Result<usize, Error> {
+        let totals = batch.assign_resident(programs, specs, lanes)?;
+        Ok(MetalWorkspace::bytes_for(totals, batch.header.scheduler_byte_count, batch.header.workspace_byte_count, batch.evaluation_lanes.len().max(1)))
+    };
+    let (one, two) = (bytes(1)?, bytes(2)?);
+    let per_lane = two.saturating_sub(one).max(1);
+    let fixed = one.saturating_sub(per_lane);
+    let share = metal_backend::buffer_free() / LANE_SHARE.1 * LANE_SHARE.0;
+    if fixed + per_lane > share {
+        return Err(Error::BackendBudget);
+    }
+    Ok(((share - fixed) / per_lane).clamp(1, wanted.max(1)))
 }
 
 /// A level's programs: (program, roots per file, sink mode, scratch label or count slot).

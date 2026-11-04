@@ -32,6 +32,11 @@ pub(in crate::code_rule_dsl) fn buffer_limit() -> usize {
     METAL_BUFFER_LIMIT
 }
 
+/// The bytes of the Metal buffer budget not reserved now.
+pub(in crate::code_rule_dsl) fn buffer_free() -> usize {
+    METAL_BUFFER_LIMIT.saturating_sub(METAL_BUFFER_BYTES.load(Ordering::Acquire))
+}
+
 /// The bytes of Metal buffers alive now (their reservations), in MB.
 pub(in crate::code_rule_dsl) fn reserved_mb() -> usize {
     METAL_BUFFER_BYTES.load(Ordering::Acquire) >> 20

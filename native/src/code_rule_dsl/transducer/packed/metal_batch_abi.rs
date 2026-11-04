@@ -346,6 +346,13 @@ pub(super) struct MetalEvaluation {
     pub workspace_work_estimate: u32,
     pub task_start: u32,
     pub task_count: u32,
+    /// A resident label batch's (decision 0033): the evaluation's program and file, and its
+    /// roots: its rule's segments (their header) and its first root's index in the rule. Its
+    /// tasks are those roots, with no task records. Zero elsewhere.
+    pub program: u32,
+    pub file: u32,
+    pub root_segment: u32,
+    pub root_base: u32,
     pub quotas: [EvaluationQuotaRecord; ARENA_KIND_COUNT],
     pub pending: LazyArenaBlockRecord,
     pub capture: LazyArenaBlockRecord,
@@ -401,7 +408,7 @@ const _: [(); 32] = [(); size_of::<TaskStatus>()];
 const _: [(); 12] = [(); size_of::<SharedArenaRecord>()];
 const _: [(); 8] = [(); size_of::<EvaluationQuotaRecord>()];
 const _: [(); 16] = [(); size_of::<LazyArenaBlockRecord>()];
-const _: [(); 308] = [(); size_of::<MetalEvaluation>()];
+const _: [(); 324] = [(); size_of::<MetalEvaluation>()];
 const _: [(); 184] = [(); size_of::<MetalGlobalArenas>()];
 const _: [(); 24] = [(); size_of::<MetalTask>()];
 
@@ -441,7 +448,7 @@ mod tests {
         assert_eq!(size_of::<SharedArenaRecord>(), 12);
         assert_eq!(size_of::<EvaluationQuotaRecord>(), 8);
         assert_eq!(size_of::<LazyArenaBlockRecord>(), 16);
-        assert_eq!(size_of::<MetalEvaluation>(), 308);
+        assert_eq!(size_of::<MetalEvaluation>(), 324);
         assert_eq!(size_of::<MetalGlobalArenas>(), 184);
         assert_eq!(size_of::<MetalTask>(), 24);
         assert_eq!(align_of::<MetalBatchHeader>(), 4);

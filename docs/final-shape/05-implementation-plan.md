@@ -542,8 +542,9 @@ What was left, and how each was closed (2026-11-03, the user's choice for the fi
 - **Roots are rules over the codes** (decision 0033): the residency indexes nodes by code, a
   pass's roots are segments of (document, code), and the device reads each root in place. No
   root lists or walk items. S7 cold on Metal: 7.5 s CPU, 1,259 keys.
-- **Left:** the peak over budget (O39, now in the GPU run), and the interpreter's tasks from
-  segments through a lane pool (O38).
+- **The interpreter's tasks are implicit** in the segments, through a lane pool fitted to the free
+  budget (O38 closed): interpreted S2 37 of 39, the other 2 over the launch limit (O40).
+- **Left:** the peak over budget (O39, now in the GPU run).
 
 **List step 27 (2026-11-03): the findings layer's SQL is typed (row 3, decision 0031).**
 - **One typed statement:** `emit::single` now composes the steps' checked `select::Query`s, not

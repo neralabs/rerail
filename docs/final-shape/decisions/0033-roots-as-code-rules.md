@@ -56,9 +56,17 @@ The interpreted retry's 45 M tasks raised the footprint to 3,017 MB before its b
    - The pattern kernel takes one item per pattern pass, found by thread, and fact rows stay one
      item each.
    - `items` and the per-root pattern items are gone.
-5. **Not yet:** the interpreter still takes a task per root (`Runner::batch_inputs`, now
-   enumerated from the rule). Its tasks should come from segments through a fixed pool of lanes
-   (O38), so that its workspace is lanes × states whatever the root count.
+5. **The interpreter's tasks are implicit** (O38):
+   - An interpreted level's evaluation records name their program, file, root segment and first
+     root (`MetalEvaluation`, 324 B). Task `t` is found by its evaluation (a search over
+     `taskStart`), and its root by the segment, so no task record is built on the host.
+   - A sweep's table is its rules: each entry tests a node's kind and the sweep's tests on the
+     device (`sweep_admits`), then finds its evaluation by (file, program). The host orders no nodes.
+   - Lanes are a pool sized from the free buffer budget (`fit_lanes`, three quarters of what is
+     free, over the workspace of one lane). Statuses are per lane; each keeps its first error.
+   - **Not yet:** two interpreted S2 clauses (ruff-async251, ruff-sim300) are recursive groups
+     whose host rounds exceed the launch limit (`BackendLaunchLimit`, O40). Their rounds belong on
+     the device, as the walks' are.
 
 ## Consequences
 
@@ -71,6 +79,7 @@ Measured with load 24-27; CPU is user + sys.
 - **Real files:** 1,259 keys on all four backends. The Metal backends take 6.7 s of CPU and the
   CPU backends 9 s.
 - **Tests:**
-  - S2: 158 of 158; interpreted, 34 of 39 equal (the same 5 refused).
+  - S2: 158 of 158; interpreted, 34 of 39 equal (the same 5 refused). With implicit tasks and
+    fitted lanes: 37 of 39, the other 2 over the launch limit (O40).
   - The regression set: 195 of 195.
   - `phase_four`/`jit`: 109 pass, with the same 11 failures as before.

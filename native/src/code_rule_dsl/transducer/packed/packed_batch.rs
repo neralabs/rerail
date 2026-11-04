@@ -100,6 +100,9 @@ pub(super) struct PackedBatch {
     /// A resident batch's (`new_resident`): each task's root's source length, as the nodes a
     /// packed batch holds give it.
     pub(super) root_spans: Vec<u32>,
+    /// A resident label batch's tasks (decision 0033), with no task records: lanes are sized
+    /// from them (`assign_resident`).
+    pub(super) resident_tasks: Option<u32>,
     /// The most states of each transient kind a task may hold (pending paths, captures, cursors,
     /// ...): 65,536 where `None`. A lane reserves the most of its evaluations' up front, so the
     /// cap bounds a dispatch's lanes (`metal_label_passes`).
@@ -1045,6 +1048,54 @@ impl PackedBatch {
         Ok(counts)
     }
 
+    /// A resident label batch's evaluations (decision 0033): one per `spec` {program, file, its
+    /// rule's segment header, its first root's index in the rule, its roots}, whose tasks are
+    /// those roots, with no task records (the device takes each from its evaluation). Each
+    /// evaluation is sized by a stand-in task whose root spans its file's source (a bound on any
+    /// root's) and whose work estimate is the most, so its states are the state cap: the lanes'
+    /// workspace is lanes times that, whatever the roots.
+    pub(super) fn assign_resident(&mut self, programs: &[Program], specs: &[[u32; 5]], lanes: usize) -> Result<super::packed_workspace::WorkspaceTotals, Error> {
+        let total = specs.iter().try_fold(0_u32, |total, spec| total.checked_add(spec[4])).ok_or(Error::BackendCapacity)?;
+        self.tasks = specs
+            .iter()
+            .enumerate()
+            .map(|(at, spec)| {
+                Ok(BatchTask {
+                    batch_ordinal: checked_u32(at)?,
+                    file: spec[1],
+                    program: spec[0],
+                    workspace_work_estimate: super::MAX_WORK_PER_TASK as u32,
+                    ..BatchTask::default()
+                })
+            })
+            .collect::<Result<_, Error>>()?;
+        self.root_spans = specs.iter().map(|spec| self.files[spec[1] as usize].source_length).collect();
+        self.resident_tasks = Some(total);
+        let totals = self.assign_workspace_with_result_limits_and_lanes(programs, None, lanes)?;
+        if self.evaluations.len() != specs.len() {
+            return Err(Error::BackendFailure);
+        }
+        let mut start = 0_u32;
+        for (evaluation, spec) in self.evaluations.iter_mut().zip(specs) {
+            let program = &programs[spec[0] as usize];
+            let repeats = program.words.iter().any(|word| split(*word).0 == REPEAT_BEGIN);
+            evaluation.task_start = start;
+            evaluation.task_count = spec[4];
+            evaluation.program = spec[0];
+            evaluation.file = spec[1];
+            evaluation.root_segment = spec[2];
+            evaluation.root_base = spec[3];
+            // The work per node of a task's subtree (`resident_work` on the device).
+            evaluation.workspace_work_estimate =
+                checked_u32(program.words.len().saturating_mul(4_096).min(0x7fff_ffff))? | u32::from(repeats) << 31;
+            start += spec[4];
+        }
+        self.tasks.clear();
+        self.root_spans.clear();
+        self.header.task_count = total;
+        Ok(totals)
+    }
+
     pub(super) fn assign_workspace_with_result_limits_and_lanes(
         &mut self,
         programs: &[Program],
@@ -1099,7 +1150,7 @@ impl PackedBatch {
         ];
         self.evaluation_lanes.clear();
         if lanes_per_evaluation > 0 {
-            let lane_count = lanes_per_evaluation.min(self.tasks.len()).max(1);
+            let lane_count = lanes_per_evaluation.min(self.resident_tasks.map_or(self.tasks.len(), |tasks| tasks as usize)).max(1);
             let mut lane_template = MetalEvaluation::default();
             for kind in transient_kinds {
                 let limit = self

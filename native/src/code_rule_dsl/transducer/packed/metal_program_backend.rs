@@ -81,6 +81,20 @@ struct MetalWorkspace {
 }
 
 impl MetalWorkspace {
+    /// The bytes a workspace of these totals holds (`new`'s buffers, before page rounding).
+    pub(super) fn bytes_for(totals: WorkspaceTotals, scheduler_bytes: u32, output_storage_bytes: u32, task_capacity: usize) -> usize {
+        use std::mem::size_of;
+        totals.pending as usize * size_of::<PendingRecord>()
+            + (totals.captures as usize + totals.cursors as usize) * size_of::<CaptureRecord>()
+            + totals.repeats as usize * size_of::<RepeatRecord>()
+            + scheduler_bytes as usize
+            + (totals.candidates as usize + totals.results as usize) * size_of::<ResultRecord>()
+            + task_capacity * size_of::<TaskStatus>()
+            + totals.value_states as usize * 4
+            + totals.output_captures as usize * size_of::<FinalCaptureRecord>()
+            + output_storage_bytes as usize
+    }
+
     fn new(
         device: &Device,
         totals: WorkspaceTotals,
