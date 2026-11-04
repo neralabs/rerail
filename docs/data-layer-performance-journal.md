@@ -5761,3 +5761,19 @@ The ports preserve those entry-point contracts.
 These four candidates are a partial delivery. Batch eight is not complete.
 The cached policy rule requires byte-exact CPython AST fingerprints; its implementation choice remains pending.
 No performance claim or Linear issue is added.
+
+### Batch eight: helper aliases and SQL surface
+
+The next TDD commit (`804e00167`) adds original helper observations and 42 supplemental oracle observations.
+The helper tests first fail on seven repository path exclusions.
+The SQL surface tests first fail because the candidate is absent, then on a bare authority context expression.
+Both corrections preserve the original entry-point semantics.
+Six candidates now pass 146 native observations: 106 positive and 40 clean.
+The helper resolver uses a versioned alias relation with ordered fallback to earlier successful bindings.
+It does not execute one query per alias or store an environment in a JSON field.
+The SQL surface tests cover each forbidden method, context attribute, bad type, and execution receiver family.
+They include source-trigger and allowed-file controls.
+
+The source pin has no dedicated lazy SQL surface test module.
+Supplemental expectations come from its unchanged analyzer, with source files written to a temporary repository.
+These probes supplement upstream tests; they do not count as upstream pytest cases.
