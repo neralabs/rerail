@@ -18,7 +18,8 @@ use std::sync::{LazyLock, Mutex};
 use rusqlite::Connection;
 
 /// The tests, by name.
-pub(in crate::code_rule_dsl) const TESTS: [&str; 4] = ["prefix", "suffix", "contains", "glob"];
+/// `i…`: the same, ignoring case (ASCII and Unicode simple case folding by lowercasing both sides).
+pub(in crate::code_rule_dsl) const TESTS: [&str; 8] = ["prefix", "suffix", "contains", "glob", "iprefix", "isuffix", "icontains", "iequals"];
 
 pub(in crate::code_rule_dsl) fn is_test(f: &str) -> bool {
     TESTS.contains(&f)
@@ -38,6 +39,15 @@ pub(in crate::code_rule_dsl) fn test(op: &str, s: &str, pattern: &str) -> bool {
                 globset::GlobBuilder::new(pattern).literal_separator(true).build().ok().map(|g| g.compile_matcher())
             });
             m.as_ref().is_some_and(|m| m.is_match(s))
+        }
+        "iprefix" | "isuffix" | "icontains" | "iequals" => {
+            let (s, p) = (s.to_lowercase(), pattern.to_lowercase());
+            match op {
+                "iprefix" => s.starts_with(&p),
+                "isuffix" => s.ends_with(&p),
+                "icontains" => s.contains(&p),
+                _ => s == p,
+            }
         }
         _ => false,
     }

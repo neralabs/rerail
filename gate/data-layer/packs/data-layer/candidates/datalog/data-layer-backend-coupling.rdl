@@ -1,0 +1,29 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.decl intval(n: node, v: int)
+.decl op(n: node, s: sym)
+.decl line(n: node, l: int)
+.input doc, node, child, field, text, intval, op, line
+.decl in_scope(d: int)
+.decl m4(n: node)
+.decl m8(n: node)
+.decl out_scope(d: int)
+.decl violation(rule: sym, clause: sym, path: sym, line: int)
+in_scope($d) :- doc($d, $p, _), @glob($p, "api/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l*/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+m4($n) :- node(_, $n, "dotted_name", _, _).
+m4($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v3).
+m8($n) :- node(_, $n, "dotted_name", _, _).
+m8($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v7).
+.output violation

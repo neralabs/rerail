@@ -1,0 +1,49 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.decl intval(n: node, v: int)
+.decl op(n: node, s: sym)
+.decl line(n: node, l: int)
+.input doc, node, child, field, text, intval, op, line
+.decl in_scope(d: int)
+.decl m10(n: node)
+.decl m17(n: node)
+.decl names0(s: sym)
+.decl names1(s: sym)
+.decl names2(s: sym)
+.decl names3(s: sym)
+.decl names4(s: sym)
+.decl names5(s: sym)
+.decl out_scope(d: int)
+.decl t6(s: sym)
+.decl violation(rule: sym, clause: sym, path: sym, line: int)
+names0("annotation").
+names1("f").
+names2("model_fields").
+names3("TypeAdapter").
+names3("get_args").
+names3("get_origin").
+names3("get_type_hints").
+names3("isinstance").
+names3("issubclass").
+names4("str").
+names5("isinstance").
+in_scope($d) :- doc($d, $p, _), @glob($p, "api/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+t6($s) :- text(_, $s), @icontains($s, "field_info").
+t6($s) :- text(_, $s), @isuffix($s, "_info").
+m10($n) :- node(_, $n, "identifier", _, _), text($n, $v4), names1($v4).
+m10($n) :- node(_, $n, "identifier", _, _), text($n, $v5), t6($v5).
+m10($n) :- node(_, $n, "subscript", _, _), field($n, "value", $v7), node(_, $v7, "attribute", _, _), field($v7, "attribute", $v8), node(_, $v8, "identifier", _, _), text($v8, $v9), names2($v9).
+m17($n) :- node(_, $n, "identifier", _, _), text($n, $v14), names3($v14).
+m17($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v15), node(_, $v15, "identifier", _, _), text($v15, $v16), names3($v16).
+.output violation

@@ -1,0 +1,120 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.decl intval(n: node, v: int)
+.decl op(n: node, s: sym)
+.decl line(n: node, l: int)
+.input doc, node, child, field, text, intval, op, line
+.kindset k0 = "with_statement"
+.decl blocked20(low: node, high: node)
+.decl blocked43(low: node, high: node)
+.decl blocked66(low: node, high: node)
+.decl blocked87(low: node, high: node)
+.decl in_scope(d: int)
+.decl m12(n: node)
+.decl m18(n: node)
+.decl m19(n: node)
+.decl m25(n: node)
+.decl m35(n: node)
+.decl m41(n: node)
+.decl m42(n: node)
+.decl m48(n: node)
+.decl m58(n: node)
+.decl m64(n: node)
+.decl m65(n: node)
+.decl m79(n: node)
+.decl m85(n: node)
+.decl m86(n: node)
+.decl names0(s: sym)
+.decl names1(s: sym)
+.decl names2(s: sym)
+.decl names3(s: sym)
+.decl names4(s: sym)
+.decl names5(s: sym)
+.decl names6(s: sym)
+.decl out_scope(d: int)
+.decl u27(n: node)
+.decl u4(n: node)
+.decl u50(n: node)
+.decl u71(n: node)
+.decl u93(n: node)
+.decl violation(rule: sym, clause: sym, path: sym, line: int)
+names0("resolved_value").
+names1("open_provider_read_plan").
+names1("open_provider_versioned_read_plan").
+names1("open_provider_versioned_write_plan").
+names1("open_provider_write_plan").
+names1("open_read_plan").
+names1("open_write_plan").
+names2("resolve").
+names2("resolve_async").
+names3("execute_raw").
+names3("fetchall_raw").
+names3("fetchone_raw").
+names3("nonportably_execute_sql").
+names4("read").
+names4("read_async").
+names4("write").
+names4("write_async").
+names5("open").
+names6("Popen").
+names6("delete").
+names6("get").
+names6("open").
+names6("patch").
+names6("post").
+names6("put").
+names6("request").
+names6("run").
+names6("sleep").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l[0-9][0-9][0-9][0-9]_*/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
+m12($n) :- node(_, $n, "identifier", _, _), text($n, $v9), names1($v9).
+m12($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v10), node(_, $v10, "identifier", _, _), text($v10, $v11), names1($v11).
+m18($n) :- node(_, $n, "identifier", _, _), text($n, $v15), names1($v15).
+m18($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v16), node(_, $v16, "identifier", _, _), text($v16, $v17), names1($v17).
+m19($n) :- node(_, $n, "call", _, _), field($n, "function", $v8), m12($v8).
+m19($n) :- node(_, $n, "as_pattern", _, _), child($n, $v13, _), node(_, $v13, "call", _, _), field($v13, "function", $v14), m18($v14).
+u4($n) :- node(_, $n, "with_statement", _, _), child($n, $v5, _), node(_, $v5, "with_clause", _, _), child($v5, $v6, _), node(_, $v6, "with_item", _, _), field($v6, "value", $v7), m19($v7).
+blocked20($low, $high) :- inside($low, $s, k0), u4($s), inside($s, $high, k0).
+m25($n) :- node(_, $n, "identifier", _, _), text($n, $v22), names2($v22).
+m25($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v23), node(_, $v23, "identifier", _, _), text($v23, $v24), names2($v24).
+m35($n) :- node(_, $n, "identifier", _, _), text($n, $v32), names1($v32).
+m35($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v33), node(_, $v33, "identifier", _, _), text($v33, $v34), names1($v34).
+m41($n) :- node(_, $n, "identifier", _, _), text($n, $v38), names1($v38).
+m41($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v39), node(_, $v39, "identifier", _, _), text($v39, $v40), names1($v40).
+m42($n) :- node(_, $n, "call", _, _), field($n, "function", $v31), m35($v31).
+m42($n) :- node(_, $n, "as_pattern", _, _), child($n, $v36, _), node(_, $v36, "call", _, _), field($v36, "function", $v37), m41($v37).
+u27($n) :- node(_, $n, "with_statement", _, _), child($n, $v28, _), node(_, $v28, "with_clause", _, _), child($v28, $v29, _), node(_, $v29, "with_item", _, _), field($v29, "value", $v30), m42($v30).
+blocked43($low, $high) :- inside($low, $s, k0), u27($s), inside($s, $high, k0).
+m48($n) :- node(_, $n, "identifier", _, _), text($n, $v45), names3($v45).
+m48($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v46), node(_, $v46, "identifier", _, _), text($v46, $v47), names3($v47).
+m58($n) :- node(_, $n, "identifier", _, _), text($n, $v55), names1($v55).
+m58($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v56), node(_, $v56, "identifier", _, _), text($v56, $v57), names1($v57).
+m64($n) :- node(_, $n, "identifier", _, _), text($n, $v61), names1($v61).
+m64($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v62), node(_, $v62, "identifier", _, _), text($v62, $v63), names1($v63).
+m65($n) :- node(_, $n, "call", _, _), field($n, "function", $v54), m58($v54).
+m65($n) :- node(_, $n, "as_pattern", _, _), child($n, $v59, _), node(_, $v59, "call", _, _), field($v59, "function", $v60), m64($v60).
+u50($n) :- node(_, $n, "with_statement", _, _), child($n, $v51, _), node(_, $v51, "with_clause", _, _), child($v51, $v52, _), node(_, $v52, "with_item", _, _), field($v52, "value", $v53), m65($v53).
+blocked66($low, $high) :- inside($low, $s, k0), u50($s), inside($s, $high, k0).
+m79($n) :- node(_, $n, "identifier", _, _), text($n, $v76), names1($v76).
+m79($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v77), node(_, $v77, "identifier", _, _), text($v77, $v78), names1($v78).
+m85($n) :- node(_, $n, "identifier", _, _), text($n, $v82), names1($v82).
+m85($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v83), node(_, $v83, "identifier", _, _), text($v83, $v84), names1($v84).
+m86($n) :- node(_, $n, "call", _, _), field($n, "function", $v75), m79($v75).
+m86($n) :- node(_, $n, "as_pattern", _, _), child($n, $v80, _), node(_, $v80, "call", _, _), field($v80, "function", $v81), m85($v81).
+u71($n) :- node(_, $n, "with_statement", _, _), child($n, $v72, _), node(_, $v72, "with_clause", _, _), child($v72, $v73, _), node(_, $v73, "with_item", _, _), field($v73, "value", $v74), m86($v74).
+blocked87($low, $high) :- inside($low, $s, k0), u71($s), inside($s, $high, k0).
+.output violation

@@ -1,0 +1,43 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.decl intval(n: node, v: int)
+.decl op(n: node, s: sym)
+.decl line(n: node, l: int)
+.input doc, node, child, field, text, intval, op, line
+.decl name(n: node, s: sym)
+name($n, $s) :- text($n, $s).
+name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.kindset k0 = "module"
+.kindset k1 = "import_from_statement"
+.decl in_scope(d: int)
+.decl m33(n: node)
+.decl names0(s: sym)
+.decl names1(s: sym)
+.decl names2(s: sym)
+.decl out_scope(d: int)
+.decl u10(n: node)
+.decl u2(n: node)
+.decl violation(rule: sym, clause: sym, path: sym, line: int)
+names0("KeyError").
+names0("StopAsyncIteration").
+names0("StopIteration").
+names1("suppress").
+names2("contextlib").
+in_scope($d) :- doc($d, $p, _), @glob($p, "api/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "services/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer_testing/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
+m33($n) :- node(_, $n, "dotted_name", _, _), text($n, $v30), names1($v30).
+m33($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v31), node(_, $v31, "dotted_name", _, _), text($v31, $v32), names1($v32).
+.output violation

@@ -933,6 +933,8 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 }
                 // A node's document (`typing::cross_rounds`): nodes are `d << 32 | index`.
                 ("doc", [x]) => bin(Op::Divide, x.clone(), integer(1i64 << 32)),
+                // A sibling's position (`logic::convert`: `precedes`, `follows`).
+                ("add", [x, y]) => bin(Op::Add, x.clone(), y.clone()),
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
                 ("cat", [x, y]) => bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone()),
                 ("flat_bin", [o, x, y]) => {
