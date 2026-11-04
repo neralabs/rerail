@@ -588,7 +588,7 @@ export function loadIndex(path: string): BuiltIndex {
  * favour the real decisions. A decision absent from the index stays absent. `--seed` 1 is this layout; another seed
  * draws other distractors, places them elsewhere and then shuffles the whole index, so ties and prompt order change.
  */
-export function runIndex(dataset: Dataset, built: BuiltIndex, task: Task, distractors: number, seed: number): IndexEntry[] {
+function runIndex(dataset: Dataset, built: BuiltIndex, task: Task, distractors: number, seed: number): IndexEntry[] {
   if (distractors > built.distractors) throw new Error(`--distractors takes at most ${built.distractors}, what ${built.path} holds`);
   const find = (id: string) => built.entries.find(entry => entry.id === id);
   const ownPresent = task.conflict !== undefined && find(task.conflict.own) !== undefined;
