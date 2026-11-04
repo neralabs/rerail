@@ -1440,7 +1440,7 @@ export const codeRuleClauseSchema = z
           deferred: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), nonEmptyString).refine(fields => Object.keys(fields).length >= 1 && Object.keys(fields).length <= 32 && new Set(Object.keys(fields).map(s => s.toLowerCase())).size === Object.keys(fields).length, "Deferred columns must contain 1 to 32 distinct fields.").optional(),
         }).strict(),
         z.object({ name: nonEmptyString, pythonAst: z.object({ roots: nonEmptyString, syntax: nonEmptyString,
-          fields: z.array(z.enum(["dump", "body_sha256", "signature_sha256", "identifier", "unparse"])).min(1).max(5).refine(fields => new Set(fields).size === fields.length, "Python AST fields must be distinct."),
+          fields: z.array(z.enum(["dump", "body_sha256", "signature_sha256", "identifier", "unparse", "literal_json"])).min(1).max(6).refine(fields => new Set(fields).size === fields.length, "Python AST fields must be distinct."),
         }).strict() }).strict(),
         z.object({ name: nonEmptyString, reachability: z.object({ roots: nonEmptyString, edges: nonEmptyString.optional(), syntax: nonEmptyString.optional(),
           batchSize: z.number().int().min(1).max(4096).optional(),

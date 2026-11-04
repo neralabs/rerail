@@ -1504,6 +1504,395 @@
           "source": "def preprocess(owner):\n    grammar_rows_lazy(owner)\n"
         }
       ]
+    },
+    {
+      "id": "cached-policy-clean",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-body-drift",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 2\n"
+        }
+      ],
+      "policySource": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+    },
+    {
+      "id": "cached-policy-signature-drift",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> str:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "policySource": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+    },
+    {
+      "id": "cached-policy-owner_scope136",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "policyChanges": {
+        "owner_scope": "connection"
+      }
+    },
+    {
+      "id": "cached-policy-rationale137",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "policyChanges": {
+        "rationale": ""
+      }
+    },
+    {
+      "id": "cached-policy-cache_types138",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "policyChanges": {
+        "cache_types": [
+          [
+            "cache",
+            "object"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "cached-policy-cache_types139",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "policyChanges": {
+        "cache_types": [
+          [
+            "cache",
+            "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+          ],
+          [
+            "cache",
+            "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "cached-policy-allowed_cache_members140",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "policyChanges": {
+        "allowed_cache_members": [
+          [
+            "touch",
+            "invalid"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "cached-policy-duplicate-policy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "duplicatePolicy": true
+    },
+    {
+      "id": "cached-policy-annotation-required",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-positional-cache",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-cache-default",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache = None) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-closure",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    def closure():\n        return cache.touch\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-reflective",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    getattr(cache,\"touch\")()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-mutable-global",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\nSTATE = []\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return len(STATE)\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-dynamic",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.__dict__\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-async",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\nasync def derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-variadic",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*args, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-generator",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    yield 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-memoized-clean",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-memoized-body-drift",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 3\n"
+        }
+      ],
+      "policySource": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+    },
+    {
+      "id": "cached-policy-memoized-max_entries",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "policyChanges": {
+        "max_entries": 5
+      }
+    },
+    {
+      "id": "cached-policy-memoized-cache_lifetime",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "policyChanges": {
+        "cache_lifetime": "request"
+      }
+    },
+    {
+      "id": "cached-policy-memoized-key_policy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "policyChanges": {
+        "key_policy": "mutable"
+      }
+    },
+    {
+      "id": "cached-policy-memoized-return_policy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "policyChanges": {
+        "return_policy": "alias"
+      }
+    },
+    {
+      "id": "cached-policy-memoized-exception_policy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "policyChanges": {
+        "exception_policy": "all"
+      }
+    },
+    {
+      "id": "cached-policy-memoized-rationale",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "policyChanges": {
+        "rationale": ""
+      }
+    },
+    {
+      "id": "cached-policy-memoized-negative-bound",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=-1)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "signed": false
+    },
+    {
+      "id": "cached-policy-memoized-bool-bound",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=True)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "signed": false
+    },
+    {
+      "id": "cached-policy-memoized-no-marker",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "signed": false
     }
   ]
 }

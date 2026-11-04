@@ -2,6 +2,7 @@
   "format": "rerail.data-layer-recording/v1",
   "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "checks": [
+    "cached_pure_lazy_allowlist",
     "lazy_architecture",
     "lazy_sql_surface",
     "plan_helpers_allowlist"
@@ -10,7 +11,7 @@
   "pytest_exit_code": 0,
   "collected_tests": 0,
   "uncaptured_tests": [],
-  "loaded_source_files_checked": 120,
+  "loaded_source_files_checked": 122,
   "events": [
     {
       "test": "probe:batch8:call-_grammar_effect_lazy",
@@ -4415,6 +4416,1126 @@
         "options": {
           "oracleAnalyzer": true,
           "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-clean",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-body-drift",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: function body hash changed",
+          "message": "l1234_policy_test.sample.derive: function body hash changed"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-signature-drift",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> str:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: function signature hash changed",
+          "message": "l1234_policy_test.sample.derive: function signature hash changed"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-owner_scope136",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: owner scope 'connection' is not approved",
+          "message": "l1234_policy_test.sample.derive: owner scope 'connection' is not approved"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"connection\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-rationale137",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: review rationale is required",
+          "message": "l1234_policy_test.sample.derive: review rationale is required"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-cache_types138",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache type 'object' is not approved",
+          "message": "l1234_policy_test.sample.derive: cache type 'object' is not approved"
+        },
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache argument 'cache' annotation 'OptimizerRunCache' does not match cache type 'object'",
+          "message": "l1234_policy_test.sample.derive: cache argument 'cache' annotation 'OptimizerRunCache' does not match cache type 'object'"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"object\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-cache_types139",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache type metadata must name each cache argument exactly once",
+          "message": "l1234_policy_test.sample.derive: cache type metadata must name each cache argument exactly once"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"], [\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-allowed_cache_members140",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache member access modes are invalid: ['invalid']",
+          "message": "l1234_policy_test.sample.derive: cache member access modes are invalid: ['invalid']"
+        },
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache member access changed: actual=(('touch', 'call'),) policy=(('touch', 'invalid'),)",
+          "message": "l1234_policy_test.sample.derive: cache member access changed: actual=(('touch', 'call'),) policy=(('touch', 'invalid'),)"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"invalid\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-duplicate-policy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "duplicate policy entry: l1234_policy_test.sample.derive",
+          "message": "duplicate policy entry: l1234_policy_test.sample.derive"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}, {\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-annotation-required",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache argument 'cache' requires an exact annotation",
+          "message": "l1234_policy_test.sample.derive: cache argument 'cache' requires an exact annotation"
+        },
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache argument 'cache' annotation None does not match cache type 'l2070_batching.optimizer_run_cache.OptimizerRunCache'",
+          "message": "l1234_policy_test.sample.derive: cache argument 'cache' annotation None does not match cache type 'l2070_batching.optimizer_run_cache.OptimizerRunCache'"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"2e24abdf095a7d9afc54466f2444e685720b6f2737a9f1fd3f3817c3bc185cec\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-positional-cache",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache argument 'cache' must be keyword-only",
+          "message": "l1234_policy_test.sample.derive: cache argument 'cache' must be keyword-only"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"363fc12600d2262124aba27c486cc028826e5dc51ac113810640ab81fa1da166\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-cache-default",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache = None) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache argument 'cache' cannot have a default",
+          "message": "l1234_policy_test.sample.derive: cache argument 'cache' cannot have a default"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"548a794cf716b0eade4c1ff5c4bfb2694c0ddd596dd3de70e442e493a8a3cfd0\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-closure",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    def closure():\n        return cache.touch\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: a cache argument cannot be captured by a closure",
+          "message": "l1234_policy_test.sample.derive: a cache argument cannot be captured by a closure"
+        },
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: a cache argument cannot escape through return",
+          "message": "l1234_policy_test.sample.derive: a cache argument cannot escape through return"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"], [\"touch\", \"read\"]], \"body_hash\": \"b91751aea0a00320278e4a732296768d01aa13ad42d210500954b55a372cc7c5\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-reflective",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    getattr(cache,\"touch\")()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: a cache argument can only be used through signed member access",
+          "message": "l1234_policy_test.sample.derive: a cache argument can only be used through signed member access"
+        },
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: getattr() on a cache argument is forbidden",
+          "message": "l1234_policy_test.sample.derive: getattr() on a cache argument is forbidden"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [], \"body_hash\": \"a07cce9abc3fb8b1dbc6593cf88164597ef8a4c485801e9f63ac9ec982c60cbe\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-mutable-global",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\nSTATE = []\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return len(STATE)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cached pure-lazy functions cannot read mutable global state 'STATE'",
+          "message": "l1234_policy_test.sample.derive: cached pure-lazy functions cannot read mutable global state 'STATE'"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"2c40fb8a159887438fa5a4ed5f786f1ecbd800f4eba92032352cf0dfa73232dd\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-dynamic",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.__dict__\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: dynamic cache access '__dict__' is forbidden",
+          "message": "l1234_policy_test.sample.derive: dynamic cache access '__dict__' is forbidden"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [], \"body_hash\": \"f6ae33c1dd624e6d583ceeb88440dcaaa22b6546c8d8bef6527f1f4856eb8b01\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-async",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\nasync def derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cached pure-lazy functions must be synchronous",
+          "message": "l1234_policy_test.sample.derive: cached pure-lazy functions must be synchronous"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-variadic",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*args, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cached pure-lazy functions cannot use variadic arguments",
+          "message": "l1234_policy_test.sample.derive: cached pure-lazy functions cannot use variadic arguments"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"a19ac80904dbe5078dcc2535661bcddd201648c74a95f5210e4608f8c88d251a\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-generator",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    yield 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cached pure-lazy functions cannot be generators",
+          "message": "l1234_policy_test.sample.derive: cached pure-lazy functions cannot be generators"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"34a634631ef8ae7e3ea63971093e90f37b2ba5b8ce0d82705a1ea27476be4064\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-clean",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "findings": [],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[{\"body_hash\": \"7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced\", \"cache_lifetime\": \"process\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l1234_policy_test.sample.derive\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 4, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-body-drift",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 3\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: function body hash changed",
+          "message": "l1234_policy_test.sample.derive: function body hash changed"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[{\"body_hash\": \"7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced\", \"cache_lifetime\": \"process\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l1234_policy_test.sample.derive\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 4, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-max_entries",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: memoization bound changed",
+          "message": "l1234_policy_test.sample.derive: memoization bound changed"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[{\"body_hash\": \"7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced\", \"cache_lifetime\": \"process\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l1234_policy_test.sample.derive\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 5, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-cache_lifetime",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: cache lifetime is not approved",
+          "message": "l1234_policy_test.sample.derive: cache lifetime is not approved"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[{\"body_hash\": \"7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced\", \"cache_lifetime\": \"request\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l1234_policy_test.sample.derive\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 4, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-key_policy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: key policy is not approved",
+          "message": "l1234_policy_test.sample.derive: key policy is not approved"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[{\"body_hash\": \"7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced\", \"cache_lifetime\": \"process\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l1234_policy_test.sample.derive\", \"key_policy\": \"mutable\", \"max_entries\": 4, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-return_policy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: return policy is not approved",
+          "message": "l1234_policy_test.sample.derive: return policy is not approved"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[{\"body_hash\": \"7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced\", \"cache_lifetime\": \"process\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l1234_policy_test.sample.derive\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 4, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"alias\", \"signature_hash\": \"ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-exception_policy",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: exception policy is not approved",
+          "message": "l1234_policy_test.sample.derive: exception policy is not approved"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[{\"body_hash\": \"7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced\", \"cache_lifetime\": \"process\", \"exception_policy\": \"all\", \"function\": \"l1234_policy_test.sample.derive\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 4, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-rationale",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: review rationale is required",
+          "message": "l1234_policy_test.sample.derive: review rationale is required"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[{\"body_hash\": \"7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced\", \"cache_lifetime\": \"process\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l1234_policy_test.sample.derive\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 4, \"rationale\": \"\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-negative-bound",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=-1)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: memoized_pure_lazy max_entries must be a literal integer",
+          "message": "l1234_policy_test.sample.derive: memoized_pure_lazy max_entries must be a literal integer"
+        },
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "unsigned memoized pure-lazy function: l1234_policy_test.sample.derive",
+          "message": "unsigned memoized pure-lazy function: l1234_policy_test.sample.derive"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-bool-bound",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=True)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: memoized_pure_lazy max_entries must be a literal integer",
+          "message": "l1234_policy_test.sample.derive: memoized_pure_lazy max_entries must be a literal integer"
+        },
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "unsigned memoized pure-lazy function: l1234_policy_test.sample.derive",
+          "message": "unsigned memoized pure-lazy function: l1234_policy_test.sample.derive"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-memoized-no-marker",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l1234_policy_test.sample.derive: memoized_pure_lazy requires the canonical pure_lazy marker",
+          "message": "l1234_policy_test.sample.derive: memoized_pure_lazy requires the canonical pure_lazy marker"
+        },
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "unsigned memoized pure-lazy function: l1234_policy_test.sample.derive",
+          "message": "unsigned memoized pure-lazy function: l1234_policy_test.sample.derive"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[]"
         }
       }
     }
