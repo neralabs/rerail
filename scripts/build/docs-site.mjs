@@ -251,8 +251,24 @@ function render(markdown, path) {
     },
   });
   // A paragraph that is only a file's path, right before a code block, becomes that block's caption.
-  const body = marked.parse(markdown).replace(/<p><code>([^<\s]+\.\w+)<\/code><\/p>\n<div class="code-block">/g, '<div class="code-block has-file"><div class="code-file">$1</div>');
+  const body = labelTableCells(
+    marked.parse(markdown).replace(/<p><code>([^<\s]+\.\w+)<\/code><\/p>\n<div class="code-block">/g, '<div class="code-block has-file"><div class="code-file">$1</div>'),
+  );
   return { title, body, mermaid, copyable, missing, sections };
+}
+
+/** Each table body cell labelled with its column's heading (`data-label`), which a phone shows above the cell. */
+function labelTableCells(html) {
+  return html.replace(/<table>([\s\S]*?)<\/table>/gu, (table, inner) => {
+    const heads = [...(/<thead>([\s\S]*?)<\/thead>/u.exec(inner)?.[1] ?? "").matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gu)].map(([, cell]) =>
+      escapeHtml(decodeHtml(cell.replace(/<[^>]+>/gu, "")).trim()),
+    );
+    if (heads.length === 0) return table;
+    return table.replace(/<tr>([\s\S]*?)<\/tr>/gu, (row, cells) => {
+      let column = 0;
+      return `<tr>${cells.replace(/<td(?=[\s>])/gu, () => `<td data-label="${heads[column++] ?? ""}"`)}</tr>`;
+    });
+  });
 }
 
 /**
@@ -440,6 +456,9 @@ main > h1 + p { margin-top: var(--flow); }
 main > h2 + h3 { margin-top: var(--flow); }
 li + li, li > ul, li > ol { margin-top: 0.35rem; }
 strong { font-weight: 650; }
+/* Prose is justified and hyphenated; a section's first paragraph is its one-sentence summary, set as a lede. */
+main > p, main > ul > li, main > ol > li, main blockquote p, main > details > p, main > details > ul > li, main > details > ol > li { text-align: justify; hyphens: auto; -webkit-hyphens: auto; }
+main > h2 + p { font-size: 1.06rem; color: var(--muted-foreground); }
 
 code, pre, .rule-key, .rule-id, .rule-tag, .rule-var { ${MONO} }
 code { font-size: 0.86em; background: var(--subtle); color: var(--foreground); padding: 0.12em 0.4em; border-radius: var(--radius-md); overflow-wrap: anywhere; }
@@ -511,13 +530,24 @@ details[open] > summary { border-bottom: 1px solid var(--border); border-radius:
 details[open] > summary::before { transform: rotate(45deg); }
 details > summary:hover { background: var(--hover); }
 details > :not(summary) { margin: var(--pad-y) var(--pad-x); }
+details > table { width: calc(100% - 2 * var(--pad-x)); }
 
-table { display: block; max-width: 100%; overflow-x: auto; border-collapse: separate; border-spacing: 0; font-size: 0.93em; line-height: 1.55; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); }
-th, td { padding: 0.55em 0.9em; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+/* Tables fit the column: cells wrap rather than scroll; on a phone each row stacks, every cell labelled by its column. */
+table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.93em; line-height: 1.55; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); overflow: hidden; }
+th, td { padding: 0.55em 0.9em; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+td code, th code { overflow-wrap: anywhere; }
 tr:last-child td { border-bottom: 0; }
 th { background: var(--code-surface); color: var(--header); font-weight: 650; }
 td + td, th + th { border-left: 1px solid var(--border); }
 tbody tr:hover td { background: var(--hover); }
+@media (max-width: 640px) {
+  table, thead, tbody, tr, th, td { display: block; }
+  thead { display: none; }
+  tr { border-bottom: 1px solid var(--border); padding: 0.4em 0; }
+  tr:last-child { border-bottom: 0; }
+  td, td + td { border: 0; padding: 0.2em 0.9em; }
+  td[data-label]::before { content: attr(data-label); display: block; font-size: 0.78rem; font-weight: 650; color: var(--muted-foreground); }
+}
 blockquote { padding: var(--pad-y) var(--pad-x); border-left: 3px solid var(--brand); border-radius: 0 var(--radius-xl) var(--radius-xl) 0; background: var(--brand-subtle); }
 img { max-width: 100%; height: auto; }
 hr { margin: 0; border: 0; border-top: 1px solid var(--border); }
@@ -613,6 +643,22 @@ for (const button of document.querySelectorAll(".copy-button")) {
     button.reset = setTimeout(() => { button.textContent = "Copy"; button.classList.remove("done"); }, 1600);
   });
 }
+</script>
+`;
+
+/** A link into folded detail opens the folds around its target, so the reader lands on visible text. */
+const UNFOLD_SCRIPT = `<script>
+(() => {
+  const unfold = () => {
+    const id = decodeURIComponent(location.hash.slice(1));
+    const target = id && document.getElementById(id);
+    if (!target) return;
+    for (let fold = target.closest("details"); fold; fold = fold.parentElement.closest("details")) fold.open = true;
+    target.scrollIntoView();
+  };
+  addEventListener("hashchange", unfold);
+  unfold();
+})();
 </script>
 `;
 
@@ -781,7 +827,7 @@ ${siteHeader(root, current, pages)}
 <main>
 ${agentNote(root, current)}${body}</main>
 ${outline(sections)}<footer class="site-footer"><p><a href="${REPO}/blob/${BRANCH}/docs/${encodeURI(path)}">View source on GitHub</a></p></footer>
-${copyable ? COPY_SCRIPT : ""}${mermaid ? MERMAID_SCRIPT : ""}</body>
+${copyable ? COPY_SCRIPT : ""}${mermaid ? MERMAID_SCRIPT : ""}${body.includes("<details") ? UNFOLD_SCRIPT : ""}</body>
 </html>
 `;
 }
@@ -967,7 +1013,7 @@ const agentNote = (root, page) =>
   `<p class="agent-note">For AI agents: <a href="${root}/${twinPath(page)}">this page as Markdown</a> · <a href="${root}/llms.txt">llms.txt</a> · <a href="${root}/${SCHEMA}">JSON Schema</a></p>\n`;
 
 const tokens = readFileSync(TOKENS, "utf8");
-const undeclared = undeclaredTokens(tokens, `${SITE_TOKENS}${HEADER_CSS}${STYLE}${REFERENCE_MAP}${COPY_SCRIPT}${MERMAID_SCRIPT}${OUTLINE_SCRIPT}`);
+const undeclared = undeclaredTokens(tokens, `${SITE_TOKENS}${HEADER_CSS}${STYLE}${REFERENCE_MAP}${COPY_SCRIPT}${MERMAID_SCRIPT}${OUTLINE_SCRIPT}${UNFOLD_SCRIPT}`);
 if (undeclared.length > 0) {
   process.stderr.write(`docs-site: the site's CSS uses custom properties neither ${relative(ROOT, TOKENS)} nor its own CSS declares: ${undeclared.join(", ")}\n`);
   process.exit(1);

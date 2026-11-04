@@ -1,44 +1,28 @@
 # Architecture rule examples
 
-Design rules that maintainers of well-known open-source projects enforce in pull-request review, written as Rerail
-rules. Each example shows the problem, code that breaks the rule, what the rule says, the review comment or
-architecture doc it comes from, and the full rule with its test cases, which Rerail's test suite runs through the
-engine. None of them is a stock linter rule: each holds one codebase's design in place, and several of the projects
-say in writing that no tool checks it for them.
+Design rules that maintainers of well-known open-source projects enforce in review, written as Rerail rules. No stock
+linter checks them, and several projects say no tool does.
 
-To use one, open **Full rule**, copy it into `draft.json`, change the names and paths to your repository's, and run
-`rerail rules test draft.json`, then `rerail rules add draft.json` ([Testing a draft](writing-rules.md#testing-a-draft)).
+Each example shows breaking code, the rule in brief, its source, and the full rule with test cases that Rerail's test
+suite runs through the engine.
+
+To use one:
+
+1. Open the example's **full rule** fold and copy its JSON into `draft.json`.
+2. Change the names and paths to your repository's.
+3. Run `rerail rules test draft.json`, then `rerail rules add draft.json` ([Testing a draft](writing-rules.md#testing-a-draft)).
+
 Or describe the rule to `/rerail-create` and let the agent write it.
-
-- [Python](#python)
-  - [Sentry: cell-silo code reads control-silo models through RPC](#sentry-cell-silo-code-reads-control-silo-models-through-rpc)
-  - [Home Assistant: integrations talk HTTP through a library and the shared session](#home-assistant-integrations-talk-http-through-a-library-and-the-shared-session)
-  - [Zulip: views validate; zerver/actions changes state and tells clients](#zulip-views-validate-zerveractions-changes-state-and-tells-clients)
-- [TypeScript and Vue](#typescript-and-vue)
-  - [Immich (NestJS): services reach the filesystem through repositories](#immich-nestjs-services-reach-the-filesystem-through-repositories)
-  - [n8n (Vue): frontend modules import only the shared packages](#n8n-vue-frontend-modules-import-only-the-shared-packages)
-  - [VS Code: services come in through the constructor](#vs-code-services-come-in-through-the-constructor)
-- [Rust](#rust)
-  - [rust-analyzer: the ide and hir crates do no IO](#rust-analyzer-the-ide-and-hir-crates-do-no-io)
-  - [Zed: project files go through Fs, not std::fs](#zed-project-files-go-through-fs-not-stdfs)
-  - [uv: every environment variable is declared once, in EnvVars](#uv-every-environment-variable-is-declared-once-in-envvars)
-- [PHP and SQL](#php-and-sql)
-  - [Nextcloud: apps use the public OCP API, never the server's private OC classes](#nextcloud-apps-use-the-public-ocp-api-never-the-servers-private-oc-classes)
-  - [Laravel: env() only in config files; read settings through config()](#laravel-env-only-in-config-files-read-settings-through-config)
-  - [Synapse (PostgreSQL): index an existing table in a background update, not a schema delta](#synapse-postgresql-index-an-existing-table-in-a-background-update-not-a-schema-delta)
-- [React](#react)
-  - [Panels never nest](#panels-never-nest)
-  - [A hook that only works inside its wrapper](#a-hook-that-only-works-inside-its-wrapper)
-- [What a rule can and can't check](#what-a-rule-can-and-cant-check)
 
 ## Python
 
+Rules that send control-silo reads, HTTP and client events through the one layer each project allows.
+
 ### Sentry: cell-silo code reads control-silo models through RPC
 
-Sentry runs in silos: users and integrations live in the control silo's database, and each cell holds only its
-organizations' data. A cell-silo endpoint or task that queries `User` or `Integration` directly works in local
-development, where one database holds every table, and fails in production. Asked to post a status check, an agent
-loads the integration the obvious way:
+Users and integrations live in Sentry's control silo; a cell's database holds only its organizations' data. A
+cell-silo query on `User` or `Integration` passes locally, where one database holds every table, and fails in
+production. Asked to post a status check, an agent writes:
 
 `src/sentry/preprod/vcs/status_checks/size/tasks.py`
 
@@ -72,10 +56,12 @@ allow   cell models such as Repository; user_service and integration_service; co
 misses  cell-silo code not marked in its own file, such as helpers a cell endpoint calls; control models other than users and integrations
 ```
 
-From review: [getsentry/sentry#98301](https://github.com/getsentry/sentry/pull/98301#discussion_r2307818686) — “the `Integration` model is scoped to the control silo.” The fix it asked for: “So that we use the RPC to fetch the integration from the control silo.”
+From review: [getsentry/sentry#98301](https://github.com/getsentry/sentry/pull/98301#discussion_r2307818686).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Review quote and full rule: copy into <code>draft.json</code></summary>
+
+The review: “the `Integration` model is scoped to the control silo.” The fix it asked for: “So that we use the RPC to fetch the integration from the control silo.”
 
 ```json draft
 {
@@ -159,9 +145,9 @@ From review: [getsentry/sentry#98301](https://github.com/getsentry/sentry/pull/9
 
 ### Home Assistant: integrations talk HTTP through a library and the shared session
 
-Home Assistant keeps device protocols in PyPI libraries and hands them its own web session. An integration that opens
-its own `ClientSession` adds a connection pool per config entry and never closes it; one that calls `requests` inline
-puts protocol code in core. A new integration's setup often starts like this:
+Home Assistant keeps device protocols in PyPI libraries and hands them its shared web session. An integration's own
+`ClientSession` adds a connection pool per config entry that never closes; an inline `requests` call puts protocol
+code in core. A new integration's setup often starts like this:
 
 `homeassistant/components/pool_monitor/__init__.py`
 
@@ -197,10 +183,12 @@ allow   async_get_clientsession and async_create_clientsession; aiohttp.ClientTi
 misses  raw HTTP over the shared session itself, such as session.get(url) written in the integration
 ```
 
-From review: [home-assistant/core#65090](https://github.com/home-assistant/core/pull/65090#discussion_r870416576) — “please use `async_get_clientsession` both here and in the config flow to reduce sessions created”; and the [development checklist](https://contributors.home-assistant.io/core/development/checklist/) — “All communication with devices and services goes through a Python library published on PyPI. The integration itself contains no protocol code.”
+From review: [home-assistant/core#65090](https://github.com/home-assistant/core/pull/65090#discussion_r870416576) and the [development checklist](https://contributors.home-assistant.io/core/development/checklist/).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Review quotes and full rule: copy into <code>draft.json</code></summary>
+
+The review: “please use `async_get_clientsession` both here and in the config flow to reduce sessions created”. The checklist: “All communication with devices and services goes through a Python library published on PyPI. The integration itself contains no protocol code.”
 
 ```json draft
 {
@@ -330,8 +318,8 @@ From review: [home-assistant/core#65090](https://github.com/home-assistant/core/
 ### Zulip: views validate; zerver/actions changes state and tells clients
 
 In Zulip, a `do_` function in `zerver/actions/` makes a change, writes its `RealmAuditLog` row and sends the event
-that updates every open client. A view that sends the event itself bypasses that function, so the next caller of the
-same change (another endpoint, a management command, an import) has no event to send and clients go stale:
+that updates open clients. A view that sends the event itself bypasses it, so other callers of the same change (an
+endpoint, a management command, an import) send no event and clients go stale:
 
 `zerver/views/drafts.py`
 
@@ -365,10 +353,12 @@ allow   calling a do_ function; reading RealmAuditLog with filter(); send_event_
 misses  a view that writes a model with .save() and sends no event; helpers in zerver/lib that send events
 ```
 
-From the architecture doc: [Zulip directory structure](https://zulip.readthedocs.io/en/latest/subsystems/directory-structure.html) — “we have a policy that all code calling `send_event_on_commit` to trigger pushing data to clients must live here.”
+From the architecture doc: [Zulip directory structure](https://zulip.readthedocs.io/en/latest/subsystems/directory-structure.html).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Doc quote and full rule: copy into <code>draft.json</code></summary>
+
+On `zerver/actions/`: “we have a policy that all code calling `send_event_on_commit` to trigger pushing data to clients must live here.”
 
 ```json draft
 {
@@ -460,9 +450,13 @@ From the architecture doc: [Zulip directory structure](https://zulip.readthedocs
 
 ## TypeScript and Vue
 
+Rules for layer boundaries, package imports and dependency injection in TypeScript and Vue codebases.
+
 ### Immich (NestJS): services reach the filesystem through repositories
 
-Immich's server keeps technology in `src/repositories` and business logic in `src/services`, so a service's unit tests replace each repository with a mock. A service that calls `node:fs` itself can't be tested without a real disk, and the storage repository stops being the one place the server touches files. A regex can't tell `utimes(...)` the fs function from a repository method of the same name; the rule follows each name to its import:
+Immich keeps technology in `src/repositories` and business logic in `src/services`, so service tests mock each repository. A service calling `node:fs` needs a real disk to test, and the storage repository is no longer the one place the server touches files.
+
+A service that resets a file's modified time calls `node:fs` itself:
 
 `server/src/services/asset-media.service.ts`
 
@@ -494,10 +488,15 @@ misses  fs reached through another module, such as a util that wraps it; require
         the readFileSync of index.html that api.service.ts has today
 ```
 
-From review: [immich-app/immich#7010](https://github.com/immich-app/immich/pull/7010#discussion_r1484909502) — “We don't call fs methods directly in services. Can you just add this to the storage repository and use that here instead?”; the [architecture doc](https://github.com/immich-app/immich/blob/main/docs/docs/developer/architecture.mdx) — “we aim to separate technology specific implementations (`src/repositories`) from core business logic (`src/services`).”
+From review: [immich-app/immich#7010](https://github.com/immich-app/immich/pull/7010#discussion_r1484909502) and the [architecture doc](https://github.com/immich-app/immich/blob/main/docs/docs/developer/architecture.mdx).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Review quotes and full rule: copy into <code>draft.json</code></summary>
+
+A regex can't tell the fs function `utimes(...)` from a repository method of that name; the rule follows each name to
+its import.
+
+The review: “We don't call fs methods directly in services. Can you just add this to the storage repository and use that here instead?” The architecture doc: “we aim to separate technology specific implementations (`src/repositories`) from core business logic (`src/services`).”
 
 ```json draft
 {
@@ -612,7 +611,9 @@ From review: [immich-app/immich#7010](https://github.com/immich-app/immich/pull/
 
 ### n8n (Vue): frontend modules import only the shared packages
 
-An n8n frontend module under `packages/modules/<name>/frontend` depends on the shared L0–L2 packages only; `@/…` is the editor shell, which loads the module, and sibling modules are off limits. A module that imports a shell store ties itself to the shell's internals, and once the dependency is declared every type check and build passes, so n8n's own guide leaves the boundary to reviewers. Asked to show a workflow's name in the inbox, an agent imports the shell's store:
+An n8n frontend module (`packages/modules/<name>/frontend`) may import only the shared L0–L2 packages, not `@/…` (the
+editor shell that loads it) or sibling modules. A shell import couples the module to shell internals, yet type checks
+and builds pass once the dependency is declared. Asked to show a workflow's name in the inbox, an agent imports the shell's store:
 
 `packages/modules/inbox/frontend/src/components/InboxHeader.vue`
 
@@ -650,10 +651,12 @@ misses  a sibling module listed in package.json but never imported; a store read
         file the descriptor imports
 ```
 
-From the architecture doc: [n8n-io/n8n frontend-module-guide.md](https://github.com/n8n-io/n8n/blob/master/packages/%40n8n/module-cli/frontend-module-guide.md#imports-and-boundaries) — “Never import another `@n8n/frontend-module-*`. Never import `@/…`, because `@/…` is the shell.” and “Until that rule lands, the boundary is the responsibility of the reviewer.”
+From the architecture doc: [n8n-io/n8n frontend-module-guide.md](https://github.com/n8n-io/n8n/blob/master/packages/%40n8n/module-cli/frontend-module-guide.md#imports-and-boundaries).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Doc quotes and full rule: copy into <code>draft.json</code></summary>
+
+The guide: “Never import another `@n8n/frontend-module-*`. Never import `@/…`, because `@/…` is the shell.” and “Until that rule lands, the boundary is the responsibility of the reviewer.”
 
 ```json draft
 {
@@ -779,7 +782,9 @@ From the architecture doc: [n8n-io/n8n frontend-module-guide.md](https://github.
 
 ### VS Code: services come in through the constructor
 
-VS Code builds its service graph from constructor parameters: `@IEditorService` tells the instantiation service what a class needs, so it can create dependencies first and report cycles. A class that keeps `IInstantiationService` and later pulls a service out with `invokeFunction(accessor => accessor.get(...))` hides that dependency and creates the service whenever the line first runs. A regex for `accessor.get(` would also flag every action's `run(accessor)`, where it is the documented way in:
+VS Code builds its service graph from constructor parameters. `@IEditorService` tells the instantiation service what a class needs, so it creates dependencies first and reports cycles. Holding `IInstantiationService` and later calling `invokeFunction(accessor => accessor.get(...))` hides the dependency and creates the service when that line first runs.
+
+A chat widget that opens an editor resolves the editor service when it runs:
 
 `src/vs/workbench/contrib/chat/browser/attachments/chatAttachmentWidget.ts`
 
@@ -819,10 +824,15 @@ misses  invokeFunction(helper, …) with a named helper that calls accessor.get(
         flags calls on main that predate the guideline, such as mcpRegistry.ts
 ```
 
-From the architecture doc: [microsoft/vscode coding guidelines](https://github.com/microsoft/vscode/blob/main/.github/instructions/coding-guidelines.instructions.md#L66) — “Declare service dependencies in constructors via DI — never access services through `IInstantiationService` elsewhere.” and the [Source Code Organization wiki](https://github.com/microsoft/vscode/wiki/Source-Code-Organization#dependency-injection) — “Services get to its clients via `constructor injection`.”
+From the architecture docs: [microsoft/vscode coding guidelines](https://github.com/microsoft/vscode/blob/main/.github/instructions/coding-guidelines.instructions.md#L66) and the [Source Code Organization wiki](https://github.com/microsoft/vscode/wiki/Source-Code-Organization#dependency-injection).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Doc quotes and full rule: copy into <code>draft.json</code></summary>
+
+A regex for `accessor.get(` would also flag every action's `run(accessor)`, where it is the documented way in; the rule
+looks only inside callbacks passed to `invokeFunction`.
+
+The coding guidelines: “Declare service dependencies in constructors via DI — never access services through `IInstantiationService` elsewhere.” The wiki: “Services get to its clients via `constructor injection`.”
 
 ```json draft
 {
@@ -931,12 +941,14 @@ From the architecture doc: [microsoft/vscode coding guidelines](https://github.c
 
 ## Rust
 
+Rules that keep IO, file access and environment-variable names in the one place each project allows.
+
 ### rust-analyzer: the ide and hir crates do no IO
 
-rust-analyzer's `ide`, `hir` and `base-db` crates compute every answer from inputs the server has already loaded, so
-analysis never fails on the outside world and its tests need nothing outside the process. Only the `rust-analyzer`
-crate, which talks to the editor, touches files, processes and the network. Asked for an SVG of the crate graph, an
-agent renders it with `dot` right where the graph is built:
+rust-analyzer's `ide`, `hir` and `base-db` crates compute answers only from inputs the server has loaded, so analysis
+can't fail on the outside world and tests stay in-process. Only the `rust-analyzer` crate, which talks to the editor,
+touches files, processes and the network. Asked for an SVG of the crate graph, an agent runs `dot` where the graph is
+built:
 
 `crates/ide/src/view_crate_graph.rs`
 
@@ -968,10 +980,12 @@ allow   returning the .dot text for the rust-analyzer crate to render; the same 
 misses  methods on a Child or File passed in; calls written inside macro arguments
 ```
 
-From review: [rust-lang/rust-analyzer#8801](https://github.com/rust-lang/rust-analyzer/pull/8801#discussion_r630570615) — “It seems that the layering is slightly off here, we generally don’t do IO, including IPC, in the ide layer and below.” The follow-up, [#8807](https://github.com/rust-lang/rust-analyzer/pull/8807), moved the `dot` call into the rust-analyzer crate; the [architecture doc](https://github.com/rust-lang/rust-analyzer/blob/master/docs/book/src/contributing/architecture.md#error-handling) says “Only parts touching LSP are allowed to do IO.”
+From review: [rust-lang/rust-analyzer#8801](https://github.com/rust-lang/rust-analyzer/pull/8801#discussion_r630570615), its follow-up [#8807](https://github.com/rust-lang/rust-analyzer/pull/8807) and the [architecture doc](https://github.com/rust-lang/rust-analyzer/blob/master/docs/book/src/contributing/architecture.md#error-handling).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Review quotes and full rule: copy into <code>draft.json</code></summary>
+
+The review: “It seems that the layering is slightly off here, we generally don’t do IO, including IPC, in the ide layer and below.” The follow-up moved the `dot` call into the rust-analyzer crate. The architecture doc: “Only parts touching LSP are allowed to do IO.”
 
 ```json draft
 {
@@ -1056,10 +1070,10 @@ From review: [rust-lang/rust-analyzer#8801](https://github.com/rust-lang/rust-an
 
 ### Zed: project files go through Fs, not std::fs
 
-Zed edits projects on the local disk, over SSH and in collaboration sessions, and its tests run against an in-memory
-`FakeFs`; all of that works because file access goes through the `Fs` trait and the `Worktree`. A `std::fs` call reads
-the local disk on whatever thread it runs on, does nothing useful for a remote project, and escapes `FakeFs` in tests.
-Asked to paste an image into a Markdown file, an agent writes it straight to disk:
+Zed edits local, SSH and collaboration projects, and tests against an in-memory `FakeFs`, because file access goes
+through the `Fs` trait and the `Worktree`. A `std::fs` call reads the local disk on whatever thread it runs on, does
+nothing useful for a remote project, and escapes `FakeFs` in tests. Asked to paste an image into a Markdown file, an
+agent writes it straight to disk:
 
 `crates/editor/src/clipboard.rs`
 
@@ -1097,10 +1111,12 @@ misses  Path::exists() and other std::path methods that touch the disk; a paths:
         the message tells the agent to keep those
 ```
 
-From review: [zed-industries/zed#58588](https://github.com/zed-industries/zed/pull/58588#discussion_r3558128265) — “Could we go through `Worktree::create_entry` instead of `std::fs::write`? That would avoid blocking here and make this work on remote projects.”
+From review: [zed-industries/zed#58588](https://github.com/zed-industries/zed/pull/58588#discussion_r3558128265).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Review quote and full rule: copy into <code>draft.json</code></summary>
+
+The review: “Could we go through `Worktree::create_entry` instead of `std::fs::write`? That would avoid blocking here and make this work on remote projects.”
 
 ```json draft
 {
@@ -1190,9 +1206,8 @@ From review: [zed-industries/zed#58588](https://github.com/zed-industries/zed/pu
 ### uv: every environment variable is declared once, in EnvVars
 
 uv declares every environment variable it reads as a constant on `EnvVars` in the `uv-static` crate, and generates its
-environment-variable reference from that list. A variable named by a string literal works, but it is missing from the
-reference, and a typo in the name fails silently. Adding a fallback region for S3 request signing, an agent spells the
-second variable out inline:
+environment-variable reference from that list. A string-literal name works but is missing from the reference, and a
+typo fails silently. Adding a fallback region for S3 request signing, an agent spells the second variable inline:
 
 `crates/uv-auth/src/providers.rs`
 
@@ -1223,10 +1238,12 @@ misses  Command::env("NAME", ...) and env_remove, which are methods; a name buil
         format! or passed in through a helper
 ```
 
-From review: [astral-sh/uv#15925](https://github.com/astral-sh/uv/pull/15925#discussion_r2359013746) — “Should be in `EnvVars`”, on `std::env::var("AWS_DEFAULT_REGION")`; the merge reads `EnvVars::AWS_DEFAULT_REGION`. The [`EnvVars` doc comment](https://github.com/astral-sh/uv/blob/main/crates/uv-static/src/env_vars.rs) says it “Declares all environment variable used throughout `uv` and its crates.”
+From review: [astral-sh/uv#15925](https://github.com/astral-sh/uv/pull/15925#discussion_r2359013746) and the [`EnvVars` doc comment](https://github.com/astral-sh/uv/blob/main/crates/uv-static/src/env_vars.rs).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Review quotes and full rule: copy into <code>draft.json</code></summary>
+
+The review: “Should be in `EnvVars`”, on `std::env::var("AWS_DEFAULT_REGION")`; the merge reads `EnvVars::AWS_DEFAULT_REGION`. The doc comment says `EnvVars` “Declares all environment variable used throughout `uv` and its crates.”
 
 ```json draft
 {
@@ -1310,9 +1327,13 @@ From review: [astral-sh/uv#15925](https://github.com/astral-sh/uv/pull/15925#dis
 
 ## PHP and SQL
 
+Rules that keep apps on public APIs, settings in config files, and slow index builds out of startup.
+
 ### Nextcloud: apps use the public OCP API, never the server's private OC classes
 
-A Nextcloud app runs against whichever server version the admin installs. Classes under `OC\` are the server's private implementation, with no compatibility promise from one release to the next, so an app that calls one can break on upgrade, and the app store approves only apps that use the public `OCP\` API. Needing to check an uploaded file name, an agent finds the server's own helper:
+Nextcloud apps run on whatever server version the admin installs. `OC\` classes are the server's private implementation and can change between releases, so an app using one can break on upgrade. The app store accepts only apps that use the public `OCP\` API.
+
+Needing to check an uploaded file name, an agent finds the server's own helper:
 
 `lib/Controller/ApiController.php`
 
@@ -1344,10 +1365,12 @@ allow   OCP\… (including \OCP\Util); the app's own OCA\Forms\…; other apps' 
 misses  a private service fetched by string, such as $container->get('OC\Files\View')
 ```
 
-From review: [nextcloud/forms#2040](https://github.com/nextcloud/forms/pull/2040#discussion_r1547820774) — “`OC` is private and should not be used in apps. Only use `OCP` API.” (and the [app store rules](https://docs.nextcloud.com/server/stable/developer_manual/app_publishing_maintenance/publishing.html#be-technically-sound): “Apps can only use the public Nextcloud API.”)
+From review: [nextcloud/forms#2040](https://github.com/nextcloud/forms/pull/2040#discussion_r1547820774) and the [app store rules](https://docs.nextcloud.com/server/stable/developer_manual/app_publishing_maintenance/publishing.html#be-technically-sound).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Review quotes and full rule: copy into <code>draft.json</code></summary>
+
+The review: “`OC` is private and should not be used in apps. Only use `OCP` API.” The app store rules: “Apps can only use the public Nextcloud API.”
 
 ```json draft
 {
@@ -1403,7 +1426,9 @@ From review: [nextcloud/forms#2040](https://github.com/nextcloud/forms/pull/2040
 
 ### Laravel: env() only in config files; read settings through config()
 
-In production Laravel runs `php artisan config:cache`, and from then on it doesn't load `.env`: an `env()` call outside `config/` returns only the server's real environment variables, usually `null`, while the same code works on a developer machine. The value has to live in a `config/` file and be read with `config()`. Adding a Patreon client, an agent reads the token where it uses it:
+In production Laravel runs `php artisan config:cache` and stops loading `.env`. An `env()` call outside `config/` then sees only the server's real environment variables, usually `null`, though it works on a developer machine. Put the value in a `config/` file and read it with `config()`.
+
+Adding a Patreon client, an agent reads the token where it uses it:
 
 `app/Services/Patreon/PatreonApi.php`
 
@@ -1439,10 +1464,12 @@ allow   config('services.…'); app()->environment(); $this->option('env'); anot
 misses  getenv() and $_ENV, which lose .env the same way; it also flags a namespaced function of your own named env()
 ```
 
-From review: [spatie/spatie.be#35](https://github.com/spatie/spatie.be/pull/35#discussion_r226855944) — “The `env` function may only be used in config files.” (and the [Laravel docs](https://laravel.com/docs/12.x/configuration#configuration-caching): “you should be sure that you are only calling the `env` function from within your configuration files”)
+From review: [spatie/spatie.be#35](https://github.com/spatie/spatie.be/pull/35#discussion_r226855944) and the [Laravel docs](https://laravel.com/docs/12.x/configuration#configuration-caching).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Review quotes and full rule: copy into <code>draft.json</code></summary>
+
+The review: “The `env` function may only be used in config files.” The Laravel docs, on configuration caching: “you should be sure that you are only calling the `env` function from within your configuration files”.
 
 ```json draft
 {
@@ -1547,7 +1574,9 @@ From review: [spatie/spatie.be#35](https://github.com/spatie/spatie.be/pull/35#d
 
 ### Synapse (PostgreSQL): index an existing table in a background update, not a schema delta
 
-Synapse applies schema deltas at startup and serves nothing until they finish, so a `CREATE INDEX` on a table that already holds a large server's rows keeps the homeserver down while the index builds, and a `DROP INDEX` takes a heavy lock on the table. A table the same delta creates is still empty and safe to index. Asked to speed up a query, an agent writes the obvious delta:
+Synapse applies schema deltas at startup and serves nothing until they finish. `CREATE INDEX` on a table that already holds a large server's rows keeps the homeserver down while the index builds; `DROP INDEX` takes a heavy table lock. A table the same delta creates is empty and safe to index.
+
+Asked to speed up a query, an agent writes the obvious delta:
 
 `synapse/storage/schema/main/delta/93/02_event_push_actions_thread_idx.sql`
 
@@ -1576,10 +1605,12 @@ misses  .sql.postgres, .sql.sqlite and Python deltas; it flags an index on a tab
         same version creates, so create a table and its indexes in one file
 ```
 
-From the architecture doc: [docs/development/database_schema.md](https://github.com/element-hq/synapse/blob/develop/docs/development/database_schema.md#worked-examples-of-gradual-migrations) — “including adding columns, indices or `NOT NULL` constraints to non-empty tables — such a migration should be done as a background update”; from review: [element-hq/synapse#18440](https://github.com/element-hq/synapse/pull/18440#discussion_r2089278208) — “for new tables, it's fine to create the index right now”
+From the architecture doc: [docs/development/database_schema.md](https://github.com/element-hq/synapse/blob/develop/docs/development/database_schema.md#worked-examples-of-gradual-migrations) and review: [element-hq/synapse#18440](https://github.com/element-hq/synapse/pull/18440#discussion_r2089278208).
 
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>Review quotes and full rule: copy into <code>draft.json</code></summary>
+
+The doc: “including adding columns, indices or `NOT NULL` constraints to non-empty tables — such a migration should be done as a background update”. The review: “for new tables, it's fine to create the index right now”.
 
 ```json draft
 {
@@ -1653,11 +1684,13 @@ From the architecture doc: [docs/development/database_schema.md](https://github.
 
 ## React
 
+Two rules for an app built from `<PanelFrame>` panels: one follows imports across files, one checks the enclosing function.
+
 ### Panels never nest
 
-Every panel renders inside `<PanelFrame>`, which draws its title bar and close button and opens its analytics
-scope. A frame inside a frame draws two title bars and counts the view twice. Asked to show the customer in the order
-panel, an agent reaches for the existing `CustomerPanel`, which brings its own frame:
+Every panel renders inside `<PanelFrame>`, which draws the title bar and close button and opens the analytics scope.
+Nested frames draw two title bars and count the view twice. Asked to show the customer in the order panel, an agent
+reuses `CustomerPanel`, which brings its own frame:
 
 `src/panels/OrdersPanel.tsx`
 
@@ -1685,11 +1718,11 @@ allow   frames side by side; panels side by side on a page; ordinary components 
 misses  a panel imported by a relative path (./CustomerPanel)
 ```
 
-The rule never sees inside `CustomerPanel`. It knows `CustomerPanel` is a panel because the name resolves to an
-import from `@/panels/`, so the repository's folder convention carries the nesting across files.
-
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>How it works and full rule: copy into <code>draft.json</code></summary>
+
+The rule never sees inside `CustomerPanel`. It treats it as a panel because the name is imported from `@/panels/`, so
+the folder convention carries the nesting across files.
 
 ```json draft
 {
@@ -1781,9 +1814,8 @@ import from `@/panels/`, so the repository's folder convention carries the nesti
 
 ### A hook that only works inside its wrapper
 
-`usePanel()` reads the context `<PanelFrame>` provides, so it works only in components rendered inside a frame.
-Called in the component that renders the frame, it runs before the frame exists and gets no panel. Nothing fails until
-someone opens the panel:
+`usePanel()` reads the context `<PanelFrame>` provides, so it works only inside a frame. Called in the component that
+renders the frame, it runs before the frame exists and gets no panel. Nothing fails until someone opens the panel:
 
 `src/panels/OrdersPanel.tsx`
 
@@ -1811,13 +1843,14 @@ allow   a child component in the same file that calls usePanel(); hooks under sr
 misses  a component under src/panels/ that some page renders without a frame
 ```
 
-"Nearest enclosing function" is `"stopBy": { "matches": "function" }`: the search for the frame stops at the first
-function around the call, so a child component declared in the same file is not blamed for its parent. Whether every
-page renders `src/panels/` components inside a frame needs the render tree, which no rule sees; keep `usePanel()`
-throwing when it finds no frame.
-
 <details>
-<summary>Full rule with its test cases: copy into <code>draft.json</code></summary>
+<summary>How it works and full rule: copy into <code>draft.json</code></summary>
+
+"Nearest enclosing function" is `"stopBy": { "matches": "function" }`. The search for the frame stops at the first
+function around the call, so a child component declared in the same file is not blamed for its parent.
+
+Whether every page renders `src/panels/` components inside a frame needs the render tree, which no rule sees. Keep
+`usePanel()` throwing when it finds no frame.
 
 ```json draft
 {
@@ -1901,8 +1934,10 @@ throwing when it finds no frame.
 
 ## What a rule can and can't check
 
-Each rule on this page reads one file at a time: its syntax tree, its path and its text. Within that file a rule can
-ask:
+Each rule on this page reads one file at a time: its syntax tree, path and text.
+
+<details>
+<summary>What a rule can ask within one file</summary>
 
 | Question | How | Example |
 |---|---|---|
@@ -1912,10 +1947,12 @@ ask:
 | Does a name here match one elsewhere in the file? | the same capture, such as `$TABLE`, in two places | Synapse: an index on a table the migration does not create |
 | Which file is this? | `scope`, and a clause's own `file.path` condition | n8n: `.vue` and `.ts` files under a frontend module |
 
-A rule cannot ask what happens in another file. There is no type checker, call graph or render tree: a rule cannot
-tell which component ends up rendered inside which, whether a helper it calls does IO, or what type a value has. That is
-why each card has a `misses` line. A design rule becomes checkable when the code writes the decision down where a file
-shows it:
+</details>
+
+A rule cannot see into other files. With no type checker, call graph or render tree, it cannot tell which component
+renders inside which, whether a called helper does IO, or a value's type. Hence each example's `misses` line.
+
+A design rule becomes checkable when the code records the decision where one file shows it:
 
 1. **In the same file:** the call sits lexically inside the class, function, block or element it must not be in.
 2. **In the names:** the decision follows a module, package or crate (`OC\` versus `OCP\`, `std::fs` versus Zed's
