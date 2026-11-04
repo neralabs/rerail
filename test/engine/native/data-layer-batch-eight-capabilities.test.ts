@@ -40,3 +40,20 @@ it("reads canonical byte columns from selected nodes without a repository source
   expect(result.violations).toHaveLength(1);
   expect(result.violations[0].variables.row.column).toBe("4");
 });
+
+it("applies the source byte limit per file in both repository execution paths", async () => {
+  const authored = policy();
+  const caps = JSON.parse(capabilities); caps.limits.maxSourceBytes = 160;
+  const native = loadNativeBinding();
+  const rule = native.CodeRuleDslRuntime.compile(JSON.stringify(authored), "json", JSON.stringify(caps));
+  const files = ["a.py", "b.py", "c.py"].map(path => ({ path, language: "python",
+    source: "def f(value: int) -> int:\n    return value * 2\n# " + "padding".repeat(12) + "\n" }));
+  const direct = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files }), "report"));
+  expect(direct.failures).toEqual([]); expect(direct.violations).toHaveLength(3);
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(rule);
+    const result = JSON.parse(await workspace.applyAsync(JSON.stringify({ revision: 1, files, removed: [] })));
+    expect(result.evaluation.failures).toEqual([]); expect(result.evaluation.violations).toHaveLength(3);
+  } finally { workspace.close(); }
+});
