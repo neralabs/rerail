@@ -1,14 +1,5 @@
 <div class="col">
-  <div style="display:grid;gap:14px">
-    <h1>Rerail logic: rules as Datalog</h1>
-    <p class="lede">A proposal to replace the <code>rerail.policy/v1</code> JSON with one text format. Each rule file is a small Datalog program over facts the parser provides. The name resolution, import and call libraries that rules depend on are Datalog too, so they ship as data instead of as binary code.</p>
-    <div class="stats">
-      <div class="stat"><b>{{rules}}</b><span>pack rules translated</span></div>
-      <div class="stat"><b>{{json_mb}} → {{rr_mb}}</b><span>pretty JSON → .rr, comments excluded</span></div>
-      <div class="stat"><b>{{atom_rules}}</b><span>rules keeping a matcher atom</span></div>
-      <div class="stat"><b>{{lib_datalog}} / {{lib_native}}</b><span>library relations: Datalog / native</span></div>
-    </div>
-  </div>
+  <h1>Syntax</h1>
 
   <section style="display:grid;gap:10px">
     <h2>Datalog in one minute</h2>

@@ -4,6 +4,7 @@
 """
 
 import argparse
+import html
 import glob
 import json
 import os
@@ -142,7 +143,16 @@ def main():
     with open(os.path.join(a.out, "data", "hand.json"), "w", encoding="utf-8") as fh:
         fh.write(compact(hand_data))
 
-    stats = {"rules": f"{n_rules:,}", "json_mb": f"{total_json / 1e6:.1f} MB", "rr_mb": f"{total_rr / 1e6:.1f} MB",
+    def code_lines(text):
+        return sum(1 for l in text.split("\n") if l.strip() and not l.strip().startswith("//"))
+    dl_py = sum(e["py"].count("\n") for k, e in hand_data.items() if k not in ("router", "fli") and "py" in e)
+    dl_rr = sum(code_lines(e["final"]) for e in hand_data.values() if "final" in e)
+    lib_lines = lambda fam: sum(code_lines(l["src"]) for m, l in libs.items() if m.startswith(fam))
+    router_pretty = json.dumps(router_json, indent=2, ensure_ascii=False)
+    stats = {"rules": f"{n_rules:,}",
+             "router_json_lines": str(router_pretty.count("\n") + 1), "router_b1_code": str(code_lines(b1)),
+             "dl_py_lines": f"{dl_py:,}", "dl_rr_code": f"{dl_rr:,}",
+             "lib_py_lines": f"{lib_lines('python/'):,}", "lib_tsx_lines": f"{lib_lines('tsx/'):,}", "json_mb": f"{total_json / 1e6:.1f} MB", "rr_mb": f"{total_rr / 1e6:.1f} MB",
              "atom_rules": f"{atom_rules:,}", "lib_native": str(n_native), "lib_datalog": str(n_datalog)}
 
     def embed(obj):
@@ -150,7 +160,9 @@ def main():
 
     page = read(os.path.join(HERE, "page.html"))
     page = (page.replace("__LIBS__", embed(libs)).replace("__HAND__", embed(hand_meta)).replace("__PACKS__", embed(packs))
-            .replace("__STATS__", embed(stats)).replace("__SYNTAX__", read(os.path.join(HERE, "syntax.html"))))
+            .replace("__STATS__", embed(stats)).replace("__SYNTAX__", read(os.path.join(HERE, "syntax.html")))
+            .replace("__INTRO__", read(os.path.join(HERE, "intro.html"))
+                     .replace("@@router_json@@", html.escape(router_pretty)).replace("@@router_b1@@", html.escape(b1.rstrip("\n")))))
     with open(os.path.join(a.out, "index.html"), "w", encoding="utf-8") as fh:
         fh.write(page)
     print(json.dumps({"rules": n_rules, "packs": len(packs), "hand": len(hand_meta), **stats}))
