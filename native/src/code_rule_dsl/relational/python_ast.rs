@@ -202,6 +202,22 @@ pub(super) fn execute(
                             .expect("expanded canonical relation");
                         let expanded: Vec<BTreeMap<String, String>> =
                             serde_json::from_str(&encoded).map_err(|e| invalid(e.to_string()))?;
+                        if request.expand.as_deref() == Some("nodes") {
+                            let spans = expanded
+                                .iter()
+                                .map(|r| {
+                                    let offset = |field: &str| {
+                                        r.get(field)
+                                            .and_then(|v| v.parse::<u32>().ok())
+                                            .ok_or_else(|| invalid("missing canonical source span"))
+                                    };
+                                    Ok((offset("ast_start")?, offset("ast_stop")?))
+                                })
+                                .collect::<Result<Vec<_>>>()?;
+                            demand.trees[root.file as usize]
+                                .facts
+                                .register_python_spans(spans)?;
+                        }
                         for expanded_row in expanded {
                             source::charge(&demand.work, 1)?;
                             output.files.push(root.file);

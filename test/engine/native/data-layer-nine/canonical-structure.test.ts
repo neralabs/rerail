@@ -44,7 +44,7 @@ it("anchors canonical variadic parameters whose spans differ from CST parameter 
   const source = "def f(*args: int, **kwargs: str):\n    pass\n";
   const authored = { format: "rerail.policy/v1", id: "canonical-parameter-spans", revision: 1, mode: "log", clauses: [{ id: "args", relational: {
     inputs: { gate: { evidence: { as: "f", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } } },
-    syntax: { name: "nodes", gate: "gate", columns: ["__path", "id", "kind"] },
+    syntax: { name: "nodes", gate: "gate", columns: ["__path", "id", "kind", "__start", "__end"] },
     stages: [{ name: "canonical", pythonAst: { syntax: "nodes", roots: "SELECT __path,id FROM nodes WHERE kind='module'", fields: ["ast_kind", "ast_start", "ast_stop", "ast_name"], expand: "nodes" } }],
     query: "SELECT __path path,CAST(ast_start AS INTEGER) start_byte,CAST(ast_stop AS INTEGER) end_byte,ast_name identity FROM canonical WHERE ast_kind='arg'", key: ["identity"],
   }, violation: { code: "PARAM", message: "Canonical parameter", anchor: "witness.span" } }] };
@@ -52,4 +52,8 @@ it("anchors canonical variadic parameters whose spans differ from CST parameter 
   const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: [{ path: "a.py", source, language: "python" }] }), "report"));
   expect(result.failures).toEqual([]);
   expect(result.violations.map((v: { span: { startByte: number; endByte: number } }) => source.slice(v.span.startByte, v.span.endByte))).toEqual(["args: int", "kwargs: str"]);
+  authored.clauses[0]!.relational.query = authored.clauses[0]!.relational.query.replace("CAST(ast_start AS INTEGER) start_byte", "CAST(ast_start AS INTEGER)+1 start_byte");
+  const fabricated = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(authored), "json", capabilities);
+  const rejected = JSON.parse(fabricated.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: [{ path: "a.py", source, language: "python" }] }), "report"));
+  expect(rejected.failures).toEqual([expect.objectContaining({ message: "relational results must anchor to an input witness span" })]);
 });

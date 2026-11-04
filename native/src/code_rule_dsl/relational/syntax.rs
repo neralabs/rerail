@@ -94,6 +94,7 @@ pub(in crate::code_rule_dsl) struct Facts {
     children: Postings,
     kinds: Postings,
     fields: Fields,
+    python_spans: parking_lot::Mutex<Option<Vec<(u32, u32)>>>,
     owners: parking_lot::Mutex<HashMap<(String, bool), Arc<OwnerIndex>>>,
     selections: Selections,
 }
@@ -168,6 +169,7 @@ impl Facts {
             children,
             kinds,
             fields,
+            python_spans: parking_lot::Mutex::new(None),
             owners: parking_lot::Mutex::new(HashMap::new()),
             selections: parking_lot::Mutex::new(HashMap::new()),
         };
@@ -230,6 +232,28 @@ impl Facts {
             &self.lines,
         )
     }
+    /// Only the canonical module producer can publish additional source spans.
+    /// Python's arg spans omit * and **, unlike the corresponding CST nodes.
+    pub(super) fn register_python_spans(&self, mut spans: Vec<(u32, u32)>) -> Result<()> {
+        use ast_grep_core::Doc;
+        let mut published = self.python_spans.lock();
+        if published.is_some() {
+            return Ok(());
+        }
+        let source = self.doc.get_source();
+        if spans.iter().any(|&(start, end)| {
+            start > end
+                || end as usize > source.len()
+                || !source.is_char_boundary(start as usize)
+                || !source.is_char_boundary(end as usize)
+        }) {
+            return Err(invalid("canonical Python span exceeds its source"));
+        }
+        spans.sort_unstable();
+        spans.dedup();
+        *published = Some(spans);
+        Ok(())
+    }
     pub(super) fn span(&self, start: usize, end: usize, excludes: &[String]) -> Option<Span> {
         // The preorder table is ordered by source start. Check only equal-start nodes.
         let at = self
@@ -243,6 +267,18 @@ impl Facts {
                     && !excludes.iter().any(|k| k == self.packed.kind(id))
             })
             .then(|| self.lines.span(start, end))
+            .or_else(|| {
+                if !excludes.is_empty() {
+                    return None;
+                }
+                let key = (u32::try_from(start).ok()?, u32::try_from(end).ok()?);
+                self.python_spans
+                    .lock()
+                    .as_ref()?
+                    .binary_search(&key)
+                    .ok()?;
+                Some(self.lines.span(start, end))
+            })
     }
     fn owner(&self, owner: &Owner) -> Result<Arc<OwnerIndex>> {
         let key = (owner.kind.clone(), owner.outermost);
