@@ -1,1 +1,0 @@
-In a partial clone (`git clone --filter=blob:none`), Rerail's Git calls no longer fetch missing objects from the remote: every Git process sets `GIT_NO_LAZY_FETCH=1`, and a git-diff audit lists changed files without rename detection (a renamed file appears under its new path). The Claude Code set-up check runs Git the same way, not by `git` on `PATH`.
