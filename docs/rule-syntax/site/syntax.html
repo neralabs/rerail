@@ -176,6 +176,7 @@ exec(code)                          # not reported: this exec is the local funct
       <tr><td><code>CODE(@place("a.json", 1), …) :- …</code></td><td>A finding at a file and line with no node there: an allowlist, a baseline, a Markdown line. Line 0: the whole file.</td></tr>
       <tr><td><code>.violation SEC(at: span, c: symbol) code {c}</code></td><td>The code is a column: each SEC code found in a comment is its own code.</td></tr>
       <tr><td><code>.severity CODE warning</code></td><td>Severity per code, as the repository's report shows it.</td></tr>
+      <tr><td><code>.requires "data-layer:a", …</code></td><td>A suite: one finding per member policy that blocks or ends Unknown (budget, timeout).</td></tr>
       <tr><td><code>.gate CODE</code></td><td>When CODE has rows they are the only findings: a bad signature replaces the report.</td></tr>
       <tr><td><code>.on parse_error report CODE</code></td><td>Also report files the language's own parser rejects (their outcome stays Unknown).</td></tr>
       <tr><td><code>.budget M by k from base [floor] [drop 10%]</code></td><td>Ratchet whose ceilings are the rows of relation base, derived by rules, usually from a verified baseline file. M is a violation or an <code>.output</code> metric.</td></tr>

@@ -73,3 +73,8 @@ confirm once a parser and engine exist. None is fixed yet.
    against real signatures at the pinned revision, the rules themselves were not run.
 3. file-length follows the CLI's line count (splitlines); the suite plugin counts `\n`. They differ only on files
    with other line separators.
+4. Check that the bundled tree-sitter-python parses PEP 696 type-parameter defaults (`def f[T = int]()`):
+   broad_type_surfaces' BTS009 reads them. Upgrade the grammar if not.
+5. Five checks need facts from a run of repository code, read from CI-written JSON: linter_enforcement,
+   explicit_semantic_ids, plan_composition_architecture, serverplan_target_architecture, test_budget. The CI
+   step that writes each file is not designed here.
