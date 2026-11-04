@@ -2115,6 +2115,30 @@
           "source": "def inspect_runtime(tx):\n    return tx._conn\n"
         }
       ]
+    },
+    {
+      "id": "cached-policy-stale-clean",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "policySource": "from l2055_lazy_result.purity import cached_pure_lazy\n@cached_pure_lazy(cache_args=(\"cache\",))\ndef derive(*, cache: OptimizerRunCache) -> int:\n    cache.touch()\n    return 1\n",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "def unrelated():\n    return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "cached-policy-stale-memoized-clean",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "policySource": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@pure_lazy\n@memoized_pure_lazy(max_entries=4)\ndef derive(value: int) -> int:\n    return value * 2\n",
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "def unrelated():\n    return 1\n"
+        }
+      ]
     }
   ]
 }

@@ -6213,6 +6213,78 @@
           "entryPoint": "scan_paths"
         }
       }
+    },
+    {
+      "test": "probe:batch8:cached-policy-stale-clean",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "def unrelated():\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "stale cached pure-lazy policy entry: l1234_policy_test.sample.derive",
+          "message": "stale cached pure-lazy policy entry: l1234_policy_test.sample.derive"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [[\"touch\", \"call\"]], \"body_hash\": \"fb192f5358b99356174ee27737bded8f564166af2dce86c15f27136ffcda0cb2\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l1234_policy_test.sample.derive\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"58eade3c4ee0f0aa521443f9cf9f76c64c69f96a891aacc9f1f96b086b5fedd3\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:cached-policy-stale-memoized-clean",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l1234_policy_test/sample.py",
+          "source": "def unrelated():\n    return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "stale memoized pure-lazy policy entry: l1234_policy_test.sample.derive",
+          "message": "stale memoized pure-lazy policy entry: l1234_policy_test.sample.derive"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[{\"body_hash\": \"7e783fc807de80e8856ea7d18c4321d18b0ac3c95691c8267538f7c1957c4ced\", \"cache_lifetime\": \"process\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l1234_policy_test.sample.derive\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 4, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"ac9252cd5bf8aec6165067d9d8554604f302540b556527a083db6cfd46d94fdd\"}]"
+        }
+      }
     }
   ]
 }
