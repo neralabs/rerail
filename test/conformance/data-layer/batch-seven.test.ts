@@ -14,6 +14,29 @@ const localChecks = [
   "post_op_side_effects",
 ];
 
+it("keeps positive fixtures for the covered diagnostic families", () => {
+  const recordings = ["recording", "probes"].map(kind => JSON.parse(readFileSync(fixturesPath("host", "data-layer-port", `batch-07-${kind}.json`), "utf8")));
+  expect([...localChecks].sort()).toEqual([...recordings[0].checks].sort());
+  const codes: Record<string, string[]> = {
+    post_op_side_effects: ["POSTOP001", "POSTOP002", "POSTOP200", "POSTOP201", "POSTOP202", "POSTOP203", "POSTOP204", "POSTOP205", "POSTOP206"],
+    post_op_no_internal_dispatch: Array.from({ length: 9 }, (_, index) => `POSTOPDISPATCH00${index + 1}`),
+    executor_publication_repairs: ["executor_publication_repair"],
+    history_serverplan_projection: ["HSP-001", "HSP-002", "HSP-003", "HSP-004"],
+    revision_ancestry_invariants: ["forbidden_descriptor", "removed_surface", "stored_revision_text_cast"],
+    versioned_merged_identity: ["VMI001", "VMI002", "VMI003"],
+    publication_registry_writes: ["REGISTRY_DIRECT_WRITE"],
+    declared_fact_interrogation: ["CONTRACT_ATTR_PROBE", "OVERRIDE_IDENTITY_PROBE"],
+    grammar_mutation_invalidation: ["MUTATION_WITHOUT_INVALIDATION"],
+    unknown_contract_defaults: ["UNKNOWN_DEFAULTED", "UNKNOWN_AS_FALSY"],
+  };
+  for (const [check, required] of Object.entries(codes)) {
+    const events = recordings.flatMap(recording => recording.events).filter((event: { check: string; retained_reason?: string; upstream_passed: boolean }) =>
+      event.check === check && event.retained_reason === undefined && event.upstream_passed);
+    const observed = new Set(events.flatMap((event: { findings: { code: string }[] }) => event.findings.map(finding => finding.code)));
+    for (const code of required) expect(observed.has(code), `${check}: missing positive fixture for ${code}`).toBe(true);
+  }
+});
+
 it.each(localChecks)("preserves original and supplemental %s findings through snapshot and workspace APIs", async check => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-batch-seven-"));
   const log = vi.spyOn(console, "log").mockImplementation(() => {});

@@ -29,6 +29,10 @@ def post_op_repository(module, root, options):
     updates['POST_OP_SURFACE_FILES'] = tuple(updates[key] for key in ('POST_OP_SOURCE', 'POST_OP_SPECS_SOURCE', 'POST_OP_DOMAIN_DECODERS_SOURCE'))
     for option, name in [('fatesSignature', 'POST_OP_FATES_SIGNATURE'), ('surfaceSignature', 'POST_OP_SURFACE_SIGNATURE')]:
         if option in options: updates[name] = options[option]
+    if 'fateOverrides' in options:
+        updates['POST_OP_FATE_OVERRIDES'] = {
+            symbol: module.PostOpFate(fate) for symbol, fate in (entry.split('=', 1) for entry in options['fateOverrides'])
+        }
     saved = {key: getattr(module, key) for key in updates}
     try:
         for key, value in updates.items(): setattr(module, key, value)

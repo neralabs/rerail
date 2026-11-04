@@ -109,7 +109,12 @@ def candidate(source,policy,constant):
     stages.append(S('findings',' UNION ALL '.join(rows)))
     all_query="SELECT * FROM findings UNION ALL SELECT "+q(POST)+",0,0,'POSTOP000','fates-signature' WHERE NOT (SELECT valid FROM fate_valid) AND NOT EXISTS(SELECT 1 FROM findings)"
     direct="SELECT m.__path AS path,0 AS start_byte,0 AS end_byte,'POSTOP203' AS issue,'bypass' AS identity FROM modules m JOIN bypass b ON b.__path=m.__path"
-    query={'$option':'entryPoint','cases':{'_collect_runtime_allowlist_bypass_violations_from_tree':direct,'_collect_violations':'SELECT * FROM findings'},'default':all_query}
+    query={'$option':'entryPoint','cases':{
+        '_collect_runtime_allowlist_bypass_violations_from_tree':direct,
+        '_collect_violations':'SELECT * FROM findings',
+        '_collect_broad_runtime_authority_violations':"SELECT * FROM findings WHERE issue='POSTOP204'",
+        '_collect_exact_runtime_symbol_coverage_violations':"SELECT * FROM findings WHERE issue IN ('POSTOP205','POSTOP206')",
+    },'default':all_query}
     p['clauses'].append({'id':'signed-surface','relational':{'inputs':inputs,'stages':stages,'locations':[POST],'query':query,'key':['issue','identity'],'code':'issue'},
         'violation':{'code':'POSTOP203','anchor':'witness.span','message':'Signed post-op boundary'}})
     return p

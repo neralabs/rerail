@@ -928,7 +928,9 @@
           "$option": "entryPoint",
           "cases": {
             "_collect_runtime_allowlist_bypass_violations_from_tree": "SELECT m.__path AS path,0 AS start_byte,0 AS end_byte,'POSTOP203' AS issue,'bypass' AS identity FROM modules m JOIN bypass b ON b.__path=m.__path",
-            "_collect_violations": "SELECT * FROM findings"
+            "_collect_violations": "SELECT * FROM findings",
+            "_collect_broad_runtime_authority_violations": "SELECT * FROM findings WHERE issue='POSTOP204'",
+            "_collect_exact_runtime_symbol_coverage_violations": "SELECT * FROM findings WHERE issue IN ('POSTOP205','POSTOP206')"
           },
           "default": "SELECT * FROM findings UNION ALL SELECT 'l2070_batching/post_op.py',0,0,'POSTOP000','fates-signature' WHERE NOT (SELECT valid FROM fate_valid) AND NOT EXISTS(SELECT 1 FROM findings)"
         },
