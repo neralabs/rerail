@@ -5777,3 +5777,16 @@ They include source-trigger and allowed-file controls.
 The source pin has no dedicated lazy SQL surface test module.
 Supplemental expectations come from its unchanged analyzer, with source files written to a temporary repository.
 These probes supplement upstream tests; they do not count as upstream pytest cases.
+
+### Batch eight: purity source and call-graph ladder
+
+The purity recorder now includes facade sources read by the original export check.
+It keeps the selected analysis paths separate from those auxiliary files.
+It also preserves source text for cached-policy facts constructed from virtual paths.
+Source hashes computed by the original linter are not supplied as native facts.
+
+The initial purity replay misses three observations.
+The failures identify export reachability, a NULL-sensitive global-name predicate, and frozen dataclass decorators.
+After correction, all 42 original purity observations pass through both native APIs.
+Together, the seven candidates pass 188 observations: 131 positive and 57 clean.
+Further semantic probes, repository parity, and the three remaining candidates are still required.

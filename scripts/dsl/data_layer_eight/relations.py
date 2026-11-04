@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Whole-file syntax demand with narrow SQL relations and native ownership facts."""
-import re
-from data_layer_six.ast_relations import relational,python_stages,trim_ast_projection,whole_file_syntax_relations
+import json,re
+from data_layer_six.ast_relations import json,relational,python_stages,trim_ast_projection,whole_file_syntax_relations
 from data_layer_six.sql_columns import narrow_columns
 
 def clause(name,stages,query,inputs=None):
@@ -11,7 +11,7 @@ def clause(name,stages,query,inputs=None):
     # Retain only actual consumers; do not publish generic unused relations.
     catalog={s['name']:s for s in plan['stages']};needed=set();pending=[query]
     while pending:
-        for table in re.findall(r'(?i)\b(?:FROM|JOIN)\s+([a-z_]\w*)',pending.pop()):
+        for table in re.findall(r'(?i)\b(?:FROM|JOIN)\s+([a-z_]\w*)',json.dumps(pending.pop())):
             if table in catalog and table not in needed:
                 needed.add(table);pending.append(catalog[table]['query'])
     plan['stages']=[s for s in plan['stages'] if s['name'] in needed]

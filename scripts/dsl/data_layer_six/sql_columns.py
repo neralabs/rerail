@@ -8,6 +8,9 @@ from collections import defaultdict
 def sql_strings(value):
     if isinstance(value, str):
         yield value
+    elif "template" in value:
+        # Array option values add literal rows, with the same declared schema.
+        yield value["template"].replace("{}", "")
     else:
         for child in value.get("cases", {}).values():
             yield from sql_strings(child)
@@ -89,7 +92,10 @@ def schema(plan):
         if 'reachability' in stage:
             create(name, ['__path','root','node'])
         else:
-            db.execute(f'CREATE TABLE {quote(name)} AS SELECT * FROM ({next(sql_strings(stage["query"]))}) LIMIT 0')
+            try:
+                db.execute(f'CREATE TABLE {quote(name)} AS SELECT * FROM ({next(sql_strings(stage["query"]))}) LIMIT 0')
+            except sqlite3.Error as error:
+                raise ValueError(f'SQL stage {name}: {error}') from error
             tables[name] = [r[1] for r in db.execute(f'PRAGMA table_info({quote(name)})')]
             for col in stage.get('deferred', {}):
                 if col not in tables[name]:
