@@ -151,6 +151,26 @@ def install(recorder):
                         "fatesSignature": module.POST_OP_FATES_SIGNATURE,
                         "surfaceSignature": module.POST_OP_SURFACE_SIGNATURE,
                     }}
+                elif check == "post_op_side_effects" and entry in {
+                    "_collect_broad_runtime_authority_violations", "_collect_exact_runtime_symbol_coverage_violations",
+                }:
+                    # These helpers take Python values rather than source files.
+                    # Materialize those exact values at their production syntax
+                    # boundary. Expected findings still come from the original call.
+                    registry = "SIGNED_POST_OP_SYMBOLS = " + repr(tuple(arguments["entries"])) + "\n"
+                    files = [{"path": "l2070_batching/post_op_allowlist.py", "source": registry}]
+                    for argument, attribute, path in [
+                        ("post_op_tree", "POST_OP_SOURCE", "l2070_batching/post_op.py"),
+                        ("specs_tree", "POST_OP_SPECS_SOURCE", "l2070_batching/post_op_specs.py"),
+                    ]:
+                        if entry == "_collect_broad_runtime_authority_violations":
+                            if argument == "post_op_tree": files.append({"path": path, "source": ""})
+                            continue
+                        supplied_tree = arguments.get(argument)
+                        text = getattr(module, attribute).read_text() if supplied_tree is None else trees.get(supplied_tree)
+                        if text is None: raise ValueError("The original AST source is unavailable")
+                        files.append({"path": path, "source": text})
+                    event["input_adapter"] = "Exact helper entries become a registry assignment; supplied ASTs retain their original source."
                 else:
                     raise ValueError("No original source-bearing analyzer input")
                 if not files and check != "versioned_merged_identity":
@@ -200,7 +220,8 @@ def install(recorder):
         "history_serverplan_projection": ["check_source"],
         "post_op_no_internal_dispatch": ["collect_violations_for_source"],
         "versioned_merged_identity": ["collect_violations"],
-        "post_op_side_effects": ["_collect_runtime_allowlist_bypass_violations_from_tree", "_collect_violations"],
+        "post_op_side_effects": ["_collect_runtime_allowlist_bypass_violations_from_tree", "_collect_violations",
+                                 "_collect_broad_runtime_authority_violations", "_collect_exact_runtime_symbol_coverage_violations"],
     }
     for check, names in entries.items():
         module = modules[check]
