@@ -5790,3 +5790,20 @@ The failures identify export reachability, a NULL-sensitive global-name predicat
 After correction, all 42 original purity observations pass through both native APIs.
 Together, the seven candidates pass 188 observations: 131 positive and 57 clean.
 Further semantic probes, repository parity, and the three remaining candidates are still required.
+
+### Batch eight: eager-resolve helper parity
+
+The eighth candidate matches all 59 recorded original eager-resolve observations: 45 positive and 14 clean.
+The first semantic ladder exposes duplicate phase identities and incorrect taint from canonical legacy helper wrappers.
+Phase findings now use the linter's function/pattern identity.
+Canonical wrappers suppress only the specific legacy resolver seed that the original linter removes.
+The native executor still owns cycle-safe SQL propagation in both directions: phases reach callees; eager patterns reach callers.
+
+The original AST helper wrappers call `ast.unparse` before scanning.
+The recorder now preserves that actual scanner input, rather than comparing normalized diagnostic lines with pre-normalized source.
+It also records the effective external-I/O allowlist used by each observation.
+
+For lazy architecture, 84 distinct source inputs from original fact tests are evaluated by the unchanged full analyzer.
+These are supplemental source probes, not replacements for the original fact assertions.
+Seven additional probes bring positive coverage to all 18 LA diagnostic families.
+The ninth and tenth ports, broader semantic probes, and repository acceptance remain open.
