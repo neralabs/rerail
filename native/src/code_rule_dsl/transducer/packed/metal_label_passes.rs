@@ -570,7 +570,12 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
     plan.steps.iter().flat_map(|(_, levels)| levels).map(Vec::len).max().unwrap_or(0).max(1)
 }
 
-const SOURCE: &str = include_str!("metal_label_passes.metal");
+/// The device's tape view (decision 0032), which the label and pattern kernels read.
+const TAPE_VIEW: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"));
+/// The label kernels over the tape view.
+const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"), include_str!("metal_label_passes.metal"));
+/// Where a label kernel binds the batch's four slabs (`Slabs`): past every other buffer.
+const SLAB_SLOT: u64 = 27;
 const KERNELS: [&str; 11] = [
     "label_sink",
     "label_settle",
@@ -694,6 +699,10 @@ fn bytes_of<T: Copy>(values: &[T]) -> &[u8] {
 
 /// The batch's tape buffers, shared by every level.
 struct Tapes {
+    /// The batch's documents, resident (decision 0032): the label kernels read their tapes in
+    /// place, `docs` holding each one's `DocView`.
+    table: crate::code_rule_dsl::residency::slabs::DocTable,
+    docs: MappedBuffer,
     files: MappedBuffer,
     nodes: MappedBuffer,
     children: MappedBuffer,
@@ -1272,7 +1281,21 @@ fn tapes(
     for file in &mut batch_files {
         file.supertype_start += prefix as u32;
     }
+    // The documents in the slabs, one table over them: a batch over `MAX_SLABS` is the wave's to
+    // split.
+    let table = crate::code_rule_dsl::prof::time("residency.docs", || crate::code_rule_dsl::residency::slabs::admit_docs(files))?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or(Error::BackendCapacity)?;
+    if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
+        return Err(Error::BackendFailure);
+    }
+    let docs = if table.views.is_empty() {
+        MappedBuffer::zeroed::<crate::code_rule_dsl::residency::slabs::DocView>(device, 1)?
+    } else {
+        MappedBuffer::from_slice(device, &table.views)?
+    };
     Ok(Tapes {
+        table,
+        docs,
         files: MappedBuffer::from_slice(device, &batch_files)?,
         nodes: MappedBuffer::wrap(nodes),
         children: MappedBuffer::wrap(children),
@@ -1285,6 +1308,15 @@ fn tapes(
 }
 
 impl Runner<'_> {
+    /// The batch's slabs at `SLAB_SLOT..` (`Slabs`), the last repeated where it has fewer.
+    fn bind_slabs(&self, encoder: &metal::ComputeCommandEncoderRef) {
+        let slabs = &self.tapes.table.slabs;
+        for slot in 0..crate::code_rule_dsl::residency::slabs::MAX_SLABS {
+            let buffer = slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| &slab.buffer.buffer);
+            encoder.set_buffer(SLAB_SLOT + slot as u64, Some(buffer), 0);
+        }
+    }
+
     fn flag(&self, index: usize) -> u32 {
         unsafe { *self.flags.buffer.contents().cast::<u32>().add(index) }
     }
@@ -1388,6 +1420,7 @@ impl Runner<'_> {
         for (index, (buffer, offset)) in buffers.iter().enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), *offset);
         }
+        self.bind_slabs(encoder);
         encoder.set_bytes(
             buffers.len() as u64,
             std::mem::size_of::<Shape>() as u64,
@@ -1807,18 +1840,14 @@ impl Runner<'_> {
         if !matches.is_empty() {
             let item_count = (matches.len() / 5) as u32;
             let (items, constraints) = (self.upload(&matches)?, self.upload(&constraints)?);
-            let tapes = &self.tapes;
-            let (nodes, children, source) =
-                (tapes.nodes.buffer.clone(), tapes.children.buffer.clone(), tapes.source.buffer.clone());
+            let docs = self.tapes.docs.buffer.clone();
             let shape = Shape {
                 item_count,
                 ..self.shape()
             };
             self.pattern_kernel(
                 &[
-                    (&nodes, 0),
-                    (&children, 0),
-                    (&source, 0),
+                    (&docs, 0),
                     (&labels, 8),
                     (&scratch, 0),
                     (&flags, 0),
@@ -2029,10 +2058,8 @@ impl Runner<'_> {
         let shape = Shape { target_count: shape_levels.len() as u32, steps, ..self.shape() };
         let tapes = &self.tapes;
         let buffers = [
-            tapes.nodes.buffer.clone(),
-            tapes.children.buffer.clone(),
+            tapes.docs.buffer.clone(),
             tapes.supertypes.buffer.clone(),
-            tapes.files.buffer.clone(),
             passes,
             words,
             items,
@@ -2057,13 +2084,14 @@ impl Runner<'_> {
         encoder.set_label(KERNELS[pipeline]);
         crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[pipeline]), 1);
         encoder.set_compute_pipeline_state(&state);
-        for (index, buffer) in buffers.iter().take(13).enumerate() {
+        for (index, buffer) in buffers.iter().take(11).enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), 0);
         }
-        encoder.set_bytes(13, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
-        if let Some(stacks) = buffers.get(13) {
-            encoder.set_buffer(14, Some(stacks), 0);
+        encoder.set_bytes(11, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+        if let Some(stacks) = buffers.get(11) {
+            encoder.set_buffer(12, Some(stacks), 0);
         }
+        self.bind_slabs(encoder);
         encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, 1, 1), MTLSize::new(GROUP_WIDTH, 1, 1));
         encoder.end_encoding();
         self.encoded = true;
@@ -2220,10 +2248,8 @@ impl Runner<'_> {
             };
             let tapes = &self.tapes;
             let buffers = [
-                (&tapes.nodes.buffer.clone(), 0),
-                (&tapes.children.buffer.clone(), 0),
+                (&tapes.docs.buffer.clone(), 0),
                 (&tapes.supertypes.buffer.clone(), 0),
-                (&tapes.files.buffer.clone(), 0),
                 (&passes, 0),
                 (&words, 0),
                 (&items_buffer, 0),
@@ -2245,8 +2271,9 @@ impl Runner<'_> {
                 for (index, (buffer, offset)) in buffers.iter().enumerate() {
                     encoder.set_buffer(index as u64, Some(buffer), *offset);
                 }
-                encoder.set_bytes(11, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
-                encoder.set_buffer(12, Some(&stacks.buffer), 0);
+                encoder.set_bytes(9, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+                encoder.set_buffer(10, Some(&stacks.buffer), 0);
+                self.bind_slabs(encoder);
                 let width = state.thread_execution_width().max(1);
                 encoder.checked_dispatch_threads(&self.command, MTLSize::new(threads as u64, 1, 1), MTLSize::new(width.min(threads as u64), 1, 1));
                 encoder.end_encoding();
@@ -2277,14 +2304,11 @@ impl Runner<'_> {
         for (tier, passes, count, threads) in tiers {
         let shape = Shape { item_count: threads as u32, target_count: count as u32, steps, ..self.shape() };
         let tapes = &self.tapes;
-        let (nodes, children, supertypes, files) =
-            (tapes.nodes.buffer.clone(), tapes.children.buffer.clone(), tapes.supertypes.buffer.clone(), tapes.files.buffer.clone());
+        let (docs, head) = (tapes.docs.buffer.clone(), tapes.supertypes.buffer.clone());
         let (scratch, flags, counts) = (self.scratch.buffer.clone(), self.flags.buffer.clone(), self.counts.buffer.clone());
         let buffers = [
-            (&nodes, 0),
-            (&children, 0),
-            (&supertypes, 0),
-            (&files, 0),
+            (&docs, 0),
+            (&head, 0),
             (&passes, 0),
             (&words, 0),
             (&items, 0),

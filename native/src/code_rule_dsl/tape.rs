@@ -1559,6 +1559,10 @@ pub(super) struct TapeDoc {
     guests: Guests,
     /// A guest's link to the file it is embedded in.
     host: Option<Arc<HostLink>>,
+    /// The image this document was restored from, and its stored bytes' SHA-256 once asked
+    /// (`residency::slabs::admit_docs`, decision 0032): what the device reads in place.
+    image: Arc<TapeImage>,
+    digest: Arc<std::sync::OnceLock<[u8; 32]>>,
 }
 
 #[derive(Clone)]
@@ -1916,6 +1920,8 @@ impl TapeDoc {
             texts: Arc::default(),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
+            image: Arc::new(image.clone()),
+            digest: Arc::default(),
         })
     }
 
@@ -2031,6 +2037,20 @@ impl TapeDoc {
 
     pub(super) fn transducer_len(&self) -> usize {
         self.data.len()
+    }
+
+    /// The SHA-256 of this document's image as stored (the store's key for it), computed once.
+    pub(super) fn tape_digest(&self) -> Result<[u8; 32], String> {
+        if let Some(digest) = self.digest.get() {
+            return Ok(*digest);
+        }
+        let digest = <[u8; 32]>::from(Sha256::digest(self.image.to_bytes()?));
+        Ok(*self.digest.get_or_init(|| digest))
+    }
+
+    /// This document's image as stored, its source and its grammar: what residency admits.
+    pub(super) fn resident_parts(&self) -> Result<(Vec<u8>, &str, &Arc<Grammar>), String> {
+        Ok((self.image.to_bytes()?, self.source.as_str(), &self.grammar))
     }
 
     pub(super) fn transducer_kind(&self, node: u32) -> u16 {
@@ -2220,6 +2240,7 @@ impl TapeDoc {
                 .sum::<usize>()
             + (self.kind_overrides.capacity() + self.supertypes.capacity())
                 * std::mem::size_of::<(u32, u16)>()
+            + self.image.estimated_bytes()
     }
 }
 

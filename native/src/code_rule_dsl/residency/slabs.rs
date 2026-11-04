@@ -296,60 +296,103 @@ pub(in crate::code_rule_dsl) fn admit(
     digests: &[[u8; 32]],
     grammar: &dyn Fn(i64) -> Result<Arc<Grammar>, String>,
 ) -> Result<Vec<Arc<Resident>>, Error> {
-    let (lock, _) = &*STATE;
-    let missing = {
-        let mut state = lock.lock().map_err(|_| Error::BackendFailure)?;
-        state.clock += 1;
-        let clock = state.clock;
-        let mut missing = Vec::new();
-        for digest in digests {
-            match state.documents.get(digest).map(|document| document.slab.id) {
-                Some(slab) => {
-                    if let Some(entry) = state.slabs.iter_mut().find(|entry| entry.slab.id == slab) {
-                        entry.last_use = clock;
-                    }
-                }
-                None if !missing.contains(digest) => missing.push(*digest),
-                None => {}
-            }
-        }
-        crate::code_rule_dsl::prof::count("residency.hits", digests.len() - missing.len());
-        missing
-    };
+    let missing = misses(digests)?;
     if !missing.is_empty() {
-        crate::code_rule_dsl::prof::count("residency.misses", missing.len());
         let frames = crate::code_rule_dsl::prof::time("residency.read", || store.resident_frames(&missing)).map_err(invalid)?;
-        let _admit = crate::code_rule_dsl::prof::Stage::start("residency.admit");
-        let mut state = lock.lock().map_err(|_| Error::BackendFailure)?;
-        // The slabs of documents this admission reads stay.
-        let mut keep = digests.iter().filter_map(|digest| state.documents.get(digest).map(|document| document.slab.id)).collect::<Vec<_>>();
-        for (digest, frames) in missing.iter().zip(frames) {
-            let frames = frames.ok_or_else(|| invalid("a tape the store does not hold"))?;
-            let grammar = grammar(frames.grammar_id).map_err(invalid)?;
-            let plan = plan(&frames)?;
-            let (at, offset) = state.room(plan.bytes(), &keep)?;
-            let document = place(&state.slabs[at].slab, offset, digest, &frames, &plan, &grammar)?;
-            let clock = state.clock;
-            let entry = &mut state.slabs[at];
-            entry.used = offset + plan.bytes();
-            entry.last_use = clock;
-            keep.push(entry.slab.id);
-            for (pool, bytes) in state.pools.iter_mut().zip(document.bytes) {
-                *pool += bytes;
+        let mut planned = Vec::with_capacity(missing.len());
+        for (digest, frames) in missing.iter().zip(&frames) {
+            let frames = frames.as_ref().ok_or_else(|| invalid("a tape the store does not hold"))?;
+            planned.push((*digest, plan(frames)?, grammar(frames.grammar_id).map_err(invalid)?, frames));
+        }
+        insert(digests, planned.iter().map(|(digest, plan, grammar, frames)| (*digest, plan, &**grammar, Parts::Frames(frames))).collect())?;
+    }
+    resident(digests)
+}
+
+/// The documents of in-memory tapes, resident, in order: hits from the residency, misses copied
+/// from each document's image and source (a batch whose tapes were restored before it ran).
+pub(in crate::code_rule_dsl) fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Arc<Resident>>, Error> {
+    let digests = docs.iter().map(|doc| doc.tape_digest().map_err(invalid)).collect::<Result<Vec<_>, _>>()?;
+    let missing = misses(&digests)?;
+    if !missing.is_empty() {
+        let mut owned = Vec::with_capacity(missing.len());
+        for digest in &missing {
+            let doc = &docs[digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests")];
+            let (image, source, grammar) = doc.resident_parts().map_err(invalid)?;
+            if image.len() < resident::HEADER_LEN {
+                return Err(invalid("a tape image shorter than its header"));
             }
-            state.documents.insert(*digest, Arc::new(document));
+            let (nodes, codes) = resident::header_counts(&image[..resident::HEADER_LEN]).map_err(invalid)?;
+            let lines = 1 + source.bytes().filter(|&byte| byte == b'\n').count();
+            let plan = Plan { tape: image.len(), source: source.len(), nodes, codes, lines };
+            owned.push((*digest, plan, Arc::clone(grammar), image, source));
+        }
+        insert(&digests, owned.iter().map(|(digest, plan, grammar, image, source)| (*digest, plan, &**grammar, Parts::Bytes(image, source.as_bytes()))).collect())?;
+    }
+    resident(&digests)
+}
+
+/// The digests the residency does not hold (each once); the hits' slabs are marked used.
+fn misses(digests: &[[u8; 32]]) -> Result<Vec<[u8; 32]>, Error> {
+    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    state.clock += 1;
+    let clock = state.clock;
+    let mut missing = Vec::new();
+    for digest in digests {
+        match state.documents.get(digest).map(|document| document.slab.id) {
+            Some(slab) => {
+                if let Some(entry) = state.slabs.iter_mut().find(|entry| entry.slab.id == slab) {
+                    entry.last_use = clock;
+                }
+            }
+            None if !missing.contains(digest) => missing.push(*digest),
+            None => {}
         }
     }
-    let state = lock.lock().map_err(|_| Error::BackendFailure)?;
+    crate::code_rule_dsl::prof::count("residency.hits", digests.len() - missing.len());
+    crate::code_rule_dsl::prof::count("residency.misses", missing.len());
+    Ok(missing)
+}
+
+/// Places the misses' parts, keeping the slabs of every document `digests` reads.
+fn insert(digests: &[[u8; 32]], parts: Vec<([u8; 32], &Plan, &Grammar, Parts<'_>)>) -> Result<(), Error> {
+    let _admit = crate::code_rule_dsl::prof::Stage::start("residency.admit");
+    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let mut keep = digests.iter().filter_map(|digest| state.documents.get(digest).map(|document| document.slab.id)).collect::<Vec<_>>();
+    for (digest, plan, grammar, parts) in parts {
+        let (at, offset) = state.room(plan.bytes(), &keep)?;
+        let document = place(&state.slabs[at].slab, offset, &digest, parts, plan, grammar)?;
+        let clock = state.clock;
+        let entry = &mut state.slabs[at];
+        entry.used = offset + plan.bytes();
+        entry.last_use = clock;
+        keep.push(entry.slab.id);
+        for (pool, bytes) in state.pools.iter_mut().zip(document.bytes) {
+            *pool += bytes;
+        }
+        state.documents.insert(digest, Arc::new(document));
+    }
+    Ok(())
+}
+
+fn resident(digests: &[[u8; 32]]) -> Result<Vec<Arc<Resident>>, Error> {
+    let state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
     digests.iter().map(|digest| state.documents.get(digest).cloned().ok_or(Error::BackendCapacity)).collect()
 }
 
 /// Writes a document's parts into `slab` at `offset` (`plan.bytes()` of room), checked.
+/// Where a document's bytes come from: a store's frames, decompressed into the slab, or an image
+/// and source already in memory, copied.
+enum Parts<'a> {
+    Frames(&'a crate::content_store::ResidentFrames),
+    Bytes(&'a [u8], &'a [u8]),
+}
+
 fn place(
     slab: &Arc<Slab>,
     offset: usize,
     digest: &[u8; 32],
-    frames: &crate::content_store::ResidentFrames,
+    parts: Parts<'_>,
     plan: &Plan,
     grammar: &Grammar,
 ) -> Result<Resident, Error> {
@@ -361,22 +404,38 @@ fn place(
     let parent_at = source_at + aligned(plan.source);
     let codes_at = parent_at + aligned(4 * plan.nodes);
     let lines_at = codes_at + aligned(24 * plan.codes);
-    // Decompressed straight into the slab, to the frames' raw lengths exactly.
     let tape = region(tape_at, plan.tape);
-    if zstd::bulk::decompress_to_buffer(&frames.tape_frame, tape).map_err(|error| invalid(format!("tape frame: {error}")))? != plan.tape {
-        return Err(invalid("tape frame length"));
-    }
     let source = region(source_at, plan.source);
-    if zstd::bulk::decompress_to_buffer(&frames.source_frame, source).map_err(|error| invalid(format!("source frame: {error}")))? != plan.source {
-        return Err(invalid("source frame length"));
+    match parts {
+        // Decompressed straight into the slab, to the frames' raw lengths exactly.
+        Parts::Frames(frames) => {
+            if zstd::bulk::decompress_to_buffer(&frames.tape_frame, tape).map_err(|error| invalid(format!("tape frame: {error}")))? != plan.tape {
+                return Err(invalid("tape frame length"));
+            }
+            if zstd::bulk::decompress_to_buffer(&frames.source_frame, source).map_err(|error| invalid(format!("source frame: {error}")))? != plan.source {
+                return Err(invalid("source frame length"));
+            }
+            if <[u8; 32]>::from(Sha256::digest(&*source)) != frames.source_sha256 {
+                return Err(invalid("a resident source's digest"));
+            }
+        }
+        Parts::Bytes(image, text) => {
+            tape.copy_from_slice(image);
+            source.copy_from_slice(text);
+        }
     }
     let tape = &*tape;
     let source = &*source;
-    if <[u8; 32]>::from(Sha256::digest(tape)) != *digest || <[u8; 32]>::from(Sha256::digest(source)) != frames.source_sha256 {
-        return Err(invalid("a resident object's digest"));
+    if <[u8; 32]>::from(Sha256::digest(tape)) != *digest {
+        return Err(invalid("a resident tape's digest"));
     }
     let layout = resident::layout(tape).map_err(invalid)?;
-    if layout.source_len != source.len() || layout.nodes as usize != plan.nodes || layout.code_count != plan.codes || std::str::from_utf8(source).is_err() {
+    if layout.source_len != source.len()
+        || layout.nodes as usize != plan.nodes
+        || layout.code_count != plan.codes
+        || <[u8; 32]>::from(Sha256::digest(source)) != layout.source_digest
+        || std::str::from_utf8(source).is_err()
+    {
         return Err(invalid("a tape and its source disagree"));
     }
     // SAFETY: the parent region is `4 * nodes` bytes at a 16-byte offset in the mapping.

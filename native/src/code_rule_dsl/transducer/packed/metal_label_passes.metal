@@ -76,31 +76,41 @@ kernel void label_round(device uint* flags [[buffer(0)]],device uint* head [[buf
 // pass marks its start at the first emit; a targets pass marks every node an emitting path
 // captured. A walk that outgrows its frames, captures or steps, or reads an unsaved cursor, sets
 // bit 1 of flags[0], and the clause runs again with its passes on the interpreter.
-struct Node { uint parent,nextAny,nextNamed,childStart,childCount,descendantEnd,sourceStart,sourceEnd,kind,field,flags; };
-struct File { uint nodeStart,nodeCount,sourceStart,sourceLength,lineStart,lineCount,superStart,superCount; };
-struct Supertype { uint node,kind; };
+// A walk's document (decision 0032): its tape read in place from the slabs, by `metal_tape.metal`'s
+// accessors. Nodes are the batch's numbering throughout (labels, texts, records); a step reads
+// its node at `node - doc.nodeBase`. `head` is the label prefix: {label count, words}, then the
+// labels' bits.
+struct Tree { Slabs s; DocView d; };
+static DocView doc_of(device const DocView* docs,uint count,uint node){uint first=0u,last=count;while(last-first>1u){uint middle=(first+last)/2u;if(docs[middle].nodeBase<=node)first=middle;else last=middle;}return docs[first];}
+inline uint tree_local(thread const Tree& t,uint node){return node-t.d.nodeBase;}
+inline uint tree_global(thread const Tree& t,uint local){return local==TAPE_NONE?TAPE_NONE:local+t.d.nodeBase;}
+inline uint tree_flags(thread const Tree& t,uint node){return tape_flags(t.s,t.d,tree_local(t,node));}
+inline uint tree_next(thread const Tree& t,uint node,bool named){uint local=tree_local(t,node);return tree_global(t,named?tape_next_named(t.s,t.d,local):tape_next(t.s,t.d,local));}
+inline uint tree_first(thread const Tree& t,uint node){return tree_global(t,tape_first_child(t.s,t.d,tree_local(t,node)));}
+inline uint tree_end(thread const Tree& t,uint node){return node+tape_size(t.s,t.d,tree_local(t,node));}
+inline uint tree_parent(thread const Tree& t,uint node){return tree_global(t,tape_parent(t.s,t.d,tree_local(t,node)));}
 // A pass: its words, its scratch label, whether it marks captures, and its starts in `items`.
 struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,textStart,threadStart; };
 // A path's state, and for a move's frame (resume 1 children, 2 descendants, 3 following
-// siblings; 0 a forked path) where its candidates continue.
+// siblings; 0 a forked path) where its candidates continue: `next` the next candidate (a child or
+// sibling by link, a descendant by number up to `end`).
 // Eight cursors, as micro.rs's CURSORS.
 struct MicroFrame { uint pc,node,resume,named,next,end,cursors[8],capture0,capture1,captured; };
 // The loop tier's pool: 4096 threads of 64 frames, or (a run that outgrew them) 2048 of 128 in
 // the same stacks (metal_label_passes.rs's MICRO_POOL, MICRO_DEEP_POOL).
 constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=64u,MICRO_POOL=4096u,MICRO_DEEP_FRAMES=128u,MICRO_DEEP_POOL=2048u;
 
-static bool micro_class(device const Supertype* supertypes,device const File* files,uint fileCount,uint node,uint kind){
-  if(kind>=61440u){uint words=supertypes[0].kind;device const uint* bits=(device const uint*)(supertypes+1);return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;}
-  uint first=0u,last=fileCount;while(last-first>1u){uint middle=(first+last)/2u;if(files[middle].nodeStart<=node)first=middle;else last=middle;}
-  File file=files[first];uint low=file.superStart,high=low+file.superCount;
-  while(low<high){uint middle=low+(high-low)/2u;Supertype value=supertypes[middle];if(value.node<node||(value.node==node&&value.kind<kind))low=middle+1u;else high=middle;}
-  return low<file.superStart+file.superCount&&supertypes[low].node==node&&supertypes[low].kind==kind;
+static bool micro_class(thread const Tree& t,device const uint* head,uint node,uint kind){
+  if(kind>=61440u){uint words=head[1];device const uint* bits=head+2;return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;}
+  return tape_has_class(t.s,t.d,tree_local(t,node),kind);
 }
 
-static uint micro_next(device const Node* nodes,device const uint* children,thread MicroFrame& frame){
-  if(frame.resume==1u){Node parent=nodes[frame.end];while(frame.next<parent.childCount){uint child=children[parent.childStart+frame.next];frame.next++;if(frame.named==0u||(nodes[child].flags&1u))return child;}return MICRO_NONE;}
-  if(frame.resume==2u){while(frame.next<frame.end){uint node=frame.next;frame.next++;if(frame.named==0u||(nodes[node].flags&1u))return node;}return MICRO_NONE;}
-  if(frame.resume==3u){uint node=frame.next;if(node==MICRO_NONE)return MICRO_NONE;frame.next=frame.named?nodes[node].nextNamed:nodes[node].nextAny;return node;}
+// A move frame's next candidate (`MicroFrame`, `RootFrame`).
+template<typename Frame>
+static uint walk_next(thread const Tree& t,thread Frame& frame){
+  if(frame.resume==1u){while(frame.next!=MICRO_NONE){uint child=frame.next;frame.next=tree_next(t,child,false);if(frame.named==0u||(tree_flags(t,child)&1u))return child;}return MICRO_NONE;}
+  if(frame.resume==2u){while(frame.next<frame.end){uint node=frame.next;frame.next++;if(frame.named==0u||(tree_flags(t,node)&1u))return node;}return MICRO_NONE;}
+  if(frame.resume==3u){uint node=frame.next;if(node==MICRO_NONE)return MICRO_NONE;frame.next=tree_next(t,node,frame.named!=0u);return node;}
   return MICRO_NONE;
 }
 
@@ -108,21 +118,23 @@ static uint micro_next(device const Node* nodes,device const uint* children,thre
 // walk takes the smallest stack its static depth fits (`Micro::depth`; 06 S7: 128 frames for
 // every walk held ~850 MB a run).
 template<uint FRAMES,typename Stack>
-static void micro_from(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,MicroPass pass,device const uint* words,uint start,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack);
+static void micro_from(thread const Tree& t,device const uint* head,MicroPass pass,device const uint* words,uint start,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack);
 
 template<uint FRAMES,typename Stack>
-static void micro_walk(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,uint tid){
+static void micro_walk(device const DocView* docs,thread const Slabs& slabs,device const uint* head,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,uint tid){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   if(tid>=shape.itemCount)return;
   // A pass's threads are contiguous from its threadStart; its items are a range that passes of
   // one domain share.
   uint low=0u,high=shape.targetCount;while(high-low>1u){uint middle=(low+high)/2u;if(passes[middle].threadStart<=tid)low=middle;else high=middle;}
-  micro_from<FRAMES>(nodes,children,supertypes,files,passes[low],words,items[passes[low].itemStart+(tid-passes[low].threadStart)],scratch,flags,texts,counts,shape,stack);
+  uint start=items[passes[low].itemStart+(tid-passes[low].threadStart)];
+  Tree t={slabs,doc_of(docs,shape.fileCount,start)};
+  micro_from<FRAMES>(t,head,passes[low],words,start,scratch,flags,texts,counts,shape,stack);
 }
 
 // A pass's walk from `start`.
 template<uint FRAMES,typename Stack>
-static void micro_from(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,MicroPass pass,device const uint* words,uint start,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack){
+static void micro_from(thread const Tree& t,device const uint* head,MicroPass pass,device const uint* words,uint start,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack){
   device atomic_uint* bits=scratch+pass.target*shape.words;
   uint depth=0u,steps=0u,fired=0u;
   MicroFrame path={0u,start,0u,0u,0u,0u,{MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE},MICRO_NONE,MICRO_NONE,0u};
@@ -132,22 +144,22 @@ static void micro_from(device const Node* nodes,device const uint* children,devi
     while(alive){
       if(++steps>shape.steps)MICRO_FAIL
       uint word=words[pass.wordStart+path.pc],op=word&255u,mode=(word>>8u)&255u,arg=word>>16u;
-      bool named=mode==1u;Node node=nodes[path.node];
+      bool named=mode==1u;
       switch(op){
         case 0u:alive=false;break;
-        case 1u:alive=node.kind==arg;break;
-        case 2u:alive=node.field==arg;break;
-        case 3u:alive=(node.flags&mode)==mode&&(node.flags&arg)==0u;break;
-        case 10u:alive=micro_class(supertypes,files,shape.fileCount,path.node,arg);break;
+        case 1u:alive=tape_kind(t.s,t.d,tree_local(t,path.node))==arg;break;
+        case 2u:alive=tape_field(t.s,t.d,tree_local(t,path.node))==arg;break;
+        case 3u:{uint nodeFlags=tree_flags(t,path.node);alive=(nodeFlags&mode)==mode&&(nodeFlags&arg)==0u;}break;
+        case 10u:alive=micro_class(t,head,path.node,arg);break;
         case 4u:alive=((texts[(pass.textStart+arg)*shape.words+path.node/32u]>>(path.node%32u))&1u)!=0u;break;
-        case 17u:{uint next=named?node.nextNamed:node.nextAny;if(next==MICRO_NONE)alive=false;else path.node=next;}break;
-        case 18u:if(node.parent==MICRO_NONE)alive=false;else path.node=node.parent;break;
+        case 17u:{uint next=tree_next(t,path.node,named);if(next==MICRO_NONE)alive=false;else path.node=next;}break;
+        case 18u:{uint parent=tree_parent(t,path.node);if(parent==MICRO_NONE)alive=false;else path.node=parent;}break;
         case 16u:case 19u:case 20u:{
           MicroFrame frame=path;frame.pc=path.pc+1u;frame.named=named?1u:0u;
-          if(op==16u){frame.resume=1u;frame.next=0u;frame.end=path.node;}
-          else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=node.descendantEnd;}
-          else{frame.resume=3u;frame.next=named?node.nextNamed:node.nextAny;}
-          uint candidate=micro_next(nodes,children,frame);
+          if(op==16u){frame.resume=1u;frame.next=tree_first(t,path.node);frame.end=path.node;}
+          else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=tree_end(t,path.node);}
+          else{frame.resume=3u;frame.next=tree_next(t,path.node,named);}
+          uint candidate=walk_next(t,frame);
           if(candidate==MICRO_NONE){alive=false;break;}
           if(depth==FRAMES)MICRO_FAIL
           stack[depth++]=frame;path.node=candidate;
@@ -185,20 +197,20 @@ static void micro_from(device const Node* nodes,device const uint* children,devi
       if(stack[depth-1u].resume==0u){path=stack[--depth];break;}
       // The top frame advanced in thread memory (the stack may be in device memory).
       MicroFrame top=stack[depth-1u];
-      uint candidate=micro_next(nodes,children,top);
+      uint candidate=walk_next(t,top);
       if(candidate==MICRO_NONE){depth--;continue;}
       stack[depth-1u]=top;path=top;path.node=candidate;break;
     }
   }
   #undef MICRO_FAIL
 }
-kernel void label_micro_8(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device MicroFrame* stacks [[buffer(11)]],constant Shape& shape [[buffer(12)]],uint tid [[thread_position_in_grid]]){thread MicroFrame stack[8];micro_walk<8u>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,shape,stack,tid);}
-kernel void label_micro_32(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device MicroFrame* stacks [[buffer(11)]],constant Shape& shape [[buffer(12)]],uint tid [[thread_position_in_grid]]){thread MicroFrame stack[32];micro_walk<32u>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,shape,stack,tid);}
+kernel void label_micro_8(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){Slabs slabs={s0,s1,s2,s3};thread MicroFrame stack[8];micro_walk<8u>(docs,slabs,head,passes,words,items,scratch,flags,texts,counts,shape,stack,tid);}
+kernel void label_micro_32(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){Slabs slabs={s0,s1,s2,s3};thread MicroFrame stack[32];micro_walk<32u>(docs,slabs,head,passes,words,items,scratch,flags,texts,counts,shape,stack,tid);}
 // Loops whose depth follows the tree: MICRO_POOL threads stride over the items, each with
 // its stack in device memory (`stacks`), so no thread memory is reserved for 128 frames per
 // thread in flight.
-kernel void label_micro(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device MicroFrame* stacks [[buffer(11)]],constant Shape& shape [[buffer(12)]],uint tid [[thread_position_in_grid]]){for(uint item=tid;item<shape.itemCount;item+=MICRO_POOL)micro_walk<MICRO_FRAMES>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_FRAMES,item);}
-kernel void label_micro_deep(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device MicroFrame* stacks [[buffer(11)]],constant Shape& shape [[buffer(12)]],uint tid [[thread_position_in_grid]]){for(uint item=tid;item<shape.itemCount;item+=MICRO_DEEP_POOL)micro_walk<MICRO_DEEP_FRAMES>(nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_DEEP_FRAMES,item);}
+kernel void label_micro(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){Slabs slabs={s0,s1,s2,s3};for(uint item=tid;item<shape.itemCount;item+=MICRO_POOL)micro_walk<MICRO_FRAMES>(docs,slabs,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_FRAMES,item);}
+kernel void label_micro_deep(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){Slabs slabs={s0,s1,s2,s3};for(uint item=tid;item<shape.itemCount;item+=MICRO_DEEP_POOL)micro_walk<MICRO_DEEP_FRAMES>(docs,slabs,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_DEEP_FRAMES,item);}
 
 // A recursive group's rounds to its fixpoint in one dispatch (decision 0024 §3): a threadgroup
 // per file, whose labels are its own (a walk never leaves its tree). A round runs each level in
@@ -216,13 +228,14 @@ static uint group_mask(uint index,uint first,uint end){
 }
 
 template<uint FRAMES,typename Stack>
-static void label_group_run(Stack stack,device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,device const GroupLevel* levels,device const Op* ops,constant Shape& shape,uint file,uint lane,uint width,threadgroup atomic_uint* changed){
-  device atomic_uint* labels=(device atomic_uint*)(supertypes+1);
-  File own=files[file];
-  uint first=own.nodeStart,end=own.nodeStart+own.nodeCount;
+static void label_group_run(Stack stack,device const DocView* docs,thread const Slabs& slabs,device const uint* head,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,device const GroupLevel* levels,device const Op* ops,constant Shape& shape,uint file,uint lane,uint width,threadgroup atomic_uint* changed){
+  device atomic_uint* labels=(device atomic_uint*)(head+2);
+  DocView own=docs[file];
+  Tree t={slabs,own};
+  uint first=own.nodeBase,end=own.nodeBase+own.nodes;
   if(first>=end)return;
   uint firstWord=first/32u,endWord=(end+31u)/32u;
-  uint limit=own.nodeCount+2u;
+  uint limit=own.nodes+2u;
   bool settled=false;
   for(uint round=0u;round<limit;round++){
     if(lane==0u)atomic_store_explicit(changed,0u,memory_order_relaxed);
@@ -237,7 +250,7 @@ static void label_group_run(Stack stack,device const Node* nodes,device const ui
         uint from=low;high=pass.itemCount;
         while(low<high){uint middle=(low+high)/2u;if(items[pass.itemStart+middle]<end)low=middle+1u;else high=middle;}
         for(uint item=from+lane;item<low;item+=width){
-          micro_from<FRAMES>(nodes,children,supertypes,files,pass,words,items[pass.itemStart+item],scratch,flags,texts,counts,shape,stack);
+          micro_from<FRAMES>(t,head,pass,words,items[pass.itemStart+item],scratch,flags,texts,counts,shape,stack);
         }
       }
       threadgroup_barrier(mem_flags::mem_device);
@@ -273,8 +286,8 @@ static void label_group_run(Stack stack,device const Node* nodes,device const ui
   if(!settled&&lane==0u)atomic_fetch_or_explicit(&flags[3],1u,memory_order_relaxed);
 }
 
-kernel void label_group_8(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device const GroupLevel* levels [[buffer(11)]],device const Op* ops [[buffer(12)]],constant Shape& shape [[buffer(13)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]]){threadgroup atomic_uint changed;thread MicroFrame stack[8];label_group_run<8u>(stack,nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,&changed);}
-kernel void label_group_32(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const MicroPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint* items [[buffer(6)]],device atomic_uint* scratch [[buffer(7)]],device atomic_uint* flags [[buffer(8)]],device const uint* texts [[buffer(9)]],device atomic_uint* counts [[buffer(10)]],device const GroupLevel* levels [[buffer(11)]],device const Op* ops [[buffer(12)]],constant Shape& shape [[buffer(13)]],device MicroFrame* stacks [[buffer(14)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]]){threadgroup atomic_uint changed;label_group_run<32u>(stacks+(file*width+lane)*32u,nodes,children,supertypes,files,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,&changed);}
+kernel void label_group_8(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device const GroupLevel* levels [[buffer(9)]],device const Op* ops [[buffer(10)]],constant Shape& shape [[buffer(11)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]]){Slabs slabs={s0,s1,s2,s3};threadgroup atomic_uint changed;thread MicroFrame stack[8];label_group_run<8u>(stack,docs,slabs,head,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,&changed);}
+kernel void label_group_32(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device const GroupLevel* levels [[buffer(9)]],device const Op* ops [[buffer(10)]],constant Shape& shape [[buffer(11)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],device MicroFrame* stacks [[buffer(12)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]]){Slabs slabs={s0,s1,s2,s3};threadgroup atomic_uint changed;label_group_run<32u>(stacks+(file*width+lane)*32u,docs,slabs,head,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,&changed);}
 
 // A root program's walk as records (decision 0024 §3, `Micro::records`, the same walk): a
 // thread per (program, file, task, start) item, after the labels, reading them in place. Each
@@ -290,15 +303,8 @@ struct RootFrame { uint pc,node,resume,named,next,end,cursors[8],captured,caps[8
 // The 32-frame roots run as a pool of ROOT_POOL threads with device stacks (metal_label_passes.rs's ROOT_POOL).
 constant uint ROOT_CAPTURES=8u,ROOT_RECORD=20u,ROOT_POOL=4096u;
 
-static uint root_next(device const Node* nodes,device const uint* children,thread RootFrame& frame){
-  if(frame.resume==1u){Node parent=nodes[frame.end];while(frame.next<parent.childCount){uint child=children[parent.childStart+frame.next];frame.next++;if(frame.named==0u||(nodes[child].flags&1u))return child;}return MICRO_NONE;}
-  if(frame.resume==2u){while(frame.next<frame.end){uint node=frame.next;frame.next++;if(frame.named==0u||(nodes[node].flags&1u))return node;}return MICRO_NONE;}
-  if(frame.resume==3u){uint node=frame.next;if(node==MICRO_NONE)return MICRO_NONE;frame.next=frame.named?nodes[node].nextNamed:nodes[node].nextAny;return node;}
-  return MICRO_NONE;
-}
-
 template<uint FRAMES,typename Stack>
-static bool root_walk(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,RootPass pass,device const uint* words,uint start,device const uint* texts,constant Shape& shape,Stack stack,device uint* out,uint capacity,uint item,uint at,thread uint& emitted){
+static bool root_walk(thread const Tree& t,device const uint* head,RootPass pass,device const uint* words,uint start,device const uint* texts,constant Shape& shape,Stack stack,device uint* out,uint capacity,uint item,uint at,thread uint& emitted){
   uint depth=0u,steps=0u,fired=0u;
   RootFrame path;
   path.pc=0u;path.node=start;path.resume=0u;path.named=0u;path.next=0u;path.end=0u;path.captured=0u;
@@ -308,22 +314,22 @@ static bool root_walk(device const Node* nodes,device const uint* children,devic
     while(alive){
       if(++steps>shape.steps)return false;
       uint word=words[pass.wordStart+path.pc],op=word&255u,mode=(word>>8u)&255u,arg=word>>16u;
-      bool named=mode==1u;Node node=nodes[path.node];
+      bool named=mode==1u;
       switch(op){
         case 0u:alive=false;break;
-        case 1u:alive=node.kind==arg;break;
-        case 2u:alive=node.field==arg;break;
-        case 3u:alive=(node.flags&mode)==mode&&(node.flags&arg)==0u;break;
-        case 10u:alive=micro_class(supertypes,files,shape.fileCount,path.node,arg);break;
+        case 1u:alive=tape_kind(t.s,t.d,tree_local(t,path.node))==arg;break;
+        case 2u:alive=tape_field(t.s,t.d,tree_local(t,path.node))==arg;break;
+        case 3u:{uint nodeFlags=tree_flags(t,path.node);alive=(nodeFlags&mode)==mode&&(nodeFlags&arg)==0u;}break;
+        case 10u:alive=micro_class(t,head,path.node,arg);break;
         case 4u:alive=((texts[(pass.textStart+arg)*shape.words+path.node/32u]>>(path.node%32u))&1u)!=0u;break;
-        case 17u:{uint next=named?node.nextNamed:node.nextAny;if(next==MICRO_NONE)alive=false;else path.node=next;}break;
-        case 18u:if(node.parent==MICRO_NONE)alive=false;else path.node=node.parent;break;
+        case 17u:{uint next=tree_next(t,path.node,named);if(next==MICRO_NONE)alive=false;else path.node=next;}break;
+        case 18u:{uint parent=tree_parent(t,path.node);if(parent==MICRO_NONE)alive=false;else path.node=parent;}break;
         case 16u:case 19u:case 20u:{
           RootFrame frame=path;frame.pc=path.pc+1u;frame.named=named?1u:0u;
-          if(op==16u){frame.resume=1u;frame.next=0u;frame.end=path.node;}
-          else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=node.descendantEnd;}
-          else{frame.resume=3u;frame.next=named?node.nextNamed:node.nextAny;}
-          uint candidate=root_next(nodes,children,frame);
+          if(op==16u){frame.resume=1u;frame.next=tree_first(t,path.node);frame.end=path.node;}
+          else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=tree_end(t,path.node);}
+          else{frame.resume=3u;frame.next=tree_next(t,path.node,named);}
+          uint candidate=walk_next(t,frame);
           if(candidate==MICRO_NONE){alive=false;break;}
           if(depth==FRAMES)return false;
           stack[depth++]=frame;path.node=candidate;
@@ -355,7 +361,7 @@ static bool root_walk(device const Node* nodes,device const uint* children,devic
       if(depth==0u)return true;
       if(stack[depth-1u].resume==0u){path=stack[--depth];break;}
       RootFrame top=stack[depth-1u];
-      uint candidate=root_next(nodes,children,top);
+      uint candidate=walk_next(t,top);
       if(candidate==MICRO_NONE){depth--;continue;}
       stack[depth-1u]=top;path=top;path.node=candidate;break;
     }
@@ -363,17 +369,18 @@ static bool root_walk(device const Node* nodes,device const uint* children,devic
 }
 
 template<uint FRAMES,typename Stack>
-static void root_records_run(device const Node* nodes,device const uint* children,device const Supertype* supertypes,device const File* files,device const RootPass* passes,device const uint* words,device const uint4* items,device const uint* texts,device uint* records,device atomic_uint* cursor,device atomic_uint* failures,constant Shape& shape,uint tid,Stack stack){
+static void root_records_run(device const DocView* docs,thread const Slabs& slabs,device const uint* head,device const RootPass* passes,device const uint* words,device const uint4* items,device const uint* texts,device uint* records,device atomic_uint* cursor,device atomic_uint* failures,constant Shape& shape,uint tid,Stack stack){
   if(tid>=shape.itemCount)return;
   uint4 item=items[tid];RootPass pass=passes[item.x];
+  Tree t={slabs,doc_of(docs,shape.fileCount,item.w)};
   uint emitted=0u;
-  if(!root_walk<FRAMES>(nodes,children,supertypes,files,pass,words,item.w,texts,shape,stack,nullptr,0u,tid,0u,emitted)){atomic_fetch_or_explicit(&failures[item.x],1u,memory_order_relaxed);return;}
+  if(!root_walk<FRAMES>(t,head,pass,words,item.w,texts,shape,stack,nullptr,0u,tid,0u,emitted)){atomic_fetch_or_explicit(&failures[item.x],1u,memory_order_relaxed);return;}
   if(emitted==0u)return;
   uint at=atomic_fetch_add_explicit(&cursor[0],emitted,memory_order_relaxed);
   if(at+emitted>shape.targetCount){atomic_fetch_or_explicit(&cursor[1],1u,memory_order_relaxed);return;}
   uint again=0u;
-  root_walk<FRAMES>(nodes,children,supertypes,files,pass,words,item.w,texts,shape,stack,records,shape.targetCount,shape.round+tid,at,again);
+  root_walk<FRAMES>(t,head,pass,words,item.w,texts,shape,stack,records,shape.targetCount,shape.round+tid,at,again);
 }
 
-kernel void root_records_8(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const RootPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint4* items [[buffer(6)]],device const uint* texts [[buffer(7)]],device uint* records [[buffer(8)]],device atomic_uint* cursor [[buffer(9)]],device atomic_uint* failures [[buffer(10)]],constant Shape& shape [[buffer(11)]],uint tid [[thread_position_in_grid]]){thread RootFrame stack[8];root_records_run<8u>(nodes,children,supertypes,files,passes,words,items,texts,records,cursor,failures,shape,tid,stack);}
-kernel void root_records_32(device const Node* nodes [[buffer(0)]],device const uint* children [[buffer(1)]],device const Supertype* supertypes [[buffer(2)]],device const File* files [[buffer(3)]],device const RootPass* passes [[buffer(4)]],device const uint* words [[buffer(5)]],device const uint4* items [[buffer(6)]],device const uint* texts [[buffer(7)]],device uint* records [[buffer(8)]],device atomic_uint* cursor [[buffer(9)]],device atomic_uint* failures [[buffer(10)]],constant Shape& shape [[buffer(11)]],device RootFrame* stacks [[buffer(12)]],uint tid [[thread_position_in_grid]]){for(uint item=tid;item<shape.itemCount;item+=ROOT_POOL)root_records_run<32u>(nodes,children,supertypes,files,passes,words,items,texts,records,cursor,failures,shape,item,stacks+tid*32u);}
+kernel void root_records_8(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const RootPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint4* items [[buffer(4)]],device const uint* texts [[buffer(5)]],device uint* records [[buffer(6)]],device atomic_uint* cursor [[buffer(7)]],device atomic_uint* failures [[buffer(8)]],constant Shape& shape [[buffer(9)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){Slabs slabs={s0,s1,s2,s3};thread RootFrame stack[8];root_records_run<8u>(docs,slabs,head,passes,words,items,texts,records,cursor,failures,shape,tid,stack);}
+kernel void root_records_32(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const RootPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint4* items [[buffer(4)]],device const uint* texts [[buffer(5)]],device uint* records [[buffer(6)]],device atomic_uint* cursor [[buffer(7)]],device atomic_uint* failures [[buffer(8)]],constant Shape& shape [[buffer(9)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],device RootFrame* stacks [[buffer(10)]],uint tid [[thread_position_in_grid]]){Slabs slabs={s0,s1,s2,s3};for(uint item=tid;item<shape.itemCount;item+=ROOT_POOL)root_records_run<32u>(docs,slabs,head,passes,words,items,texts,records,cursor,failures,shape,item,stacks+tid*32u);}

@@ -88,11 +88,27 @@ The user chose the full §20 scope: the kernels on the wave's path read the v9np
    the JIT) bind the document table and the slabs instead of `nodes`, `children`, `source`,
    `lineStarts` and the supertype pairs. The Metal path then no longer calls `PackedBatch::new` for
    tapes. This lands in the steps that follow; the status is in the plan.
-5. **Not in this step:** the CPU executors still read `TapeDoc` (§20.5.3).
+   - **Landed (stage 4):** the label passes (micro walks, fused groups, root records) and the
+     generated pattern kernel bind `docs` at 0, the label prefix at 1, and the slabs at 27–30.
+     Node numbers stay the batch's; a walk finds its document by `nodeBase` and reads at the
+     local index. Children are followed by link, not by a children table; the pattern kernel's
+     child scans keep their last child (`Kids`), so a scan in order hops once a child. Grammar
+     classes come from the code table, derived classes from the prefix.
+   - The interpreter, the sweep and the JIT still read the packed batch until stage 5.
+5. **In-memory admission (`admit_docs`):** a batch whose tapes were restored before it ran (every
+   caller but the wave, and every test) is admitted from its documents: a `TapeDoc` keeps the
+   `TapeImage` it was restored from and its stored bytes' SHA-256 (computed once). The image is
+   serialized and copied into the slab, with the same checks as a stored frame, plus the source
+   against the header's digest. A document the residency holds is a hit either way.
+6. **Not in this step:** the CPU executors still read `TapeDoc` (§20.5.3).
 
 ## Consequences
 
 - Each document's form is made once per admission and shared by every batch and run, until the
   drop or its slab's retirement.
+- A `TapeDoc` holds its image as well (about 10 bytes a node beside its ~48-byte records), counted
+  in `navigation_bytes`.
+- Stage 4 checks: S2 158 of 158 clauses; `waves::` 111 of 111; real files 1,259 keys on all four
+  backends.
 - The device does more work per access: a code-table lookup, and sibling hops where `MetalNode`
   held links. The cost is to be measured on S2 and S7 when the kernels move.
