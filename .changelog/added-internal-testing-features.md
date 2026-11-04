@@ -1,0 +1,1 @@
+In [internal testing](docs/internal-testing.md), not ready for use: `rerail scan` without `--session`, a headless scan for CI; `rerail remote`, which sends this machine's sessions to an HTTPS endpoint you add; and `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1`, which turns the first-checkout scan back on.

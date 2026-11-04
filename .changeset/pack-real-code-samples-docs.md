@@ -9,5 +9,3 @@
 "@neralabs/rerail-pack-typescript": patch
 "@neralabs/rerail-pack-vue": patch
 ---
-
-README and licence notes: the ports are scored on labelled real-code samples instead of pinned corpora; no rule changes.

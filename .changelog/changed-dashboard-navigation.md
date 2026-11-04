@@ -1,0 +1,1 @@
+In the dashboard, a pack's page leads with its name and Remove pack, and its All switch is on only when every rule is. The Violations steered and Sessions with violations tiles open History filtered to them, a session's timeline filters by rule, and the Rerail wordmark opens Overview.

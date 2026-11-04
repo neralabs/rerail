@@ -6,7 +6,7 @@ Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-Rerail and its rule packs are public on npm, so installing Rerail, and adding a pack, needs no npm account. The daemon now answers only a request that carries its access capability, so another user of your machine, or a sandboxed process allowed localhost, gets nothing from it: open the dashboard from `rerail manage`, since an old bookmark no longer gets in. A coding agent's Rerail tools reach only the repository it works in, and a file named like one holding secrets reaches it by rule and place only. The dashboard says less, by rule. A daemon reachable from other machines now serves HTTPS with `--tls-cert` and `--tls-key`, or needs `--insecure-http` to stay on plain HTTP, so check that before updating a remote set-up. Block is still not in this release.
+0.1.1 closes the daemon to any request without its access capability, keeps a coding agent's Rerail tools to its own repository, and loads rules from a checkout's own folder and from third parties' packs. When you update, open the dashboard with `rerail manage`, since old bookmarks and links no longer get in, and have your own scripts and HTTP or MCP clients send the `x-rerail-access` header from `daemon.json`. A daemon reachable from other machines starts only with `--tls-cert` and `--tls-key`, or with `--insecure-http`. Rules Rerail did not publish (ones a coding agent writes, a worktree's own, and third parties' or folders' packs) run in Log until you approve them, though your existing library rules stay approved, and `rerail update rollback` is gone.
 
 ## 0.1.0 (2026-10-27)
 

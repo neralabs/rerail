@@ -1,1 +1,0 @@
-The daemon never sends its access capability to a recorded daemon pid that another OS user now runs. Its engine socket lives in a private per-user folder; if another user created that folder first, the daemon listens in a private folder beside its database instead of refusing to start.

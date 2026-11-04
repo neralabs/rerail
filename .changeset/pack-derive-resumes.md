@@ -12,5 +12,3 @@
 "@neralabs/rerail-pack-typescript": patch
 "@neralabs/rerail-pack-vue": patch
 ---
-
-README: the note that deriving pack test data is paused is gone, since derive runs again; no rule changes.
