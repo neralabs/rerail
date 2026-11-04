@@ -81,7 +81,7 @@ const LANGUAGES = {
   vue: "xml", html: "xml", xml: "xml",
   css: "css",
   sh: "bash", shell: "bash", bash: "bash", console: "bash",
-  json: "json",
+  json: "json", jsonc: "json",
   sql: "sql",
   diff: "diff", patch: "diff",
   yaml: "yaml", yml: "yaml",
@@ -164,26 +164,33 @@ function rewriteUrl(url, from) {
  */
 function codeBlock(text, language) {
   const grammar = LANGUAGES[language];
-  const html = grammar === undefined ? escapeHtml(text) : hljs.highlight(text, { language: grammar, ignoreIllegals: true }).value;
+  let html = grammar === undefined ? escapeHtml(text) : hljs.highlight(text, { language: grammar, ignoreIllegals: true }).value;
+  // highlight.js marks any word that names a shell builtin (`test`, `log`, `wait`, `dir`) even inside an argument or flag;
+  // in these command lines that colour misleads more than it helps.
+  if (grammar === "bash") html = html.replace(/<span class="hljs-built_in">([^<]*)<\/span>/gu, "$1");
   const name = grammar ?? (/^[\w-]+$/u.test(language) ? language : "");
   const label = name === "" ? "" : ` language-${name}`;
-  return `<div class="code-block"><button type="button" class="copy-button" aria-live="polite">Copy</button><pre><code class="hljs${label}">${html}</code></pre></div>\n`;
+  // The bar over the block names its language (or, set by render, its file) and carries the copy button, so the button
+  // never sits on the code.
+  const caption = /^[\w-]+$/u.test(language) ? language : "text";
+  return `<div class="code-block"><div class="code-bar"><span class="code-label">${escapeHtml(caption)}</span><button type="button" class="copy-button" aria-live="polite">Copy</button></div><pre><code class="hljs${label}">${html}</code></pre></div>\n`;
 }
 
-/** A rule-card value: its "quoted" strings, `<Tag>`s and `$VARIABLES` marked, the rest escaped. */
+/** A rule-card value: its "quoted" strings, `<Tag>`s and `$VARIABLES` marked, the rest breakable escaped text. */
 const ruleValue = (text) =>
   text
     .split(/("[^"]*"|<\/?[A-Za-z][\w.:-]*(?:\s[^<>]*?)?\/?>|\$[A-Z][A-Z0-9_]*)/)
     .map((part, index) => {
-      if (index % 2 === 0) return escapeHtml(part);
+      if (index % 2 === 0) return breakAt(escapeHtml(part));
       const kind = part.startsWith('"') ? "str" : part.startsWith("$") ? "var" : "tag";
-      return `<span class="rule-${kind}">${escapeHtml(part)}</span>`;
+      return `<span class="rule-${kind}">${breakAt(escapeHtml(part))}</span>`;
     })
     .join("");
 
 /**
  * A ```rule block as a rule card: each line is a keyword (`rule`, `files`, `forbid`, `say`, `allow`, `misses`) and its
- * value, an indented line continues the one above, and the `rule` line's trailing mode becomes a badge.
+ * value, an indented line continues the one above (a soft wrap, joined with a space), and the `rule` line's trailing
+ * mode becomes a badge.
  */
 function ruleCard(text) {
   const rows = [];
@@ -194,11 +201,11 @@ function ruleCard(text) {
     else rows.push({ key, values: [value] });
   }
   const html = rows.map(({ key, values }) => {
-    let value = values.map(ruleValue).join("<br>");
+    let value = values.map(ruleValue).join(" ");
     if (key === "rule") {
       const [, id = values[0], mode] = /^(.*?)\s+(\S+)$/.exec(values[0]) ?? [];
       value = RULE_MODES.has(mode) ? `<code class="rule-id">${escapeHtml(id)}</code><span class="rule-mode rule-mode-${mode}">${mode}</span>` : `<code class="rule-id">${escapeHtml(values[0])}</code>`;
-      value += values.slice(1).map((more) => `<br>${ruleValue(more)}`).join("");
+      value += values.slice(1).map((more) => ` ${ruleValue(more)}`).join("");
     }
     return `<div class="rule-row${key === "rule" ? " rule-head" : ""}"><span class="rule-key">${escapeHtml(key)}</span><span class="rule-value">${value}</span></div>`;
   });
@@ -250,26 +257,105 @@ function render(markdown, path) {
       },
     },
   });
-  // A paragraph that is only a file's path, right before a code block, becomes that block's caption.
-  const body = labelTableCells(
-    marked.parse(markdown).replace(/<p><code>([^<\s]+\.\w+)<\/code><\/p>\n<div class="code-block">/g, '<div class="code-block has-file"><div class="code-file">$1</div>'),
+  // A paragraph that is only a file's path, right before a code block, becomes that block's caption; a GitHub alert
+  // (`> [!WARNING]`) becomes a titled box; a fold's <summary> gets its inline Markdown (`code`, emphasis), which raw
+  // HTML blocks otherwise keep as written.
+  const body = breakCode(
+    labelTableCells(
+      marked
+        .parse(markdown)
+        .replace(/<p><code>([^<\s]+\.\w+)<\/code><\/p>\n<div class="code-block"><div class="code-bar"><span class="code-label">[^<]*<\/span>/g, (_, file) => `<div class="code-block"><div class="code-bar"><span class="code-label code-file">${breakAt(file)}</span>`)
+        .replace(/<blockquote>\n<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(?:<\/p>\s*<p>)?/gu, (_, kind) => {
+          const title = kind[0] + kind.slice(1).toLowerCase();
+          return `<blockquote class="alert alert-${kind.toLowerCase()}">\n<p class="alert-title">${title}</p>\n<p>`;
+        })
+        .replace(/<summary>([\s\S]*?)<\/summary>/gu, (_, summary) => `<summary>${marked.parseInline(summary)}</summary>`)
+        .replace(/<table>[\s\S]*?<\/table>/gu, (table) => `<div class="table-scroll">${table}</div>`),
+      5,
+    ),
   );
   return { title, body, mermaid, copyable, missing, sections };
 }
 
-/** Each table body cell labelled with its column's heading (`data-label`), which a phone shows above the cell. */
-function labelTableCells(html) {
-  return html.replace(/<table>([\s\S]*?)<\/table>/gu, (table, inner) => {
+/**
+ * Each body cell of a table of up to `maxColumns` columns labelled with its column's heading (`data-label`): a phone
+ * stacks such a table, each cell under its label. A wider table keeps its grid and scrolls.
+ */
+function labelTableCells(html, maxColumns) {
+  return html.replace(/<table\b[^>]*>([\s\S]*?)<\/table>/gu, (table, inner) => {
     const heads = [...(/<thead>([\s\S]*?)<\/thead>/u.exec(inner)?.[1] ?? "").matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gu)].map(([, cell]) =>
       escapeHtml(decodeHtml(cell.replace(/<[^>]+>/gu, "")).trim()),
     );
-    if (heads.length === 0) return table;
-    return table.replace(/<tr>([\s\S]*?)<\/tr>/gu, (row, cells) => {
-      let column = 0;
-      return `<tr>${cells.replace(/<td(?=[\s>])/gu, () => `<td data-label="${heads[column++] ?? ""}"`)}</tr>`;
-    });
+    const labelled =
+      heads.length === 0 || heads.length > maxColumns
+        ? table
+        : table.replace(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gu, (row, attributes, cells) => {
+            let column = 0;
+            return `<tr${attributes}>${cells.replace(/<td(?=[\s>])/gu, () => `<td data-label="${heads[column++] ?? ""}"`)}</tr>`;
+          });
+    // A short cell of a few words ("10 GiB", "537 (318)", "kebab-case") stays on one line.
+    return labelled.replace(/<(t[dh])([^>]*)>([^<]{1,12})<\/t[dh]>/gu, (cell, tag, attributes, text) =>
+      /[ -]/u.test(text) && !attributes.includes("class=") ? `<${tag}${attributes} class="short">${text}</${tag}>` : cell,
+    );
   });
 }
+
+/**
+ * Escaped text that may break after `/`, `\`, `.`, `=`, `,` or `|` (`<wbr>`) where a name continues on both sides: not
+ * after a leading `.` or `/`, not inside `1.0`, and not before a short extension (`README.md`). `:` joins one name
+ * (`fixtures:pull`), and so does `_` in a short one; a snake name of 21 characters or more (a test name, an operation,
+ * a long constant) may break at its underscores. A long path then wraps at its separators before mid-name, and a
+ * table column holding one narrows there without any cell breaking a word.
+ */
+const breakAt = (escaped) =>
+  escaped
+    .replace(/(?<=[\p{L}\p{N})\]}*;])([/\\=,|])(?=[\p{L}*&{([])/gu, "$1<wbr>")
+    .replace(/(?<=[\p{L}\p{N})\]}*;])\.(?=\p{L}[\p{L}\p{N}_-]{4})/gu, ".<wbr>")
+    .replace(/[\p{L}\p{N}_]{21,}/gu, (name) => name.replace(/_(?=\p{L})/gu, "_<wbr>"));
+
+/** Inline code up to this long is one unbroken piece: a flag, a name or a short command never splits. */
+const WHOLE_CODE = 14;
+/** Up to this long it is one piece where the column is wider than a phone's; on a phone it moves to its own line whole. */
+const WIDE_CODE = 24;
+/** A piece of longer code up to this long never splits; a longer one (a very long name) splits only if wider than the line. */
+const PIECE = 30;
+
+/**
+ * Every inline `<code>` of plain text, in pieces the line may break between but never inside: a browser would otherwise
+ * also break after every `-` (`--steer-|strategy`) or `>`. Short code is one piece (`whole`, `wide`; on a phone a `wide`
+ * one moves to the next line together with the punctuation around it, `.code-unit`). Longer code breaks at its spaces
+ * and at `breakAt`'s separators, each piece a nowrap span (`.seg`, `.seg.long` for one wider than a phone's line). Runs
+ * of spaces keep their width as non-breaking spaces before the last, and spaced single letters (`R E R A I L`) stay
+ * together. Highlighted blocks carry a class and are left alone.
+ */
+const breakCode = (html) =>
+  html.replace(/(\(?)<code>([^<]*)<\/code>([.,;:!?)]*)/gu, (_, open, code, close) => {
+    const length = decodeHtml(code).length;
+    if (length <= WHOLE_CODE) return `${open}<code class="whole">${code}</code>${close}`;
+    if (length <= WIDE_CODE) return `<span class="code-unit">${open}<code class="whole wide">${code}</code>${close}</span>`;
+    const spaced = code
+      .replace(/ {2,}/gu, (run) => `${"&nbsp;".repeat(run.length - 1)} `)
+      .replace(/(?<=(?:^| )\S) (?=\S(?: |$))/gu, "&nbsp;");
+    const words = spaced.split(/( )/u).map((word) =>
+      word === " "
+        ? word
+        : breakAt(word)
+            .split("<wbr>")
+            .map((piece) => `<span class="seg${decodeHtml(piece).length > PIECE ? " long" : ""}">${piece}</span>`)
+            .join("<wbr>"),
+    );
+    return `${open}<code>${words.join("")}</code>${close}`;
+  });
+
+/** The inline-code pieces of `breakCode`, for the docs pages and the DSL reference alike. */
+const CODE_PIECES_CSS = `code { white-space: normal; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+code.whole, code .seg { white-space: pre; }
+@media (max-width: 640px) {
+  code .seg.long { display: inline-block; max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: break-word; }
+  .code-unit { display: inline-block; max-width: 100%; margin: 0; }
+  .code-unit code.whole.wide { white-space: pre-wrap; overflow-wrap: break-word; }
+}
+`;
 
 /**
  * The site's page-local tokens: what Nera's sheet cannot express, each a token or a mix of them, as ui/css/base.css
@@ -283,7 +369,7 @@ const LIGHT_TOKENS = `
   --code-surface: color-mix(in srgb, var(--border) 40%, var(--card));
   --log-fg: var(--muted-foreground);
   --log-bg: var(--subtle);
-  --steer-fg: var(--warning-foreground);
+  --steer-fg: color-mix(in srgb, var(--warning-foreground) 82%, var(--foreground));
   --steer-bg: color-mix(in srgb, var(--warning) 10%, transparent);
   --block-fg: var(--danger-foreground);
   --block-bg: var(--danger-subtle);
@@ -291,13 +377,13 @@ const LIGHT_TOKENS = `
   --card-shadow: 0 6px 16px -4px color-mix(in srgb, var(--brand) 30%, transparent);
   --bar-shadow: 0 8px 20px -12px color-mix(in srgb, var(--foreground) 22%, transparent);
   --syn-keyword: var(--brand-foreground);
-  --syn-string: var(--success-foreground);
-  --syn-number: var(--warning-foreground);
+  --syn-string: color-mix(in srgb, var(--success-foreground) 72%, var(--foreground));
+  --syn-number: color-mix(in srgb, var(--warning-foreground) 72%, var(--foreground));
   --syn-literal: var(--danger-foreground);
-  --syn-attr: var(--info-foreground);
+  --syn-attr: color-mix(in srgb, var(--info-foreground) 72%, var(--foreground));
   --syn-title: var(--header);
   --syn-comment: var(--muted-foreground);
-  --syn-punctuation: var(--subtle-foreground);
+  --syn-punctuation: var(--muted-foreground);
 `;
 const DARK_TOKENS = `
     --header: var(--foreground);
@@ -326,18 +412,22 @@ const HEADER_CSS = `
 .site-header .brand::before { content: ""; width: 0.8rem; height: 0.8rem; border-radius: var(--radius-sm); background: var(--brand); box-shadow: 0.25rem 0.25rem 0 var(--brand-subtle-hover); }
 .site-header nav a:not(.brand) { color: var(--muted-foreground); font-size: 0.92rem; font-weight: 500; }
 .site-header nav a:not(.brand):hover, .site-header nav a[aria-current="page"] { color: var(--brand-foreground); text-decoration: none; }
+.site-header nav .site-search li a { color: var(--foreground); }
 .site-search { position: relative; }
 .site-search input {
   width: 13rem; padding: 0.3rem 0.7rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card);
   color: var(--foreground); font: inherit; font-size: 0.88rem;
 }
 .site-search input:focus { outline: 2px solid var(--brand-border); outline-offset: 1px; }
+.site-search input::placeholder { color: var(--muted-foreground); opacity: 1; }
 .site-search ol {
   position: absolute; right: 0; top: calc(100% + 0.4rem); z-index: 20; width: min(28rem, 92vw); max-height: 70vh; overflow-y: auto;
   list-style: none; margin: 0; padding: 0.35rem; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); box-shadow: var(--card-shadow);
 }
 .site-search li a { display: block; padding: 0.45rem 0.65rem; border-radius: var(--radius-lg); color: var(--foreground); font-size: 0.9rem; line-height: 1.4; }
 .site-search li a:hover, .site-search li[aria-selected] a { background: var(--brand-subtle); text-decoration: none; }
+/* While the pointer is over the list, only the result under it is highlighted. */
+.site-search ol:hover li[aria-selected] a:not(:hover) { background: none; }
 .site-search li small { display: block; color: var(--muted-foreground); font-size: 0.78rem; }
 .site-search li.none { padding: 0.45rem 0.65rem; color: var(--muted-foreground); font-size: 0.9rem; }
 .site-theme { display: inline-flex; padding: 0.35rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: none; color: var(--muted-foreground); cursor: pointer; }
@@ -350,11 +440,20 @@ const HEADER_CSS = `
 :root[data-theme="dark"] .site-theme .ico-sun { display: block; }
 :root[data-theme="dark"] .site-theme .ico-moon { display: none; }
 .site-theme:hover { color: var(--brand-foreground); border-color: var(--brand-border); }
-@media (max-width: 640px) { .site-search { flex-basis: 100%; } .site-search input { width: 100%; } }
+/* Where the bar wraps, search takes its own full row and its results open under it, and the bar scrolls away with the
+   page instead of covering a third of a phone screen and every heading a link jumps to. */
+@media (max-width: 900px) {
+  .site-header { position: relative; }
+  .site-search { flex-basis: 100%; }
+  .site-search input { width: 100%; }
+  .site-search ol { left: 0; right: auto; width: 100%; }
+}
 `;
 
 /** Where a reader's theme is kept: the key the DSL reference's own script reads, so that page agrees with the rest. */
 const THEME_KEY = "rerail-dsl-ref-theme";
+/** Where the theme toggle keeps a diagram page's place and open folds across the reload it makes. */
+const RESTORE_KEY = "rerail-docs-restore";
 
 /** Applies the reader's theme in <head>, before the page paints. Without a choice, the colour scheme decides. */
 const THEME_SCRIPT = `<script>
@@ -379,7 +478,10 @@ const THEME_ICONS = [
   ["ico-moon", "M236.37,139.4a12,12,0,0,0-12-3A84.07,84.07,0,0,1,119.6,31.59a12,12,0,0,0-15-15A108.86,108.86,0,0,0,49.69,55.07,108,108,0,0,0,136,228a107.09,107.09,0,0,0,64.93-21.69,108.86,108.86,0,0,0,38.44-54.94A12,12,0,0,0,236.37,139.4Zm-49.88,47.74A84,84,0,0,1,68.86,69.51,84.93,84.93,0,0,1,92.27,48.29Q92,52.13,92,56A108.12,108.12,0,0,0,200,164q3.87,0,7.71-.27A84.79,84.79,0,0,1,186.49,187.14Z"],
 ].map(([name, path]) => `<svg class="${name}" viewBox="0 0 256 256" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="${path}"/></svg>`).join("");
 
-/** The top bar's toggle. A page with a diagram reloads, since mermaid takes its colours from the tokens once. */
+/**
+ * The top bar's toggle. A page with a diagram reloads, since mermaid takes its colours from the tokens once; the reload
+ * keeps the reader's place and open folds (`RESTORE_KEY`, read back by `MERMAID_SCRIPT`).
+ */
 const THEME_TOGGLE_SCRIPT = `<script>
 (() => {
   const root = document.documentElement;
@@ -390,7 +492,11 @@ const THEME_TOGGLE_SCRIPT = `<script>
     root.style.colorScheme = theme;
     try {
       localStorage.setItem("${THEME_KEY}", theme);
-      if (document.querySelector("pre.mermaid")) location.reload();
+      if (document.querySelector("pre.mermaid")) {
+        const open = [...document.querySelectorAll("details")].map((fold) => fold.open);
+        sessionStorage.setItem("${RESTORE_KEY}", JSON.stringify({ path: location.pathname, open, y: scrollY }));
+        location.reload();
+      }
     } catch { /* private mode: this page only */ }
   });
 })();
@@ -407,6 +513,11 @@ const OUTLINE_SCRIPT = `<script>
     frame = 0;
     let index = -1;
     headings.forEach((h, i) => { if (h && h.getBoundingClientRect().top < 140) index = i; });
+    // At the end of the page the last sections cannot scroll up to the line; the last one is the one being read, unless
+    // a link just brought another heading to the top.
+    if (innerHeight + scrollY >= document.documentElement.scrollHeight - 2) index = headings.length - 1;
+    const target = headings.indexOf(document.getElementById(decodeURIComponent(location.hash.slice(1))));
+    if (target !== -1 && Math.abs(headings[target].getBoundingClientRect().top - 80) < 24) index = target;
     links.forEach((a, i) => (i === index ? a.setAttribute("aria-current", "true") : a.removeAttribute("aria-current")));
   };
   addEventListener("scroll", () => { frame ||= requestAnimationFrame(mark); }, { passive: true });
@@ -440,6 +551,8 @@ main {
 main > * { grid-column: 2; min-width: 0; }
 
 h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 0; scroll-margin-top: 5rem; letter-spacing: -0.012em; color: var(--header); }
+/* A link to a row, term or item (not a heading) lands below the bar too, and marks what it pointed at. */
+:is(dt, dd, li, tr, p, span, div):target { scroll-margin-top: 5rem; background: var(--brand-subtle); border-radius: var(--radius-md); }
 h1 { font-size: 2.3rem; font-weight: 750; letter-spacing: -0.025em; }
 h1 + p { font-size: 1.12rem; color: var(--muted-foreground); }
 h2 { font-size: 1.55rem; font-weight: 700; }
@@ -447,6 +560,8 @@ h3 { font-size: 1.2rem; font-weight: 650; }
 h4, h5, h6 { font-size: 1rem; font-weight: 650; }
 h1 .anchor, h2 .anchor, h3 .anchor, h4 .anchor, h5 .anchor, h6 .anchor { float: left; margin-left: -1.1em; width: 1.1em; color: var(--subtle-foreground); font-weight: 400; visibility: hidden; }
 h1:hover .anchor, h2:hover .anchor, h3:hover .anchor, h4:hover .anchor, h5:hover .anchor, h6:hover .anchor { visibility: visible; text-decoration: none; }
+/* Below this width the column's margin is narrower than the "#" that hangs in it. */
+@media (max-width: 900px) { h1 .anchor, h2 .anchor, h3 .anchor, h4 .anchor, h5 .anchor, h6 .anchor { display: none; } }
 :where(p, ul, ol, table, blockquote, .code-block, .rule-card, details, pre, figure) { margin: 0; }
 main > * + *, blockquote > * + *, li > * + * { margin-top: var(--flow); }
 main > h2 { margin-top: var(--section); }
@@ -454,36 +569,67 @@ main > h3, main > h4 { margin-top: var(--subsection); }
 main > :is(h1, h2, h3, h4, h5, h6) + * { margin-top: var(--under-heading); }
 main > h1 + p { margin-top: var(--flow); }
 main > h2 + h3 { margin-top: var(--flow); }
+ul, ol { padding-left: 1.4em; }
 li + li, li > ul, li > ol { margin-top: 0.35rem; }
+/* A GitHub task list: the checkbox stands in for the bullet. */
+li:has(> input[type="checkbox"]:first-child) { list-style: none; }
+li > input[type="checkbox"]:first-child { margin: 0 0.45em 0 -1.35em; vertical-align: -0.1em; }
 strong { font-weight: 650; }
-/* Prose is justified and hyphenated; a section's first paragraph is its one-sentence summary, set as a lede. */
-main > p, main > ul > li, main > ol > li, main blockquote p, main > details > p, main > details > ul > li, main > details > ol > li { text-align: justify; hyphens: auto; -webkit-hyphens: auto; }
+/* Prose is justified and hyphenated where the column is wide enough for even spacing; narrower, it is set ragged. A
+   paragraph or item holding code is set ragged too: code never breaks inside a name, so justifying around it leaves
+   wide gaps. A section's first paragraph is its one-sentence summary, set as a lede. */
+@media (min-width: 1024px) {
+  :is(main > p, main > ul > li, main > ol > li, main blockquote p, main > details > p, main > details > ul > li, main > details > ol > li):not(:has(code)) { text-align: justify; hyphens: auto; -webkit-hyphens: auto; hyphenate-limit-chars: 7 3 3; }
+}
 main > h2 + p { font-size: 1.06rem; color: var(--muted-foreground); }
 
 code, pre, .rule-key, .rule-id, .rule-tag, .rule-var { ${MONO} }
-code { font-size: 0.86em; background: var(--subtle); color: var(--foreground); padding: 0.12em 0.4em; border-radius: var(--radius-md); overflow-wrap: anywhere; }
+/* Inline code is never hyphenated and keeps its own spacing. It breaks only between the pieces breakCode marks: a
+   short one never, a long one after a space or a separator, and inside a piece only when it alone is wider than the line. */
+code { font-size: 0.86em; background: var(--subtle); color: var(--foreground); padding: 0.12em 0.4em; border-radius: var(--radius-md); overflow-wrap: break-word; hyphens: manual; -webkit-hyphens: manual; }
+${CODE_PIECES_CSS}
 a code { color: inherit; }
-/* Long lines wrap rather than scroll: a wrapped line keeps the text exact for copying, and nothing hides off the edge. */
-pre { font-size: 0.86em; line-height: 1.6; background: var(--code-surface); color: var(--foreground); padding: var(--pad-y) var(--pad-x); border: 1px solid var(--border); border-radius: var(--radius-xl); white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: auto; tab-size: 4; }
-pre code { font-size: 1em; background: none; padding: 0; border-radius: 0; overflow-wrap: anywhere; }
-pre.mermaid { background: var(--card); text-align: center; }
+/* A code block keeps its lines as written (indentation, aligned comments, diagrams) and scrolls inside itself when a
+   line is wider than the column; the page never scrolls sideways. A shade at an edge with more code past it shows
+   that the block scrolls (two covers that travel with the text hide the shades at the ends). */
+pre {
+  font-size: 0.86em; line-height: 1.6; color: var(--foreground); padding: var(--pad-y) var(--pad-x); border: 1px solid var(--border);
+  border-radius: var(--radius-xl); white-space: pre; overflow-x: auto; tab-size: 4; text-align: left; hyphens: manual; -webkit-hyphens: manual;
+  background:
+    linear-gradient(to right, var(--code-surface) 40%, transparent) left / 2.5rem 100% no-repeat local,
+    linear-gradient(to left, var(--code-surface) 40%, transparent) right / 2.5rem 100% no-repeat local,
+    linear-gradient(to right, color-mix(in srgb, var(--foreground) 16%, transparent), transparent) left / 1rem 100% no-repeat scroll,
+    linear-gradient(to left, color-mix(in srgb, var(--foreground) 16%, transparent), transparent) right / 1rem 100% no-repeat scroll,
+    var(--code-surface);
+}
+pre code { font-size: 1em; background: none; padding: 0; border-radius: 0; white-space: inherit; overflow-wrap: normal; }
+pre.mermaid {
+  text-align: center; white-space: normal;
+  background:
+    linear-gradient(to right, var(--card) 40%, transparent) left / 2.5rem 100% no-repeat local,
+    linear-gradient(to left, var(--card) 40%, transparent) right / 2.5rem 100% no-repeat local,
+    linear-gradient(to right, color-mix(in srgb, var(--foreground) 16%, transparent), transparent) left / 1rem 100% no-repeat scroll,
+    linear-gradient(to left, color-mix(in srgb, var(--foreground) 16%, transparent), transparent) right / 1rem 100% no-repeat scroll,
+    var(--card);
+}
 /* Where a block still overflows (long lines in other docs, wide tables), its scrollbar is thin and in the theme. */
 pre, table { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 
 .code-block { position: relative; }
-.code-block pre { margin: 0; }
-.code-file { ${MONO} font-size: 0.8rem; line-height: 1.4; color: var(--muted-foreground); background: var(--card); padding: 0.6rem 5.5rem 0.6rem var(--pad-x); border: 1px solid var(--border); border-bottom: 0; border-radius: var(--radius-xl) var(--radius-xl) 0 0; overflow-wrap: anywhere; }
-.code-file + pre { border-radius: 0 0 var(--radius-xl) var(--radius-xl); }
-.has-file .copy-button { top: 0.35rem; }
-.copy-button {
-  position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.2rem 0.6rem; border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--card); color: var(--muted-foreground); font-family: inherit; font-size: 0.78rem; font-weight: 500; line-height: 1.4; cursor: pointer;
-  opacity: 0; transition: opacity 0.15s, color 0.15s;
+.code-block pre { margin: 0; border-radius: 0 0 var(--radius-xl) var(--radius-xl); }
+.code-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.3rem 0.4rem 0.3rem var(--pad-x);
+  background: var(--card); border: 1px solid var(--border); border-bottom: 0; border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 }
-.code-block:hover .copy-button, .copy-button:focus-visible, .copy-button.done { opacity: 1; }
+.code-label { ${MONO} font-size: 0.78rem; line-height: 1.4; color: var(--muted-foreground); overflow-wrap: break-word; min-width: 0; }
+.code-file { color: var(--foreground); }
+.copy-button {
+  flex: none; padding: 0.15rem 0.6rem; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--card); color: var(--muted-foreground); font-family: inherit; font-size: 0.76rem; font-weight: 500; line-height: 1.4; cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
 .copy-button:hover { color: var(--foreground); border-color: var(--brand-border); }
 .copy-button.done { color: var(--success-foreground); border-color: var(--success-foreground); }
-@media (hover: none) { .copy-button { opacity: 1; } }
 
 .hljs-keyword, .hljs-meta .hljs-keyword, .hljs-selector-tag, .hljs-doctag { color: var(--syn-keyword); }
 .hljs-string, .hljs-regexp, .hljs-template-tag, .hljs-addition { color: var(--syn-string); }
@@ -506,9 +652,9 @@ pre, table { scrollbar-width: thin; scrollbar-color: var(--border-strong) transp
 .rule-row { display: grid; grid-template-columns: 4.8rem minmax(0, 1fr); column-gap: 1rem; padding: 0.35rem var(--pad-x); }
 .rule-head { border-bottom: 1px solid var(--border); padding-bottom: 0.75rem; margin-bottom: 0.4rem; }
 .rule-key { color: var(--brand-foreground); font-weight: 700; font-size: 0.86em; padding-top: 0.12em; }
-.rule-value { overflow-wrap: anywhere; }
+.rule-value { overflow-wrap: break-word; }
 .rule-head .rule-value { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; flex-wrap: wrap; }
-.rule-id { font-size: 0.9em; font-weight: 600; color: var(--header); background: none; padding: 0; }
+.rule-id { font-size: 0.9em; font-weight: 600; color: var(--header); background: none; padding: 0; overflow-wrap: anywhere; }
 .rule-mode { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 0.12rem 0.6rem; border-radius: 999px; background: var(--log-bg); color: var(--log-fg); }
 .rule-mode-steer { background: var(--steer-bg); color: var(--steer-fg); }
 .rule-mode-block { background: var(--block-bg); color: var(--block-fg); }
@@ -517,38 +663,50 @@ pre, table { scrollbar-width: thin; scrollbar-color: var(--border-strong) transp
 .rule-var { color: var(--syn-attr); }
 
 details { border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--card); box-shadow: var(--card-shadow); }
+/* A summary is one run of text (code in it wraps with the words); its chevron sits in the left padding. */
 details > summary {
-  display: flex; align-items: center; gap: 0.65rem; padding: 0.8rem var(--pad-x); cursor: pointer; list-style: none;
+  display: block; position: relative; padding: 0.8rem var(--pad-x) 0.8rem calc(var(--pad-x) + 1.3rem); cursor: pointer; list-style: none;
   font-weight: 600; color: var(--header); border-radius: var(--radius-xl); user-select: none;
 }
 details > summary::-webkit-details-marker { display: none; }
 details > summary::before {
-  content: ""; flex: none; width: 0.45rem; height: 0.45rem; margin: 0 0.15rem;
+  content: ""; position: absolute; left: calc(var(--pad-x) + 0.15rem); top: 1.28rem; width: 0.45rem; height: 0.45rem;
   border-right: 2px solid var(--muted-foreground); border-bottom: 2px solid var(--muted-foreground); transform: rotate(-45deg); transition: transform 0.15s;
 }
 details[open] > summary { border-bottom: 1px solid var(--border); border-radius: var(--radius-xl) var(--radius-xl) 0 0; }
-details[open] > summary::before { transform: rotate(45deg); }
+details[open] > summary::before { transform: rotate(45deg); top: 1.12rem; }
 details > summary:hover { background: var(--hover); }
 details > :not(summary) { margin: var(--pad-y) var(--pad-x); }
-details > table { width: calc(100% - 2 * var(--pad-x)); }
 
-/* Tables fit the column: cells wrap rather than scroll; on a phone each row stacks, every cell labelled by its column. */
+/* Tables fit the column: cells wrap between words; on a phone each row stacks, every cell labelled by its column. A
+   table whose unbreakable cells (names, routes) are wider than the column together scrolls inside its frame. */
+.table-scroll { overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.93em; line-height: 1.55; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); overflow: hidden; }
-th, td { padding: 0.55em 0.9em; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
-td code, th code { overflow-wrap: anywhere; }
+/* Cells wrap between words (break-word keeps each word whole when sizing columns; anywhere would let a column shrink to
+   one letter wide). Code breaks at the <wbr> after its separators. */
+th, td { padding: 0.55em 0.9em; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); overflow-wrap: break-word; }
+td code, th code { overflow-wrap: break-word; }
+:is(td, th).short { white-space: nowrap; }
 tr:last-child td { border-bottom: 0; }
 th { background: var(--code-surface); color: var(--header); font-weight: 650; }
 td + td, th + th { border-left: 1px solid var(--border); }
 tbody tr:hover td { background: var(--hover); }
 @media (max-width: 640px) {
-  table, thead, tbody, tr, th, td { display: block; }
-  thead { display: none; }
-  tr { border-bottom: 1px solid var(--border); padding: 0.4em 0; }
-  tr:last-child { border-bottom: 0; }
-  td, td + td { border: 0; padding: 0.2em 0.9em; }
+  table:has(td[data-label]), table:has(td[data-label]) :is(thead, tbody, tr, th, td) { display: block; }
+  table:has(td[data-label]) thead { display: none; }
+  table:has(td[data-label]) tr { border-bottom: 1px solid var(--border); padding: 0.4em 0; }
+  table:has(td[data-label]) tr:last-child { border-bottom: 0; }
+  td[data-label], td[data-label] + td { border: 0; padding: 0.2em 0.9em; }
   td[data-label]::before { content: attr(data-label); display: block; font-size: 0.78rem; font-weight: 650; color: var(--muted-foreground); }
+  td[data-label]:empty { display: none; }
 }
 blockquote { padding: var(--pad-y) var(--pad-x); border-left: 3px solid var(--brand); border-radius: 0 var(--radius-xl) var(--radius-xl) 0; background: var(--brand-subtle); }
+/* GitHub's alerts (> [!NOTE], > [!WARNING]…): a titled box in the alert's colour. */
+blockquote.alert-note, blockquote.alert-important { border-left-color: var(--info); background: var(--info-subtle); }
+blockquote.alert-tip { border-left-color: var(--success); background: var(--success-subtle); }
+blockquote.alert-warning { border-left-color: var(--warning); background: var(--warning-subtle); }
+blockquote.alert-caution { border-left-color: var(--danger); background: var(--danger-subtle); }
+blockquote .alert-title { font-weight: 650; color: var(--header); }
 img { max-width: 100%; height: auto; }
 hr { margin: 0; border: 0; border-top: 1px solid var(--border); }
 main > hr, main > hr + * { margin-top: var(--subsection); }
@@ -579,11 +737,29 @@ main > .agent-note + * { margin-top: 0.75rem; }
  * it would cover the page, and stuck it would cover the top bar, which wraps there.
  */
 const REFERENCE_UNDER_HEADER = `
-@media (min-width: 961px) { #toc { top: 3.15rem; height: calc(100vh - 3.15rem); } }
+figure.ex-fig .src .src-path { overflow-wrap: break-word; }
+@media (min-width: 961px) { #toc { top: 3.6rem; height: calc(100vh - 3.6rem); } }
 @media (max-width: 960px) { #toc { position: static; } }
-.site-header nav { max-width: 1320px; padding-left: 18px; }
-html { scroll-padding-top: 4rem; }
-.card, h2, h3, h4 { scroll-margin-top: 4rem; }
+html { scroll-padding-top: 4.25rem; }
+.card, h2, h3, h4 { scroll-margin-top: 0.5rem; }
+:is(dt, dd, li, tr, span):target { background: var(--accent-soft); border-radius: 4px; }
+/* A figure keeps its labels at least about 10px: below the column width that allows, it scrolls inside its frame. */
+@media (max-width: 1100px) { svg.figure:not(.heatmap) { min-width: 820px; } }
+code { hyphens: manual; -webkit-hyphens: manual; }
+${CODE_PIECES_CSS}
+:is(td, th).short { white-space: nowrap; }
+/* A table of up to five columns stacks on a phone, each cell under its column's name; a wider matrix keeps its grid and
+   scrolls inside its frame. */
+@media (max-width: 640px) {
+  .table-wrap:has(td[data-label]) { overflow-x: visible; }
+  .table-wrap table:has(td[data-label]), .table-wrap table:has(td[data-label]) :is(thead, tbody, tr, th, td) { display: block; }
+  .table-wrap table:has(td[data-label]) thead { display: none; }
+  .table-wrap table:has(td[data-label]) tr { border-bottom: 1px solid var(--border); padding: 4px 0; }
+  .table-wrap table:has(td[data-label]) tr:last-child { border-bottom: 0; }
+  .table-wrap td[data-label] { border: 0; padding: 2px 10px; }
+  .table-wrap td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 650; color: var(--muted); }
+  .table-wrap td[data-label]:empty { display: none; }
+}
 `;
 
 /**
@@ -594,7 +770,7 @@ html { scroll-padding-top: 4rem; }
  */
 const REFERENCE_MAP = `:root {
   --bg: var(--background) !important; --fg: var(--foreground) !important;
-  --muted: var(--muted-foreground) !important; --faint: var(--subtle-foreground) !important;
+  --muted: var(--muted-foreground) !important; --faint: var(--muted-foreground) !important;
   --rule: var(--border) !important; --shadow: var(--card-shadow) !important;
   --accent: var(--brand-foreground) !important; --accent-soft: var(--brand-subtle) !important; --accent-ink: var(--header) !important;
   --code-bg: var(--code-surface) !important; --code-fg: var(--foreground) !important;
@@ -629,7 +805,7 @@ code, pre, .mono { ${MONO} }
 const COPY_SCRIPT = `<script>
 for (const button of document.querySelectorAll(".copy-button")) {
   button.addEventListener("click", async () => {
-    const code = button.parentElement.querySelector("code");
+    const code = button.closest(".code-block").querySelector("code");
     let label = "Copied";
     try {
       await navigator.clipboard.writeText(code.textContent);
@@ -687,6 +863,26 @@ mermaid.initialize({
   },
 });
 await mermaid.run();
+// A diagram is drawn to fit the column unless that shrinks its labels below 0.8 of their size; then it keeps that size
+// and scrolls inside its frame.
+for (const svg of document.querySelectorAll("pre.mermaid svg")) {
+  const natural = svg.viewBox.baseVal?.width;
+  const frame = getComputedStyle(svg.parentElement);
+  const room = svg.parentElement.clientWidth - parseFloat(frame.paddingLeft) - parseFloat(frame.paddingRight);
+  if (!natural || room / natural >= 0.8) continue;
+  svg.style.maxWidth = "none";
+  svg.style.width = natural * 0.8 + "px";
+  // Start in the middle, where a top-down diagram's first nodes are, with the shades showing it continues both ways.
+  svg.parentElement.scrollLeft = (svg.parentElement.scrollWidth - svg.parentElement.clientWidth) / 2;
+}
+try {
+  const saved = JSON.parse(sessionStorage.getItem("${RESTORE_KEY}") ?? "null");
+  sessionStorage.removeItem("${RESTORE_KEY}");
+  if (saved?.path === location.pathname) {
+    document.querySelectorAll("details").forEach((fold, i) => { fold.open = saved.open[i] ?? fold.open; });
+    scrollTo(0, saved.y);
+  }
+} catch { /* private mode: nothing was kept */ }
 </script>
 `;
 
@@ -756,9 +952,12 @@ const SEARCH_SCRIPT = `<script>
     if (event.key === "/" && !/^(input|textarea|select)$/i.test(document.activeElement?.tagName ?? "")) {
       event.preventDefault();
       input.focus();
+      input.select();
     }
   });
   document.addEventListener("click", (event) => { if (!box.contains(event.target)) list.hidden = true; });
+  // A result on this same page changes only the hash, so the list closes itself.
+  list.addEventListener("click", (event) => { if (event.target.closest("a")) list.hidden = true; });
 })();
 </script>
 `;
@@ -771,16 +970,25 @@ function siteHeader(root, current, pages) {
   return `<header class="site-header"><nav><a class="brand" href="${root}/index.html">Rerail docs</a>${nav.join("")}${search}</nav></header>\n${SEARCH_SCRIPT}${THEME_TOGGLE_SCRIPT}`;
 }
 
-/** Plain text of an HTML fragment, its whitespace collapsed. */
-const textOf = (html) => decodeHtml(html.replace(/<[^>]+>/gu, " ")).replace(/\s+/gu, " ").trim();
+/** Plain text of an HTML fragment, its whitespace collapsed; inline tags (code, links, emphasis) join their text. */
+const textOf = (html) =>
+  decodeHtml(html.replace(/<\/?(?:a|b|code|em|i|span|strong|wbr)\b[^>]*>/gu, "").replace(/<[^>]+>/gu, " "))
+    .replace(/\s+/gu, " ")
+    .trim();
 
-/** A docs page's search entries: the page itself, then each h2 and h3 section with the start of its text. */
+/** How much of a section's text the search reads: enough for the terms deep in a long section, not the whole page. */
+const SEARCH_TEXT = 2000;
+
+/** A section's searchable text: its prose, tables and code, without diagram source. */
+const sectionText = (html) => textOf(html.replace(/<pre class="mermaid">[\s\S]*?<\/pre>/gu, "")).slice(0, SEARCH_TEXT);
+
+/** A docs page's search entries: the page itself, then each h2 and h3 section with its text (`sectionText`). */
 function pageSearchEntries(body, page, title) {
   const parts = body.split(/(<h[23] id="[^"]+">[\s\S]*?<\/h[23]>)/u);
-  const entries = [{ p: title, s: title, u: page, t: textOf(parts[0].replace(/<h1[\s\S]*?<\/h1>/u, "")).slice(0, 280) }];
+  const entries = [{ p: title, s: title, u: page, t: sectionText(parts[0].replace(/<h1[\s\S]*?<\/h1>/u, "")) }];
   for (let i = 1; i < parts.length; i += 2) {
     const id = /id="([^"]+)"/u.exec(parts[i])[1];
-    entries.push({ p: title, s: textOf(parts[i].replace(/<a class="anchor"[^>]*>#<\/a>/u, "")), u: `${page}#${id}`, t: textOf(parts[i + 1] ?? "").slice(0, 280) });
+    entries.push({ p: title, s: textOf(parts[i].replace(/<a class="anchor"[^>]*>#<\/a>/u, "")), u: `${page}#${id}`, t: sectionText(parts[i + 1] ?? "") });
   }
   return entries;
 }
@@ -788,11 +996,17 @@ function pageSearchEntries(body, page, title) {
 /** The DSL reference's search entries: its section headings, construct cards and grammar productions. */
 function referenceSearchEntries(html, title) {
   const entries = [];
-  for (const [, id, inner] of html.matchAll(/<h[23] id="([^"]+)"[^>]*>([\s\S]*?)<\/h[23]>/gu)) {
-    entries.push({ p: title, s: textOf(inner.replace(/<a class="anchor"[^>]*>#<\/a>/u, "")), u: `${REFERENCE}#${id}`, t: "" });
+  // Each section's own prose, its cards and example figures left to their own entries.
+  const main = html.slice(html.indexOf("<main"), html.lastIndexOf("</main>"));
+  const parts = main.split(/(<h[23] id="[^"]+"[^>]*>[\s\S]*?<\/h[23]>)/u);
+  for (let i = 1; i < parts.length; i += 2) {
+    const id = /id="([^"]+)"/u.exec(parts[i])[1];
+    const prose = (parts[i + 1] ?? "").replace(/<section class="card"[\s\S]*?<\/section>|<figure[\s\S]*?<\/figure>/gu, "");
+    entries.push({ p: title, s: textOf(parts[i].replace(/<a class="anchor"[^>]*>#<\/a>/u, "")), u: `${REFERENCE}#${id}`, t: sectionText(prose) });
   }
-  for (const [, id, heading, lede] of html.matchAll(/<section class="card" id="([^"]+)"[^>]*>\s*<h3>([\s\S]*?)<\/h3>\s*<p>([\s\S]*?)<\/p>/gu)) {
-    entries.push({ p: title, s: textOf(heading.replace(/<a class="anchor"[^>]*>#<\/a>/u, "")), u: `${REFERENCE}#${id}`, t: textOf(lede).slice(0, 280) });
+  // A card's text, without its example figures (JSON the reader searches by key, through the grammar entries).
+  for (const [, id, heading, card] of html.matchAll(/<section class="card" id="([^"]+)"[^>]*>\s*<h3>([\s\S]*?)<\/h3>([\s\S]*?)<\/section>/gu)) {
+    entries.push({ p: title, s: textOf(heading.replace(/<a class="anchor"[^>]*>#<\/a>/u, "")), u: `${REFERENCE}#${id}`, t: sectionText(card.replace(/<figure[\s\S]*?<\/figure>/gu, "")) });
   }
   for (const [, id, name, about] of html.matchAll(/<(?:details|div) class="prod[^"]*" id="(g-[^"]+)"[^>]*>[\s\S]*?<span class="nt">([^<]+)<\/span>[\s\S]*?<span class="about">([\s\S]*?)<\/span>/gu)) {
     entries.push({ p: `${title}: grammar`, s: name, u: `${REFERENCE}#${id}`, t: textOf(about) });
@@ -844,7 +1058,8 @@ function themedReference(html, pages) {
   const at = end + "</style>".length;
   const open = body + "<body>".length;
   const top = main + '<main id="top">'.length;
-  return `${html.slice(0, at)}\n${THEME_SCRIPT}<link rel="alternate" type="text/markdown" href="${twinPath(REFERENCE)}">\n<link rel="stylesheet" href="tokens.css">\n<style>\n${SITE_TOKENS}${HEADER_CSS}${REFERENCE_MAP}${REFERENCE_UNDER_HEADER}</style>${html.slice(at, open)}\n${siteHeader(".", REFERENCE, pages)}${html.slice(open, top)}\n${agentNote(".", REFERENCE)}${html.slice(top)}`;
+  const content = breakCode(labelTableCells(html.slice(top), 5)).replace(/<span class="src-path">([^<]*)<\/span>/gu, (_, path) => `<span class="src-path">${breakAt(path)}</span>`);
+  return `${html.slice(0, at)}\n${THEME_SCRIPT}<link rel="alternate" type="text/markdown" href="${twinPath(REFERENCE)}">\n<link rel="stylesheet" href="tokens.css">\n<style>\n${SITE_TOKENS}${HEADER_CSS}${REFERENCE_MAP}${REFERENCE_UNDER_HEADER}</style>${html.slice(at, open)}\n${siteHeader(".", REFERENCE, pages)}${html.slice(open, top)}\n${agentNote(".", REFERENCE)}${content}`;
 }
 
 /** A page's Markdown twin, which agents read instead of the HTML: `x.html` → `x.md`. */

@@ -49,12 +49,12 @@ Each language family has one adapter type, and every engine call site asks it in
 | Family | Languages | Capabilities | Suppressions |
 |---|---|---|---|
 | `python` | `python` | all five | `noqa`, `nosec` |
-| `ecma` | `typescript`, `javascript` | `scope`, `value`, `arguments`; `calls`, `formatArgs` `Refused` | `eslint`, `oxlint`, `biome` |
+| `ecma` | `typescript`, `javascript` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint`, `oxlint`, `biome` |
 | `php` | `php` | all five | `phpstan`, `psalm`, `phpcs` |
 | `blade` | `blade` | all five | none |
 | `rust` | `rust` | all five | `clippy` |
-| `vue` | `vue` | `scope`, `value`, `arguments`; `calls`, `formatArgs` `Refused` | `eslint` |
-| `sql` | `sql` | `scope`, `value`, `arguments`; `calls`, `formatArgs` `Refused` | `sqlfluff` |
+| `vue` | `vue` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint` |
+| `sql` | `sql` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
 
 <details>
 <summary>What each concern trait holds</summary>

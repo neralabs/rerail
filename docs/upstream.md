@@ -319,11 +319,11 @@ A pull request is a publish request for a tool-pack when it:
   ([Removing data](#removing-data)).
 
 ```mermaid
-flowchart LR
+flowchart TD
   A["Contributor:<br/>stage publish/, open the PR"] --> B["Waiting comment;<br/>CI judges the data"]
   B --> C["Maintainer:<br/>dispatch Publish pack data"]
   C --> D["prep:<br/>pack, check licences, summary"]
-  D --> E["Code owner:<br/>approve test-data-upload"]
+  D --> E["Code owner:<br/>approve<br/>test-data-upload"]
   E --> F["upload:<br/>put create-only, verify"]
   F --> G["finish:<br/>commit the locks, remove publish/"]
   G --> H["Merge"]
@@ -383,7 +383,7 @@ nothing; its token can only write pull request comments.
   same rows, no publish steps, and a note that the pull request porting the change publishes it.
 - It deletes a waiting comment once nothing is left to publish. The comment blocks nothing; structure metric #3 does.
 
-**The dispatch.** The run is titled "Publish pack data for #<n>".
+**The dispatch.** The run is titled `Publish pack data for #<n>`.
 
 - **`replace` off** (default): the locked archive, less files of removed authored rows, with `publish/` laid over it.
 - **`replace` on**: exactly what `publish/` holds. Use it with whole staged sets (`fixtures:stage --all`) to remove
